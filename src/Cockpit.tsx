@@ -3,7 +3,8 @@ import { useApp } from "./store";
 import { LeftPanel } from "./LeftPanel";
 import { PaneGrid } from "./PaneGrid";
 import { Board } from "./Board";
-import { IconBrand, IconPanel, IconSettings, IconTheme, IconFile, IconBroadcast } from "./Icons";
+import { IconBrand, IconPanel, IconSettings, IconTheme, IconFile, IconBroadcast, IconTerminalPlus } from "./Icons";
+import { useVendors } from "./vendors";
 import { Settings } from "./Settings";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { ToastHost } from "./ToastHost";
@@ -24,7 +25,10 @@ function toggleTheme() {
 export function Cockpit() {
   const workspaces = useApp((s) => s.workspaces);
   const activeId = useApp((s) => s.activeId);
+  const addPane = useApp((s) => s.addPane);
   const active = workspaces.find((w) => w.id === activeId) ?? null;
+  const vendors = useVendors((s) => s.vendors);
+  const [addOpen, setAddOpen] = useState(false);
 
   const [expanded, setExpanded] = useState(true);
   const showExplorer = useUI((s) => s.explorerOpen);
@@ -58,6 +62,33 @@ export function Cockpit() {
         <IconBrand size={18} className="brand-mark" />
         <span className="brand">Flightdeck</span>
         <span className="ws">{view === "board" ? "Board" : active?.name}</span>
+        {view === "terminals" && active && (
+          <div className="addpane-wrap">
+            <button
+              className={"tb-ic" + (addOpen ? " on" : "")}
+              title="Add a pane to this workspace"
+              onClick={() => setAddOpen((o) => !o)}
+            >
+              <IconTerminalPlus size={17} />
+            </button>
+            {addOpen && (
+              <div className="addpane-menu" onMouseLeave={() => setAddOpen(false)}>
+                <div className="apm-h">New pane in {active.name}</div>
+                {vendors.map((v) => (
+                  <button
+                    className="apm-item"
+                    key={v.id}
+                    onClick={() => { addPane(active.id, v.id, active.root); setAddOpen(false); }}
+                  >
+                    <span className="apm-dot" style={{ background: `var(${v.accent})` }} />
+                    <span className="apm-name">{v.label}</span>
+                    {!v.installed && <span className="apm-warn" title={v.detail}>not installed</span>}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
         <span className="sp" />
         <Notifications />
         <button

@@ -3,6 +3,7 @@ import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { PaneView } from "./PaneView";
 import { useApp, type Workspace } from "./store";
 import { IconWorkspace } from "./Icons";
+import { defaultCycle } from "./vendors";
 
 // Arrange N panes into rows; each divider is draggable so any pane can be resized.
 function rows(n: number): number[][] {
@@ -41,7 +42,16 @@ export function PaneGrid({ ws }: { ws: Workspace }) {
     <div className="grid-empty">
       <IconWorkspace size={26} />
       <div className="grid-empty-title">No panes in this workspace</div>
-      <div className="grid-empty-sub">Every pane here was closed. Add one from the side panel.</div>
+      <div className="grid-empty-sub">Every pane here was closed. Add one to keep working in {ws.name}.</div>
+      <button
+        className="grid-empty-add"
+        onClick={() => {
+          const addPane = useApp.getState().addPane;
+          addPane(ws.id, defaultCycle()[0], ws.root);
+        }}
+      >
+        + Add a pane
+      </button>
     </div>
   );
   const layout = rows(ws.panes.length);

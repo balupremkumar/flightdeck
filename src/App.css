@@ -89,6 +89,16 @@ body {
 .topbar .sp { flex: 1; }
 .topbar .tb-ic { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 26px; border: 0; background: transparent; color: var(--tmuted); border-radius: 6px; cursor: pointer; transition: color .14s ease, background-color .14s ease; }
 .topbar .tb-ic:hover { color: var(--text-primary); background: rgba(255,255,255,.05); }
+/* Add-pane menu — contextual "+" next to the workspace name in the top bar. */
+.addpane-wrap { position: relative; }
+.addpane-menu { position: absolute; left: 0; top: 34px; width: 230px; background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow-lg); z-index: 60; overflow: hidden; padding-bottom: 4px; }
+.apm-h { padding: 10px 12px 8px; font-size: 10.5px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: var(--tmuted); border-bottom: 1px solid var(--border-soft); margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.apm-item { display: flex; align-items: center; gap: 9px; width: 100%; text-align: left; font: inherit; font-size: 13px; color: var(--text-primary); background: transparent; border: 0; padding: 7px 12px; cursor: pointer; transition: background-color .14s ease; }
+.apm-item:hover { background: color-mix(in srgb, var(--accent) 9%, transparent); }
+.apm-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.apm-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.apm-warn { flex: none; font-size: 10px; font-weight: 600; color: var(--st-waiting); border: 1px solid color-mix(in srgb, var(--st-waiting) 45%, transparent); border-radius: 5px; padding: 1px 6px; }
+
 .bell-wrap { position: relative; }
 .bell { position: relative; display: inline-flex; align-items: center; justify-content: center; background: transparent; border: 0; color: var(--tmuted); cursor: pointer; padding: 4px 6px; border-radius: 7px; transition: color .14s ease, background-color .14s ease; }
 .bell:hover, .bell.on { color: var(--text-primary); background: rgba(255,255,255,.05); }
@@ -173,6 +183,9 @@ body {
 .grid-empty > svg { color: var(--faint); opacity: .7; margin-bottom: 2px; }
 .grid-empty-title { font-size: 13px; font-weight: 600; color: var(--text-secondary); }
 .grid-empty-sub { font-size: 12px; color: var(--tmuted); }
+.grid-empty-add { margin-top: 10px; font: inherit; font-size: 12.5px; font-weight: 700; color: var(--on-accent); background: var(--accent-grad); border: 0; border-radius: 8px; padding: 8px 15px; cursor: pointer; transition: filter .14s ease, transform .14s ease; }
+.grid-empty-add:hover { filter: brightness(1.06); }
+.grid-empty-add:active { transform: translateY(1px); }
 
 /* resizable panel grid */
 .pg { flex: 1; min-height: 0; width: 100%; }
