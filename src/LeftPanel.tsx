@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent, DragEvent as ReactDragEvent } from "react";
 import { useApp, type PaneModel, type Workspace } from "./store";
 import { useUI } from "./ui";
+import { defaultCycle } from "./vendors";
 import { IconPlus, IconClose, IconBoard, IconDrag } from "./Icons";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
@@ -43,9 +44,8 @@ function relTime(ts: number | undefined, now: number): string | null {
   return `${Math.round(h / 24)}d ago`;
 }
 
-// Default pane mix for a workspace spun up by dropping a folder — mirrors
-// NewWorkspace's own default cycle (claude/agy alternating).
-const DROP_CYCLE = ["claude", "agy"];
+// Default pane mix for a workspace spun up by dropping a folder. Comes from the
+// vendor registry (installed agents), not a hardcoded list.
 
 export function LeftPanel({ expanded, view, setView }: { expanded: boolean; view: View; setView: (v: View) => void }) {
   const workspaces = useApp((s) => s.workspaces);
@@ -126,7 +126,8 @@ export function LeftPanel({ expanded, view, setView }: { expanded: boolean; view
         if (!path) return;
         invoke("fs_list_dir", { path })
           .then(() => {
-            const panes = Array.from({ length: 4 }, (_, i) => ({ vendor: DROP_CYCLE[i % DROP_CYCLE.length], cwd: path }));
+            const cycle = defaultCycle();
+            const panes = Array.from({ length: 4 }, (_, i) => ({ vendor: cycle[i % cycle.length], cwd: path }));
             createWorkspace(path, panes);
             setView("terminals");
             pushToast("success", `Created workspace from ${path}`);

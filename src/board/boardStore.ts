@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { BoardCards, Card, ChecklistItem, Column, ColumnId, Label, Priority, Vendor } from "./types";
+import type { BoardCards, Card, ChecklistItem, Column, ColumnId, Label, Priority } from "./types";
 
 // Deep Cove accents as theme tokens (not hex) so the board flips correctly in
 // light mode. Column ramp reads grey -> azure -> ice -> aqua(done).
@@ -225,8 +225,5 @@ export const LABEL_SWATCHES: Array<{ name: string; colorVar: string }> = [
   { name: "Indigo", colorVar: "--agent-claude" },
 ];
 
-export const VENDOR_META: Record<Vendor, { label: string }> = {
-  claude: { label: "Claude" },
-  agy: { label: "Antigravity" },
-  pwsh: { label: "pwsh" },
-};
+// VENDOR_META removed — vendor labels/colours come from the Rust registry via
+// src/vendors.ts (vendorLabel / vendorShort / vendorColor). BACKLOG 216.

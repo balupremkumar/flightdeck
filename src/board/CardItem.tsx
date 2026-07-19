@@ -1,7 +1,7 @@
 import type { DragEvent } from "react";
 import type { Card, ColumnId } from "./types";
-import { PRIORITY_COLORS, VENDOR_COLORS, STATE_COLORS, STATE_LABELS } from "./palette";
-import { VENDOR_META } from "./boardStore";
+import { PRIORITY_COLORS, STATE_COLORS, STATE_LABELS } from "./palette";
+import { vendorColor, vendorShort } from "../vendors";
 import { usePaneStatus } from "./usePaneStatus";
 
 interface CardItemProps {
@@ -109,17 +109,17 @@ export function CardItem({
                   <span
                     className="chip-agent-dot"
                     style={{
-                      background: VENDOR_COLORS[card.agent],
-                      boxShadow: `0 0 6px color-mix(in srgb, ${VENDOR_COLORS[card.agent]} 50%, transparent)`,
+                      background: vendorColor(card.agent),
+                      boxShadow: `0 0 6px color-mix(in srgb, ${vendorColor(card.agent)} 50%, transparent)`,
                     }}
                   />
-                  {VENDOR_META[card.agent].label}
+                  {vendorShort(card.agent)}
                 </span>
               )}
               {status && (
                 <span className="chip chip-agent chip-live" title={`${STATE_LABELS[status.state]} — updated ${status.rel}`}>
                   <span className={`chip-agent-dot dot-${status.state}`} style={{ background: STATE_COLORS[status.state] }} />
-                  {card.agent ? VENDOR_META[card.agent].label : "agent"} · {status.rel}
+                  {card.agent ? vendorShort(card.agent) : "agent"} · {status.rel}
                 </span>
               )}
               {hasChecklist && (

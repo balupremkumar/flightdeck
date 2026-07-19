@@ -2,13 +2,13 @@ import { useEffect, useState } from "react";
 import { useApp } from "../store";
 import { useUI } from "../ui";
 import { IconClose } from "../Icons";
-import { useBoardStore, makeId, LABEL_SWATCHES, VENDOR_META } from "./boardStore";
+import { useBoardStore, makeId, LABEL_SWATCHES } from "./boardStore";
+import { useVendors } from "../vendors";
 import { usePaneStatus } from "./usePaneStatus";
 import { STATE_COLORS, STATE_LABELS } from "./palette";
 import type { Priority, Vendor } from "./types";
 
 const PRIORITIES: Priority[] = ["LOW", "MEDIUM", "HIGH", "CRITICAL"];
-const VENDORS: Vendor[] = ["claude", "agy", "pwsh"];
 
 export function CardDetail({ cardId, onClose }: { cardId: string; onClose: () => void }) {
   const card = useBoardStore((s) => {
@@ -29,6 +29,7 @@ export function CardDetail({ cardId, onClose }: { cardId: string; onClose: () =>
   const workspaces = useApp((s) => s.workspaces);
   const requestConfirm = useUI((s) => s.requestConfirm);
   const pushToast = useUI((s) => s.pushToast);
+  const vendors = useVendors((s) => s.vendors);
 
   const [title, setTitle] = useState(card?.title ?? "");
   const [description, setDescription] = useState(card?.description ?? "");
@@ -124,7 +125,7 @@ export function CardDetail({ cardId, onClose }: { cardId: string; onClose: () =>
               onChange={(e) => updateCard(card.id, { agent: (e.target.value || undefined) as Vendor | undefined })}
             >
               <option value="">Unassigned</option>
-              {VENDORS.map((v) => (<option key={v} value={v}>{VENDOR_META[v].label}</option>))}
+              {vendors.filter((v) => v.kind === "agent").map((v) => (<option key={v.id} value={v.id}>{v.label}</option>))}
             </select>
           </div>
 

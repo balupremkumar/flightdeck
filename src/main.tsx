@@ -2,6 +2,11 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
 import { bootAppearance } from "./themes";
+import { useVendors } from "./vendors";
+
+// Load the vendor registry from the Rust side once at boot. Everything that
+// renders an agent name/colour reads from this (BACKLOG 216).
+void useVendors.getState().load();
 
 // Apply saved theme + accent + colour-blind/reduced-motion overrides before
 // first paint (dark/Ice/off are the defaults).

@@ -116,16 +116,14 @@ fn now_ms() -> u64 {
 /// carry a leaked secret (vendor probe detail, pane cwd/vendor) is passed
 /// through `redact` before serialization.
 pub fn build_bundle(app_version: &str, panes: Vec<SupportPaneInput>) -> Result<String, String> {
-    let vendor_infos: Vec<vendors::VendorInfo> = vendors::registry()
-        .iter()
-        .map(|v| {
-            let (installed, detail) = v.probe();
-            vendors::VendorInfo {
-                id: v.id().into(),
-                label: v.label().into(),
-                installed,
-                detail: redact(&detail),
-            }
+    // Reuse the registry's own descriptor rather than rebuilding one, so new
+    // adapter fields can never go missing here. Probe detail can contain a
+    // filesystem path, so it still goes through redact().
+    let vendor_infos: Vec<vendors::VendorInfo> = vendors::detect()
+        .into_iter()
+        .map(|mut v| {
+            v.detail = redact(&v.detail);
+            v
         })
         .collect();
 

@@ -7,12 +7,12 @@
 
 :root {
   /* surfaces (bg -> surface -> elevated) */
-  --abyss:#05080E;
-  --bg:#070B12;
-  --bg-2:#090F18;
-  --surface:#0E1523;
-  --surface-2:#141F31;
-  --elevated:#1A2637;
+  --abyss:#03050A;
+  --bg:#05080E;
+  --bg-2:#070A11;
+  --surface:#0A0E18;
+  --surface-2:#0D131F;
+  --elevated:#111827;
 
   /* lines */
   --line:rgba(128,168,212,0.13);

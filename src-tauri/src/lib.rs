@@ -70,46 +70,19 @@ struct Entry {
     dir: bool,
 }
 
-// Stripped from every child so a stray key in the ambient shell can never turn a
-// subscription CLI into a metered API call. Subtractive only — nothing is added.
-// TODO: hand-maintained and not yet exhaustive — proxy/enterprise auth-mode
-// switches (e.g. ANTHROPIC_VERTEX_PROJECT_ID, CLAUDE_CODE_USE_BEDROCK,
-// GOOGLE_CLOUD_PROJECT) could still flip a CLI off subscription auth. Extend as
-// vendors and auth modes are added.
-const CROSS_VENDOR_KEYS: &[&str] = &[
-    "ANTHROPIC_API_KEY",
-    "ANTHROPIC_AUTH_TOKEN",
-    "ANTHROPIC_BASE_URL",
-    "GOOGLE_API_KEY",
-    "GEMINI_API_KEY",
-    "MOONSHOT_API_KEY",
-    "OPENAI_API_KEY",
-    "CODEX_API_KEY",
-];
-
-// First-run detection: which agent CLIs/shells are actually installed on this
-// machine. Data-driven off the vendor registry (vendors.rs / R1b).
+// First-run detection + the frontend's single source of truth for which
+// agents/shells exist. Env stripping now lives per-adapter in vendors.rs
+// (BASE_ENV_STRIP + PROXY_ENV_STRIP), enforced by its conformance tests.
 #[tauri::command]
 fn detect_vendors() -> Vec<vendors::VendorInfo> {
-    vendors::registry()
-        .iter()
-        .map(|v| {
-            let (installed, detail) = v.probe();
-            vendors::VendorInfo {
-                id: v.id().into(),
-                label: v.label().into(),
-                installed,
-                detail,
-            }
-        })
-        .collect()
+    vendors::detect()
 }
 
 fn build_command(vendor: &str, cwd: &str) -> CommandBuilder {
     let adapter = vendors::find(vendor);
     let mut cmd = adapter.command(cwd);
-    for k in CROSS_VENDOR_KEYS {
-        cmd.env_remove(*k);
+    for k in adapter.env_strip() {
+        cmd.env_remove(k);
     }
     // Force colour: Node-based CLIs (claude) and others suppress ANSI colour unless
     // the environment advertises a colour TTY, which a ConPTY doesn't always trip.

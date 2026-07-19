@@ -3,7 +3,8 @@ import { IconBoard, IconRefresh, IconPlus } from "./Icons";
 import { useApp } from "./store";
 import { useUI } from "./ui";
 import "./Board.css";
-import { useBoardStore, COLUMNS, VENDOR_META } from "./board/boardStore";
+import { useBoardStore, COLUMNS } from "./board/boardStore";
+import { useVendors, agentVendors, vendorShort } from "./vendors";
 import { CardItem } from "./board/CardItem";
 import { CardDetail } from "./board/CardDetail";
 import { exportBoardMarkdown } from "./board/markdown";
@@ -12,7 +13,6 @@ import type { Card, ColumnId, Priority, Vendor } from "./board/types";
 type SortMode = "manual" | "priority" | "newest";
 const PRIORITY_RANK: Record<Priority, number> = { CRITICAL: 3, HIGH: 2, MEDIUM: 1, LOW: 0 };
 const PRIORITIES: Priority[] = ["LOW", "MEDIUM", "HIGH", "CRITICAL"];
-const VENDORS: Vendor[] = ["claude", "agy", "pwsh"];
 
 function IconExport({ size = 14 }: { size?: number }) {
   return (
@@ -35,6 +35,7 @@ export function Board() {
   const activeId = useApp((s) => s.activeId);
   const workspaces = useApp((s) => s.workspaces);
   const pushToast = useUI((s) => s.pushToast);
+  const vendors = useVendors((s) => s.vendors);
 
   const [dragId, setDragId] = useState<string | null>(null);
   const [dragOverCol, setDragOverCol] = useState<ColumnId | null>(null);
@@ -87,12 +88,13 @@ export function Board() {
     }
     const ws = workspaces.find((w) => w.id === activeId);
     if (!ws) return;
-    const vendor: Vendor = card.agent ?? "claude";
+    // Prefer the card's agent, else the first installed agent the registry knows.
+    const vendor: Vendor = card.agent ?? agentVendors().find((a) => a.installed)?.id ?? "claude";
     useApp.getState().addPane(activeId, vendor, ws.root);
     const newPaneId = useApp.getState().workspaces.find((w) => w.id === activeId)?.focused;
     if (newPaneId != null) {
       linkPane(card.id, activeId, newPaneId);
-      pushToast("success", `Dispatched "${card.title}" to ${VENDOR_META[vendor].label}`);
+      pushToast("success", `Dispatched "${card.title}" to ${vendorShort(vendor)}`);
     }
   }
 
@@ -295,7 +297,7 @@ export function Board() {
           </select>
           <select className="board-filter" value={agentFilter} onChange={(e) => setAgentFilter(e.target.value as Vendor | "ALL")}>
             <option value="ALL">All agents</option>
-            {VENDORS.map((v) => (<option key={v} value={v}>{VENDOR_META[v].label}</option>))}
+            {vendors.filter((v) => v.kind === "agent").map((v) => (<option key={v.id} value={v.id}>{v.label}</option>))}
           </select>
           <select className="board-filter" value={sortMode} onChange={(e) => setSortMode(e.target.value as SortMode)}>
             <option value="manual">Manual order</option>

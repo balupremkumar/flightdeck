@@ -8,7 +8,7 @@ import "./Broadcast.css";
 type Scope = "workspace" | "all";
 type Target = { w: { id: number; name: string }; p: PaneModel };
 
-const LABEL: Record<string, string> = { claude: "claude-code", agy: "antigravity", kimi: "kimi", pwsh: "pwsh" };
+import { vendorShort } from "./vendors";
 
 // Self-contained broadcast composer: one message, sent to all (or a chosen
 // subset of) panes via the existing `pty_write` command. Docks as a floating
@@ -105,7 +105,7 @@ export function Broadcast() {
             >
               <span className={"bc-dot " + p.state} />
               {scope === "all" && <span className="bc-chip-ws">{w.name}</span>}
-              <span>{LABEL[p.vendor] ?? p.vendor}</span>
+              <span>{vendorShort(p.vendor)}</span>
             </button>
           );
         })}

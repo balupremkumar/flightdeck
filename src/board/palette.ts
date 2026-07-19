@@ -1,5 +1,5 @@
 import type { PaneState } from "../store";
-import type { Priority, Vendor } from "./types";
+import type { Priority } from "./types";
 
 // Severity ramp within the brand: grey -> blue -> gold -> red.
 export const PRIORITY_COLORS: Record<Priority, string> = {
@@ -9,11 +9,7 @@ export const PRIORITY_COLORS: Record<Priority, string> = {
   CRITICAL: "var(--st-error)",
 };
 
-export const VENDOR_COLORS: Record<Vendor, string> = {
-  claude: "var(--agent-claude)", // indigo — light-safe pair in theme.css
-  agy: "var(--accent)",
-  pwsh: "var(--st-idle)",
-};
+// Vendor colours now come from the registry — see vendorColor() in src/vendors.ts.
 
 // Live pane state -> dot colour, same ramp PaneView uses for `.pdot`.
 export const STATE_COLORS: Record<PaneState, string> = {

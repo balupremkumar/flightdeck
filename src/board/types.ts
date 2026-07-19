@@ -6,7 +6,9 @@ export type Priority = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
 // Mirrors the real launchable vendor ids used by NewWorkspace/PaneView
 // (store.ts PaneModel.vendor) — not the aspirational Agent list from the
 // old seed data, so a card's agent can actually be dispatched to a pane.
-export type Vendor = "claude" | "agy" | "pwsh";
+// Vendor ids come from the Rust registry at runtime (see src/vendors.ts).
+// A union type here would structurally block adding an agent (BACKLOG 217).
+export type Vendor = string;
 
 export type ColumnId = "todo" | "inprogress" | "review" | "complete";
 

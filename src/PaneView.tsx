@@ -10,7 +10,7 @@ import {
 } from "./Icons";
 import "./panes.css";
 
-const LABEL: Record<string, string> = { claude: "claude-code", agy: "antigravity", kimi: "kimi", pwsh: "pwsh" };
+import { vendorShort } from "./vendors";
 const MIN_FONT = 9;
 const MAX_FONT = 22;
 const DEFAULT_FONT = 13;
@@ -104,7 +104,7 @@ export function PaneView({
     setMenuOpen(false);
   };
 
-  const displayName = pane.title || LABEL[pane.vendor] || pane.vendor;
+  const displayName = pane.title || vendorShort(pane.vendor);
 
   return (
     <div
@@ -138,7 +138,7 @@ export function PaneView({
             ref={nameRef}
             className="prename"
             value={draft}
-            placeholder={LABEL[pane.vendor] ?? pane.vendor}
+            placeholder={vendorShort(pane.vendor)}
             onChange={(e) => setDraft(e.target.value)}
             onBlur={commitRename}
             onKeyDown={(e) => {

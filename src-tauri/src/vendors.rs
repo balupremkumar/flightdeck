@@ -1,24 +1,57 @@
-// vendors.rs — vendor adapter trait + registry (R1b). Was a hand-rolled
-// VendorSpec table + if/else in lib.rs; promoted to a small dyn-dispatch
-// contract so adding an agent/shell is one impl + one line in `registry()`.
+// vendors.rs — vendor adapter trait + registry (R1b / I1).
 //
-// A VendorAdapter owns everything specific to one agent/shell: how to detect
-// it (`probe`), how to launch it (`command`), its process-tree root image
-// name for orphan scanning (`root_exe`), and any pre-spawn side effect
-// (`prepare`, e.g. agy's sticky workspace trust). Cross-vendor concerns (env
-// stripping, colour forcing, cwd) stay centralised in lib.rs's
-// `build_command`, since they apply identically to every vendor.
+// This module is THE source of truth for what agents/shells exist. The frontend
+// gets the list from `detect_vendors` (see lib.rs) rather than duplicating it,
+// so adding an agent is one impl + one line in `registry()` — no frontend edit.
+//
+// A VendorAdapter owns everything specific to one agent/shell: how to detect it
+// (`probe`), how to launch it (`command`), its process-tree root image name for
+// orphan scanning (`root_exe`), any pre-spawn side effect (`prepare`, e.g. agy's
+// sticky workspace trust), the env it must not inherit (`env_strip`), and how it
+// presents in the UI (`short`, `kind`, `accent`).
 
 use std::sync::OnceLock;
 
 use portable_pty::CommandBuilder;
 use serde::Serialize;
 
+/// Env stripped from EVERY child so a stray key in the ambient shell can never
+/// turn a subscription CLI into a metered API call. Subtractive only.
+/// Adapters extend this via `env_strip` — they never shrink it.
+pub const BASE_ENV_STRIP: &[&str] = &[
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+    "ANTHROPIC_BASE_URL",
+    "GOOGLE_API_KEY",
+    "GEMINI_API_KEY",
+    "MOONSHOT_API_KEY",
+    "OPENAI_API_KEY",
+    "CODEX_API_KEY",
+];
+
+/// Proxy / enterprise auth-mode switches. Present here rather than as a TODO:
+/// any of these can flip a CLI off subscription auth into metered billing.
+pub const PROXY_ENV_STRIP: &[&str] = &[
+    "ANTHROPIC_VERTEX_PROJECT_ID",
+    "CLAUDE_CODE_USE_BEDROCK",
+    "CLAUDE_CODE_USE_VERTEX",
+    "AWS_BEARER_TOKEN_BEDROCK",
+    "GOOGLE_CLOUD_PROJECT",
+    "GOOGLE_GENAI_USE_VERTEXAI",
+    "CLOUD_ML_REGION",
+];
+
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VendorInfo {
     pub id: String,
     pub label: String,
+    /// Compact name for chips/badges where the full label won't fit.
+    pub short: String,
+    /// "agent" (an AI coding CLI) or "shell" (a plain terminal).
+    pub kind: String,
+    /// CSS custom-property name the UI uses to colour this vendor.
+    pub accent: String,
     pub installed: bool,
     pub detail: String,
 }
@@ -75,7 +108,6 @@ fn git_bash_path() -> Option<String> {
 // root a pane at any folder, ensure the folder is in agy's trustedWorkspaces
 // before spawning. Sticky (never revoked). Serialised so concurrent agy panes
 // opened at once can't interleave a read-modify-write of settings.json.
-// Ported from gemini-run.ps1.
 static AGY_TRUST_LOCK: OnceLock<std::sync::Mutex<()>> = OnceLock::new();
 
 fn ensure_agy_trust(work_dir: &str) {
@@ -117,24 +149,43 @@ pub trait VendorAdapter: Send + Sync {
     /// (installed, detail) — detail is a resolved path when installed, or a
     /// human-readable reason when not.
     fn probe(&self) -> (bool, String);
-    /// Build the launch command (program + args + cwd). Env stripping/colour
-    /// forcing is applied centrally by the caller (lib.rs::build_command).
+    /// Build the launch command (program + args + cwd). Colour forcing is
+    /// applied centrally by the caller; env stripping comes from `env_strip`.
     fn command(&self, cwd: &str) -> CommandBuilder;
     /// Base image name of the root process this adapter launches, used by the
     /// orphan scanner (203) to recognise stray Flightdeck-spawned trees.
     fn root_exe(&self) -> &'static str;
+
     /// Pre-spawn side effect hook. No-op by default.
     fn prepare(&self, _cwd: &str) {}
+
+    /// Compact display name. Defaults to the full label.
+    fn short(&self) -> &'static str {
+        self.label()
+    }
+    /// "agent" or "shell". Agents are the AI CLIs; shells are plain terminals.
+    fn kind(&self) -> &'static str {
+        "agent"
+    }
+    /// CSS custom-property name used to colour this vendor in the UI.
+    fn accent(&self) -> &'static str {
+        "--accent"
+    }
+    /// Env vars this adapter must not inherit. Always a superset of
+    /// BASE_ENV_STRIP — an adapter can add, never remove.
+    fn env_strip(&self) -> Vec<&'static str> {
+        let mut v: Vec<&'static str> = BASE_ENV_STRIP.to_vec();
+        v.extend_from_slice(PROXY_ENV_STRIP);
+        v
+    }
 }
 
 struct Claude;
 impl VendorAdapter for Claude {
-    fn id(&self) -> &'static str {
-        "claude"
-    }
-    fn label(&self) -> &'static str {
-        "Claude Code"
-    }
+    fn id(&self) -> &'static str { "claude" }
+    fn label(&self) -> &'static str { "Claude Code" }
+    fn short(&self) -> &'static str { "Claude" }
+    fn accent(&self) -> &'static str { "--agent-claude" }
     fn probe(&self) -> (bool, String) {
         match which("claude") {
             Some(p) => (true, p),
@@ -149,19 +200,15 @@ impl VendorAdapter for Claude {
         c.cwd(cwd);
         c
     }
-    fn root_exe(&self) -> &'static str {
-        "pwsh.exe"
-    }
+    fn root_exe(&self) -> &'static str { "pwsh.exe" }
 }
 
 struct Agy;
 impl VendorAdapter for Agy {
-    fn id(&self) -> &'static str {
-        "agy"
-    }
-    fn label(&self) -> &'static str {
-        "Antigravity"
-    }
+    fn id(&self) -> &'static str { "agy" }
+    fn label(&self) -> &'static str { "Antigravity" }
+    fn short(&self) -> &'static str { "Antigravity" }
+    fn accent(&self) -> &'static str { "--accent" }
     fn probe(&self) -> (bool, String) {
         let p = agy_path();
         if std::path::Path::new(&p).exists() {
@@ -176,22 +223,19 @@ impl VendorAdapter for Agy {
         c.cwd(cwd);
         c
     }
-    fn root_exe(&self) -> &'static str {
-        "agy.exe"
-    }
-    fn prepare(&self, cwd: &str) {
-        ensure_agy_trust(cwd);
-    }
+    fn root_exe(&self) -> &'static str { "agy.exe" }
+    fn prepare(&self, cwd: &str) { ensure_agy_trust(cwd); }
 }
+
+// --- Shells (170) ----------------------------------------------------------
 
 struct Pwsh;
 impl VendorAdapter for Pwsh {
-    fn id(&self) -> &'static str {
-        "pwsh"
-    }
-    fn label(&self) -> &'static str {
-        "pwsh (shell)"
-    }
+    fn id(&self) -> &'static str { "pwsh" }
+    fn label(&self) -> &'static str { "pwsh (shell)" }
+    fn short(&self) -> &'static str { "pwsh" }
+    fn kind(&self) -> &'static str { "shell" }
+    fn accent(&self) -> &'static str { "--aqua" }
     fn probe(&self) -> (bool, String) {
         match which("pwsh.exe").or_else(|| which("pwsh")) {
             Some(p) => (true, p),
@@ -203,21 +247,16 @@ impl VendorAdapter for Pwsh {
         c.cwd(cwd);
         c
     }
-    fn root_exe(&self) -> &'static str {
-        "pwsh.exe"
-    }
+    fn root_exe(&self) -> &'static str { "pwsh.exe" }
 }
-
-// --- Shell selection (170) -------------------------------------------------
 
 struct Cmd;
 impl VendorAdapter for Cmd {
-    fn id(&self) -> &'static str {
-        "cmd"
-    }
-    fn label(&self) -> &'static str {
-        "cmd (shell)"
-    }
+    fn id(&self) -> &'static str { "cmd" }
+    fn label(&self) -> &'static str { "cmd (shell)" }
+    fn short(&self) -> &'static str { "cmd" }
+    fn kind(&self) -> &'static str { "shell" }
+    fn accent(&self) -> &'static str { "--muted" }
     fn probe(&self) -> (bool, String) {
         match which("cmd.exe") {
             Some(p) => (true, p),
@@ -229,19 +268,16 @@ impl VendorAdapter for Cmd {
         c.cwd(cwd);
         c
     }
-    fn root_exe(&self) -> &'static str {
-        "cmd.exe"
-    }
+    fn root_exe(&self) -> &'static str { "cmd.exe" }
 }
 
 struct GitBash;
 impl VendorAdapter for GitBash {
-    fn id(&self) -> &'static str {
-        "git-bash"
-    }
-    fn label(&self) -> &'static str {
-        "Git Bash"
-    }
+    fn id(&self) -> &'static str { "git-bash" }
+    fn label(&self) -> &'static str { "Git Bash" }
+    fn short(&self) -> &'static str { "Git Bash" }
+    fn kind(&self) -> &'static str { "shell" }
+    fn accent(&self) -> &'static str { "--st-waiting" }
     fn probe(&self) -> (bool, String) {
         match git_bash_path() {
             Some(p) => (true, p),
@@ -255,19 +291,16 @@ impl VendorAdapter for GitBash {
         c.cwd(cwd);
         c
     }
-    fn root_exe(&self) -> &'static str {
-        "bash.exe"
-    }
+    fn root_exe(&self) -> &'static str { "bash.exe" }
 }
 
 struct Wsl;
 impl VendorAdapter for Wsl {
-    fn id(&self) -> &'static str {
-        "wsl"
-    }
-    fn label(&self) -> &'static str {
-        "WSL"
-    }
+    fn id(&self) -> &'static str { "wsl" }
+    fn label(&self) -> &'static str { "WSL" }
+    fn short(&self) -> &'static str { "WSL" }
+    fn kind(&self) -> &'static str { "shell" }
+    fn accent(&self) -> &'static str { "--ice" }
     fn probe(&self) -> (bool, String) {
         match which("wsl.exe") {
             Some(p) => (true, p),
@@ -281,9 +314,7 @@ impl VendorAdapter for Wsl {
         c.cwd(cwd);
         c
     }
-    fn root_exe(&self) -> &'static str {
-        "wsl.exe"
-    }
+    fn root_exe(&self) -> &'static str { "wsl.exe" }
 }
 
 pub fn registry() -> Vec<Box<dyn VendorAdapter>> {
@@ -304,4 +335,104 @@ pub fn find(id: &str) -> Box<dyn VendorAdapter> {
         .into_iter()
         .find(|v| v.id() == id)
         .unwrap_or_else(|| Box::new(Pwsh))
+}
+
+/// Full descriptor list for the frontend — the single source of truth for
+/// "what agents exist", including live install detection.
+pub fn detect() -> Vec<VendorInfo> {
+    registry()
+        .iter()
+        .map(|v| {
+            let (installed, detail) = v.probe();
+            VendorInfo {
+                id: v.id().into(),
+                label: v.label().into(),
+                short: v.short().into(),
+                kind: v.kind().into(),
+                accent: v.accent().into(),
+                installed,
+                detail,
+            }
+        })
+        .collect()
+}
+
+// --- Adapter conformance suite (227) ---------------------------------------
+// Every adapter must pass these. A new agent is not "wired" until it does.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ids_are_unique_and_nonempty() {
+        let reg = registry();
+        let mut ids: Vec<&str> = reg.iter().map(|v| v.id()).collect();
+        assert!(ids.iter().all(|i| !i.is_empty()), "every adapter needs an id");
+        let count = ids.len();
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(ids.len(), count, "adapter ids must be unique");
+    }
+
+    #[test]
+    fn presentation_fields_are_populated() {
+        for v in registry() {
+            assert!(!v.label().is_empty(), "{} has no label", v.id());
+            assert!(!v.short().is_empty(), "{} has no short name", v.id());
+            assert!(!v.root_exe().is_empty(), "{} has no root_exe", v.id());
+            assert!(
+                v.accent().starts_with("--"),
+                "{} accent must be a CSS custom property, got {}",
+                v.id(),
+                v.accent()
+            );
+            assert!(
+                matches!(v.kind(), "agent" | "shell"),
+                "{} has invalid kind {}",
+                v.id(),
+                v.kind()
+            );
+        }
+    }
+
+    /// The core safety invariant: no adapter may narrow the env-strip list, or a
+    /// stray ambient key could flip a subscription CLI to metered billing.
+    #[test]
+    fn every_adapter_strips_at_least_the_base_keys() {
+        for v in registry() {
+            let strip = v.env_strip();
+            for key in BASE_ENV_STRIP {
+                assert!(strip.contains(key), "{} fails to strip {}", v.id(), key);
+            }
+            for key in PROXY_ENV_STRIP {
+                assert!(strip.contains(key), "{} fails to strip proxy var {}", v.id(), key);
+            }
+        }
+    }
+
+    #[test]
+    fn command_targets_the_requested_cwd() {
+        for v in registry() {
+            let cmd = v.command("D:\\test\\dir");
+            assert_eq!(
+                cmd.get_cwd().map(|c| c.to_string_lossy().into_owned()),
+                Some("D:\\test\\dir".to_string()),
+                "{} did not set cwd",
+                v.id()
+            );
+        }
+    }
+
+    #[test]
+    fn find_round_trips_every_id_and_falls_back_safely() {
+        for v in registry() {
+            assert_eq!(find(v.id()).id(), v.id());
+        }
+        assert_eq!(find("no-such-vendor").id(), "pwsh", "unknown id must fall back to a shell");
+    }
+
+    #[test]
+    fn detect_covers_the_whole_registry() {
+        assert_eq!(detect().len(), registry().len());
+    }
 }

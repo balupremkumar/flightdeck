@@ -1,16 +1,8 @@
 import { useEffect, useState, type CSSProperties } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useApp } from "./store";
 import { IconClose, IconFolder, IconRefresh } from "./Icons";
-
-const VENDORS = [
-  { id: "claude", name: "Claude Code" },
-  { id: "agy", name: "Antigravity" },
-  { id: "pwsh", name: "pwsh (shell)" },
-];
-const CYCLE = ["claude", "agy"];
-const SHORT: Record<string, string> = { claude: "Claude", agy: "Antigravity", pwsh: "pwsh" };
+import { useVendors, vendorMeta, vendorShort, defaultCycle } from "./vendors";
 
 function baseName(p: string): string {
   const s = p.replace(/[\\/]+$/, "");
@@ -32,25 +24,21 @@ export function NewWorkspace() {
 
   const [count, setCount] = useState(4);
   const [root, setRoot] = useState("D:\\Dev\\ai\\Harness");
-  const [slots, setSlots] = useState<Slot[]>(() =>
-    Array.from({ length: 4 }, (_, i) => ({ vendor: CYCLE[i % CYCLE.length], dir: null }))
-  );
+  const [slots, setSlots] = useState<Slot[]>(() => {
+    const cycle = defaultCycle();
+    return Array.from({ length: 4 }, (_, i) => ({ vendor: cycle[i % cycle.length], dir: null }));
+  });
 
-  // First-run detection: which agent CLIs are actually installed here.
-  const [vinfo, setVinfo] = useState<Record<string, { installed: boolean; detail: string }>>({});
-  useEffect(() => {
-    invoke<{ id: string; label: string; installed: boolean; detail: string }[]>("detect_vendors")
-      .then((list) => {
-        const m: Record<string, { installed: boolean; detail: string }> = {};
-        for (const v of list) m[v.id] = { installed: v.installed, detail: v.detail };
-        setVinfo(m);
-      })
-      .catch(() => { /* detection is best-effort — never block the launcher */ });
-  }, []);
+  // Vendor list + install detection both come from the Rust registry (216).
+  const vendors = useVendors((s) => s.vendors);
+  const vendorsLoaded = useVendors((s) => s.loaded);
+  const loadVendors = useVendors((s) => s.load);
+  useEffect(() => { void loadVendors(); }, [loadVendors]);
 
   const changeCount = (n: number) => {
     setCount(n);
-    setSlots((prev) => Array.from({ length: n }, (_, i) => prev[i] ?? { vendor: CYCLE[i % CYCLE.length], dir: null }));
+    const cycle = defaultCycle();
+    setSlots((prev) => Array.from({ length: n }, (_, i) => prev[i] ?? { vendor: cycle[i % cycle.length], dir: null }));
   };
   const setVendor = (i: number, v: string) => setSlots((s) => s.map((x, j) => (j === i ? { ...x, vendor: v } : x)));
   const setDir = (i: number, d: string | null) => setSlots((s) => s.map((x, j) => (j === i ? { ...x, dir: d } : x)));
@@ -68,7 +56,7 @@ export function NewWorkspace() {
     createWorkspace(root.trim(), slots.map((s) => ({ vendor: s.vendor, cwd: (s.dir ?? root).trim() })));
 
   const counts = slots.reduce<Record<string, number>>((m, s) => ((m[s.vendor] = (m[s.vendor] || 0) + 1), m), {});
-  const summary = Object.entries(counts).map(([v, c]) => `${c}× ${SHORT[v] ?? v}`).join(", ");
+  const summary = Object.entries(counts).map(([v, c]) => `${c}× ${vendorShort(v)}`).join(", ");
 
   return (
     <div className={"launcher" + (hasWorkspaces ? " overlay" : "")}>
@@ -111,10 +99,10 @@ export function NewWorkspace() {
                 <div className="slot-row" key={i}>
                   <span className="slot-n">Pane {i + 1}</span>
                   <select className="vsel" value={s.vendor} onChange={(e) => setVendor(i, e.target.value)}>
-                    {VENDORS.map((o) => (<option key={o.id} value={o.id}>{o.name}</option>))}
+                    {vendors.map((o) => (<option key={o.id} value={o.id}>{o.label}</option>))}
                   </select>
-                  {vinfo[s.vendor] && !vinfo[s.vendor].installed && (
-                    <span className="slot-warn" title={vinfo[s.vendor].detail}>not installed</span>
+                  {vendorsLoaded && !vendorMeta(s.vendor).installed && (
+                    <span className="slot-warn" title={vendorMeta(s.vendor).detail}>not installed</span>
                   )}
                   <button className={"dirbtn" + (s.dir ? " custom" : "")} onClick={() => browseSlot(i)} title={s.dir ?? root + "  (default)"}>
                     <IconFolder size={12} /> {baseName(s.dir ?? root)}
