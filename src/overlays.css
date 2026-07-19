@@ -43,8 +43,7 @@
   transition: color .14s ease, background-color .14s ease;
 }
 .seg button:hover { color: var(--text); }
-.seg button.on { color: var(--abyss); background: var(--accent-grad); }
-:root[data-theme="light"] .seg button.on { color: #fff; }
+.seg button.on { color: var(--on-accent); background: var(--accent-grad); }
 
 .kbd-list { display: flex; flex-direction: column; }
 .kbd-row { display: flex; align-items: center; justify-content: space-between; padding: 9px 0; border-bottom: 1px solid var(--line); font-size: 13.5px; color: var(--text); }

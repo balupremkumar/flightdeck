@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useUI, applyUiScale } from "./ui";
+import { useVendors } from "./vendors";
 import { IconClose } from "./Icons";
 import {
   THEMES, ACCENTS, findTheme, findAccent,
@@ -96,11 +97,8 @@ function formatCombo(e: KeyboardEvent): string | null {
 // overrides. Vendor ids mirror src-tauri/src/lib.rs's VENDORS table.
 // Persisted here for the launcher / pty_spawn call sites to read later.
 // ---------------------------------------------------------------------
-const VENDORS = [
-  { id: "claude", label: "Claude Code" },
-  { id: "agy", label: "Antigravity" },
-  { id: "pwsh", label: "pwsh (shell)" },
-];
+// Vendor list comes from the Rust registry (src/vendors.ts) — never hardcode it
+// here, or a newly-added agent silently gets no settings row (BACKLOG 216).
 export interface AgentSettings {
   defaultVendor: string;
   flags: Record<string, string>;
@@ -135,6 +133,7 @@ function saveStartupBehavior(v: StartupBehavior) {
 export function Settings() {
   const open = useUI((s) => s.settingsOpen);
   const setOpen = useUI((s) => s.setSettingsOpen);
+  const vendors = useVendors((s) => s.vendors);
 
   const [themeId, setThemeId] = useState(currentThemeId());
   const [accentId, setAccentId] = useState(currentAccentId());
@@ -260,21 +259,33 @@ export function Settings() {
               )}
             </div>
 
-            <div className="set-row">
-              <div className="set-row-t"><span className="set-row-name">Accent colour</span><span className="set-row-sub">Auto-adjusts for dark or light</span></div>
-              <div className="accent-row">
-                {ACCENTS.map((a) => (
-                  <button
-                    key={a.id}
-                    className={"accent-swatch" + (accentId === a.id ? " on" : "")}
-                    style={{ background: mode === "light" ? findAccent(a.id).light.accent : findAccent(a.id).dark.accent }}
-                    onClick={() => selectAccent(a.id)}
-                    title={a.label}
-                    aria-label={`Accent: ${a.label}`}
-                  />
-                ))}
+            {/* High Contrast fixes its accent deliberately for accessibility —
+                letting the picker override it silently defeats the whole theme. */}
+            {themeId !== "high-contrast" && (
+              <div className="set-row">
+                <div className="set-row-t"><span className="set-row-name">Accent colour</span><span className="set-row-sub">Auto-adjusts for dark or light</span></div>
+                <div className="accent-row">
+                  {ACCENTS.map((a) => (
+                    <button
+                      key={a.id}
+                      className={"accent-swatch" + (accentId === a.id ? " on" : "")}
+                      style={{ background: mode === "light" ? findAccent(a.id).light.accent : findAccent(a.id).dark.accent }}
+                      onClick={() => selectAccent(a.id)}
+                      title={a.label}
+                      aria-label={`Accent: ${a.label}`}
+                    />
+                  ))}
+                </div>
               </div>
-            </div>
+            )}
+            {themeId === "high-contrast" && (
+              <div className="set-row">
+                <div className="set-row-t">
+                  <span className="set-row-name">Accent colour</span>
+                  <span className="set-row-sub">Fixed by High Contrast for accessibility</span>
+                </div>
+              </div>
+            )}
 
             <div className="set-row">
               <div className="set-row-t"><span className="set-row-name">Colour-blind-safe status colours</span><span className="set-row-sub">Blue / amber / vermillion instead of red / green</span></div>
@@ -368,7 +379,7 @@ export function Settings() {
             <div className="set-row">
               <div className="set-row-t"><span className="set-row-name">Default vendor</span><span className="set-row-sub">Pre-selected for new panes</span></div>
               <div className="seg">
-                {VENDORS.map((v) => (
+                {vendors.map((v) => (
                   <button key={v.id} className={agents.defaultVendor === v.id ? "on" : ""} onClick={() => updateAgents({ ...agents, defaultVendor: v.id })}>
                     {v.label}
                   </button>
@@ -376,7 +387,7 @@ export function Settings() {
               </div>
             </div>
             <div className="agent-list">
-              {VENDORS.map((v) => (
+              {vendors.map((v) => (
                 <div className="agent-row" key={v.id}>
                   <span className="agent-row-name">{v.label}</span>
                   <input

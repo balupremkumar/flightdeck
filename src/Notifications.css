@@ -14,7 +14,7 @@
 .ntf-bell.dnd { color: var(--faint); opacity: .6; }
 .ntf-badge {
   position: absolute; top: -1px; right: -1px; min-width: 15px; height: 15px; border-radius: 999px;
-  background: var(--st-waiting); color: #1a1400; font-size: 9px; font-weight: 800;
+  background: var(--st-waiting); color: var(--on-warn); font-size: 9px; font-weight: 800;
   display: grid; place-items: center; padding: 0 3px;
 }
 

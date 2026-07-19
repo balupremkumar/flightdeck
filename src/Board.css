@@ -88,7 +88,7 @@
   border: none;
   border-radius: 8px;
   background: var(--accent-grad);
-  color: #05080E;
+  color: var(--on-accent);
   font-size: 12.5px;
   font-weight: 700;
   padding: 7px 13px 7px 10px;
@@ -162,8 +162,8 @@
 
 .col-drop-active {
   border-color: var(--accent);
-  background-color: rgba(67, 166, 245, 0.06);
-  box-shadow: inset 0 0 0 1px rgba(67, 166, 245, 0.25);
+  background-color: color-mix(in srgb, var(--accent) 6%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 25%, transparent);
 }
 
 .col-accent {
@@ -231,7 +231,7 @@
 .col-add-btn:hover {
   border-color: var(--accent);
   color: var(--accent);
-  background: rgba(67, 166, 245, 0.08);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
 }
 
 .col-list {
@@ -422,7 +422,7 @@
   cursor: default;
   gap: 8px;
   border-color: var(--accent);
-  box-shadow: 0 0 0 1px rgba(67, 166, 245, 0.2);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 20%, transparent);
 }
 
 .composer-input {
@@ -492,7 +492,7 @@
 
 .composer-add {
   background: var(--accent-grad);
-  color: #05080E;
+  color: var(--on-accent);
 }
 
 .composer-add:hover {
@@ -502,7 +502,6 @@
 /* Gradient buttons: dark ink reads on the bright dark-theme accent; in light
    mode the gradient is deeper blue, so flip to white ink. */
 :root[data-theme="light"] .board-new-btn,
-:root[data-theme="light"] .composer-add { color: #fff; }
 
 /* ---------- Toolbar: search / filter / sort ---------- */
 .board-toolbar {

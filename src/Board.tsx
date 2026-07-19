@@ -35,6 +35,7 @@ export function Board() {
   const activeId = useApp((s) => s.activeId);
   const workspaces = useApp((s) => s.workspaces);
   const pushToast = useUI((s) => s.pushToast);
+  const requestConfirm = useUI((s) => s.requestConfirm);
   const vendors = useVendors((s) => s.vendors);
 
   const [dragId, setDragId] = useState<string | null>(null);
@@ -251,10 +252,20 @@ export function Board() {
     setShowComposer(false);
   }
 
+  // Destructive: throws away every card and re-seeds. Same guard as the other
+  // destructive actions — it sits next to "Copy as Markdown" with equal weight.
   function refresh() {
-    cancelComposer();
-    setSelectedId(null);
-    reset();
+    requestConfirm({
+      title: "Reset the board?",
+      body: "Every card, checklist and label is discarded and the board goes back to its seed contents. This can't be undone.",
+      confirmLabel: "Reset board",
+      danger: true,
+      onConfirm: () => {
+        cancelComposer();
+        setSelectedId(null);
+        reset();
+      },
+    });
   }
 
   async function doExport() {

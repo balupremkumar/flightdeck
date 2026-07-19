@@ -72,11 +72,10 @@ body {
 .dirreset:hover { color: var(--text-primary); background: rgba(255,255,255,.06); }
 .dialog .df { display: flex; align-items: center; gap: 10px; padding: 14px 18px; border-top: 1px solid var(--border); }
 .df .cancel { font: inherit; font-size: 12.5px; color: var(--text-secondary); background: transparent; border: 0; cursor: pointer; padding: 8px 12px; }
-.btn-primary { margin-left: auto; font: inherit; font-size: 12.5px; font-weight: 700; color: var(--abyss); background: var(--accent-grad); border: 0; border-radius: 8px; padding: 9px 16px; cursor: pointer; transition: filter .14s ease, transform .14s ease; }
+.btn-primary { margin-left: auto; font: inherit; font-size: 12.5px; font-weight: 700; color: var(--on-accent); background: var(--accent-grad); border: 0; border-radius: 8px; padding: 9px 16px; cursor: pointer; transition: filter .14s ease, transform .14s ease; }
 .btn-primary:hover { filter: brightness(1.06); }
 .btn-primary:active { transform: translateY(1px); }
 .btn-primary:disabled { opacity: .5; cursor: default; transform: none; }
-:root[data-theme="light"] .btn-primary { color: #fff; }
 
 /* ---------- cockpit shell ---------- */
 .cockpit-root { height: 100%; display: flex; flex-direction: column; }
@@ -94,7 +93,7 @@ body {
 .bell { position: relative; display: inline-flex; align-items: center; justify-content: center; background: transparent; border: 0; color: var(--tmuted); cursor: pointer; padding: 4px 6px; border-radius: 7px; transition: color .14s ease, background-color .14s ease; }
 .bell:hover, .bell.on { color: var(--text-primary); background: rgba(255,255,255,.05); }
 .bell.on { color: var(--accent); }
-.bell-badge { position: absolute; top: -1px; right: -1px; min-width: 15px; height: 15px; border-radius: 999px; background: var(--st-waiting); color: #1a1400; font-size: 9px; font-weight: 800; display: grid; place-items: center; padding: 0 3px; }
+.bell-badge { position: absolute; top: -1px; right: -1px; min-width: 15px; height: 15px; border-radius: 999px; background: var(--st-waiting); color: var(--on-warn); font-size: 9px; font-weight: 800; display: grid; place-items: center; padding: 0 3px; }
 .bell-menu { position: absolute; right: 0; top: 34px; width: 250px; background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 20px 50px -16px rgba(0,0,0,.7); z-index: 60; overflow: hidden; }
 .bell-h { padding: 10px 12px; font-size: 10.5px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: var(--tmuted); border-bottom: 1px solid var(--border); }
 .bell-empty { padding: 14px 12px; font-size: 12.5px; color: var(--tmuted); }

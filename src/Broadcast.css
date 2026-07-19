@@ -30,8 +30,7 @@
   background: transparent; border: 0; border-radius: 6px; padding: 5px 10px; cursor: pointer;
   transition: color .14s ease, background-color .14s ease;
 }
-.bc-seg button.on { color: var(--abyss); background: var(--accent-grad); }
-:root[data-theme="light"] .bc-seg button.on { color: #fff; }
+.bc-seg button.on { color: var(--on-accent); background: var(--accent-grad); }
 
 .bc-x {
   display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px;
@@ -70,9 +69,8 @@
 .bc-enter input { accent-color: var(--accent); width: 13px; height: 13px; }
 
 .bc-send {
-  font: inherit; font-size: 12.5px; font-weight: 700; color: var(--abyss); background: var(--accent-grad);
+  font: inherit; font-size: 12.5px; font-weight: 700; color: var(--on-accent); background: var(--accent-grad);
   border: 0; border-radius: 9px; padding: 8px 16px; cursor: pointer; transition: filter .14s ease, opacity .14s ease;
 }
-:root[data-theme="light"] .bc-send { color: #fff; }
 .bc-send:hover:not(:disabled) { filter: brightness(1.07); }
 .bc-send:disabled { opacity: .45; cursor: not-allowed; }

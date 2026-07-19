@@ -7,16 +7,24 @@
 
 :root {
   /* surfaces (bg -> surface -> elevated) */
+  /* Surfaces. The floor stays dark (owner's call); the STEPS between planes are
+     what carry depth — earlier values sat ~1.04:1 apart, so separation relied
+     entirely on the border and the UI read flat/muddy. */
   --abyss:#03050A;
   --bg:#05080E;
-  --bg-2:#070A11;
-  --surface:#0A0E18;
-  --surface-2:#0D131F;
-  --elevated:#111827;
+  --bg-2:#080C14;
+  --surface:#0B0F19;
+  --surface-2:#111827;
+  --elevated:#171F30;
 
   /* lines */
-  --line:rgba(128,168,212,0.13);
-  --line-strong:rgba(128,168,212,0.26);
+  --line:rgba(148,184,224,0.19);
+  --line-strong:rgba(148,184,224,0.34);
+
+  /* Ink that sits ON a filled accent / warning surface. One token instead of
+     the ten hardcoded #fff / #1a1400 / #05080E literals that had already drifted. */
+  --on-accent:#05080E;
+  --on-warn:#1a1400;
 
   /* ink */
   --text:#EAF1F8;
@@ -87,6 +95,7 @@
   --st-exited:#0E8C66;
 
   --agent-claude:#5B63D6;
+  --on-accent:#FFFFFF;
 
   --accent-grad:linear-gradient(125deg,#1FA0D8 0%,#1C72D0 48%,#2B53E0 100%);
   --glow:0 0 0 1px rgba(28,114,208,0.22), 0 8px 40px rgba(28,114,208,0.16);
@@ -131,7 +140,9 @@
   --line:rgba(216,222,233,0.12); --line-strong:rgba(216,222,233,0.24);
   --text:#ECEFF4; --muted:#D8DEE9; --faint:#9AA6BF;
   --ice:#88C0D0; --azure:#81A1C1; --aqua:#8FBCBB; --deepblue:#5E81AC; --red:#BF616A; --accent:#81A1C1;
-  --st-starting:#88C0D0; --st-running:#A3BE8C; --st-waiting:#EBCB8B; --st-idle:#4C566A; --st-error:#BF616A; --st-exited:#8FBCBB;
+  /* --st-idle lifted off #4C566A: it collided with --elevated and the pane
+     header, making an idle pane's dot invisible in this theme. */
+  --st-starting:#88C0D0; --st-running:#A3BE8C; --st-waiting:#EBCB8B; --st-idle:#7C8AA6; --st-error:#BF616A; --st-exited:#8FBCBB;
   --agent-claude:#B48EAD;
   --accent-grad:linear-gradient(125deg,#88C0D0 0%,#81A1C1 48%,#5E81AC 100%);
   --glow:0 0 0 1px rgba(136,192,208,0.20), 0 8px 40px rgba(136,192,208,0.20);
