@@ -138,6 +138,10 @@ function saveStartupBehavior(v: StartupBehavior) {
   try { localStorage.setItem("flightdeck-startup", v); } catch { /* non-persistent */ }
 }
 
+// Shown in About + useful for bug reports. Keep in step with package.json /
+// tauri.conf.json version bumps.
+export const APP_VERSION = "0.1.0";
+
 export function Settings() {
   const open = useUI((s) => s.settingsOpen);
   const setOpen = useUI((s) => s.setSettingsOpen);
@@ -171,6 +175,17 @@ export function Settings() {
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
   }, [capturing]);
+
+  // Esc closes — every other overlay does; Settings was the odd one out (QOL 328).
+  // Skipped while capturing a shortcut rebind so Esc can be bound/cancelled there.
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !capturing) setOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, capturing, setOpen]);
 
   if (!open) return null;
 
@@ -435,7 +450,7 @@ export function Settings() {
 
           <section className="set-section">
             <div className="set-label">About</div>
-            <div className="set-about">Flightdeck — a multi-agent terminal cockpit. Deep Cove build.</div>
+            <div className="set-about">Flightdeck v{APP_VERSION} — a multi-agent terminal cockpit. Deep Cove build.</div>
           </section>
         </div>
       </div>

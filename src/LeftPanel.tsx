@@ -108,7 +108,11 @@ export function LeftPanel({ expanded, view, setView }: { expanded: boolean; view
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     let cancelled = false;
-    getCurrentWebview()
+    // getCurrentWebview() throws outside a real Tauri window (reads
+    // __TAURI_INTERNALS__) — guard so browser previews/QA rigs don't crash.
+    let webview: ReturnType<typeof getCurrentWebview>;
+    try { webview = getCurrentWebview(); } catch { return; }
+    webview
       .onDragDropEvent((e) => {
         const el = panelRef.current;
         if (e.payload.type === "leave") { setFolderOver(false); return; }
@@ -348,7 +352,8 @@ export function LeftPanel({ expanded, view, setView }: { expanded: boolean; view
       </div>
       <div className="lp-sep" />
       <div className={"lp-app" + (view === "board" ? " active" : "")} onClick={() => setView("board")}>
-        <span className="lp-i board"><IconBoard size={16} /></span>
+        {/* NOT class "board" — Board.css declares a global .board for the board screen */}
+        <span className="lp-i lp-board-i"><IconBoard size={16} /></span>
         <span className="lp-name">Board</span>
       </div>
       {dropHint}

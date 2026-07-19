@@ -14,6 +14,7 @@ import { CommandPalette } from "./CommandPalette";
 import { Explorer } from "./Explorer";
 import { useUI } from "./ui";
 import { applyTheme, currentThemeId, findTheme } from "./themes";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 
 // Quick light/dark flip. Goes through the themes registry (not a raw data-theme
 // write) so it stays in step with the richer theme picker in Settings.
@@ -52,6 +53,17 @@ export function Cockpit() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [setSettingsOpen]);
+
+  // Window title reflects what needs you (QOL 365) — visible from the taskbar
+  // without focusing the app. Guarded: no-op outside a real Tauri window.
+  const waitingCount = workspaces.reduce((n, w) => n + w.panes.filter((p) => p.state === "waiting").length, 0);
+  const errorCount = workspaces.reduce((n, w) => n + w.panes.filter((p) => p.state === "error").length, 0);
+  useEffect(() => {
+    const bits = ["Flightdeck"];
+    if (waitingCount > 0) bits.push(`${waitingCount} waiting`);
+    if (errorCount > 0) bits.push(`${errorCount} error${errorCount === 1 ? "" : "s"}`);
+    try { void getCurrentWindow().setTitle(bits.join(" — ")); } catch { /* browser preview */ }
+  }, [waitingCount, errorCount]);
 
   return (
     <div className="cockpit-root">

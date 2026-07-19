@@ -161,6 +161,19 @@
   --shadow-lg:0 0 0 1px rgba(255,255,255,0.40), 0 30px 70px -20px rgba(0,0,0,0.90);
 }
 
+/* Scrollbars (QOL 336) — raw OS scrollbars read foreign against the chrome.
+   Token-driven so all six themes get a matching, quiet treatment. */
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--muted) 26%, transparent);
+  border-radius: 6px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-thumb:hover { background: color-mix(in srgb, var(--muted) 42%, transparent); background-clip: padding-box; border: 2px solid transparent; }
+*::-webkit-scrollbar-corner { background: transparent; }
+
 /* Focus ring — 2px accent, offset. Applies to every interactive element. */
 :where(button, a, input, select, [tabindex]):focus-visible {
   outline:2px solid var(--ice);

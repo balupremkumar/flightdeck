@@ -34,62 +34,35 @@ function card(partial: Partial<Card> & { title: string }): Card {
   };
 }
 
-const L_RUST = mkLabel("Rust", "--agent-claude");
-const L_UI = mkLabel("UI", "--ice");
-const L_INFRA = mkLabel("Infra", "--st-waiting");
+const L_GUIDE = mkLabel("guide", "--ice");
 
+// Generic onboarding seed (QOL 292) — teaches the board's mechanics without
+// shipping anyone's personal task list to a fresh install.
 function seedCards(): BoardCards {
   return {
     todo: [
-      card({ title: "Vendor adapter trait + registry (Rust)", priority: "HIGH", labels: [L_RUST] }),
-      card({ title: "Pattern-based per-vendor status + auth-required", priority: "MEDIUM", labels: [L_RUST] }),
-      card({ title: "Windows clean shutdown — Ctrl+C then Job Object", priority: "HIGH", labels: [L_INFRA] }),
       card({
-        title: "SQLite persistence — survive app restart",
+        title: "Drag a card into In Progress — an agent picks it up",
         priority: "HIGH",
-        labels: [L_INFRA],
-        description: "Workspaces/panes/layout/presets/scrollback/events survive a full restart; restore on reopen.",
+        labels: [L_GUIDE],
+        description: "Dropping a card into In Progress spawns an agent pane in your active workspace and links it to the card, so live status shows right here.",
+      }),
+      card({
+        title: "Click a card to open its detail view",
+        priority: "MEDIUM",
+        labels: [L_GUIDE],
         checklist: mkChecklist([
-          ["Schema (workspaces/panes/sessions/scrollback)", false],
-          ["Batched scrollback flush (~4KB/2s)", false],
-          ["Restore on reopen", false],
+          ["Add a description", false],
+          ["Add labels and a checklist", false],
+          ["Assign an agent", false],
         ]),
       }),
-      card({ title: "First-run CLI detection (installed + logged in)", priority: "MEDIUM", labels: [L_INFRA] }),
-      card({ title: "Settings screen + multiple themes", priority: "MEDIUM", labels: [L_UI] }),
-      card({ title: "Explorer file-tree panel", priority: "LOW" }),
-      card({ title: "Frameless window + custom title bar", priority: "LOW", labels: [L_UI] }),
-      card({ title: "Kimi adapter (activate on subscribe)", priority: "LOW" }),
-      card({ title: "Local LLM via LM Studio / Qwen", priority: "LOW" }),
+      card({ title: "Add your own tasks with + New Task", priority: "LOW", labels: [L_GUIDE] }),
     ],
-    inprogress: [
-      card({
-        title: "Kanban card → dispatch an agent pane",
-        priority: "HIGH",
-        agent: "claude",
-        labels: [L_UI],
-        description: "Dropping a card into In Progress spawns/assigns an agent pane and links the card to it.",
-        checklist: mkChecklist([
-          ["Dispatch on drop", true],
-          ["Live status dot on the card", true],
-          ["Card detail view", false],
-        ]),
-      }),
-      card({ title: "Kanban board polish + real data", priority: "MEDIUM", agent: "claude", labels: [L_UI] }),
-      card({ title: "agy concurrency — sticky workspace trust (Rust)", priority: "MEDIUM", agent: "agy", labels: [L_RUST] }),
-    ],
-    review: [
-      card({ title: "Multi-workspace — stacked & background", priority: "HIGH" }),
-      card({ title: "Per-pane working directory", priority: "MEDIUM" }),
-      card({ title: "Notification bell + waiting dots", priority: "MEDIUM" }),
-      card({ title: "Resizable split panes", priority: "MEDIUM" }),
-    ],
+    inprogress: [],
+    review: [],
     complete: [
-      card({ title: "Phase 0 spike — live PTY on Windows", priority: "CRITICAL" }),
-      card({ title: "agy interactive in a real terminal — confirmed", priority: "CRITICAL" }),
-      card({ title: "Tauri 2 + React 19 scaffold", priority: "MEDIUM" }),
-      card({ title: "New Workspace dialog + per-pane agents", priority: "MEDIUM" }),
-      card({ title: "Live per-pane status (activity-based)", priority: "MEDIUM" }),
+      card({ title: "Open the Board", priority: "LOW", labels: [L_GUIDE] }),
     ],
   };
 }

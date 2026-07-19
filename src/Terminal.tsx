@@ -10,6 +10,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { terminalThemeFor } from "./terminal-theme";
+import { getTerminalSettings } from "./Settings";
 
 // Reads the app's active theme straight off the DOM — the app dispatches no
 // theme-change event, so this (plus the MutationObserver below) is how the
@@ -121,10 +122,15 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
   useEffect(() => {
     const el = elRef.current!;
     themeRef.current = terminalThemeFor(activeThemeId());
+    // Terminal settings from Settings > Terminal (QOL 319 — they were persisted
+    // but never read). fontSize stays a per-pane prop (zoom control).
+    const ts = getTerminalSettings();
     const term = new XTerm({
-      fontFamily: "'JetBrains Mono','Cascadia Code',Consolas,monospace",
+      fontFamily: `'${ts.fontFamily}','JetBrains Mono','Cascadia Code',Consolas,monospace`,
       fontSize,
       cursorBlink: true,
+      cursorStyle: ts.cursorStyle,
+      scrollback: ts.scrollback,
       theme: themeRef.current,
     });
     const fit = new FitAddon();

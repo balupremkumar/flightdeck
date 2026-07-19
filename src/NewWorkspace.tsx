@@ -28,7 +28,8 @@ export function NewWorkspace() {
   const hasWorkspaces = useApp((s) => s.workspaces.length > 0);
 
   const [count, setCount] = useState(4);
-  const [root, setRoot] = useState("D:\\Dev\\ai\\Harness");
+  // No baked-in default path (QOL 285) — placeholder guides instead.
+  const [root, setRoot] = useState("");
   const [slots, setSlots] = useState<Slot[]>(() => {
     const cycle = defaultCycle();
     return Array.from({ length: 4 }, (_, i) => ({ vendor: cycle[i % cycle.length], dir: null }));
@@ -113,7 +114,7 @@ export function NewWorkspace() {
             <span className="lbl">Default directory</span>
             <div className="dir">
               <span className="folder"><IconFolder size={14} /></span>
-              <input className="path" value={root} onChange={(e) => setRoot(e.target.value)} spellCheck={false} />
+              <input className="path" value={root} onChange={(e) => setRoot(e.target.value)} spellCheck={false} placeholder="Choose your project folder…" />
               <button className="browse" onClick={browseRoot}>Browse</button>
             </div>
           </div>
