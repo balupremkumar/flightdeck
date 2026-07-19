@@ -1,6 +1,6 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import { Terminal as XTerm } from "@xterm/xterm";
-import type { ILinkProvider, ILink } from "@xterm/xterm";
+import type { ILinkProvider, ILink, ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon, type ISearchOptions, type ISearchResultChangeEvent } from "@xterm/addon-search";
 import { WebLinksAddon } from "@xterm/addon-web-links";
@@ -9,7 +9,14 @@ import "@xterm/xterm/css/xterm.css";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
-import { flightdeckTerminalTheme } from "./terminal-theme";
+import { terminalThemeFor } from "./terminal-theme";
+
+// Reads the app's active theme straight off the DOM — the app dispatches no
+// theme-change event, so this (plus the MutationObserver below) is how the
+// terminal stays in sync with Settings' theme picker.
+function activeThemeId(): string {
+  return document.documentElement.getAttribute("data-theme") ?? "dark";
+}
 
 // Matches Windows/POSIX-ish file paths in terminal output (with an optional
 // trailing :line[:col]), e.g. `D:\proj\src\App.tsx:42:5`, `./src/foo.ts`, `/etc/hosts`.
@@ -24,14 +31,14 @@ function hexToRgba(hex: string, alpha: number): string {
 }
 
 // Overview-ruler / highlight colours for search matches — derived from the
-// terminal's own (always-dark) theme, not the app-level light/dark tokens,
-// since the terminal deliberately stays dark in both app themes.
-function searchDecorations() {
+// terminal's own active theme (not the app-level light/dark tokens), so
+// they stay legible whichever palette the terminal is currently painted in.
+function searchDecorations(theme: ITheme) {
   return {
-    matchOverviewRuler: flightdeckTerminalTheme.yellow as string,
-    activeMatchColorOverviewRuler: flightdeckTerminalTheme.cursor as string,
-    matchBackground: hexToRgba(flightdeckTerminalTheme.yellow as string, 0.25),
-    activeMatchBackground: hexToRgba(flightdeckTerminalTheme.cursor as string, 0.35),
+    matchOverviewRuler: theme.yellow as string,
+    activeMatchColorOverviewRuler: theme.cursor as string,
+    matchBackground: hexToRgba(theme.yellow as string, 0.25),
+    activeMatchBackground: hexToRgba(theme.cursor as string, 0.35),
   };
 }
 
@@ -78,6 +85,8 @@ interface TerminalProps {
   quietThresholdMs?: number;
   onExit?: (crashed: boolean) => void;
   onState?: (state: string) => void;
+  /** Live foreground process name (backend `pty://proc`), e.g. "claude" -> "node". */
+  onProc?: (name: string) => void;
 }
 
 // Cap on buffered bytes for a pane hidden behind another workspace / focus mode —
@@ -86,7 +95,7 @@ const HIDDEN_BUFFER_CAP = 262144; // 256KB
 
 // One live terminal bound to a PTY in the Rust core.
 export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Terminal(
-  { vendor, cwd, fontSize = 12.5, ligatures = false, quietThresholdMs = 3000, onExit, onState },
+  { vendor, cwd, fontSize = 12.5, ligatures = false, quietThresholdMs = 3000, onExit, onState, onProc },
   ref
 ) {
   const elRef = useRef<HTMLDivElement>(null);
@@ -95,12 +104,13 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
   const searchAddonRef = useRef<SearchAddon | null>(null);
   const ligAddonRef = useRef<LigaturesAddon | null>(null);
   const quietThresholdRef = useRef(quietThresholdMs);
+  const themeRef = useRef<ITheme>(terminalThemeFor(activeThemeId()));
 
   useImperativeHandle(ref, () => ({
     findNext: (query, opts) =>
-      searchAddonRef.current?.findNext(query, { ...opts, decorations: searchDecorations() } as ISearchOptions) ?? false,
+      searchAddonRef.current?.findNext(query, { ...opts, decorations: searchDecorations(themeRef.current) } as ISearchOptions) ?? false,
     findPrevious: (query) =>
-      searchAddonRef.current?.findPrevious(query, { decorations: searchDecorations() } as ISearchOptions) ?? false,
+      searchAddonRef.current?.findPrevious(query, { decorations: searchDecorations(themeRef.current) } as ISearchOptions) ?? false,
     clearSearch: () => searchAddonRef.current?.clearDecorations(),
     onSearchResults: (cb) => {
       const d = searchAddonRef.current?.onDidChangeResults(cb);
@@ -110,11 +120,12 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
 
   useEffect(() => {
     const el = elRef.current!;
+    themeRef.current = terminalThemeFor(activeThemeId());
     const term = new XTerm({
       fontFamily: "'JetBrains Mono','Cascadia Code',Consolas,monospace",
       fontSize,
       cursorBlink: true,
-      theme: flightdeckTerminalTheme,
+      theme: themeRef.current,
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
@@ -135,9 +146,12 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
     let unOut: (() => void) | undefined;
     let unExit: (() => void) | undefined;
     let unState: (() => void) | undefined;
+    let unProc: (() => void) | undefined;
     // The Rust reader can emit output before pty_spawn's id round-trips back here;
     // buffer anything that arrives while paneId is still 0, then replay it.
     const earlyOut: { pane_id: number; b64: string }[] = [];
+    // Same race for the spawn-time `pty://proc` root-name event.
+    const earlyProc = new Map<number, string>();
 
     const decodeB64 = (b64: string): Uint8Array => {
       const bin = atob(b64);
@@ -231,6 +245,12 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
         onState?.(e.payload.state);
       });
 
+      unProc = await listen<{ pane_id: number; name: string }>("pty://proc", (e) => {
+        if (paneId === 0) { earlyProc.set(e.payload.pane_id, e.payload.name); return; }
+        if (e.payload.pane_id !== paneId) return;
+        onProc?.(e.payload.name);
+      });
+
       try {
         paneId = await invoke<number>("pty_spawn", { vendor, cwd, cols: term.cols, rows: term.rows });
       } catch (err) {
@@ -246,6 +266,9 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
         if (visible) writeB64(p.b64); else pushHidden(decodeB64(p.b64));
       }
       earlyOut.length = 0;
+      const bufferedProc = earlyProc.get(paneId);
+      if (bufferedProc) onProc?.(bufferedProc);
+      earlyProc.clear();
 
       // The container may have resized during the spawn round-trip (the observer
       // fires before onResize is wired), so push the current size once.
@@ -259,15 +282,28 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
     const ro = new ResizeObserver(() => { if (visible) { try { fit.fit(); } catch { /* mid-teardown */ } } });
     ro.observe(el);
 
+    // Live theme sync: Settings flips `data-theme` on <html> with no event of
+    // its own, so watch the attribute directly. Mutates xterm's existing
+    // theme option in place — same pattern as the fontSize effect below —
+    // never remounts/respawns the PTY.
+    const themeObserver = new MutationObserver(() => {
+      const next = terminalThemeFor(activeThemeId());
+      themeRef.current = next;
+      term.options.theme = next;
+    });
+    themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+
     return () => {
       disposed = true;
       clearQuietTimer();
       ro.disconnect();
       io.disconnect();
+      themeObserver.disconnect();
       fileLinks.dispose();
       unOut?.();
       unExit?.();
       unState?.();
+      unProc?.();
       if (paneId) invoke("pty_kill", { paneId });
       term.dispose();
       termRef.current = null;

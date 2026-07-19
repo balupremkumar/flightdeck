@@ -95,3 +95,38 @@ export const IconWindowClose = IconClose;
 export const IconTheme = (p: IconProps) => (
   <Svg {...p}><circle cx="10" cy="10" r="6.3" /><path d="M10 3.7 A6.3 6.3 0 0 0 10 16.3 Z" fill="currentColor" stroke="none" /></Svg>
 );
+
+// Broadcast — radio-waves fanning off a beacon dot, matching IconAgent's
+// footprint so it can drop into the same topbar slot.
+export const IconBroadcast = (p: IconProps) => (
+  <Svg {...p}>
+    <circle cx="10" cy="10" r="1.7" fill="currentColor" stroke="none" />
+    <path d="M6.8 7.2 a4.2 4.2 0 0 0 0 5.6" />
+    <path d="M13.2 7.2 a4.2 4.2 0 0 1 0 5.6" />
+    <path d="M4.3 4.6 a7.8 7.8 0 0 0 0 10.8" />
+    <path d="M15.7 4.6 a7.8 7.8 0 0 1 0 10.8" />
+  </Svg>
+);
+
+// Terminal chevron (prompt) with a small plus badge — "new terminal".
+export const IconTerminalPlus = (p: IconProps) => (
+  <Svg {...p}>
+    <rect x="2.5" y="4.5" width="11" height="9.5" rx="1.6" />
+    <path d="M5 8 L7.3 9.9 L5 11.8" />
+    <path d="M8.2 11.8 H10.6" />
+    <path d="M15 12.5 V17.5" />
+    <path d="M12.5 15 H17.5" />
+  </Svg>
+);
+
+// Wipe — a destructive full-reset glyph (trash-adjacent), distinct from the
+// circular refresh arrow used for the harmless per-pane restart.
+export const IconWipe = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M5 6.2 H15" />
+    <path d="M7.3 6.2 V4.6 a1 1 0 0 1 1 -1 h3.4 a1 1 0 0 1 1 1 v1.6" />
+    <path d="M6.1 6.2 L6.8 15 a1.2 1.2 0 0 0 1.2 1.1 h4 a1.2 1.2 0 0 0 1.2 -1.1 l0.7 -8.8" />
+    <path d="M8.7 9 V13.2" />
+    <path d="M11.3 9 V13.2" />
+  </Svg>
+);

@@ -57,8 +57,13 @@ export function CommandPalette() {
   const focusPane = useApp((s) => s.focusPane);
   const startCreate = useApp((s) => s.startCreate);
   const restartPane = useApp((s) => s.restartPane);
+  const closePane = useApp((s) => s.closePane);
   const setSettingsOpen = useUI((s) => s.setSettingsOpen);
   const pushToast = useUI((s) => s.pushToast);
+  const requestConfirm = useUI((s) => s.requestConfirm);
+  const explorerOpen = useUI((s) => s.explorerOpen);
+  const setExplorerOpen = useUI((s) => s.setExplorerOpen);
+  const setBroadcastOpen = useUI((s) => s.setBroadcastOpen);
 
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -114,6 +119,27 @@ export function CommandPalette() {
             },
           });
         }
+        // Same guard as the pane header's close button: a dead pane closes
+        // directly, a live one confirms first (closing kills the PTY / ends
+        // the agent session with no way back).
+        const paneDead = p.state === "idle" || p.state === "error";
+        list.push({
+          id: `close:${p.id}`,
+          section: "Actions",
+          label: `Close pane — ${p.title || p.vendor} (${w.name})`,
+          run: () => {
+            switchWorkspace(w.id);
+            focusPane(w.id, p.id);
+            if (paneDead) { closePane(w.id, p.id); return; }
+            requestConfirm({
+              title: `Close ${p.title || p.vendor}?`,
+              body: "This pane is still live. Closing it ends the session — the running agent can't be brought back.",
+              confirmLabel: "Close & end session",
+              danger: true,
+              onConfirm: () => closePane(w.id, p.id),
+            });
+          },
+        });
       }
     }
     list.push({ id: "act:new-workspace", section: "Actions", label: "New workspace", run: () => startCreate() });
@@ -121,8 +147,18 @@ export function CommandPalette() {
     list.push({ id: "act:theme-dark", section: "Actions", label: "Switch to dark theme", run: () => setTheme("dark") });
     list.push({ id: "act:theme-light", section: "Actions", label: "Switch to light theme", run: () => setTheme("light") });
     list.push({ id: "act:toggle-panel", section: "Actions", label: "Toggle side panel", hint: "Ctrl+B", run: toggleSidePanel });
+    list.push({
+      id: "act:toggle-explorer",
+      section: "Actions",
+      label: explorerOpen ? "Toggle file explorer (currently open)" : "Toggle file explorer (currently closed)",
+      run: () => setExplorerOpen(!explorerOpen),
+    });
+    list.push({ id: "act:open-broadcast", section: "Actions", label: "Open broadcast", run: () => setBroadcastOpen(true) });
     return list;
-  }, [workspaces, switchWorkspace, focusPane, restartPane, startCreate, setSettingsOpen, pushToast]);
+  }, [
+    workspaces, switchWorkspace, focusPane, restartPane, closePane, startCreate,
+    setSettingsOpen, pushToast, requestConfirm, explorerOpen, setExplorerOpen, setBroadcastOpen,
+  ]);
 
   const results = useMemo(() => {
     const q = query.trim();

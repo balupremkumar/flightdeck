@@ -67,6 +67,14 @@ const DEFAULT_SHORTCUTS: ShortcutDef[] = [
   { id: "settings", label: "Open settings", combo: "Ctrl+," },
   { id: "toggle-panel", label: "Toggle side panel", combo: "Ctrl+B" },
 ];
+// Shipped shortcuts that aren't rebindable — hardcoded elsewhere (CommandPalette's
+// own key handler, Cockpit's Ctrl+1-9 workspace switcher). Shown here read-only so
+// Settings doesn't undersell what the app actually supports.
+const FIXED_SHORTCUTS: ShortcutDef[] = [
+  { id: "cmdp-k", label: "Command palette", combo: "Ctrl+K" },
+  { id: "cmdp-p", label: "Command palette", combo: "Ctrl+P" },
+  { id: "switch-workspace", label: "Switch to workspace 1-9", combo: "Ctrl+1..9" },
+];
 export function getShortcuts(): ShortcutDef[] {
   let overrides: Record<string, string> = {};
   try { overrides = JSON.parse(localStorage.getItem("flightdeck-shortcuts") || "{}"); } catch { /* non-persistent */ }
@@ -369,8 +377,17 @@ export function Settings() {
                   )}
                 </div>
               ))}
+              {FIXED_SHORTCUTS.map((s) => (
+                <div className="kbd-row" key={s.id}>
+                  <span>{s.label}</span>
+                  <span className="kbd-keys">
+                    {s.combo.split("+").map((k) => <kbd key={k}>{k}</kbd>)}
+                  </span>
+                </div>
+              ))}
               <div className="kbd-row"><span>Close settings / dialog</span><span className="kbd-keys"><kbd>Esc</kbd></span></div>
             </div>
+            <div className="set-row-sub">Only the shortcuts above with a Change button can be rebound.</div>
             <button className="btn-ghost set-reset" onClick={() => { resetShortcuts(); setShortcuts(getShortcuts()); }}>Reset to defaults</button>
           </section>
 

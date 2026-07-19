@@ -3,7 +3,7 @@ import { useApp } from "./store";
 import { LeftPanel } from "./LeftPanel";
 import { PaneGrid } from "./PaneGrid";
 import { Board } from "./Board";
-import { IconBrand, IconPanel, IconSettings, IconTheme, IconFile } from "./Icons";
+import { IconBrand, IconPanel, IconSettings, IconTheme, IconFile, IconBroadcast } from "./Icons";
 import { Settings } from "./Settings";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { ToastHost } from "./ToastHost";
@@ -27,10 +27,13 @@ export function Cockpit() {
   const active = workspaces.find((w) => w.id === activeId) ?? null;
 
   const [expanded, setExpanded] = useState(true);
-  const [showExplorer, setShowExplorer] = useState(false);
+  const showExplorer = useUI((s) => s.explorerOpen);
+  const setShowExplorer = useUI((s) => s.setExplorerOpen);
   const view = useUI((s) => s.activeView);
   const setView = useUI((s) => s.setActiveView);
   const setSettingsOpen = useUI((s) => s.setSettingsOpen);
+  const broadcastOpen = useUI((s) => s.broadcastOpen);
+  const setBroadcastOpen = useUI((s) => s.setBroadcastOpen);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -60,9 +63,16 @@ export function Cockpit() {
         <button
           className={"tb-ic" + (showExplorer ? " on" : "")}
           title="Toggle file explorer"
-          onClick={() => setShowExplorer((x) => !x)}
+          onClick={() => setShowExplorer(!showExplorer)}
         >
           <IconFile size={17} />
+        </button>
+        <button
+          className={"tb-ic" + (broadcastOpen ? " on" : "")}
+          title="Broadcast to panes"
+          onClick={() => setBroadcastOpen(!broadcastOpen)}
+        >
+          <IconBroadcast size={17} />
         </button>
         <button className="tb-ic" title="Toggle light / dark" onClick={toggleTheme}>
           <IconTheme size={17} />

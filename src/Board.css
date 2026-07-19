@@ -62,7 +62,7 @@
 .board-icon-btn {
   width: 28px;
   height: 28px;
-  border-radius: 50%;
+  border-radius: 6px;
   border: 1px solid var(--border);
   background: var(--surface);
   color: var(--text2);
@@ -738,6 +738,11 @@
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 8px 10px;
+}
+.cd-pane-status .btn-ghost {
+  padding: 4px 10px;
+  font-size: 11.5px;
+  border-radius: 6px;
 }
 
 .cd-section {

@@ -25,6 +25,7 @@ export function CardDetail({ cardId, onClose }: { cardId: string; onClose: () =>
   const removeChecklistItem = useBoardStore((s) => s.removeChecklistItem);
   const addLabel = useBoardStore((s) => s.addLabel);
   const removeLabel = useBoardStore((s) => s.removeLabel);
+  const unlinkPane = useBoardStore((s) => s.unlinkPane);
 
   const workspaces = useApp((s) => s.workspaces);
   const requestConfirm = useUI((s) => s.requestConfirm);
@@ -133,6 +134,14 @@ export function CardDetail({ cardId, onClose }: { cardId: string; onClose: () =>
             <div className="cd-pane-status">
               <span className="chip-agent-dot" style={{ background: STATE_COLORS[status.state] }} />
               Live in {ws?.name ?? "a workspace"} — {STATE_LABELS[status.state]}, updated {status.rel}
+              <span className="board-spacer" />
+              <button
+                type="button"
+                className="btn-ghost"
+                onClick={() => { unlinkPane(card.id); pushToast("info", "Pane unlinked from card"); }}
+              >
+                Unlink pane
+              </button>
             </div>
           )}
 

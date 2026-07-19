@@ -1,13 +1,39 @@
 /* Flightdeck — Explorer panel. Tokens only (theme.css); never hardcode hex. */
 
 .explorer {
+  position: relative;
   display: flex;
   flex-direction: column;
+  flex: none;
   height: 100%;
   min-height: 0;
   background: var(--surface);
   color: var(--text);
   font-size: 12px;
+}
+
+/* right-edge resize handle — thin line, accent on hover/drag (matches .rz) */
+.ex-resize {
+  position: absolute;
+  top: 0;
+  right: -1px;
+  bottom: 0;
+  width: 1px;
+  background: var(--line-strong);
+  cursor: col-resize;
+  z-index: 2;
+}
+.ex-resize::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -3px;
+  right: -3px;
+}
+.ex-resize:hover,
+.ex-resize.dragging {
+  background: var(--accent);
 }
 
 /* ---------- header ---------- */

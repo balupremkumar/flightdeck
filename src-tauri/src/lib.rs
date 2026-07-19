@@ -9,6 +9,7 @@ mod health;
 mod job;
 mod orphans;
 mod persist;
+mod procname;
 mod support;
 mod vendors;
 
@@ -34,6 +35,9 @@ struct Pane {
     // compute a CPU% delta between polls. 0/0 until first sampled.
     last_cpu_100ns: AtomicU64,
     last_sample_ms: AtomicU64,
+    // Live foreground process name (procname.rs), kept so pane_health can
+    // report it and the sampler can diff against it to avoid event spam.
+    proc_name: Mutex<String>,
 }
 
 #[derive(Default)]
@@ -58,6 +62,12 @@ struct ExitPayload {
 struct StatePayload {
     pane_id: u32,
     state: String,
+}
+
+#[derive(Clone, Serialize)]
+struct ProcPayload {
+    pane_id: u32,
+    name: String,
 }
 
 fn now_ms() -> u64 {
@@ -137,6 +147,15 @@ fn pty_spawn(
         *n
     };
 
+    // Live foreground process name (audit item): the root name is known
+    // immediately (the vendor's own root_exe), before the sampler's first
+    // tick ever runs.
+    let root_proc_name = procname::normalize(adapter.root_exe());
+    let _ = app.emit(
+        "pty://proc",
+        ProcPayload { pane_id: id, name: root_proc_name.clone() },
+    );
+
     // Activity-based status: the reader marks the pane "running" on output; a monitor
     // thread flips it to "waiting" after a quiet spell (agent idle, likely awaiting
     // input). Vendor-agnostic v1; pattern-based per-vendor detection is a later refinement.
@@ -206,6 +225,7 @@ fn pty_spawn(
             cwd,
             last_cpu_100ns: AtomicU64::new(0),
             last_sample_ms: AtomicU64::new(0),
+            proc_name: Mutex::new(root_proc_name),
         },
     );
     Ok(id)
@@ -308,6 +328,7 @@ fn pane_health(reg: State<Registry>) -> Vec<health::PaneHealth> {
             pid,
             cpu_percent,
             memory_mb: mem_bytes as f64 / (1024.0 * 1024.0),
+            proc_name: p.proc_name.lock().unwrap().clone(),
         });
     }
     out
@@ -366,6 +387,53 @@ fn export_support_bundle(app: AppHandle, reg: State<Registry>, dest_path: String
     std::fs::write(&dest_path, json).map_err(|e| e.to_string())
 }
 
+// Live foreground process name sampler (audit item): one thread, ~2s
+// interval, one shared toolhelp snapshot per tick (not per-pane). Walks each
+// live pane's process tree from its root pid and picks the deepest/most-recent
+// descendant's image name (procname.rs) as an approximation of "what's
+// actually running". Emits `pty://proc` only when a pane's name changes — the
+// initial "root name at spawn" emission happens inline in pty_spawn, so this
+// only fires once the tree has actually grown/changed underneath the root
+// (e.g. pwsh -> node -> claude). When there are no panes, each tick is just a
+// lock + is_empty check — no snapshot walk.
+fn spawn_proc_sampler(app: AppHandle) {
+    std::thread::spawn(move || loop {
+        std::thread::sleep(Duration::from_secs(2));
+
+        let reg = app.state::<Registry>();
+        let roots: Vec<(u32, u32)> = {
+            let panes = reg.panes.lock().unwrap();
+            if panes.is_empty() {
+                continue;
+            }
+            panes
+                .iter()
+                .filter_map(|(id, p)| p.child.process_id().map(|pid| (*id, pid)))
+                .collect()
+        };
+        if roots.is_empty() {
+            continue;
+        }
+
+        let snapshot = orphans::snapshot_processes();
+        for (pane_id, root_pid) in roots {
+            let Some(name) = procname::deepest_descendant_name(root_pid, &snapshot) else {
+                continue;
+            };
+            let panes = reg.panes.lock().unwrap();
+            let Some(p) = panes.get(&pane_id) else { continue };
+            let mut last = p.proc_name.lock().unwrap();
+            if *last == name {
+                continue;
+            }
+            *last = name.clone();
+            drop(last);
+            drop(panes);
+            let _ = app.emit("pty://proc", ProcPayload { pane_id, name });
+        }
+    });
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
@@ -395,6 +463,8 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
+
+    spawn_proc_sampler(app.handle().clone());
 
     app.run(|app_handle, event| {
         // Reap every live pane's process tree when the app is asked to exit, so

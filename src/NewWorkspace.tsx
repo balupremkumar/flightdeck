@@ -10,10 +10,15 @@ function baseName(p: string): string {
   return i >= 0 ? s.slice(i + 1) : s || p;
 }
 function gridStyle(n: number): CSSProperties {
+  if (n === 1) return { gridTemplateColumns: "1fr" };
   if (n === 2) return { gridTemplateColumns: "1fr 1fr" };
   if (n === 4) return { gridTemplateColumns: "1fr 1fr", gridTemplateRows: "1fr 1fr" };
   return { gridTemplateColumns: "1fr 1fr 1fr", gridTemplateRows: "1fr 1fr" };
 }
+
+const TILE_COUNTS = [1, 2, 4, 6];
+const MIN_COUNT = 1;
+const MAX_COUNT = 9;
 
 interface Slot { vendor: string; dir: string | null; } // dir null = use the workspace default
 
@@ -69,7 +74,7 @@ export function NewWorkspace() {
           <div>
             <span className="lbl">Layout</span>
             <div className="tiles">
-              {[2, 4, 6].map((n) => (
+              {TILE_COUNTS.map((n) => (
                 <div className={"tile" + (count === n ? " sel" : "")} key={n} onClick={() => changeCount(n)}>
                   <div className="prev" style={gridStyle(n)}>
                     {Array.from({ length: n }).map((_, i) => (<i key={i} />))}
@@ -77,6 +82,30 @@ export function NewWorkspace() {
                   <span className="num">{n}</span>
                 </div>
               ))}
+              <div className={"tile tile-custom" + (!TILE_COUNTS.includes(count) ? " sel" : "")}>
+                <div className="stepper" role="group" aria-label="Custom pane count">
+                  <button
+                    type="button"
+                    className="step-btn"
+                    onClick={() => changeCount(Math.max(MIN_COUNT, count - 1))}
+                    disabled={count <= MIN_COUNT}
+                    aria-label="Decrease pane count"
+                  >
+                    −
+                  </button>
+                  <span className="step-n">{count}</span>
+                  <button
+                    type="button"
+                    className="step-btn"
+                    onClick={() => changeCount(Math.min(MAX_COUNT, count + 1))}
+                    disabled={count >= MAX_COUNT}
+                    aria-label="Increase pane count"
+                  >
+                    +
+                  </button>
+                </div>
+                <span className="num">Custom</span>
+              </div>
             </div>
           </div>
 

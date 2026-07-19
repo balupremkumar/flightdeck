@@ -19,8 +19,11 @@ pub struct OrphanInfo {
     pub name: String,
 }
 
+// pub(crate): also reused by procname.rs's foreground-process sampler, which
+// shares one snapshot per tick across panes rather than duplicating the
+// toolhelp walk.
 #[cfg(windows)]
-fn snapshot_processes() -> Vec<(u32, u32, String)> {
+pub(crate) fn snapshot_processes() -> Vec<(u32, u32, String)> {
     use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
     use windows_sys::Win32::System::Diagnostics::ToolHelp::{
         CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
@@ -59,7 +62,7 @@ fn snapshot_processes() -> Vec<(u32, u32, String)> {
 }
 
 #[cfg(not(windows))]
-fn snapshot_processes() -> Vec<(u32, u32, String)> {
+pub(crate) fn snapshot_processes() -> Vec<(u32, u32, String)> {
     Vec::new()
 }
 

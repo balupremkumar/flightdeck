@@ -220,3 +220,30 @@ body {
 .slot-warn { flex: none; font-size: 10.5px; font-weight: 600; color: var(--st-waiting); border: 1px solid color-mix(in srgb, var(--st-waiting) 45%, transparent); background: color-mix(in srgb, var(--st-waiting) 12%, transparent); border-radius: 6px; padding: 2px 7px; white-space: nowrap; }
 .pbody { flex: 1; min-height: 0; padding: 4px 4px 4px 8px; }
 .pbody .xterm { height: 100%; }
+
+/* ---------- ADDITIVE: New Workspace custom pane-count stepper (frontend agent) ---------- */
+/* Reuses .tile/.tiles/.num/.tile.sel as-is (no rules above touched) — the
+   stepper sits inside the tiles row as one more tile so it shares the same
+   card, border, and selection language as the 1/2/4/6 layout tiles. */
+.tile-custom { cursor: default; gap: 6px; }
+.stepper { display: flex; align-items: center; gap: 8px; }
+.step-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--text-secondary);
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  cursor: pointer;
+  transition: border-color .14s ease, color .14s ease, background-color .14s ease;
+}
+.step-btn:hover:not(:disabled) { color: var(--text-primary); border-color: var(--border-focus); }
+.step-btn:disabled { opacity: .4; cursor: default; }
+.step-n { min-width: 16px; text-align: center; font-size: 13px; font-weight: 700; color: var(--text-primary); font-variant-numeric: tabular-nums; }

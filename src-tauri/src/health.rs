@@ -16,6 +16,10 @@ pub struct PaneHealth {
     /// normalised across cores — a busy multi-threaded process can exceed 100.
     pub cpu_percent: f64,
     pub memory_mb: f64,
+    /// Best-effort live foreground process name for this pane (procname.rs),
+    /// e.g. "claude" / "node" / "pwsh" — the deepest descendant of the pane's
+    /// root pid, `.exe` stripped. Empty until the sampler's first tick.
+    pub proc_name: String,
 }
 
 /// Cumulative (kernel+user) CPU time in 100ns units, and working-set memory

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { invoke } from "@tauri-apps/api/core";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { useApp, type PaneModel, type PaneState } from "./store";
 import { useUI } from "./ui";
@@ -17,6 +18,13 @@ const DEFAULT_FONT = 13;
 const MIN_QUIET_SEC = 1;
 const MAX_QUIET_SEC = 30;
 const DEFAULT_QUIET_SEC = 3;
+const GIT_POLL_MS = 30000;
+
+interface GitStatus {
+  isRepo: boolean;
+  branch: string | null;
+  dirty: boolean;
+}
 
 function baseName(p: string): string {
   const s = p.replace(/[\\/]+$/, "");
@@ -94,6 +102,9 @@ export function PaneView({
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [matchInfo, setMatchInfo] = useState<{ index: number; count: number } | null>(null);
+  const [gitStatus, setGitStatus] = useState<GitStatus | null>(null);
+  // Live foreground process name (backend pty://proc via Terminal's onProc).
+  const [procName, setProcName] = useState("");
   const nameRef = useRef<HTMLInputElement>(null);
   const menuBtnRef = useRef<HTMLButtonElement>(null);
   const findRef = useRef<HTMLInputElement>(null);
@@ -163,6 +174,24 @@ export function PaneView({
 
   const displayName = pane.title || vendorShort(pane.vendor);
 
+  // Real git branch for this pane's cwd. Cheap to poll — re-check on mount,
+  // on pane restart (epoch bump), and every 30s. Degrades silently: any
+  // invoke failure (git missing, cwd gone) just hides the pill.
+  useEffect(() => {
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const status = await invoke<GitStatus>("git_status", { cwd: pane.cwd });
+        if (!cancelled) setGitStatus(status);
+      } catch {
+        if (!cancelled) setGitStatus(null);
+      }
+    };
+    poll();
+    const id = setInterval(poll, GIT_POLL_MS);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [pane.cwd, pane.epoch]);
+
   return (
     <div
       className={
@@ -211,7 +240,18 @@ export function PaneView({
           </span>
         )}
         <span className="prepo">&middot; {baseName(pane.cwd)}</span>
-        <span className="branch"><IconBranch size={11} /> main</span>
+        {procName && <span className="pproc" title="Running process">{procName}</span>}
+        {gitStatus?.isRepo && (
+          <span className="branch" title={gitStatus.dirty ? "Uncommitted changes" : undefined}>
+            <IconBranch size={11} /> {gitStatus.branch}
+            {gitStatus.dirty && (
+              <span
+                aria-hidden
+                style={{ display: "inline-block", width: 6, height: 6, borderRadius: "50%", background: "var(--st-waiting)", marginLeft: 2 }}
+              />
+            )}
+          </span>
+        )}
         <span className="sp" />
         {dead && (
           <button className="prestart" onClick={() => restartPane(pane.id)} title="Restart this pane">
@@ -325,6 +365,7 @@ export function PaneView({
           quietThresholdMs={quietSec * 1000}
           onExit={(crashed) => setPaneState(pane.id, crashed ? "error" : "idle")}
           onState={(st) => setPaneState(pane.id, st as PaneState)}
+          onProc={setProcName}
         />
       </div>
     </div>

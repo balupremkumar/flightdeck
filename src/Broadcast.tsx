@@ -1,8 +1,8 @@
-import { useMemo, useState, type KeyboardEvent } from "react";
+import { useEffect, useMemo, useState, type KeyboardEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useApp, type PaneModel } from "./store";
 import { useUI } from "./ui";
-import { IconAgent, IconClose } from "./Icons";
+import { IconClose } from "./Icons";
 import "./Broadcast.css";
 
 type Scope = "workspace" | "all";
@@ -10,35 +10,56 @@ type Target = { w: { id: number; name: string }; p: PaneModel };
 
 import { vendorShort } from "./vendors";
 
+function relTime(ms: number): string {
+  const secs = Math.max(0, Math.round((Date.now() - ms) / 1000));
+  if (secs < 5) return "just now";
+  if (secs < 60) return `${secs}s ago`;
+  if (secs < 3600) return `${Math.round(secs / 60)}m ago`;
+  return `${Math.round(secs / 3600)}h ago`;
+}
+
 // Self-contained broadcast composer: one message, sent to all (or a chosen
-// subset of) panes via the existing `pty_write` command. Docks as a floating
-// pill; expands into the full bar. Mount once: <Broadcast />.
+// subset of) panes via the existing `pty_write` command. Renders nothing when
+// closed — the topbar owns the open/close toggle via useUI().broadcastOpen.
 export function Broadcast() {
   const workspaces = useApp((s) => s.workspaces);
   const activeId = useApp((s) => s.activeId);
   const pushToast = useUI((s) => s.pushToast);
+  const open = useUI((s) => s.broadcastOpen);
+  const setOpen = useUI((s) => s.setBroadcastOpen);
+  const broadcasts = useUI((s) => s.broadcasts);
+  const pushBroadcastRecord = useUI((s) => s.pushBroadcastRecord);
 
-  const [open, setOpen] = useState(false);
   const [scope, setScope] = useState<Scope>("workspace");
   const [excluded, setExcluded] = useState<Set<number>>(new Set());
   const [text, setText] = useState("");
   const [pressEnter, setPressEnter] = useState(true);
   const [sending, setSending] = useState(false);
 
-  // Panes eligible to receive a broadcast — must have a live PTY (idle/error panes don't).
+  // Esc closes the composer from anywhere (not just the textarea).
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, setOpen]);
+
+  // Every pane in scope, live or not — dead panes are shown greyed-out and
+  // unselectable rather than silently dropped, so the scope stays honest.
   const pool = useMemo<Target[]>(() => {
     const list: Target[] = [];
     for (const w of workspaces) {
       if (scope === "workspace" && w.id !== activeId) continue;
-      for (const p of w.panes) {
-        if (p.state === "idle" || p.state === "error") continue;
-        list.push({ w: { id: w.id, name: w.name }, p });
-      }
+      for (const p of w.panes) list.push({ w: { id: w.id, name: w.name }, p });
     }
     return list;
   }, [workspaces, activeId, scope]);
 
-  const targets = pool.filter(({ p }) => !excluded.has(p.id));
+  const isDead = (p: PaneModel) => p.state === "idle" || p.state === "error";
+  const targets = pool.filter(({ p }) => !isDead(p) && !excluded.has(p.id));
+  const lastBroadcast = broadcasts[0];
 
   const toggle = (paneId: number) => {
     setExcluded((s) => {
@@ -57,9 +78,11 @@ export function Broadcast() {
     const results = await Promise.allSettled(targets.map(({ p }) => invoke("pty_write", { paneId: p.id, data: payload })));
     setSending(false);
     const failed = results.filter((r) => r.status === "rejected").length;
+    pushBroadcastRecord({ text: msg, sentTo: targets.length, failed });
     if (failed === 0) {
       pushToast("success", `Sent to ${targets.length} pane${targets.length === 1 ? "" : "s"}`);
       setText("");
+      setOpen(false);
     } else {
       // Keep the typed message on failure so the user can retry without retyping.
       pushToast("error", `Sent to ${targets.length - failed} of ${targets.length} — ${failed} failed`);
@@ -68,17 +91,9 @@ export function Broadcast() {
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void send(); }
-    if (e.key === "Escape") setOpen(false);
   };
 
-  if (!open) {
-    return (
-      <button className="bc-fab" onClick={() => setOpen(true)} title="Broadcast a message to multiple panes">
-        <IconAgent size={15} />
-        <span>Broadcast</span>
-      </button>
-    );
-  }
+  if (!open) return null;
 
   return (
     <div className="bc-bar" role="region" aria-label="Broadcast message">
@@ -93,15 +108,20 @@ export function Broadcast() {
       </div>
 
       <div className="bc-chips">
-        {pool.length === 0 && <span className="bc-empty">No live panes in scope — start or resume a session first.</span>}
+        {pool.length === 0 && <span className="bc-empty">No panes in scope — start a session first.</span>}
         {pool.map(({ w, p }) => {
+          const dead = isDead(p);
           const ex = excluded.has(p.id);
+          const title = dead
+            ? p.state === "idle" ? "Idle — restart first" : "Crashed — restart first"
+            : ex ? "Excluded — click to include" : "Included — click to exclude";
           return (
             <button
               key={p.id}
-              className={"bc-chip" + (ex ? " off" : "")}
-              onClick={() => toggle(p.id)}
-              title={ex ? "Excluded — click to include" : "Included — click to exclude"}
+              className={"bc-chip" + (dead ? " dead" : ex ? " off" : "")}
+              onClick={() => { if (!dead) toggle(p.id); }}
+              disabled={dead}
+              title={title}
             >
               <span className={"bc-dot " + p.state} />
               {scope === "all" && <span className="bc-chip-ws">{w.name}</span>}
@@ -110,6 +130,13 @@ export function Broadcast() {
           );
         })}
       </div>
+
+      {lastBroadcast && (
+        <div className="bc-last">
+          Last sent {relTime(lastBroadcast.at)} to {lastBroadcast.sentTo} pane{lastBroadcast.sentTo === 1 ? "" : "s"}
+          {lastBroadcast.failed > 0 ? ` (${lastBroadcast.failed} failed)` : ""}
+        </div>
+      )}
 
       <div className="bc-row">
         <textarea

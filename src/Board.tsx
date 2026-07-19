@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type DragEvent } from "react";
-import { IconBoard, IconRefresh, IconPlus } from "./Icons";
+import { IconBoard, IconWipe, IconPlus } from "./Icons";
 import { useApp } from "./store";
 import { useUI } from "./ui";
 import "./Board.css";
@@ -291,7 +291,7 @@ export function Board() {
           </div>
           <span className="board-spacer" />
           <button className="board-icon-btn" title="Copy board as Markdown" onClick={doExport}><IconExport size={13} /></button>
-          <button className="board-icon-btn" title="Reset board" onClick={refresh}><IconRefresh size={14} /></button>
+          <button className="board-icon-btn" title="Reset board" onClick={refresh}><IconWipe size={14} /></button>
           <button className="board-new-btn" onClick={() => setShowComposer(true)}><IconPlus size={13} /> New Task</button>
         </div>
         <div className="board-toolbar">

@@ -3,7 +3,7 @@
 // Rust commands — `fs_list_dir` (ships today) and `git_status` (owned by
 // another agent, may not exist yet or may error — every call is guarded so
 // a missing/erroring command degrades silently, never crashes the tree).
-import { useEffect, useRef, useState, type SVGProps } from "react";
+import { useCallback, useEffect, useRef, useState, type SVGProps } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { useApp } from "./store";
@@ -163,12 +163,63 @@ function Node({ name, path, dir, depth, wsId, vendor, onOpenFile }: {
 
 type RootStatus = "empty-root" | "loading" | "error" | "loaded";
 
+// Panel width (major, R-sizing): persisted so the split stays put across
+// launches. Default 240, clamped 180-480.
+const WIDTH_KEY = "flightdeck-explorer-width";
+const DEFAULT_WIDTH = 240;
+const MIN_WIDTH = 180;
+const MAX_WIDTH = 480;
+
+function clampWidth(n: number): number {
+  return Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, n));
+}
+
+function loadWidth(): number {
+  try {
+    const raw = localStorage.getItem(WIDTH_KEY);
+    const n = raw ? parseInt(raw, 10) : NaN;
+    if (Number.isFinite(n)) return clampWidth(n);
+  } catch { /* non-persistent */ }
+  return DEFAULT_WIDTH;
+}
+
 export function Explorer({ root, wsId, vendor = "pwsh" }: ExplorerProps) {
   const [panelOpen, setPanelOpen] = useState(true);
   const [entries, setEntries] = useState<Entry[]>([]);
   const [status, setStatus] = useState<RootStatus>(root ? "loading" : "empty-root");
   const [git, setGit] = useState<GitInfo | null>(null);
   const seq = useRef(0);
+
+  const [width, setWidth] = useState(loadWidth);
+  const [resizing, setResizing] = useState(false);
+  const widthRef = useRef(width);
+  widthRef.current = width;
+
+  const onResizeStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startWidth = widthRef.current;
+    setResizing(true);
+    const prevCursor = document.body.style.cursor;
+    const prevUserSelect = document.body.style.userSelect;
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    const onMove = (ev: MouseEvent) => {
+      const next = clampWidth(startWidth + (ev.clientX - startX));
+      widthRef.current = next;
+      setWidth(next);
+    };
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      setResizing(false);
+      document.body.style.cursor = prevCursor;
+      document.body.style.userSelect = prevUserSelect;
+      try { localStorage.setItem(WIDTH_KEY, String(widthRef.current)); } catch { /* non-persistent */ }
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  }, []);
 
   const load = () => {
     if (!root) { setStatus("empty-root"); return; }
@@ -186,7 +237,14 @@ export function Explorer({ root, wsId, vendor = "pwsh" }: ExplorerProps) {
   useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [root]);
 
   return (
-    <div className="explorer">
+    <div className="explorer" style={{ width }}>
+      <div
+        className={"ex-resize" + (resizing ? " dragging" : "")}
+        onMouseDown={onResizeStart}
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize explorer panel"
+      />
       <div className="ex-head">
         <button className={"ex-toggle" + (panelOpen ? " open" : "")} onClick={() => setPanelOpen((o) => !o)} title={panelOpen ? "Collapse" : "Expand"}>
           <IconChevron size={12} />

@@ -1,15 +1,6 @@
-/* Broadcast bar — self-contained, tokens-only (Broadcast.tsx). Docks as a
-   floating pill at the bottom-center of whatever it's mounted in; expands
-   into the full composer in place. */
-
-.bc-fab {
-  position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 90;
-  display: inline-flex; align-items: center; gap: 7px;
-  background: var(--elevated); border: 1px solid var(--line-strong); border-radius: 999px;
-  padding: 9px 16px; color: var(--text); font: inherit; font-size: 12.5px; font-weight: 600;
-  cursor: pointer; box-shadow: var(--shadow-lg); transition: border-color .14s ease, transform .14s ease;
-}
-.bc-fab:hover { border-color: color-mix(in srgb, var(--ice) 55%, var(--line-strong)); transform: translateX(-50%) translateY(-1px); }
+/* Broadcast composer — self-contained, tokens-only (Broadcast.tsx). Renders
+   only while useUI().broadcastOpen is true; overlays bottom-center above the
+   terminal grid rather than sitting there permanently as a floating pill. */
 
 .bc-bar {
   position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 90;
@@ -48,7 +39,10 @@
 }
 .bc-chip:hover { border-color: color-mix(in srgb, var(--ice) 45%, var(--line-strong)); }
 .bc-chip.off { opacity: .38; text-decoration: line-through; }
+.bc-chip.dead { opacity: .4; cursor: not-allowed; }
+.bc-chip:disabled { pointer-events: auto; }
 .bc-chip-ws { color: var(--faint); }
+.bc-last { font-size: 11px; color: var(--faint); padding: 0 2px; }
 .bc-dot { width: 6px; height: 6px; border-radius: 50%; flex: none; background: var(--st-idle); }
 .bc-dot.starting { background: var(--st-starting); }
 .bc-dot.running { background: var(--st-running); }

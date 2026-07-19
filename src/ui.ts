@@ -27,6 +27,17 @@ export interface NotifyEvent {
   at: number; // epoch ms
 }
 
+// A lightweight record of a completed broadcast send, so the composer (and
+// later, a feed view) can show "last sent 2m ago to 4 panes" without redoing
+// the send logic. Capped at 20, newest first.
+export interface BroadcastRecord {
+  id: number;
+  text: string;
+  sentTo: number;
+  failed: number;
+  at: number; // epoch ms
+}
+
 export interface NotifySettings {
   notifyOn: Record<PaneState, boolean>;
   sound: boolean;
@@ -62,10 +73,21 @@ interface UIState {
   // the command palette / notifications can switch back to the terminal grid.
   activeView: "terminals" | "board";
   setActiveView: (v: "terminals" | "board") => void;
+
+  // Explorer + Broadcast visibility, store-level so the command palette and
+  // top bar can both drive them. Explorer open state persists across launches.
+  explorerOpen: boolean;
+  setExplorerOpen: (open: boolean) => void;
+  broadcastOpen: boolean;
+  setBroadcastOpen: (open: boolean) => void;
+
+  broadcasts: BroadcastRecord[];
+  pushBroadcastRecord: (r: Omit<BroadcastRecord, "id" | "at">) => void;
 }
 
 let tseq = 0;
 let nseq = 0;
+let bseq = 0;
 
 const NOTIFY_KEY = "flightdeck-notify-settings";
 
@@ -136,6 +158,20 @@ export const useUI = create<UIState>((set) => ({
 
   activeView: "terminals",
   setActiveView: (activeView) => set({ activeView }),
+
+  explorerOpen: (() => {
+    try { return localStorage.getItem("flightdeck-explorer-open") === "1"; } catch { return false; }
+  })(),
+  setExplorerOpen: (explorerOpen) => {
+    try { localStorage.setItem("flightdeck-explorer-open", explorerOpen ? "1" : "0"); } catch { /* non-persistent */ }
+    set({ explorerOpen });
+  },
+  broadcastOpen: false,
+  setBroadcastOpen: (broadcastOpen) => set({ broadcastOpen }),
+
+  broadcasts: [],
+  pushBroadcastRecord: (r) =>
+    set((s) => ({ broadcasts: [{ ...r, id: ++bseq, at: Date.now() }, ...s.broadcasts].slice(0, 20) })),
 }));
 
 // Persisted UI scale (whole-app zoom). Applied on boot and from Settings.
