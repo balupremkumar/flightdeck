@@ -8,9 +8,10 @@
 <link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
 <style>
 /* ============================================================
-   Flightdeck demo reel — produced motion-graphics recreation of
-   the real app chrome (Deep Cove theme). Standalone, self-contained,
-   autoplays on load, resolves window.REEL_DONE when finished.
+   Flightdeck demo reel v2 — deterministic, seekable master-clock
+   engine. Every visual is a pure function of a single time value
+   `t` (seconds since reel start), so ?at=SECONDS renders an exact
+   paused frame with no dependence on real-time playback history.
    Tokens copied from src/theme.css (dark + dracula + nord subsets).
    ============================================================ */
 
@@ -27,8 +28,9 @@
   --font-sans:"Schibsted Grotesk","Segoe UI Variable","Segoe UI",system-ui,sans-serif;
   --font-mono:"JetBrains Mono","Cascadia Code",Consolas,ui-monospace,monospace;
   --ease-out:cubic-bezier(0.16,1,0.3,1);
+  --fw:1120px; --fh:640px; --fx:80px; --fy:40px;
 }
-html[data-theme="dracula"]{
+#appframe[data-theme="dracula"]{
   --abyss:#191A21; --bg:#282A36; --bg-2:#21222C; --surface:#343746; --surface-2:#3A3D4D; --elevated:#44475A;
   --line:rgba(189,147,249,0.14); --line-strong:rgba(189,147,249,0.28);
   --text:#F8F8F2; --muted:#B6B8C9; --faint:#7B87B0;
@@ -37,7 +39,7 @@ html[data-theme="dracula"]{
   --accent-grad:linear-gradient(125deg,#8BE9FD 0%,#BD93F9 48%,#FF79C6 100%);
   --shadow-lg:0 30px 70px -20px rgba(0,0,0,0.80);
 }
-html[data-theme="nord"]{
+#appframe[data-theme="nord"]{
   --abyss:#242933; --bg:#2E3440; --bg-2:#292E39; --surface:#3B4252; --surface-2:#434C5E; --elevated:#4C566A;
   --line:rgba(216,222,233,0.12); --line-strong:rgba(216,222,233,0.24);
   --text:#ECEFF4; --muted:#D8DEE9; --faint:#9AA6BF;
@@ -51,75 +53,62 @@ html[data-theme="nord"]{
 html,body{ margin:0; width:1280px; height:720px; overflow:hidden; background:var(--abyss); }
 body{ font-family:var(--font-sans); color:var(--text); -webkit-font-smoothing:antialiased; }
 
-#stage{ position:relative; width:1280px; height:720px; overflow:hidden; background:var(--bg); }
+#stage{ position:relative; width:1280px; height:720px; overflow:hidden; background:var(--abyss); }
 
-.scene{
-  position:absolute; inset:0; display:flex; flex-direction:column;
-  opacity:0; z-index:1; transition:opacity .7s var(--ease-out), background-color .6s ease, color .6s ease;
-  background:var(--bg); color:var(--text);
-}
-.scene.active{ opacity:1; z-index:10; }
-.scene-open, .scene-close{
-  background:radial-gradient(120% 140% at 50% -20%, #0c1526 0%, var(--abyss) 65%);
-  align-items:center; justify-content:center;
-}
+/* ---------- ambient backdrop ---------- */
+.backdrop{ position:absolute; inset:0; background:var(--abyss); overflow:hidden; z-index:0; }
+.aurora{ position:absolute; width:900px; height:900px; border-radius:50%; filter:blur(130px); mix-blend-mode:screen; }
+.aurora.a1{ left:-240px; top:-280px; opacity:.30; background:radial-gradient(circle, #9AE9FF, transparent 70%); animation:drift1 36s ease-in-out infinite; }
+.aurora.a2{ right:-260px; top:-200px; opacity:.26; background:radial-gradient(circle, #3F6BFF, transparent 70%); animation:drift2 42s ease-in-out infinite; }
+.aurora.a3{ left:26%; bottom:-380px; opacity:.24; background:radial-gradient(circle, #43A6F5, transparent 70%); animation:drift3 48s ease-in-out infinite; }
+@keyframes drift1{ 0%,100%{ transform:translate(0,0) scale(1); } 50%{ transform:translate(70px,50px) scale(1.08); } }
+@keyframes drift2{ 0%,100%{ transform:translate(0,0) scale(1); } 50%{ transform:translate(-60px,60px) scale(1.05); } }
+@keyframes drift3{ 0%,100%{ transform:translate(0,0) scale(1); } 50%{ transform:translate(50px,-40px) scale(1.1); } }
+.vignette{ position:absolute; inset:0; box-shadow:inset 0 0 240px 70px rgba(0,0,0,0.62); pointer-events:none; }
 
-/* ---------- caption kicker (every scene) ---------- */
-.kicker{
-  position:absolute; left:40px; bottom:36px; z-index:15;
-  display:inline-flex; align-items:center; gap:10px;
-  padding:11px 18px; border-radius:999px;
-  background:color-mix(in srgb, var(--surface) 82%, transparent);
-  border:1px solid var(--line-strong); box-shadow:var(--shadow-lg);
-  opacity:0; transform:translateY(10px);
-  transition:opacity .5s var(--ease-out), transform .5s var(--ease-out), background-color .5s ease, border-color .5s ease;
-}
-.kicker.show{ opacity:1; transform:none; }
-.kicker .k-dot{ width:8px; height:8px; border-radius:50%; background:var(--accent-grad); flex:none; }
-.kicker .k-text{ font-family:var(--font-sans); font-weight:700; font-size:16px; letter-spacing:-0.01em; color:var(--text); white-space:nowrap; }
-
-.theme-tag{
-  position:absolute; right:40px; top:56px; z-index:15;
-  font-family:var(--font-sans); font-weight:700; font-size:12.5px; letter-spacing:.08em; text-transform:uppercase;
-  color:var(--muted); padding:6px 12px; border-radius:999px; border:1px solid var(--line-strong);
-  background:color-mix(in srgb, var(--surface) 78%, transparent);
-  opacity:0; transition:opacity .4s ease, color .5s ease, border-color .5s ease, background-color .5s ease;
-}
-.theme-tag.show{ opacity:1; }
-
-/* ============================================================
-   Scene A / G — cold open + close
-   ============================================================ */
+/* ---------- cold open / close cards (full-bleed on backdrop) ---------- */
+.cardscene{ position:absolute; inset:0; z-index:2; display:flex; align-items:center; justify-content:center; opacity:0; }
 .open-wrap, .close-wrap{ display:flex; flex-direction:column; align-items:center; gap:18px; text-align:center; }
-.open-mark, .close-mark{
-  opacity:0; transform:translateY(14px) scale(.82);
-  transition:opacity .9s var(--ease-out), transform .9s var(--ease-out);
-  filter:drop-shadow(0 18px 40px rgba(67,166,245,.35));
-}
-.open-mark.show, .close-mark.show{ opacity:1; transform:none; }
-.open-word, .close-word{
-  font-family:var(--font-sans); font-weight:700; font-size:44px; letter-spacing:-0.02em; color:var(--text);
-  opacity:0; transform:translateY(10px);
-  transition:opacity .7s var(--ease-out), transform .7s var(--ease-out);
-}
-.open-word.show, .close-word.show{ opacity:1; transform:none; }
-.open-tag{
-  font-family:var(--font-sans); font-weight:500; font-size:18px; color:var(--muted); letter-spacing:-0.005em;
-  opacity:0; transform:translateY(8px);
-  transition:opacity .7s var(--ease-out), transform .7s var(--ease-out);
-}
-.open-tag.show{ opacity:1; transform:none; }
-.close-sub{
-  font-family:var(--font-sans); font-weight:500; font-size:16px; color:var(--muted);
-  opacity:0; transition:opacity .7s var(--ease-out);
-}
-.close-sub.show{ opacity:1; }
+.open-mark, .close-mark{ filter:drop-shadow(0 18px 40px rgba(67,166,245,.35)); }
+.open-word, .close-word{ font-family:var(--font-sans); font-weight:700; font-size:44px; letter-spacing:-0.02em; color:var(--text); }
+.open-tag{ font-family:var(--font-sans); font-weight:500; font-size:18px; color:var(--muted); letter-spacing:-0.005em; }
+.close-sub{ font-family:var(--font-sans); font-weight:500; font-size:16px; color:var(--muted); }
 .close-sub b{ color:var(--ice); font-weight:600; }
 
+/* ---------- camera rig + window frame ---------- */
+.camera{ position:absolute; inset:0; transform-origin:0 0; z-index:3; }
+.appframe{
+  position:absolute; left:var(--fx); top:var(--fy); width:var(--fw); height:var(--fh);
+  border-radius:16px; overflow:hidden; background:var(--bg);
+  box-shadow:0 50px 100px -24px rgba(0,0,0,0.72), 0 0 0 1px rgba(255,255,255,0.07);
+  transition:filter .3s ease;
+}
+.ascene{ position:absolute; inset:0; display:flex; flex-direction:column; opacity:0; background:var(--bg); color:var(--text); }
+.spot-ring{ position:absolute; border-radius:14px; opacity:0; pointer-events:none; box-shadow:0 0 0 2px var(--accent), 0 0 46px 8px rgba(67,166,245,.38); }
+
+/* ---------- cursor actor ---------- */
+.cursor{ position:absolute; z-index:6; opacity:0; pointer-events:none; }
+.cursor-svg{ display:block; filter:drop-shadow(0 3px 8px rgba(0,0,0,.55)); }
+.cursor-ring{ position:absolute; left:2px; top:1px; width:22px; height:22px; margin-left:-11px; margin-top:-11px; border-radius:50%; border:2px solid var(--ice); opacity:0; }
+
+/* ---------- kinetic caption (lower third) ---------- */
+.caption{ position:absolute; left:56px; bottom:52px; z-index:20; display:flex; align-items:center; gap:14px; opacity:0; }
+.cap-tick{ width:4px; height:26px; border-radius:2px; background:var(--accent-grad); flex:none; box-shadow:0 0 16px rgba(67,166,245,.5); }
+.cap-words{ display:flex; flex-wrap:wrap; }
+.cap-word{ overflow:hidden; display:inline-block; margin-right:.34em; }
+.cap-word > span{ display:inline-block; font-family:var(--font-sans); font-weight:700; font-size:27px; letter-spacing:-0.01em; color:#fff; text-shadow:0 2px 20px rgba(0,0,0,.65); }
+
+.theme-tag{
+  position:absolute; right:56px; top:64px; z-index:20;
+  font-family:var(--font-sans); font-weight:700; font-size:12.5px; letter-spacing:.08em; text-transform:uppercase;
+  color:var(--text); padding:6px 12px; border-radius:999px; border:1px solid rgba(255,255,255,.22);
+  background:rgba(8,12,20,.55); backdrop-filter:blur(4px); opacity:0;
+}
+
 /* ============================================================
-   Shared app chrome (topbar + left rail) — reused by cockpit,
-   kanban, palette and notifications scenes.
+   Shared app chrome (topbar + left rail)
    ============================================================ */
+.appshell{ position:absolute; inset:0; display:flex; flex-direction:column; }
 .c-topbar{
   height:40px; flex:none; display:flex; align-items:center; gap:10px; padding:0 12px;
   border-bottom:1px solid var(--line); background:var(--bg);
@@ -158,7 +147,7 @@ body{ font-family:var(--font-sans); color:var(--text); -webkit-font-smoothing:an
 .c-main{ flex:1; min-width:0; min-height:0; position:relative; }
 
 /* ============================================================
-   Pane grid (scene B: cockpit, + static reuse in D/E/F)
+   Pane grid
    ============================================================ */
 .b-grid{ position:absolute; inset:0; display:grid; grid-template-columns:1fr 1fr; grid-template-rows:1fr 1fr; gap:1px; background:var(--line); transition:background-color .5s ease; }
 .pane{ position:relative; display:flex; flex-direction:column; min-height:0; background:var(--surface); overflow:hidden; transition:background-color .5s ease; }
@@ -182,8 +171,6 @@ body{ font-family:var(--font-sans); color:var(--text); -webkit-font-smoothing:an
 
 .term{ font-family:var(--font-mono); font-size:12px; line-height:1.62; padding:10px 13px; height:100%; overflow:hidden; }
 .tl{ white-space:pre-wrap; word-break:break-word; }
-.tl.in{ animation:tl-in .22s var(--ease-out); }
-@keyframes tl-in{ from{ opacity:0; transform:translateY(3px); } to{ opacity:1; transform:none; } }
 .tl-cmd{ color:var(--ice); }
 .tl-out{ color:var(--text); }
 .tl-faint{ color:var(--faint); }
@@ -194,7 +181,7 @@ body{ font-family:var(--font-sans); color:var(--text); -webkit-font-smoothing:an
 @keyframes blink{ 50%{ opacity:0; } }
 
 /* ============================================================
-   Scene C — Kanban
+   Kanban
    ============================================================ */
 .k-wrap{ flex:1; min-height:0; display:flex; flex-direction:column; padding:20px 26px; gap:14px; }
 .k-head{ display:flex; flex-direction:column; gap:3px; }
@@ -216,29 +203,25 @@ body{ font-family:var(--font-sans); color:var(--text); -webkit-font-smoothing:an
 .k-chip{ display:inline-flex; align-items:center; gap:5px; font-size:10px; font-weight:700; letter-spacing:.04em; padding:3px 9px; border-radius:6px; }
 .k-chip-prio{ border:1px solid var(--st-waiting); color:var(--st-waiting); }
 .k-chip-prio.hi{ border-color:var(--red); color:var(--red); }
-.k-chip-agent{ background:var(--surface); border:1px solid var(--line); color:var(--muted); text-transform:none; font-weight:600; opacity:0; transform:scale(.85); transition:opacity .3s var(--ease-out), transform .3s var(--ease-out); }
-.k-chip-agent.show{ opacity:1; transform:none; }
+.k-chip-agent{ background:var(--surface); border:1px solid var(--line); color:var(--muted); text-transform:none; font-weight:600; }
 .k-chip-dot{ width:6px; height:6px; border-radius:50%; }
 .k-chip-dot.run{ background:var(--st-running); animation:dot-pulse 1.7s ease-in-out infinite; }
 @keyframes dot-pulse{ 0%,100%{ opacity:1; } 50%{ opacity:.35; } }
 .k-check{ display:inline-flex; align-items:center; gap:5px; color:var(--aqua); font-size:11px; font-weight:600; }
 
-.k-ghost{ position:absolute; z-index:30; cursor:grabbing; transform:rotate(-1.2deg); box-shadow:0 24px 50px -14px rgba(0,0,0,.65); }
-.k-dropslot{ display:none; align-items:center; justify-content:center; min-height:56px; border:1.5px dashed color-mix(in srgb, var(--accent) 60%, transparent); background:color-mix(in srgb, var(--accent) 9%, transparent); border-radius:10px; font-size:10.5px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; color:var(--accent); }
-.k-dropslot.show{ display:flex; }
+.k-ghost{ position:absolute; z-index:5; transform:rotate(-1.2deg); box-shadow:0 24px 50px -14px rgba(0,0,0,.65); opacity:0; pointer-events:none; }
+.k-dropslot{ align-items:center; justify-content:center; min-height:56px; border:1.5px dashed color-mix(in srgb, var(--accent) 60%, transparent); background:color-mix(in srgb, var(--accent) 9%, transparent); border-radius:10px; font-size:10.5px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; color:var(--accent); display:none; }
 
 /* ============================================================
-   Scene D — command palette
+   Command palette
    ============================================================ */
-.cmdp-scrim{ position:absolute; inset:0; z-index:40; background:rgba(2,4,8,.6); backdrop-filter:blur(2px); display:flex; align-items:flex-start; justify-content:center; padding-top:120px; opacity:0; transition:opacity .35s var(--ease-out); }
-.cmdp-scrim.show{ opacity:1; }
-.cmdp-modal{ width:520px; max-width:calc(100% - 60px); background:var(--elevated); border:1px solid var(--line-strong); border-radius:14px; box-shadow:var(--shadow-lg); overflow:hidden; transform:translateY(-10px) scale(.98); opacity:0; transition:transform .35s var(--ease-out), opacity .35s var(--ease-out); }
-.cmdp-scrim.show .cmdp-modal{ transform:none; opacity:1; }
+.cmdp-scrim{ position:absolute; inset:0; z-index:8; background:rgba(2,4,8,.6); backdrop-filter:blur(2px); display:flex; align-items:flex-start; justify-content:center; padding-top:96px; opacity:0; }
+.cmdp-modal{ width:520px; max-width:calc(100% - 60px); background:var(--elevated); border:1px solid var(--line-strong); border-radius:14px; box-shadow:var(--shadow-lg); overflow:hidden; }
 .cmdp-inputrow{ display:flex; align-items:center; gap:8px; padding:14px 16px; border-bottom:1px solid var(--line); }
 .cmdp-input{ flex:1; font:inherit; font-size:14px; color:var(--text); background:transparent; }
-.cmdp-input::after{ content:""; }
 .cmdp-caret{ display:inline-block; width:1.5px; height:16px; background:var(--ice); margin-left:1px; vertical-align:-3px; animation:blink 1s steps(1) infinite; }
-.cmdp-list{ max-height:260px; overflow:hidden; padding:6px; }
+.cmdp-list{ max-height:260px; overflow:hidden; padding:6px; position:relative; }
+.cmdp-list-inner{ }
 .cmdp-section{ padding:8px 10px 4px; font-size:10.5px; font-weight:700; letter-spacing:.1em; text-transform:uppercase; color:var(--faint); }
 .cmdp-item{ display:flex; align-items:center; gap:10px; padding:9px 10px; border-radius:8px; font-size:13px; color:var(--text); }
 .cmdp-item.active{ background:color-mix(in srgb, var(--accent) 14%, transparent); box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent); }
@@ -248,10 +231,9 @@ body{ font-family:var(--font-sans); color:var(--text); -webkit-font-smoothing:an
 .cmdp-foot kbd{ background:var(--surface-2); border:1px solid var(--line); border-radius:4px; padding:1px 5px; font-family:var(--font-mono); font-size:10.5px; color:var(--muted); }
 
 /* ============================================================
-   Scene F — notifications
+   Notifications
    ============================================================ */
-.bell-menu{ position:absolute; top:44px; right:14px; width:280px; background:var(--elevated); border:1px solid var(--line-strong); border-radius:12px; box-shadow:var(--shadow-lg); z-index:40; overflow:hidden; opacity:0; transform:translateY(-8px); transition:opacity .3s var(--ease-out), transform .3s var(--ease-out); }
-.bell-menu.show{ opacity:1; transform:none; }
+.bell-menu{ position:absolute; top:44px; right:14px; width:280px; background:var(--elevated); border:1px solid var(--line-strong); border-radius:12px; box-shadow:var(--shadow-lg); z-index:8; overflow:hidden; opacity:0; }
 .bell-h{ padding:11px 14px; font-size:10.5px; font-weight:700; letter-spacing:.1em; text-transform:uppercase; color:var(--faint); border-bottom:1px solid var(--line); }
 .bell-item{ display:flex; align-items:center; gap:10px; padding:10px 14px; transition:background-color .2s ease; }
 .bell-item.flash{ background:color-mix(in srgb, var(--accent) 16%, transparent); }
@@ -259,584 +241,69 @@ body{ font-family:var(--font-sans); color:var(--text); -webkit-font-smoothing:an
 .bi-ws{ font-size:12.5px; color:var(--text); }
 .bi-ag{ margin-left:auto; font-size:11px; color:var(--faint); }
 
-/* dim static backdrop used behind palette / notification overlays */
-.dim{ filter:brightness(.55) saturate(.8); }
+.dim .b-grid{ filter:brightness(.55) saturate(.8); }
 </style>
 </head>
 <body>
 <div id="stage">
 
-  <!-- A — cold open -->
-  <div class="scene scene-open" id="scene-open">
+  <div class="backdrop">
+    <div class="aurora a1"></div>
+    <div class="aurora a2"></div>
+    <div class="aurora a3"></div>
+  </div>
+  <div class="vignette"></div>
+
+  <div class="cardscene" id="scene-open">
     <div class="open-wrap">
-      <svg class="open-mark" width="92" height="92" viewBox="0 0 128 128" fill="none">
+      <svg class="open-mark" id="open-mark" width="92" height="92" viewBox="0 0 128 128" fill="none">
         <defs><linearGradient id="og" x1="0" y1="0" x2="128" y2="128" gradientUnits="userSpaceOnUse">
           <stop stop-color="#9AE9FF"/><stop offset="0.48" stop-color="#43A6F5"/><stop offset="1" stop-color="#3F6BFF"/>
         </linearGradient></defs>
         <path d="M64 28 L99 96 L64 79 L29 96 Z" fill="url(#og)"/>
       </svg>
-      <div class="open-word">Flightdeck</div>
-      <div class="open-tag">Run a fleet of AI coding agents. At once.</div>
+      <div class="open-word" id="open-word">Flightdeck</div>
+      <div class="open-tag" id="open-tag">Run a fleet of AI coding agents. At once.</div>
     </div>
   </div>
 
-  <!-- B — cockpit -->
-  <div class="scene scene-cockpit" id="scene-cockpit">
-    <div id="shell-b"></div>
-    <div class="kicker" id="kicker-b"><span class="k-dot"></span><span class="k-text"></span></div>
-  </div>
-
-  <!-- C — kanban dispatch -->
-  <div class="scene scene-kanban" id="scene-kanban">
-    <div class="k-wrap">
-      <div class="k-head">
-        <div class="k-title">Board</div>
-        <div class="k-sub">drag a card to In Progress and an agent picks it up</div>
-      </div>
-      <div class="k-cols" id="k-cols"></div>
-    </div>
-    <div class="kicker" id="kicker-c"><span class="k-dot"></span><span class="k-text"></span></div>
-  </div>
-
-  <!-- D — command palette -->
-  <div class="scene scene-palette" id="scene-palette">
-    <div id="shell-d"></div>
-    <div class="kicker" id="kicker-d"><span class="k-dot"></span><span class="k-text"></span></div>
-  </div>
-
-  <!-- E — theme montage -->
-  <div class="scene scene-theme" id="scene-theme">
-    <div id="shell-e"></div>
-    <div class="theme-tag" id="theme-tag">Deep Cove</div>
-    <div class="kicker" id="kicker-e"><span class="k-dot"></span><span class="k-text">Your cockpit, your palette.</span></div>
-  </div>
-
-  <!-- F — notifications -->
-  <div class="scene scene-notify" id="scene-notify">
-    <div id="shell-f"></div>
-    <div class="kicker" id="kicker-f"><span class="k-dot"></span><span class="k-text"></span></div>
-  </div>
-
-  <!-- G — close -->
-  <div class="scene scene-close" id="scene-close">
+  <div class="cardscene" id="scene-close">
     <div class="close-wrap">
-      <svg class="close-mark" width="80" height="80" viewBox="0 0 128 128" fill="none">
+      <svg class="close-mark" id="close-mark" width="80" height="80" viewBox="0 0 128 128" fill="none">
         <defs><linearGradient id="cg" x1="0" y1="0" x2="128" y2="128" gradientUnits="userSpaceOnUse">
           <stop stop-color="#9AE9FF"/><stop offset="0.48" stop-color="#43A6F5"/><stop offset="1" stop-color="#3F6BFF"/>
         </linearGradient></defs>
         <path d="M64 28 L99 96 L64 79 L29 96 Z" fill="url(#cg)"/>
       </svg>
-      <div class="close-word">Flightdeck</div>
-      <div class="close-sub">Built by <b>Kove</b> — kove.nz</div>
+      <div class="close-word" id="close-word">Flightdeck</div>
+      <div class="close-sub" id="close-sub">Built by <b>Kove</b> — kove.nz</div>
     </div>
   </div>
 
+  <div class="camera" id="camera">
+    <div class="appframe" id="appframe">
+      <div class="ascene" id="scene-cockpit"></div>
+      <div class="ascene" id="scene-kanban"></div>
+      <div class="ascene" id="scene-palette"></div>
+      <div class="ascene" id="scene-theme"></div>
+      <div class="ascene" id="scene-notify"></div>
+    </div>
+    <div class="spot-ring" id="spot-ring"></div>
+    <div class="cursor" id="cursor">
+      <svg class="cursor-svg" width="22" height="22" viewBox="0 0 22 22">
+        <path d="M2 1 L2 17 L6.5 13.2 L9.3 19.5 L12 18.3 L9.2 12.2 L15 12 Z" fill="#fff" stroke="#0a0d14" stroke-width="1"/>
+      </svg>
+      <div class="cursor-ring" id="cursor-ring"></div>
+    </div>
+  </div>
+
+  <div class="caption" id="caption">
+    <span class="cap-tick"></span>
+    <span class="cap-words" id="cap-words"></span>
+  </div>
+  <div class="theme-tag" id="theme-tag">Deep Cove</div>
+
 </div>
-
-<script>
-window.REEL_DONE = new Promise((resolve) => { window.__reelResolve = resolve; });
-
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const $ = (sel, root) => (root || document).querySelector(sel);
-const $$ = (sel, root) => Array.from((root || document).querySelectorAll(sel));
-const byId = (id) => document.getElementById(id);
-
-let currentScene = null;
-function crossTo(el) {
-  return new Promise((resolve) => {
-    el.style.zIndex = 10;
-    el.classList.add('active');
-    if (currentScene && currentScene !== el) {
-      const prev = currentScene;
-      prev.style.zIndex = 5;
-      setTimeout(() => prev.classList.remove('active'), 30);
-    }
-    currentScene = el;
-    setTimeout(resolve, 720);
-  });
-}
-
-/* ---------- icons ---------- */
-const ICO = {
-  panel: '<svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="4.5" width="14" height="11" rx="2"/><path d="M8 4.5 V15.5"/></svg>',
-  bell: '<svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M10 3a4.5 4.5 0 0 0-4.5 4.5v2.4c0 .9-.35 1.76-.98 2.4L4 13h12l-.52-.7a3.4 3.4 0 0 1-.98-2.4V7.5A4.5 4.5 0 0 0 10 3Z"/><path d="M8.2 15.5a1.8 1.8 0 0 0 3.6 0"/></svg>',
-  file: '<svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M5 3h6l4 4v10H5V3Z"/><path d="M11 3v4h4"/></svg>',
-  theme: '<svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="10" cy="10" r="6.5"/><path d="M10 3.5a6.5 6.5 0 0 1 0 13Z" fill="currentColor" stroke="none"/></svg>',
-  gear: '<svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="10" cy="10" r="2.6"/><path d="M10 3.5v2M10 14.5v2M3.5 10h2M14.5 10h2M5.6 5.6l1.4 1.4M13 13l1.4 1.4M5.6 14.4l1.4-1.4M13 7l1.4-1.4"/></svg>',
-  board: '<svg viewBox="0 0 20 20" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="3.5" width="4" height="13" rx="1"/><rect x="8.5" y="3.5" width="4" height="9" rx="1"/><rect x="14" y="3.5" width="3" height="6" rx="1"/></svg>',
-  branch: '<svg viewBox="0 0 20 20" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="6" cy="5" r="2"/><circle cx="6" cy="15" r="2"/><circle cx="14" cy="9" r="2"/><path d="M6 7v6M6 9c0-2.2 2-2 6-2"/></svg>',
-  ws: '<svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3.5" y="3.5" width="13" height="13" rx="2.5"/></svg>',
-  agent: '<svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="6" y="6" width="8" height="8" rx="1.5"/><path d="M10 3v3M10 14v3M3 10h3M14 10h3"/></svg>',
-  gearSm: '<svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="10" cy="10" r="2.4"/><path d="M10 4v2.2M10 13.8V16M4 10h2.2M13.8 10H16"/></svg>',
-  check: '<svg viewBox="0 0 20 20" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 10.5l3.5 3.5L16 6"/></svg>',
-};
-
-/* ---------- shared app-shell (topbar + left rail) ---------- */
-function shellHtml(opts) {
-  opts = opts || {};
-  const activeWs = opts.activeWs || 'flightdeck';
-  const wsLabel = opts.wsLabel || 'flightdeck';
-  const bellId = opts.bellId || 'bell';
-  const badge = opts.badge ? '<span class="bell-badge show" id="' + opts.bellId + '-badge">' + opts.badge + '</span>' : '<span class="bell-badge" id="' + opts.bellId + '-badge"></span>';
-  return (
-    '<div class="c-topbar">' +
-      '<span class="tb-ico">' + ICO.panel + '</span>' +
-      '<svg class="brand-mark" width="18" height="18" viewBox="0 0 128 128" fill="none"><defs><linearGradient id="tg-' + bellId + '" x1="0" y1="0" x2="128" y2="128" gradientUnits="userSpaceOnUse"><stop stop-color="#9AE9FF"/><stop offset="0.48" stop-color="#43A6F5"/><stop offset="1" stop-color="#3F6BFF"/></linearGradient></defs><path d="M64 28 L99 96 L64 79 L29 96 Z" fill="url(#tg-' + bellId + ')"/></svg>' +
-      '<span class="tb-brand">Flightdeck</span>' +
-      '<span class="tb-ws">' + wsLabel + '</span>' +
-      '<span class="tb-sp"></span>' +
-      '<span class="bell-wrap"><span class="bell" id="' + bellId + '">' + ICO.bell + badge + '</span></span>' +
-      '<span class="tb-ico">' + ICO.file + '</span>' +
-      '<span class="tb-ico">' + ICO.theme + '</span>' +
-      '<span class="tb-ico">' + ICO.gear + '</span>' +
-    '</div>' +
-    '<div class="c-body">' +
-      '<div class="c-rail">' +
-        '<div class="rail-head">WORKSPACES</div>' +
-        '<div class="rail-ws ' + (activeWs === 'flightdeck' ? 'active' : '') + '" id="rail-flightdeck"><span class="rail-i">FD</span><div class="rail-meta"><span class="rail-name">flightdeck</span><span class="rail-stat run"><i></i>2 running</span></div></div>' +
-        '<div class="rail-ws ' + (activeWs === 'billing' ? 'active' : '') + '" id="rail-billing"><span class="rail-i">BS</span><div class="rail-meta"><span class="rail-name">billing-service</span><span class="rail-stat wait"><i></i>1 waiting</span></div></div>' +
-        '<div class="rail-ws ' + (activeWs === 'docs' ? 'active' : '') + '" id="rail-docs"><span class="rail-i">DS</span><div class="rail-meta"><span class="rail-name">docs-site</span><span class="rail-stat"><i></i>idle</span></div></div>' +
-        '<div class="rail-sep"></div>' +
-        '<div class="rail-app ' + (activeWs === 'board' ? 'active' : '') + '"><span class="rail-i board">' + ICO.board + '</span><span class="rail-name">Board</span></div>' +
-      '</div>' +
-      '<div class="c-main" id="c-main-slot"></div>' +
-    '</div>'
-  );
-}
-
-function paneHtml(id, name, repo, branch, dotCls, bandCls) {
-  return (
-    '<div class="pane" id="' + id + '">' +
-      '<div class="pband ' + bandCls + '" id="' + id + '-band"></div>' +
-      '<div class="phead">' +
-        '<span class="pdot ' + dotCls + '" id="' + id + '-dot"></span>' +
-        '<span class="pname">' + name + '</span>' +
-        '<span class="prepo">' + repo + '</span>' +
-        '<span class="branch">' + ICO.branch + branch + '</span>' +
-      '</div>' +
-      '<div class="pbody" style="flex:1;min-height:0;"><div class="term" id="' + id + '-term"></div></div>' +
-    '</div>'
-  );
-}
-
-function paneGridHtml(idPrefix) {
-  return (
-    '<div class="b-grid">' +
-      paneHtml(idPrefix + '1', 'claude', 'pagination-fix', 'main', 'starting', 'starting') +
-      paneHtml(idPrefix + '2', 'agy', 'test-suite', 'feature/tests', 'starting', 'starting') +
-      paneHtml(idPrefix + '3', 'pwsh', 'flightdeck', 'feature/pane-resize', 'starting', 'starting') +
-      paneHtml(idPrefix + '4', 'claude', 'auth-middleware', 'feature/auth-mw', 'starting', 'starting') +
-    '</div>'
-  );
-}
-
-/* ---------- typing / streaming engine ---------- */
-async function typeLine(containerEl, text, cls, cps) {
-  cps = cps || 46;
-  const line = document.createElement('div');
-  line.className = 'tl ' + cls;
-  containerEl.appendChild(line);
-  const cursor = document.createElement('span');
-  cursor.className = 'tcursor';
-  for (let i = 0; i < text.length; i++) {
-    line.textContent = text.slice(0, i + 1);
-    line.appendChild(cursor);
-    await sleep(1000 / cps);
-  }
-  cursor.remove();
-}
-
-async function streamLine(containerEl, text, cls, delay) {
-  await sleep(delay == null ? 80 : delay);
-  const line = document.createElement('div');
-  line.className = 'tl in ' + cls;
-  line.textContent = text;
-  containerEl.appendChild(line);
-}
-
-async function runScript(termEl, script) {
-  for (const step of script) {
-    if (step.type === 'input') await typeLine(termEl, step.text, 'tl-cmd', step.cps || 46);
-    else await streamLine(termEl, step.text, step.cls, step.delay);
-  }
-}
-
-function setPaneState(idPrefix, cls) {
-  const band = byId(idPrefix + '-band');
-  const dot = byId(idPrefix + '-dot');
-  if (band) band.className = 'pband ' + cls;
-  if (dot) dot.className = 'pdot ' + cls;
-}
-
-const SCRIPT_CLAUDE1 = [
-  { type: 'input', text: '$ claude' },
-  { type: 'input', text: '> fix the off-by-one in pagination.ts' },
-  { cls: 'tl-faint', text: 'Reading src/pagination.ts…', delay: 260 },
-  { cls: 'tl-out', text: 'Found it — slice(start, end) used page*size instead of (page-1)*size.', delay: 90 },
-  { cls: 'tl-rm', text: '-  const start = page * size;', delay: 90 },
-  { cls: 'tl-add', text: '+  const start = (page - 1) * size;', delay: 90 },
-  { cls: 'tl-faint', text: 'Running pagination.test.ts…', delay: 100 },
-  { cls: 'tl-ok', text: '✓ 12 tests passed in 340ms', delay: 100 },
-  { cls: 'tl-ok', text: 'Committed as 4a1f0c2', delay: 90 },
-];
-const SCRIPT_AGY = [
-  { type: 'input', text: '$ agy' },
-  { type: 'input', text: '> run the full suite before merge' },
-  { cls: 'tl-faint', text: 'pytest -q', delay: 240 },
-  { cls: 'tl-out', text: '....................................', delay: 100 },
-  { cls: 'tl-out', text: '36 passed in 4.87s', delay: 100 },
-  { cls: 'tl-ok', text: 'Coverage 91.2% — no regressions', delay: 90 },
-];
-const SCRIPT_PWSH = [
-  { type: 'input', text: 'PS D:\\project> git add -A' },
-  { type: 'input', text: 'PS D:\\project> git commit -m "fix: pane resize race on spawn"' },
-  { cls: 'tl-out', text: '[feature/pane-resize 7c3e9a1] fix: pane resize race on spawn', delay: 220 },
-  { cls: 'tl-faint', text: '1 file changed, 6 insertions(+), 2 deletions(-)', delay: 100 },
-];
-const SCRIPT_CLAUDE2 = [
-  { type: 'input', text: '$ claude' },
-  { type: 'input', text: '> refactor the auth middleware' },
-  { cls: 'tl-faint', text: 'Drafting the change…', delay: 260 },
-  { cls: 'tl-out', text: 'One thing to confirm before I continue —', delay: 110 },
-  { cls: 'tl-out', text: 'expired tokens: redirect to /login, or return 401?', delay: 100 },
-];
-
-/* ============================================================
-   Scene A — cold open
-   ============================================================ */
-async function sceneOpen() {
-  await crossTo(byId('scene-open'));
-  await sleep(150);
-  $('#scene-open .open-mark').classList.add('show');
-  await sleep(650);
-  $('#scene-open .open-word').classList.add('show');
-  await sleep(550);
-  $('#scene-open .open-tag').classList.add('show');
-  await sleep(2600);
-}
-
-/* ============================================================
-   Scene B — the cockpit
-   ============================================================ */
-async function sceneCockpit() {
-  byId('shell-b').innerHTML = shellHtml({ activeWs: 'flightdeck', wsLabel: 'flightdeck', bellId: 'bell-b' });
-  byId('c-main-slot').outerHTML = '<div class="c-main" id="c-main-b">' + paneGridHtml('b-p') + '</div>';
-
-  await crossTo(byId('scene-cockpit'));
-
-  const kicker = byId('kicker-b');
-  const kText = $('#kicker-b .k-text');
-
-  setPaneState('b-p1', 'starting');
-  setPaneState('b-p2', 'starting');
-  setPaneState('b-p3', 'starting');
-  setPaneState('b-p4', 'starting');
-
-  const flip = (id) => { setPaneState(id, 'running'); };
-
-  const p1 = runScript(byId('b-p1-term'), SCRIPT_CLAUDE1).then(() => {});
-  flip('b-p1');
-  await sleep(260);
-  const p2 = runScript(byId('b-p2-term'), SCRIPT_AGY).then(() => {});
-  flip('b-p2');
-  await sleep(260);
-  const p3 = runScript(byId('b-p3-term'), SCRIPT_PWSH).then(() => {});
-  flip('b-p3');
-  await sleep(260);
-  const p4 = runScript(byId('b-p4-term'), SCRIPT_CLAUDE2).then(() => {});
-  flip('b-p4');
-
-  await sleep(900);
-  kText.textContent = 'Live parallel agents';
-  kicker.classList.add('show');
-  await sleep(3600);
-  kText.textContent = 'Subscription CLIs — no API keys';
-
-  await Promise.all([p1, p2, p3, p4]);
-  await sleep(2600);
-
-  setPaneState('b-p4', 'waiting');
-  streamLine(byId('b-p4-term'), 'Waiting on your reply…', 'tl-faint', 60);
-  await sleep(4400);
-}
-
-/* ============================================================
-   Scene C — kanban dispatch
-   ============================================================ */
-function kColHtml(id, accentVar, name, count, cardsHtml, withDropSlot) {
-  return (
-    '<div class="k-col" id="k-col-' + id + '">' +
-      '<div class="k-accent" style="background:' + accentVar + '"></div>' +
-      '<div class="k-colhead"><span class="k-coldot" style="background:' + accentVar + '"></span><span class="k-colname">' + name + '</span><span class="k-colcount">' + count + '</span></div>' +
-      '<div class="k-list" id="k-list-' + id + '">' + cardsHtml + (withDropSlot ? '<div class="k-dropslot" id="k-dropslot-' + id + '">Drop here</div>' : '') + '</div>' +
-    '</div>'
-  );
-}
-function kCardHtml(id, title, chipsHtml) {
-  return '<div class="k-card" id="' + id + '"><div class="k-card-title">' + title + '</div><div class="k-chips">' + chipsHtml + '</div></div>';
-}
-
-async function sceneKanban() {
-  const todoCards =
-    kCardHtml('card-ratelimit', 'Add rate limiting to the auth endpoint', '<span class="k-chip k-chip-prio">Medium</span>') +
-    kCardHtml('card-readme', 'Update README screenshots for the new theme picker', '<span class="k-chip k-chip-prio hi">High</span>');
-  const inprogCards =
-    kCardHtml('card-sqlite', 'Migrate settings store to SQLite', '<span class="k-chip k-chip-agent"><span class="k-chip-dot run"></span>claude</span>');
-  const reviewCards =
-    kCardHtml('card-resize', 'Fix pane resize race on spawn', '<span class="k-chip k-chip-agent"><span class="k-chip-dot"></span>pwsh</span>');
-  const doneCards =
-    kCardHtml('card-tests', 'Wire test suite into CI', '<span class="k-check">' + ICO.check + ' Done</span>');
-
-  byId('k-cols').innerHTML =
-    kColHtml('todo', 'var(--st-idle)', 'To Do', 2, todoCards, false) +
-    kColHtml('inprogress', 'var(--accent)', 'In Progress', 1, inprogCards, true) +
-    kColHtml('review', 'var(--ice)', 'In Review', 1, reviewCards, false) +
-    kColHtml('complete', 'var(--aqua)', 'Complete', 1, doneCards, false);
-
-  await crossTo(byId('scene-kanban'));
-
-  const kicker = byId('kicker-c');
-  const kText = $('#kicker-c .k-text');
-  await sleep(700);
-  kText.textContent = 'Drop a task. An agent picks it up.';
-  kicker.classList.add('show');
-
-  await sleep(1300);
-
-  const stage = byId('stage');
-  const src = byId('card-ratelimit');
-  const stageRect = stage.getBoundingClientRect();
-  const srcRect = src.getBoundingClientRect();
-
-  const ghost = src.cloneNode(true);
-  ghost.id = 'k-ghost';
-  ghost.classList.add('k-ghost');
-  ghost.style.left = (srcRect.left - stageRect.left) + 'px';
-  ghost.style.top = (srcRect.top - stageRect.top) + 'px';
-  ghost.style.width = srcRect.width + 'px';
-  byId('scene-kanban').appendChild(ghost);
-  src.style.opacity = '0.2';
-
-  await sleep(450);
-
-  const col = byId('k-col-inprogress');
-  const dropSlot = byId('k-dropslot-inprogress');
-  col.classList.add('drop-active');
-  dropSlot.classList.add('show');
-
-  const dRect = dropSlot.getBoundingClientRect();
-  ghost.style.transition = 'left .95s var(--ease-out), top .95s var(--ease-out)';
-  ghost.style.left = (dRect.left - stageRect.left) + 'px';
-  ghost.style.top = (dRect.top - stageRect.top) + 'px';
-
-  await sleep(1050);
-
-  dropSlot.classList.remove('show');
-  col.classList.remove('drop-active');
-  ghost.remove();
-  src.remove();
-
-  const landed = document.createElement('div');
-  landed.className = 'k-card';
-  landed.innerHTML = '<div class="k-card-title">Add rate limiting to the auth endpoint</div><div class="k-chips"><span class="k-chip k-chip-agent" id="k-newchip"><span class="k-chip-dot run"></span>claude</span></div>';
-  byId('k-list-inprogress').prepend(landed);
-  byId('k-col-inprogress').querySelector('.k-colcount').textContent = '2';
-
-  await sleep(120);
-  byId('k-newchip').classList.add('show');
-
-  await sleep(2600);
-}
-
-/* ============================================================
-   Scene D — command palette + workspace switch
-   ============================================================ */
-async function scenePalette() {
-  byId('shell-d').innerHTML = shellHtml({ activeWs: 'flightdeck', wsLabel: 'flightdeck', bellId: 'bell-d' });
-  byId('c-main-slot').outerHTML = '<div class="c-main dim" id="c-main-d">' + paneGridHtml('d-p') + '</div>';
-  ['d-p1', 'd-p2', 'd-p3', 'd-p4'].forEach((id) => setPaneState(id, 'running'));
-  byId('d-p1-term').innerHTML = '<div class="tl tl-cmd">$ claude</div><div class="tl tl-out">✓ Committed as 4a1f0c2</div>';
-  byId('d-p2-term').innerHTML = '<div class="tl tl-cmd">$ agy</div><div class="tl tl-ok">36 passed in 4.87s</div>';
-  byId('d-p3-term').innerHTML = '<div class="tl tl-cmd">PS&gt; git commit</div><div class="tl tl-faint">1 file changed</div>';
-  byId('d-p4-term').innerHTML = '<div class="tl tl-cmd">$ claude</div><div class="tl tl-faint">Waiting on your reply…</div>';
-  setPaneState('d-p4', 'waiting');
-
-  const scrimHtml =
-    '<div class="cmdp-scrim" id="cmdp-scrim">' +
-      '<div class="cmdp-modal">' +
-        '<div class="cmdp-inputrow">' + ICO.ws + '<span class="cmdp-input" id="cmdp-input"></span><span class="cmdp-caret"></span></div>' +
-        '<div class="cmdp-list" id="cmdp-list"></div>' +
-        '<div class="cmdp-foot"><span><kbd>&uarr;</kbd><kbd>&darr;</kbd> navigate</span><span><kbd>Enter</kbd> select</span><span><kbd>Esc</kbd> close</span></div>' +
-      '</div>' +
-    '</div>';
-  byId('scene-palette').insertAdjacentHTML('beforeend', scrimHtml);
-
-  await crossTo(byId('scene-palette'));
-
-  const kicker = byId('kicker-d');
-  const kText = $('#kicker-d .k-text');
-  await sleep(500);
-  kText.textContent = 'Ctrl+K — jump anywhere.';
-  kicker.classList.add('show');
-
-  await sleep(700);
-
-  const scrim = byId('cmdp-scrim');
-  const list = byId('cmdp-list');
-  const fullListHtml =
-    '<div class="cmdp-section">Workspaces</div>' +
-    '<div class="cmdp-item">' + ICO.ws + '<span>flightdeck</span></div>' +
-    '<div class="cmdp-item">' + ICO.ws + '<span>billing-service</span></div>' +
-    '<div class="cmdp-item">' + ICO.ws + '<span>docs-site</span></div>' +
-    '<div class="cmdp-section">Actions</div>' +
-    '<div class="cmdp-item">' + ICO.gearSm + '<span>Open settings</span><span class="cmdp-hint">Ctrl+,</span></div>';
-  list.innerHTML = fullListHtml;
-  scrim.classList.add('show');
-
-  await sleep(600);
-
-  const input = byId('cmdp-input');
-  const query = 'billing';
-  for (let i = 0; i < query.length; i++) {
-    input.textContent = query.slice(0, i + 1);
-    await sleep(70);
-  }
-
-  await sleep(200);
-  list.innerHTML =
-    '<div class="cmdp-section">Workspaces</div>' +
-    '<div class="cmdp-item active">' + ICO.ws + '<span>billing-service</span><span class="cmdp-hint">D:\\dev\\billing-service</span></div>';
-
-  await sleep(900);
-  scrim.classList.remove('show');
-  await sleep(380);
-  scrim.remove();
-
-  $('#shell-d #rail-flightdeck').classList.remove('active');
-  $('#shell-d #rail-billing').classList.add('active');
-  $('#shell-d .tb-ws').textContent = 'billing-service';
-
-  await sleep(1900);
-}
-
-/* ============================================================
-   Scene E — theme montage
-   ============================================================ */
-function staticPaneGrid(idPrefix) {
-  const grid = document.createElement('div');
-  grid.className = 'b-grid';
-  grid.innerHTML =
-    paneHtml(idPrefix + '1', 'claude', 'pagination-fix', 'main', 'running', 'running') +
-    paneHtml(idPrefix + '2', 'agy', 'test-suite', 'feature/tests', 'running', 'running') +
-    paneHtml(idPrefix + '3', 'pwsh', 'flightdeck', 'feature/pane-resize', 'running', 'running') +
-    paneHtml(idPrefix + '4', 'claude', 'auth-middleware', 'feature/auth-mw', 'waiting', 'waiting');
-  return grid;
-}
-
-async function sceneTheme() {
-  byId('shell-e').innerHTML = shellHtml({ activeWs: 'flightdeck', wsLabel: 'flightdeck', bellId: 'bell-e' });
-  const main = byId('c-main-slot');
-  main.id = 'c-main-e';
-  main.appendChild(staticPaneGrid('e-p'));
-  byId('e-p1-term').innerHTML = '<div class="tl tl-cmd">$ claude</div><div class="tl tl-ok">✓ Committed as 4a1f0c2</div>';
-  byId('e-p2-term').innerHTML = '<div class="tl tl-cmd">$ agy</div><div class="tl tl-ok">36 passed in 4.87s</div>';
-  byId('e-p3-term').innerHTML = '<div class="tl tl-cmd">PS&gt; git commit</div><div class="tl tl-faint">1 file changed</div>';
-  byId('e-p4-term').innerHTML = '<div class="tl tl-cmd">$ claude</div><div class="tl tl-faint">Waiting on your reply…</div>';
-
-  await crossTo(byId('scene-theme'));
-
-  const kicker = byId('kicker-e');
-  const tag = byId('theme-tag');
-  await sleep(300);
-  kicker.classList.add('show');
-  tag.classList.add('show');
-
-  const themes = [
-    { id: '', label: 'Deep Cove' },
-    { id: 'dracula', label: 'Dracula' },
-    { id: 'nord', label: 'Nord' },
-    { id: '', label: 'Deep Cove' },
-  ];
-  for (const t of themes) {
-    tag.textContent = t.label;
-    if (t.id) document.documentElement.setAttribute('data-theme', t.id);
-    else document.documentElement.removeAttribute('data-theme');
-    await sleep(1450);
-  }
-  await sleep(300);
-}
-
-/* ============================================================
-   Scene F — notifications
-   ============================================================ */
-async function sceneNotify() {
-  byId('shell-f').innerHTML = shellHtml({ activeWs: 'flightdeck', wsLabel: 'flightdeck', bellId: 'bell-f', badge: '3' });
-  const main = byId('c-main-slot');
-  main.id = 'c-main-f';
-  main.className = 'c-main dim';
-  main.appendChild(staticPaneGrid('f-p'));
-  byId('f-p1-term').innerHTML = '<div class="tl tl-cmd">$ claude</div><div class="tl tl-ok">✓ Committed as 4a1f0c2</div>';
-  byId('f-p2-term').innerHTML = '<div class="tl tl-cmd">$ agy</div><div class="tl tl-ok">36 passed in 4.87s</div>';
-  byId('f-p3-term').innerHTML = '<div class="tl tl-cmd">PS&gt; git commit</div><div class="tl tl-faint">1 file changed</div>';
-  byId('f-p4-term').innerHTML = '<div class="tl tl-cmd">$ claude</div><div class="tl tl-faint">Waiting on your reply…</div>';
-  byId('bell-f').classList.add('on');
-
-  const menuHtml =
-    '<div class="bell-menu" id="bell-menu">' +
-      '<div class="bell-h">Waiting on you</div>' +
-      '<div class="bell-item" id="bi-1"><span class="bi-dot"></span><span class="bi-ws">flightdeck — auth-middleware</span><span class="bi-ag">claude</span></div>' +
-      '<div class="bell-item" id="bi-2"><span class="bi-dot"></span><span class="bi-ws">billing-service — rate-limit</span><span class="bi-ag">claude</span></div>' +
-      '<div class="bell-item" id="bi-3"><span class="bi-dot"></span><span class="bi-ws">docs-site — build check</span><span class="bi-ag">pwsh</span></div>' +
-    '</div>';
-  byId('scene-notify').insertAdjacentHTML('beforeend', menuHtml);
-
-  await crossTo(byId('scene-notify'));
-
-  const kicker = byId('kicker-f');
-  const kText = $('#kicker-f .k-text');
-  await sleep(500);
-  kText.textContent = 'Never miss what needs you.';
-  kicker.classList.add('show');
-
-  await sleep(900);
-  byId('bell-menu').classList.add('show');
-
-  await sleep(1200);
-  byId('bi-1').classList.add('flash');
-  await sleep(650);
-  byId('bell-menu').classList.remove('show');
-
-  await sleep(2000);
-}
-
-/* ============================================================
-   Scene G — close
-   ============================================================ */
-async function sceneClose() {
-  await crossTo(byId('scene-close'));
-  await sleep(200);
-  $('#scene-close .close-mark').classList.add('show');
-  await sleep(600);
-  $('#scene-close .close-word').classList.add('show');
-  await sleep(500);
-  $('#scene-close .close-sub').classList.add('show');
-  await sleep(3800);
-}
-
-/* ---------- master run ---------- */
-async function run() {
-  await sceneOpen();
-  await sceneCockpit();
-  await sceneKanban();
-  await scenePalette();
-  await sceneTheme();
-  await sceneNotify();
-  await sceneClose();
-}
-
-run()
-  .catch((err) => { console.error('REEL ERROR', err); })
-  .finally(() => { window.__reelResolve(); });
-</script>
+<script src="reel.js"></script>
 </body>
 </html>
