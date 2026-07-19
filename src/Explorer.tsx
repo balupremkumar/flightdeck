@@ -6,8 +6,8 @@
 import { useCallback, useEffect, useRef, useState, type SVGProps } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { openPath } from "@tauri-apps/plugin-opener";
-import { useApp } from "./store";
 import { IconFolder, IconFile, IconChevron, IconBranch, IconAgent, IconRefresh } from "./Icons";
+import { spawnPane } from "./worktrees";
 import "./explorer.css";
 
 interface Entry { name: string; dir: boolean; }
@@ -79,7 +79,6 @@ function Node({ name, path, dir, depth, wsId, vendor, onOpenFile }: {
   const [expanded, setExpanded] = useState(false);
   const [children, setChildren] = useState<Entry[] | null>(null);
   const [status, setStatus] = useState<NodeStatus>("idle");
-  const addPane = useApp((s) => s.addPane);
   const { head, tail } = splitName(name, dir);
   const ignored = IGNORED_NAMES.has(name);
 
@@ -107,7 +106,7 @@ function Node({ name, path, dir, depth, wsId, vendor, onOpenFile }: {
 
   const newTerminalHere = (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (wsId != null) addPane(wsId, vendor, path);
+    if (wsId != null) void spawnPane(wsId, vendor, path);
   };
 
   return (
@@ -228,8 +227,8 @@ export function Explorer({ root, wsId, vendor = "pwsh" }: ExplorerProps) {
     invoke<Entry[]>("fs_list_dir", { path: root })
       .then((e) => { if (seq.current === mySeq) { setEntries(e); setStatus("loaded"); } })
       .catch(() => { if (seq.current === mySeq) setStatus("error"); });
-    // git_status may not exist yet (another agent owns it) — degrade silently.
-    invoke<GitInfo>("git_status", { path: root })
+    // Degrade silently for non-repos — the pill just doesn't render.
+    invoke<GitInfo>("git_status", { cwd: root })
       .then((g) => { if (seq.current === mySeq) setGit(g); })
       .catch(() => { if (seq.current === mySeq) setGit(null); });
   };

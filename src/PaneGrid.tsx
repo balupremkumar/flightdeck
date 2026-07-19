@@ -4,6 +4,7 @@ import { PaneView } from "./PaneView";
 import { useApp, type Workspace } from "./store";
 import { IconWorkspace } from "./Icons";
 import { defaultCycle } from "./vendors";
+import { spawnPane } from "./worktrees";
 
 // Arrange N panes into rows; each divider is draggable so any pane can be resized.
 function rows(n: number): number[][] {
@@ -45,10 +46,7 @@ export function PaneGrid({ ws }: { ws: Workspace }) {
       <div className="grid-empty-sub">Every pane here was closed. Add one to keep working in {ws.name}.</div>
       <button
         className="grid-empty-add"
-        onClick={() => {
-          const addPane = useApp.getState().addPane;
-          addPane(ws.id, defaultCycle()[0], ws.root);
-        }}
+        onClick={() => void spawnPane(ws.id, defaultCycle()[0], ws.root)}
       >
         + Add a pane
       </button>

@@ -12,9 +12,11 @@ import { Notifications } from "./Notifications";
 import { Broadcast } from "./Broadcast";
 import { CommandPalette } from "./CommandPalette";
 import { Explorer } from "./Explorer";
+import { Review } from "./Review";
 import { useUI } from "./ui";
 import { applyTheme, currentThemeId, findTheme } from "./themes";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { spawnPane } from "./worktrees";
 
 // Quick light/dark flip. Goes through the themes registry (not a raw data-theme
 // write) so it stays in step with the richer theme picker in Settings.
@@ -26,7 +28,6 @@ function toggleTheme() {
 export function Cockpit() {
   const workspaces = useApp((s) => s.workspaces);
   const activeId = useApp((s) => s.activeId);
-  const addPane = useApp((s) => s.addPane);
   const active = workspaces.find((w) => w.id === activeId) ?? null;
   const vendors = useVendors((s) => s.vendors);
   const [addOpen, setAddOpen] = useState(false);
@@ -90,7 +91,7 @@ export function Cockpit() {
                   <button
                     className="apm-item"
                     key={v.id}
-                    onClick={() => { addPane(active.id, v.id, active.root); setAddOpen(false); }}
+                    onClick={() => { void spawnPane(active.id, v.id, active.root); setAddOpen(false); }}
                   >
                     <span className="apm-dot" style={{ background: `var(${v.accent})` }} />
                     <span className="apm-name">{v.label}</span>
@@ -130,6 +131,7 @@ export function Cockpit() {
       <ToastHost />
       <CommandPalette />
       <Broadcast />
+      <Review />
 
       <div className="cockpit">
         <LeftPanel expanded={expanded} view={view} setView={setView} />

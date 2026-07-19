@@ -1,0 +1,132 @@
+/* Review drawer — the worktree diff/merge surface. A right-side drawer: the
+   app's first side-sheet primitive (overlays.css only has centered dialogs +
+   toasts). Token-driven so all 6 themes work. */
+
+.rv-scrim {
+  position: fixed; inset: 0; z-index: 60;
+  background: color-mix(in srgb, var(--abyss) 55%, transparent);
+  animation: ov-fade .16s ease;
+}
+
+.rv-drawer {
+  position: absolute; top: 0; right: 0; bottom: 0;
+  width: min(720px, 88vw);
+  display: flex; flex-direction: column;
+  background: var(--bg);
+  border-left: 1px solid var(--line-strong);
+  box-shadow: var(--shadow-lg);
+  animation: rv-slide .22s var(--ease-out);
+}
+@keyframes rv-slide { from { transform: translateX(24px); opacity: 0; } to { transform: none; opacity: 1; } }
+
+.rv-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 12px 14px; border-bottom: 1px solid var(--line);
+  color: var(--text);
+}
+.rv-title { font-size: 13.5px; font-weight: 600; }
+.rv-branch {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-family: var(--mono); font-size: 10.5px; color: var(--muted);
+  background: var(--surface); border: 1px solid var(--line); border-radius: 999px;
+  padding: 2px 8px;
+}
+.rv-head .sp, .rv-patch-bar .sp, .rv-foot .sp { flex: 1; }
+.rv-ic {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px; border-radius: 6px; border: 0;
+  background: transparent; color: var(--muted); cursor: pointer;
+  transition: background .14s ease, color .14s ease;
+}
+.rv-ic:hover { background: var(--surface); color: var(--text); }
+.rv-ic:disabled { opacity: .4; cursor: default; }
+
+.rv-empty { padding: 28px 18px; color: var(--faint); font-size: 12.5px; }
+
+.rv-body { flex: 1; display: flex; min-height: 0; }
+
+/* File list */
+.rv-files {
+  width: 220px; flex: none; overflow-y: auto;
+  border-right: 1px solid var(--line);
+  padding: 8px 6px;
+}
+.rv-files-head {
+  display: flex; align-items: center; justify-content: space-between;
+  font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--faint); padding: 2px 8px 8px;
+}
+.rv-stat em, .rv-file-stat em { font-style: normal; font-family: var(--mono); font-size: 10.5px; }
+em.add { color: var(--st-running); }
+em.del { color: var(--st-error); margin-left: 5px; }
+.rv-file {
+  display: flex; align-items: center; gap: 6px; width: 100%;
+  padding: 6px 8px; border: 0; border-radius: 7px; background: transparent;
+  color: var(--muted); font: inherit; font-size: 11.5px; cursor: pointer; text-align: left;
+  transition: background .12s ease, color .12s ease;
+}
+.rv-file:hover { background: var(--surface); color: var(--text); }
+.rv-file.sel { background: var(--surface-2); color: var(--text); }
+.rv-file-path {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  direction: rtl; text-align: left; /* keep the filename end visible */
+  font-family: var(--mono);
+}
+.rv-file-bin { font-size: 10px; color: var(--faint); }
+.rv-file-stat { flex: none; }
+
+/* Patch view */
+.rv-patch-wrap { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.rv-patch-bar {
+  display: flex; align-items: center; gap: 6px;
+  padding: 7px 10px; border-bottom: 1px solid var(--line);
+}
+.rv-patch-file { font-family: var(--mono); font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rv-hunk-count { font-family: var(--mono); font-size: 10.5px; color: var(--faint); }
+.rv-patch {
+  flex: 1; overflow: auto; margin: 0; padding: 10px 0 24px;
+  background: var(--abyss);
+  font-family: var(--mono); font-size: 11.5px; line-height: 1.5;
+}
+.rv-line { display: block; padding: 0 12px; white-space: pre; color: var(--muted); }
+.rv-line.rv-add { color: var(--st-running); background: color-mix(in srgb, var(--st-running) 9%, transparent); }
+.rv-line.rv-del { color: var(--st-error); background: color-mix(in srgb, var(--st-error) 9%, transparent); }
+.rv-line.rv-hunk { color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.rv-line.rv-meta { color: var(--faint); }
+
+/* Footer / merge action */
+.rv-foot {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 14px; border-top: 1px solid var(--line);
+}
+.rv-foot-note { flex: 1; font-size: 11px; color: var(--faint); }
+.rv-merge {
+  display: inline-flex; align-items: center; gap: 7px;
+  font: inherit; font-size: 12.5px; font-weight: 600;
+  padding: 8px 16px; border-radius: 9px; border: 0; cursor: pointer;
+  color: var(--abyss); background: var(--accent-grad);
+  transition: filter .14s ease, transform .14s ease;
+}
+.rv-merge:hover { filter: brightness(1.08); transform: translateY(-1px); }
+.rv-merge:disabled { opacity: .5; cursor: default; transform: none; }
+
+/* Pane-header diff-stat badge (rendered by PaneView) */
+.pdiff {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-family: var(--mono); font-size: 10px;
+  padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line);
+  background: var(--surface); color: var(--muted); cursor: pointer;
+  transition: border-color .14s ease, color .14s ease;
+}
+.pdiff:hover { border-color: var(--accent); color: var(--text); }
+.pdiff em { font-style: normal; }
+
+/* NewWorkspace isolation toggle row */
+.isolate-row {
+  display: flex; align-items: center; gap: 8px; margin-top: 8px;
+  font-size: 12px; color: var(--muted); cursor: pointer; user-select: none;
+}
+.isolate-row input { accent-color: var(--accent); }
+.isolate-row:hover { color: var(--text); }
+.isolate-row.off { opacity: .6; cursor: default; }
+.isolate-note { font-size: 10.5px; color: var(--st-waiting); }

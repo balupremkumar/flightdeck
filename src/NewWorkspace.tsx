@@ -3,6 +3,8 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { useApp } from "./store";
 import { IconClose, IconFolder, IconRefresh } from "./Icons";
 import { useVendors, vendorMeta, vendorShort, defaultCycle } from "./vendors";
+import { isolationPref, setIsolationPref, preparePanes, repoToplevel } from "./worktrees";
+import "./review.css"; // .isolate-row lives with the review/worktree styles
 
 function baseName(p: string): string {
   const s = p.replace(/[\\/]+$/, "");
@@ -41,6 +43,21 @@ export function NewWorkspace() {
   const loadVendors = useVendors((s) => s.load);
   useEffect(() => { void loadVendors(); }, [loadVendors]);
 
+  // Worktree isolation (Tier 0): default from the last-used preference; the
+  // toggle only applies when the default directory is actually a git repo.
+  const [isolate, setIsolate] = useState(isolationPref);
+  const [isRepo, setIsRepo] = useState<boolean | null>(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    const dir = root.trim();
+    if (!dir) { setIsRepo(null); return; }
+    let cancelled = false;
+    const t = setTimeout(() => {
+      void repoToplevel(dir).then((top) => { if (!cancelled) setIsRepo(top != null); });
+    }, 350); // debounce typing
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [root]);
+
   const changeCount = (n: number) => {
     setCount(n);
     const cycle = defaultCycle();
@@ -58,8 +75,24 @@ export function NewWorkspace() {
     if (typeof p === "string") setDir(i, p);
   };
 
-  const create = () =>
-    createWorkspace(root.trim(), slots.map((s) => ({ vendor: s.vendor, cwd: (s.dir ?? root).trim() })));
+  // Async: each isolated slot gets its own git worktree BEFORE the workspace is
+  // created, so the pane's cwd is the worktree from the very first PTY spawn.
+  // Worktree creation lives here in the click path (not in Terminal's mount
+  // effect) so StrictMode double-mounts and restarts can never re-create one.
+  const create = async () => {
+    if (busy) return;
+    setBusy(true);
+    setIsolationPref(isolate);
+    try {
+      const panes = await preparePanes(
+        slots.map((s) => ({ vendor: s.vendor, cwd: (s.dir ?? root).trim() })),
+        isolate
+      );
+      createWorkspace(root.trim(), panes);
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const counts = slots.reduce<Record<string, number>>((m, s) => ((m[s.vendor] = (m[s.vendor] || 0) + 1), m), {});
   const summary = Object.entries(counts).map(([v, c]) => `${c}× ${vendorShort(v)}`).join(", ");
@@ -117,6 +150,20 @@ export function NewWorkspace() {
               <input className="path" value={root} onChange={(e) => setRoot(e.target.value)} spellCheck={false} placeholder="Choose your project folder…" />
               <button className="browse" onClick={browseRoot}>Browse</button>
             </div>
+            <label className={"isolate-row" + (isRepo === false ? " off" : "")} title={
+              isRepo === false
+                ? "This folder isn't a git repository — panes run directly in it."
+                : "Each agent works on its own branch in its own folder copy, so parallel agents never overwrite each other. Review & merge their changes from the pane header."
+            }>
+              <input
+                type="checkbox"
+                checked={isolate && isRepo !== false}
+                disabled={isRepo === false}
+                onChange={(e) => setIsolate(e.target.checked)}
+              />
+              <span>Isolate each agent in its own git worktree</span>
+              {isRepo === false && <span className="isolate-note">not a git repo — runs directly</span>}
+            </label>
           </div>
 
           <div>
@@ -145,7 +192,9 @@ export function NewWorkspace() {
         </div>
         <div className="df">
           {hasWorkspaces && <button className="cancel" onClick={cancelCreate}>Cancel</button>}
-          <button className="btn-primary" onClick={create} disabled={!root.trim()}>Create Workspace →</button>
+          <button className="btn-primary" onClick={() => void create()} disabled={!root.trim() || busy}>
+            {busy ? "Preparing worktrees…" : "Create Workspace →"}
+          </button>
         </div>
       </div>
     </div>

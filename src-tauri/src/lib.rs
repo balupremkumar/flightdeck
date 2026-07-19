@@ -12,6 +12,7 @@ mod persist;
 mod procname;
 mod support;
 mod vendors;
+mod worktree;
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
@@ -452,6 +453,13 @@ pub fn run() {
             kill_orphans,
             export_support_bundle,
             gitstatus::git_status,
+            worktree::git_repo_toplevel,
+            worktree::git_worktree_add,
+            worktree::git_worktree_remove,
+            worktree::git_worktree_gc,
+            worktree::git_diff_summary,
+            worktree::git_file_diff,
+            worktree::git_merge_back,
             persist::save_session,
             persist::load_session,
             persist::has_previous_session,

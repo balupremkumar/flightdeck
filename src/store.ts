@@ -1,11 +1,16 @@
 import { create } from "zustand";
 
 export type PaneState = "starting" | "running" | "idle" | "waiting" | "error";
+// Worktree isolation (Tier 0): set when the pane runs in its own git worktree.
+// `cwd` then IS the worktree path; `baseBranch` is what review diffs against
+// and what merge-back targets. All absent for a plain (shared-folder) pane.
+export interface WorktreeRef { worktreePath: string; branch: string; baseBranch: string; }
 // `epoch` bumps on restart; PaneView keys the Terminal on it so a bump remounts
-// the component and respawns the PTY.
-export interface PaneModel { id: number; vendor: string; cwd: string; state: PaneState; epoch: number; title?: string; }
+// the component and respawns the PTY (same cwd — an isolated pane restarts
+// into its existing worktree, never a new one).
+export interface PaneModel extends Partial<WorktreeRef> { id: number; vendor: string; cwd: string; state: PaneState; epoch: number; title?: string; }
 export interface Workspace { id: number; name: string; root: string; panes: PaneModel[]; focused: number | null; }
-export interface NewPane { vendor: string; cwd: string; }
+export interface NewPane extends Partial<WorktreeRef> { vendor: string; cwd: string; }
 
 interface AppState {
   workspaces: Workspace[];
@@ -16,7 +21,7 @@ interface AppState {
   createWorkspace: (root: string, panes: NewPane[]) => void;
   closeWorkspace: (id: number) => void;
   switchWorkspace: (id: number) => void;
-  addPane: (wsId: number, vendor: string, cwd: string) => void;
+  addPane: (wsId: number, vendor: string, cwd: string, wt?: WorktreeRef) => void;
   closePane: (wsId: number, paneId: number) => void;
   focusPane: (wsId: number, paneId: number) => void;
   setPaneState: (paneId: number, state: PaneState) => void;
@@ -57,7 +62,16 @@ export const useApp = create<AppState>((set) => ({
         id: ++wseq,
         name: baseName(root),
         root,
-        panes: panes.map((p) => ({ id: ++pseq, vendor: p.vendor, cwd: p.cwd, state: "starting" as PaneState, epoch: 0 })),
+        panes: panes.map((p) => ({
+          id: ++pseq,
+          vendor: p.vendor,
+          cwd: p.cwd,
+          state: "starting" as PaneState,
+          epoch: 0,
+          worktreePath: p.worktreePath,
+          branch: p.branch,
+          baseBranch: p.baseBranch,
+        })),
         focused: null,
       };
       ws.focused = ws.panes[0]?.id ?? null;
@@ -73,11 +87,11 @@ export const useApp = create<AppState>((set) => ({
 
   switchWorkspace: (id) => set({ activeId: id }),
 
-  addPane: (wsId, vendor, cwd) =>
+  addPane: (wsId, vendor, cwd, wt) =>
     set((s) => ({
       workspaces: s.workspaces.map((w) => {
         if (w.id !== wsId) return w;
-        const pane: PaneModel = { id: ++pseq, vendor, cwd, state: "starting", epoch: 0 };
+        const pane: PaneModel = { id: ++pseq, vendor, cwd, state: "starting", epoch: 0, ...wt };
         return { ...w, panes: [...w.panes, pane], focused: pane.id };
       }),
     })),

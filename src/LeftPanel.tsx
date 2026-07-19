@@ -3,6 +3,7 @@ import type { MouseEvent as ReactMouseEvent, DragEvent as ReactDragEvent } from 
 import { useApp, type PaneModel, type Workspace } from "./store";
 import { useUI } from "./ui";
 import { defaultCycle } from "./vendors";
+import { closeWorkspaceWithCleanup, preparePanes, isolationPref } from "./worktrees";
 import { IconPlus, IconClose, IconBoard, IconDrag } from "./Icons";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
@@ -51,7 +52,6 @@ export function LeftPanel({ expanded, view, setView }: { expanded: boolean; view
   const workspaces = useApp((s) => s.workspaces);
   const activeId = useApp((s) => s.activeId);
   const switchWorkspace = useApp((s) => s.switchWorkspace);
-  const closeWorkspace = useApp((s) => s.closeWorkspace);
   const startCreate = useApp((s) => s.startCreate);
   const createWorkspace = useApp((s) => s.createWorkspace);
   const renameWorkspace = useApp((s) => s.renameWorkspace);
@@ -129,9 +129,12 @@ export function LeftPanel({ expanded, view, setView }: { expanded: boolean; view
         const path = e.payload.paths[0];
         if (!path) return;
         invoke("fs_list_dir", { path })
-          .then(() => {
+          .then(async () => {
             const cycle = defaultCycle();
-            const panes = Array.from({ length: 4 }, (_, i) => ({ vendor: cycle[i % cycle.length], cwd: path }));
+            const slots = Array.from({ length: 4 }, (_, i) => ({ vendor: cycle[i % cycle.length], cwd: path }));
+            // Same worktree-aware path as New Workspace — a dropped repo gets
+            // isolated panes per the remembered preference.
+            const panes = await preparePanes(slots, isolationPref());
             createWorkspace(path, panes);
             setView("terminals");
             pushToast("success", `Created workspace from ${path}`);
@@ -165,10 +168,10 @@ export function LeftPanel({ expanded, view, setView }: { expanded: boolean; view
         body: `${n} pane${n === 1 ? "" : "s"} still live. Closing ends ${n === 1 ? "its session" : "their sessions"} — the running agents can't be brought back.`,
         confirmLabel: "Close & end sessions",
         danger: true,
-        onConfirm: () => { closeWorkspace(w.id); pushToast("info", `Closed ${w.name}`); },
+        onConfirm: () => { closeWorkspaceWithCleanup(w); pushToast("info", `Closed ${w.name}`); },
       });
     } else {
-      closeWorkspace(w.id);
+      closeWorkspaceWithCleanup(w);
     }
   };
 
@@ -196,9 +199,16 @@ export function LeftPanel({ expanded, view, setView }: { expanded: boolean; view
   };
 
   const duplicate = (w: Workspace) => {
-    createWorkspace(w.root, w.panes.map((p) => ({ vendor: p.vendor, cwd: p.cwd })));
     setMenu(null);
-    pushToast("success", `Duplicated ${w.name}`);
+    // Isolated panes must NOT share the original's worktrees — re-prepare from
+    // the workspace root so the duplicate gets fresh worktrees of its own.
+    void preparePanes(
+      w.panes.map((p) => ({ vendor: p.vendor, cwd: p.worktreePath ? w.root : p.cwd })),
+      w.panes.some((p) => !!p.worktreePath)
+    ).then((panes) => {
+      createWorkspace(w.root, panes);
+      pushToast("success", `Duplicated ${w.name}`);
+    });
   };
 
   const reveal = async (w: Workspace) => {

@@ -48,6 +48,15 @@ pub struct PersistedPane {
     pub cwd: String,
     #[serde(default)]
     pub title: Option<String>,
+    // Worktree isolation (Tier 0): recorded so restore can reattach/recreate
+    // the pane's worktree and launch-time GC knows which worktrees are claimed.
+    // All None for a non-isolated pane; old session docs load with defaults.
+    #[serde(default)]
+    pub worktree_path: Option<String>,
+    #[serde(default)]
+    pub branch: Option<String>,
+    #[serde(default)]
+    pub base_branch: Option<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]

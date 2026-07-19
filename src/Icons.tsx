@@ -119,6 +119,37 @@ export const IconTerminalPlus = (p: IconProps) => (
   </Svg>
 );
 
+// Diff / compare — two columns with change ticks; the review-surface glyph.
+export const IconDiff = (p: IconProps) => (
+  <Svg {...p}>
+    <rect x="3" y="3.5" width="6" height="13" rx="1.3" />
+    <rect x="11" y="3.5" width="6" height="13" rx="1.3" />
+    <path d="M6 6.6 V9.4" />
+    <path d="M4.6 8 H7.4" />
+    <path d="M12.6 12 H15.4" />
+  </Svg>
+);
+
+// Merge — two branch dots joining into one line (merge-back action).
+export const IconMerge = (p: IconProps) => (
+  <Svg {...p}>
+    <circle cx="5.5" cy="5.5" r="1.8" />
+    <circle cx="5.5" cy="14.5" r="1.8" />
+    <circle cx="14.5" cy="10" r="1.8" />
+    <path d="M5.5 7.3 a6.5 6.5 0 0 0 7.2 2.7" />
+    <path d="M5.5 12.7 a6.5 6.5 0 0 1 7.2 -2.7" />
+  </Svg>
+);
+
+// Commit — a dot on a line (git commit).
+export const IconCommit = (p: IconProps) => (
+  <Svg {...p}>
+    <circle cx="10" cy="10" r="2.6" />
+    <path d="M2.8 10 H7.4" />
+    <path d="M12.6 10 H17.2" />
+  </Svg>
+);
+
 // Wipe — a destructive full-reset glyph (trash-adjacent), distinct from the
 // circular refresh arrow used for the harmless per-pane restart.
 export const IconWipe = (p: IconProps) => (

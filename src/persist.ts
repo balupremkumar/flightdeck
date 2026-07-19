@@ -13,6 +13,11 @@ export interface PersistedPane {
   vendor: string;
   cwd: string;
   title?: string;
+  // Worktree isolation: lets restore reattach/recreate the pane's worktree and
+  // tells launch-time GC which worktrees are still claimed. Absent for plain panes.
+  worktreePath?: string;
+  branch?: string;
+  baseBranch?: string;
 }
 
 export interface PersistedWorkspace {

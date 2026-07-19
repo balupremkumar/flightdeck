@@ -7,11 +7,13 @@ import { useUI } from "./ui";
 import { Terminal, type TerminalHandle } from "./Terminal";
 import {
   IconBranch, IconClose, IconRefresh, IconDrag, IconOverflow,
-  IconMaximizePane, IconMinimize, IconFolder, IconChevron,
+  IconMaximizePane, IconMinimize, IconFolder, IconChevron, IconDiff,
 } from "./Icons";
+import type { DiffSummary } from "./worktrees";
 import "./panes.css";
 
 import { vendorShort } from "./vendors";
+import { closePaneWithCleanup } from "./worktrees";
 const MIN_FONT = 9;
 const MAX_FONT = 22;
 const DEFAULT_FONT = 13;
@@ -69,7 +71,6 @@ export function PaneView({
 }) {
   const focused = useApp((s) => s.workspaces.find((w) => w.id === wsId)?.focused === pane.id);
   const focusPane = useApp((s) => s.focusPane);
-  const closePane = useApp((s) => s.closePane);
   const setPaneState = useApp((s) => s.setPaneState);
   const restartPane = useApp((s) => s.restartPane);
   const renamePane = useApp((s) => s.renamePane);
@@ -79,16 +80,20 @@ export function PaneView({
 
   // Closing a pane kills its PTY. If the agent is still live, confirm first —
   // a misclick otherwise ends a running session with no way back (matches the
-  // same guard the workspace-close path uses).
+  // same guard the workspace-close path uses). Isolated panes get their
+  // worktree cleaned up too (dirty ones prompt keep/discard afterwards).
+  const isolated = !!pane.worktreePath;
   const tryClosePane = () => {
     setMenuOpen(false);
-    if (dead) { closePane(wsId, pane.id); return; }
+    if (dead) { closePaneWithCleanup(wsId, pane); return; }
     requestConfirm({
       title: `Close ${displayName}?`,
-      body: "This pane is still live. Closing it ends the session — the running agent can't be brought back.",
+      body:
+        "This pane is still live. Closing it ends the session — the running agent can't be brought back." +
+        (isolated ? " Its worktree will be cleaned up (you'll be asked about unmerged work)." : ""),
       confirmLabel: "Close & end session",
       danger: true,
-      onConfirm: () => closePane(wsId, pane.id),
+      onConfirm: () => closePaneWithCleanup(wsId, pane),
     });
   };
 
@@ -103,6 +108,10 @@ export function PaneView({
   const [query, setQuery] = useState("");
   const [matchInfo, setMatchInfo] = useState<{ index: number; count: number } | null>(null);
   const [gitStatus, setGitStatus] = useState<GitStatus | null>(null);
+  // Diff-stat badge for isolated panes: "what did this agent change" at a
+  // glance, polled on the same cadence as the branch pill. Click → review drawer.
+  const [diffStat, setDiffStat] = useState<{ files: number; added: number; deleted: number } | null>(null);
+  const setReviewPane = useUI((s) => s.setReviewPane);
   // Live foreground process name (backend pty://proc via Terminal's onProc).
   const [procName, setProcName] = useState("");
   const nameRef = useRef<HTMLInputElement>(null);
@@ -192,6 +201,24 @@ export function PaneView({
     return () => { cancelled = true; clearInterval(id); };
   }, [pane.cwd, pane.epoch]);
 
+  // Diff-stat badge (isolated panes only — plain panes would just mirror the
+  // user's own uncommitted work, which isn't this pane's doing).
+  useEffect(() => {
+    if (!pane.worktreePath) { setDiffStat(null); return; }
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const s = await invoke<DiffSummary>("git_diff_summary", { cwd: pane.cwd, base: pane.baseBranch ?? null });
+        if (!cancelled) setDiffStat({ files: s.files.length, added: s.totalAdded, deleted: s.totalDeleted });
+      } catch {
+        if (!cancelled) setDiffStat(null);
+      }
+    };
+    poll();
+    const id = setInterval(poll, GIT_POLL_MS);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [pane.cwd, pane.epoch, pane.worktreePath, pane.baseBranch]);
+
   return (
     <div
       className={
@@ -252,6 +279,17 @@ export function PaneView({
             )}
           </span>
         )}
+        {diffStat && diffStat.files > 0 && (
+          <button
+            className="pdiff"
+            onClick={() => setReviewPane(pane.id)}
+            title={`${diffStat.files} file${diffStat.files === 1 ? "" : "s"} changed — review & merge`}
+          >
+            <IconDiff size={11} />
+            <em className="add">+{diffStat.added}</em>
+            <em className="del">−{diffStat.deleted}</em>
+          </button>
+        )}
         <span className="sp" />
         {dead && (
           <button className="prestart" onClick={() => restartPane(pane.id)} title="Restart this pane">
@@ -281,6 +319,11 @@ export function PaneView({
                 {maximized ? <IconMinimize size={13} /> : <IconMaximizePane size={13} />}
                 {maximized ? "Restore" : "Maximise"}
               </button>
+              {gitStatus?.isRepo && (
+                <button className="pmenu-item" onClick={() => { setReviewPane(pane.id); closeMenu(); }}>
+                  <IconDiff size={13} /> Review changes
+                </button>
+              )}
               <button className="pmenu-item" onClick={copyCwd}>
                 <IconFolder size={13} /> Copy working directory
               </button>

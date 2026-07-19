@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useApp } from "./store";
 import { useUI, setTheme } from "./ui";
+import { closePaneWithCleanup } from "./worktrees";
 import { IconWorkspace, IconAgent, IconSettings, IconClose } from "./Icons";
 import "./leftpanel.css";
 
@@ -57,13 +58,13 @@ export function CommandPalette() {
   const focusPane = useApp((s) => s.focusPane);
   const startCreate = useApp((s) => s.startCreate);
   const restartPane = useApp((s) => s.restartPane);
-  const closePane = useApp((s) => s.closePane);
   const setSettingsOpen = useUI((s) => s.setSettingsOpen);
   const pushToast = useUI((s) => s.pushToast);
   const requestConfirm = useUI((s) => s.requestConfirm);
   const explorerOpen = useUI((s) => s.explorerOpen);
   const setExplorerOpen = useUI((s) => s.setExplorerOpen);
   const setBroadcastOpen = useUI((s) => s.setBroadcastOpen);
+  const setReviewPane = useUI((s) => s.setReviewPane);
 
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -119,6 +120,16 @@ export function CommandPalette() {
             },
           });
         }
+        // Review drawer for isolated (worktree) panes — same surface as the
+        // pane header's diff-stat badge.
+        if (p.worktreePath) {
+          list.push({
+            id: `review:${p.id}`,
+            section: "Actions",
+            label: `Review changes — ${p.title || p.vendor} (${w.name})`,
+            run: () => { switchWorkspace(w.id); setReviewPane(p.id); },
+          });
+        }
         // Same guard as the pane header's close button: a dead pane closes
         // directly, a live one confirms first (closing kills the PTY / ends
         // the agent session with no way back).
@@ -130,13 +141,13 @@ export function CommandPalette() {
           run: () => {
             switchWorkspace(w.id);
             focusPane(w.id, p.id);
-            if (paneDead) { closePane(w.id, p.id); return; }
+            if (paneDead) { closePaneWithCleanup(w.id, p); return; }
             requestConfirm({
               title: `Close ${p.title || p.vendor}?`,
               body: "This pane is still live. Closing it ends the session — the running agent can't be brought back.",
               confirmLabel: "Close & end session",
               danger: true,
-              onConfirm: () => closePane(w.id, p.id),
+              onConfirm: () => closePaneWithCleanup(w.id, p),
             });
           },
         });
@@ -156,8 +167,8 @@ export function CommandPalette() {
     list.push({ id: "act:open-broadcast", section: "Actions", label: "Open broadcast", run: () => setBroadcastOpen(true) });
     return list;
   }, [
-    workspaces, switchWorkspace, focusPane, restartPane, closePane, startCreate,
-    setSettingsOpen, pushToast, requestConfirm, explorerOpen, setExplorerOpen, setBroadcastOpen,
+    workspaces, switchWorkspace, focusPane, restartPane, startCreate,
+    setSettingsOpen, pushToast, requestConfirm, explorerOpen, setExplorerOpen, setBroadcastOpen, setReviewPane,
   ]);
 
   const results = useMemo(() => {

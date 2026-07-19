@@ -81,6 +81,12 @@ interface UIState {
   broadcastOpen: boolean;
   setBroadcastOpen: (open: boolean) => void;
 
+  // Review drawer (worktree diff/merge surface): pane id being reviewed, or
+  // null when closed. Store-level so the pane header, command palette, and
+  // future board cards can all open it.
+  reviewPaneId: number | null;
+  setReviewPane: (paneId: number | null) => void;
+
   broadcasts: BroadcastRecord[];
   pushBroadcastRecord: (r: Omit<BroadcastRecord, "id" | "at">) => void;
 }
@@ -168,6 +174,9 @@ export const useUI = create<UIState>((set) => ({
   },
   broadcastOpen: false,
   setBroadcastOpen: (broadcastOpen) => set({ broadcastOpen }),
+
+  reviewPaneId: null,
+  setReviewPane: (reviewPaneId) => set({ reviewPaneId }),
 
   broadcasts: [],
   pushBroadcastRecord: (r) =>

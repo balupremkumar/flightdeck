@@ -5,6 +5,7 @@ import { useUI } from "./ui";
 import "./Board.css";
 import { useBoardStore, COLUMNS } from "./board/boardStore";
 import { useVendors, agentVendors, vendorShort } from "./vendors";
+import { spawnPane } from "./worktrees";
 import { CardItem } from "./board/CardItem";
 import { CardDetail } from "./board/CardDetail";
 import { exportBoardMarkdown } from "./board/markdown";
@@ -80,7 +81,9 @@ export function Board() {
 
   // Card -> pane dispatch (BACKLOG D11 / R7): dropping (or moving) a card into
   // In Progress spawns an agent pane rooted at the active workspace and links
-  // the card to it, so its live state can drive the card's status dot.
+  // the card to it, so its live state can drive the card's status dot. Goes
+  // through the async worktree-aware spawn path — a dispatched agent gets its
+  // own isolated worktree exactly like a hand-added pane.
   function dispatchToPane(card: Card) {
     if (card.paneId != null && workspaces.some((w) => w.panes.some((p) => p.id === card.paneId))) return; // already live
     if (activeId == null) {
@@ -91,12 +94,12 @@ export function Board() {
     if (!ws) return;
     // Prefer the card's agent, else the first installed agent the registry knows.
     const vendor: Vendor = card.agent ?? agentVendors().find((a) => a.installed)?.id ?? "claude";
-    useApp.getState().addPane(activeId, vendor, ws.root);
-    const newPaneId = useApp.getState().workspaces.find((w) => w.id === activeId)?.focused;
-    if (newPaneId != null) {
-      linkPane(card.id, activeId, newPaneId);
-      pushToast("success", `Dispatched "${card.title}" to ${vendorShort(vendor)}`);
-    }
+    void spawnPane(activeId, vendor, ws.root).then((newPaneId) => {
+      if (newPaneId != null) {
+        linkPane(card.id, activeId, newPaneId);
+        pushToast("success", `Dispatched "${card.title}" to ${vendorShort(vendor)}`);
+      }
+    });
   }
 
   function flashComplete(id: string) {
