@@ -1,0 +1,170 @@
+/* ============================================================
+   Flightdeck — Deep Cove theme
+   Single source of truth for all colour tokens (dark + light).
+   App.css and Board.css must consume these — delete their local
+   :root / .board colour blocks so the board can never drift again.
+   ============================================================ */
+
+:root {
+  /* surfaces (bg -> surface -> elevated) */
+  --abyss:#05080E;
+  --bg:#070B12;
+  --bg-2:#090F18;
+  --surface:#0E1523;
+  --surface-2:#141F31;
+  --elevated:#1A2637;
+
+  /* lines */
+  --line:rgba(128,168,212,0.13);
+  --line-strong:rgba(128,168,212,0.26);
+
+  /* ink */
+  --text:#EAF1F8;
+  --muted:#94A6BC;
+  --faint:#71839A;
+
+  /* brand accents */
+  --ice:#9AE9FF;        /* primary accent — luminous ice-azure */
+  --azure:#43A6F5;      /* accent / links */
+  --aqua:#57E5C6;       /* success accent */
+  --deepblue:#3F6BFF;   /* gradient end */
+  --red:#FF5C6A;
+  --accent:#43A6F5;
+
+  /* pane status */
+  --st-starting:#43A6F5;
+  --st-running:#52E08A;
+  --st-waiting:#F2B03D;  /* Kove-tuned warm gold (palette has no amber) */
+  --st-idle:#71839A;
+  --st-error:#FF5C6A;
+  --st-exited:#57E5C6;
+
+  /* agent identity (no brand token — a light-safe pair) */
+  --agent-claude:#8FA2FF;
+
+  /* gradient + depth */
+  --accent-grad:linear-gradient(125deg,#9AE9FF 0%,#43A6F5 48%,#3F6BFF 100%);
+  --glow:0 0 0 1px rgba(67,166,245,0.20), 0 8px 40px rgba(67,166,245,0.22);
+  --shadow-lg:0 30px 70px -20px rgba(0,0,0,0.75);
+
+  /* type */
+  --font-sans:"Schibsted Grotesk","Segoe UI Variable","Segoe UI",system-ui,sans-serif;
+  --font-mono:"JetBrains Mono","Cascadia Code",Consolas,ui-monospace,monospace;
+
+  /* motion */
+  --ease-out:cubic-bezier(0.16,1,0.3,1);
+  --ease-soft:cubic-bezier(0.4,0,0.1,1);
+}
+
+:root[data-theme="light"] {
+  --abyss:#DEE6F0;
+  --bg:#EFF3F8;
+  --bg-2:#E6EDF5;
+  --surface:#FFFFFF;
+  --surface-2:#EDF2F8;
+  --elevated:#FFFFFF;
+
+  --line:rgba(20,40,70,0.15);
+  --line-strong:rgba(20,40,70,0.30);
+
+  --text:#0B1320;
+  --muted:#47586C;
+  --faint:#5F7085;
+
+  /* pale accents flip to ink-safe values (ice/aqua vanish on white) */
+  --ice:#1C72D0;
+  --azure:#1C72D0;
+  --aqua:#0E8C66;
+  --deepblue:#2B53E0;
+  --red:#D6394A;
+  --accent:#1C72D0;
+
+  --st-starting:#1C72D0;
+  --st-running:#12A65B;
+  --st-waiting:#C77D14;
+  --st-idle:#5F7085;
+  --st-error:#D6394A;
+  --st-exited:#0E8C66;
+
+  --agent-claude:#5B63D6;
+
+  --accent-grad:linear-gradient(125deg,#1FA0D8 0%,#1C72D0 48%,#2B53E0 100%);
+  --glow:0 0 0 1px rgba(28,114,208,0.22), 0 8px 40px rgba(28,114,208,0.16);
+  --shadow-lg:0 24px 60px -22px rgba(20,40,70,0.28);
+}
+
+/* ------------------------------------------------------------------
+   Additional built-in themes. Each is a full token set on its own
+   data-theme value, cascading over the base :root (dark) block above —
+   see themes.ts for the JS-side registry (id/label/swatch) that drives
+   the picker. Applying a theme only ever sets the data-theme attribute;
+   accent + colour-blind overrides layer on top as inline custom
+   properties (see themes.ts applyAccent / applyColorBlindSafe).
+   ------------------------------------------------------------------ */
+
+:root[data-theme="dracula"] {
+  --abyss:#191A21; --bg:#282A36; --bg-2:#21222C; --surface:#343746; --surface-2:#3A3D4D; --elevated:#44475A;
+  --line:rgba(189,147,249,0.14); --line-strong:rgba(189,147,249,0.28);
+  --text:#F8F8F2; --muted:#B6B8C9; --faint:#7B87B0;
+  --ice:#8BE9FD; --azure:#62D6F5; --aqua:#69FFC4; --deepblue:#6272A4; --red:#FF5555; --accent:#BD93F9;
+  --st-starting:#8BE9FD; --st-running:#50FA7B; --st-waiting:#F1FA8C; --st-idle:#6272A4; --st-error:#FF5555; --st-exited:#69FFC4;
+  --agent-claude:#BD93F9;
+  --accent-grad:linear-gradient(125deg,#8BE9FD 0%,#BD93F9 48%,#FF79C6 100%);
+  --glow:0 0 0 1px rgba(189,147,249,0.22), 0 8px 40px rgba(189,147,249,0.22);
+  --shadow-lg:0 30px 70px -20px rgba(0,0,0,0.80);
+}
+
+:root[data-theme="gruvbox"] {
+  --abyss:#1D2021; --bg:#282828; --bg-2:#242424; --surface:#3C3836; --surface-2:#463F3B; --elevated:#504945;
+  --line:rgba(235,219,178,0.12); --line-strong:rgba(235,219,178,0.24);
+  --text:#EBDBB2; --muted:#BDAE93; --faint:#928374;
+  --ice:#83A598; --azure:#458588; --aqua:#8EC07C; --deepblue:#458588; --red:#FB4934; --accent:#FE8019;
+  --st-starting:#83A598; --st-running:#B8BB26; --st-waiting:#FABD2F; --st-idle:#928374; --st-error:#FB4934; --st-exited:#8EC07C;
+  --agent-claude:#D3869B;
+  --accent-grad:linear-gradient(125deg,#FABD2F 0%,#FE8019 48%,#D65D0E 100%);
+  --glow:0 0 0 1px rgba(254,128,25,0.22), 0 8px 40px rgba(254,128,25,0.20);
+  --shadow-lg:0 30px 70px -20px rgba(0,0,0,0.75);
+}
+
+:root[data-theme="nord"] {
+  --abyss:#242933; --bg:#2E3440; --bg-2:#292E39; --surface:#3B4252; --surface-2:#434C5E; --elevated:#4C566A;
+  --line:rgba(216,222,233,0.12); --line-strong:rgba(216,222,233,0.24);
+  --text:#ECEFF4; --muted:#D8DEE9; --faint:#9AA6BF;
+  --ice:#88C0D0; --azure:#81A1C1; --aqua:#8FBCBB; --deepblue:#5E81AC; --red:#BF616A; --accent:#81A1C1;
+  --st-starting:#88C0D0; --st-running:#A3BE8C; --st-waiting:#EBCB8B; --st-idle:#4C566A; --st-error:#BF616A; --st-exited:#8FBCBB;
+  --agent-claude:#B48EAD;
+  --accent-grad:linear-gradient(125deg,#88C0D0 0%,#81A1C1 48%,#5E81AC 100%);
+  --glow:0 0 0 1px rgba(136,192,208,0.20), 0 8px 40px rgba(136,192,208,0.20);
+  --shadow-lg:0 30px 70px -20px rgba(0,0,0,0.75);
+}
+
+:root[data-theme="high-contrast"] {
+  --abyss:#000000; --bg:#000000; --bg-2:#0A0A0A; --surface:#141414; --surface-2:#1E1E1E; --elevated:#262626;
+  --line:rgba(255,255,255,0.35); --line-strong:rgba(255,255,255,0.60);
+  --text:#FFFFFF; --muted:#E6E6E6; --faint:#BFBFBF;
+  --ice:#FFD400; --azure:#5AC8FA; --aqua:#00E5A0; --deepblue:#5AC8FA; --red:#FF3B30; --accent:#FFD400;
+  --st-starting:#5AC8FA; --st-running:#00E5A0; --st-waiting:#FFD400; --st-idle:#8C8C8C; --st-error:#FF3B30; --st-exited:#FFFFFF;
+  --agent-claude:#5AC8FA;
+  --accent-grad:linear-gradient(125deg,#FFEB6E 0%,#FFD400 55%,#FFAA00 100%);
+  --glow:0 0 0 2px #FFD400, 0 0 0 1px #000;
+  --shadow-lg:0 0 0 1px rgba(255,255,255,0.40), 0 30px 70px -20px rgba(0,0,0,0.90);
+}
+
+/* Focus ring — 2px accent, offset. Applies to every interactive element. */
+:where(button, a, input, select, [tabindex]):focus-visible {
+  outline:2px solid var(--ice);
+  outline-offset:2px;
+}
+
+/* Reduced motion (93) — opt-in via Settings. Collapses every CSS transition
+   and animation app-wide to near-zero (not "none", so code waiting on
+   transitionend/animationend doesn't hang) regardless of which stylesheet
+   declared it. */
+:root[data-reduced-motion="1"] *,
+:root[data-reduced-motion="1"] *::before,
+:root[data-reduced-motion="1"] *::after {
+  animation-duration: 0.001ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.001ms !important;
+  scroll-behavior: auto !important;
+}

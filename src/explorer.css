@@ -1,0 +1,216 @@
+/* Flightdeck — Explorer panel. Tokens only (theme.css); never hardcode hex. */
+
+.explorer {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
+}
+
+/* ---------- header ---------- */
+.ex-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  padding: 8px 8px;
+  border-bottom: 1px solid var(--line);
+}
+.ex-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  flex: none;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: transform .14s var(--ease-out), color .14s ease, background-color .14s ease;
+}
+.ex-toggle svg { transition: transform .14s var(--ease-out); }
+.ex-toggle.open svg { transform: rotate(90deg); }
+.ex-toggle:hover { color: var(--text); background: color-mix(in srgb, var(--text) 8%, transparent); }
+
+.ex-title {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.ex-branch {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 8px 1px 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 10.5px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 130px;
+}
+.ex-branch svg { flex: none; }
+.ex-branch.dirty { color: var(--st-waiting); border-color: color-mix(in srgb, var(--st-waiting) 40%, var(--line)); }
+.ex-dirty-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--st-waiting); flex: none; margin-left: 1px; }
+
+.ex-head .sp { flex: 1; min-width: 4px; }
+
+.ex-refresh {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  flex: none;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  border-radius: 5px;
+  cursor: pointer;
+  transition: color .14s ease, background-color .14s ease;
+}
+.ex-refresh:hover { color: var(--text); background: color-mix(in srgb, var(--text) 8%, transparent); }
+
+/* ---------- body / tree ---------- */
+.ex-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 4px 0 8px;
+}
+
+.ex-tree { min-width: 0; }
+.ex-node { min-width: 0; }
+
+.ex-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  height: 24px;
+  padding-right: 8px;
+  border-radius: 5px;
+  cursor: pointer;
+  user-select: none;
+  transition: background-color .12s ease;
+}
+.ex-row:hover { background: color-mix(in srgb, var(--text) 6%, transparent); }
+.ex-row:focus-visible { outline: 2px solid var(--ice); outline-offset: -2px; }
+
+.ex-chev {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 13px;
+  height: 13px;
+  flex: none;
+  color: var(--faint);
+}
+.ex-chev svg { transition: transform .14s var(--ease-out); }
+.ex-chev.open svg { transform: rotate(90deg); }
+.ex-chev-spacer { width: 13px; flex: none; }
+
+.ex-icon { display: inline-flex; flex: none; color: var(--muted); }
+
+.ex-name {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: baseline;
+}
+.ex-name .ex-head {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ex-name .ex-tail {
+  flex: none;
+  white-space: nowrap;
+  color: var(--faint);
+}
+
+.ex-lock { flex: none; color: var(--faint); margin-left: 2px; }
+
+.ex-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  flex: none;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  border-radius: 5px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity .12s ease, color .14s ease, background-color .14s ease;
+}
+.ex-row:hover .ex-action,
+.ex-action:focus-visible { opacity: 1; }
+.ex-action:hover { color: var(--ice); background: color-mix(in srgb, var(--ice) 14%, transparent); }
+
+.ex-ignored { color: var(--faint); }
+.ex-ignored .ex-icon,
+.ex-ignored .ex-chev { opacity: .55; }
+.ex-ignored .ex-name .ex-head,
+.ex-ignored .ex-name .ex-tail { opacity: .55; }
+
+/* ---------- empty / error / loading states ---------- */
+.ex-state {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  font-size: 12px;
+  color: var(--faint);
+}
+.ex-retry {
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ice);
+  background: color-mix(in srgb, var(--ice) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ice) 35%, transparent);
+  border-radius: 6px;
+  padding: 3px 10px;
+  cursor: pointer;
+  transition: background-color .14s ease;
+}
+.ex-retry:hover { background: color-mix(in srgb, var(--ice) 22%, transparent); }
+
+.ex-empty {
+  color: var(--faint);
+  font-style: italic;
+  cursor: default;
+}
+.ex-empty:hover { background: transparent; }
+
+/* ---------- loading skeleton ---------- */
+.ex-skel-group { min-width: 0; }
+.ex-skel { cursor: default; }
+.ex-skel:hover { background: transparent; }
+.ex-skel-bar {
+  height: 9px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--text) 9%, transparent);
+  animation: ex-shimmer 1.4s ease-in-out infinite;
+}
+@keyframes ex-shimmer {
+  0%, 100% { opacity: .55; }
+  50% { opacity: 1; }
+}

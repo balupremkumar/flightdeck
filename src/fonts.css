@@ -1,0 +1,38 @@
+/* ============================================================
+   Flightdeck fonts — bundled, offline-safe, no OS install.
+   Drop the .woff2 files into src/assets/fonts/ and import this
+   once (e.g. in main.tsx or at the top of App.css via @import).
+   WebView CSP: do NOT use a Google-Fonts <link> — it can fail
+   offline. Bundled @font-face is the required approach.
+
+   Files to bundle (7):
+     SchibstedGrotesk-Regular.woff2   (400)
+     SchibstedGrotesk-Medium.woff2    (500)
+     SchibstedGrotesk-SemiBold.woff2  (600)
+     SchibstedGrotesk-Bold.woff2      (700)
+     JetBrainsMono-Regular.woff2      (400)
+     JetBrainsMono-Medium.woff2       (500)
+     JetBrainsMono-SemiBold.woff2     (600)
+   Sources: fonts.google.com/specimen/Schibsted+Grotesk
+            fonts.google.com/specimen/JetBrains+Mono
+   ============================================================ */
+
+@font-face { font-family:"Schibsted Grotesk"; font-weight:400; font-style:normal; font-display:swap;
+  src:url("./assets/fonts/SchibstedGrotesk-Regular.woff2") format("woff2"); }
+@font-face { font-family:"Schibsted Grotesk"; font-weight:500; font-style:normal; font-display:swap;
+  src:url("./assets/fonts/SchibstedGrotesk-Medium.woff2") format("woff2"); }
+@font-face { font-family:"Schibsted Grotesk"; font-weight:600; font-style:normal; font-display:swap;
+  src:url("./assets/fonts/SchibstedGrotesk-SemiBold.woff2") format("woff2"); }
+@font-face { font-family:"Schibsted Grotesk"; font-weight:700; font-style:normal; font-display:swap;
+  src:url("./assets/fonts/SchibstedGrotesk-Bold.woff2") format("woff2"); }
+
+@font-face { font-family:"JetBrains Mono"; font-weight:400; font-style:normal; font-display:swap;
+  src:url("./assets/fonts/JetBrainsMono-Regular.woff2") format("woff2"); }
+@font-face { font-family:"JetBrains Mono"; font-weight:500; font-style:normal; font-display:swap;
+  src:url("./assets/fonts/JetBrainsMono-Medium.woff2") format("woff2"); }
+@font-face { font-family:"JetBrains Mono"; font-weight:600; font-style:normal; font-display:swap;
+  src:url("./assets/fonts/JetBrainsMono-SemiBold.woff2") format("woff2"); }
+
+/* Fallback stacks are already exposed as --font-sans / --font-mono in theme.css.
+   A missing file degrades cleanly to Segoe UI / Cascadia Code.
+   REMOVE every "Plus Jakarta Sans" reference (App.css body + Board.css). */

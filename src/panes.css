@@ -1,0 +1,154 @@
+/* ============================================================
+   Flightdeck — pane view (Phase 3)
+   Drag-to-reorder, maximise/focus mode, inline rename, the
+   overflow menu (restart/maximise/copy cwd/reveal/close) and
+   per-pane font zoom. Tokens only from theme.css.
+   ============================================================ */
+
+/* Drag-to-reorder grip — lives at the start of .phead, drag source only. */
+.pgrip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  flex: none;
+  color: var(--faint);
+  cursor: grab;
+  opacity: 0;
+  transition: opacity .14s ease, color .14s ease;
+}
+.phead:hover .pgrip { opacity: 1; }
+.pgrip:hover { color: var(--text); }
+.pgrip:active { cursor: grabbing; }
+
+/* Drag state on the pane being moved / the pane currently under the cursor. */
+.pane.dragging { opacity: .45; }
+.pane.drop-target { box-shadow: inset 0 0 0 2px var(--ice); }
+.pane.drop-target::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: color-mix(in srgb, var(--ice) 8%, transparent);
+  z-index: 2;
+}
+
+/* Inline pane rename */
+.prename {
+  font: inherit;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--ice);
+  border-radius: 4px;
+  padding: 1px 6px;
+  min-width: 60px;
+  max-width: 200px;
+  outline: none;
+}
+.pname { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: text; }
+
+/* Maximise / focus mode toggle */
+.pmaxbtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  flex: none;
+  border: 0;
+  background: transparent;
+  color: var(--faint);
+  cursor: pointer;
+  border-radius: 5px;
+  transition: color .14s ease, background-color .14s ease;
+}
+.pmaxbtn:hover { color: var(--text); background: color-mix(in srgb, var(--text) 8%, transparent); }
+.pmaxbtn:focus-visible { outline: 2px solid var(--ice); outline-offset: 1px; }
+
+/* Focus mode: hide every row/cell that doesn't contain the maximised pane
+   (siblings stay MOUNTED, just display:none — PTYs keep running). */
+.pg-maximized .rz { display: none; }
+.pg-maximized .pg-row:not(:has(.pane.pmax)) { display: none; }
+.pg-maximized .pg-cell:not(:has(.pane.pmax)) { display: none; }
+.pane.pmax { z-index: 3; }
+
+/* Overflow menu — button lives inline, the panel itself is portalled to
+   <body> (position: fixed) because .pane and the resizable-panel wrapper
+   both clip overflow, which would cut an absolutely-positioned dropdown. */
+.pmenu-wrap { position: relative; flex: none; }
+.pmenubtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  background: transparent;
+  color: var(--faint);
+  cursor: pointer;
+  border-radius: 5px;
+  transition: color .14s ease, background-color .14s ease;
+}
+.pmenubtn:hover { color: var(--text); background: color-mix(in srgb, var(--text) 8%, transparent); }
+.pmenubtn:focus-visible { outline: 2px solid var(--ice); outline-offset: 1px; }
+
+.pmenu {
+  position: fixed;
+  width: 220px;
+  background: var(--elevated);
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  box-shadow: 0 20px 50px -16px rgba(0, 0, 0, .7);
+  z-index: 200;
+  overflow: hidden;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.pmenu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  padding: 7px 8px;
+  cursor: pointer;
+  text-align: left;
+  transition: background-color .12s ease;
+}
+.pmenu-item:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.pmenu-item svg { flex: none; color: var(--faint); }
+.pmenu-danger { color: var(--st-error); }
+.pmenu-danger svg { color: inherit; }
+.pmenu-sep { height: 1px; background: var(--line); margin: 4px 2px; }
+
+.pmenu-zoom { padding: 7px 8px 4px; display: flex; flex-direction: column; gap: 6px; }
+.pmenu-zoom-label { font-size: 11px; color: var(--faint); text-transform: uppercase; letter-spacing: .04em; }
+.pmenu-zoom-controls { display: flex; align-items: center; gap: 6px; }
+.pmenu-zoom-controls button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  cursor: pointer;
+  transition: background-color .12s ease, border-color .12s ease;
+}
+.pmenu-zoom-controls button:hover { border-color: var(--line-strong); background: color-mix(in srgb, var(--accent) 10%, var(--surface-2)); }
+.pmenu-zoom-controls span { min-width: 34px; text-align: center; font-size: 11.5px; color: var(--muted); }
+.pmenu-zoom-reset { min-width: auto !important; margin-left: auto; }
