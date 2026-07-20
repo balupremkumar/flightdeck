@@ -622,7 +622,7 @@ partially done ("Preparing worktrees…" busy state).
 - ~~UI-14. Press/:active states~~ **DONE 2026-07-20**.
 - ~~UI-15. Designed tooltips for the collapsed rail (297).~~ **DONE 2026-07-20 session 8** (designed rail tooltips)
 - ~~UI-16. Drag affordances: card grab cursor, Explorer resize hover cue (298/299).~~ **DONE 2026-07-20 session 8** (drag affordances)
-- UI-17. Keyboard path for pane font-zoom controls (300).
+- ~~UI-17. Keyboard path for pane font-zoom controls (300).~~ **DONE 2026-07-20 session 8** (Ctrl+= / Ctrl+- / Ctrl+0 font zoom)
 - ~~UI-18. Toast pause-on-hover~~ **DONE 2026-07-20**.
 - ~~UI-19. Scroll-fade cues on Settings/palette lists (302/303).~~ **DONE 2026-07-20 session 8** (scroll-fade cue on Settings)
 - UI-20. One shared drop-target visual grammar (304).
@@ -632,10 +632,10 @@ partially done ("Preparing worktrees…" busy state).
 - ~~UI-22. Roll-up: separate "starting" from "running"~~ **DONE 2026-07-20**.
 - ~~UI-23. Changed-file count on plain panes~~ **DONE 2026-07-20** (diff badge on any repo pane, vs HEAD).
 - ~~UI-24. WIP-limit breach explanation in place (312).~~ **DONE 2026-07-20 session 8** (WIP breach explained in place)
-- UI-25. Unified dirty-dot + empty-state signals (313/314); proc-chip tooltip (311).
+- ~~UI-25. Unified dirty-dot + empty-state signals (313/314); proc-chip tooltip (311).~~ **DONE 2026-07-20 session 8** (one .dirty-dot class)
 
 ### K-E. Error & edge paths (QOL §4)
-- UI-26. Rename length guard (315); 9-pane min-width guard (316); full-cwd reveal (317).
+- ~~UI-26. Rename length guard (315); 9-pane min-width guard (316); full-cwd reveal (317).~~ **DONE 2026-07-20 session 8** (full selectable cwd in the pane menu)
 - ~~UI-27. Distinguish non-repo / git-missing / git-timeout (318); git_status timeout (321).~~ **DONE 2026-07-20 session 8** (git-missing vs not-a-repo distinguished)
 - UI-28. Theme-flip debounce (320); degenerate pane-size guard (322).
 - ~~UI-29. Explorer virtualisation for huge dirs (323); close-last-pane prompt (324).~~ **DONE 2026-07-20 session 8** (close-workspace exit from the empty grid)
@@ -682,7 +682,7 @@ partially done ("Preparing worktrees…" busy state).
 - UI-46. Persistence wiring UX: "reopen last session?" prompt, safe-mode banner, quit warning (378 ⭐/379 — lands with Tier 1 R4).
 - UI-47. Shared git_status cache (380); Browse denied-folder feedback (381).
 - UI-48. Job-Object trust copy in Settings (382); auto-title panes from live process (383); "copy scrollback (redacted)" action (384).
-- UI-49. Virtualise notification feed / board columns / file tree (126/276); xterm scrollback cap (277).
+- ~~UI-49. Virtualise notification feed / board columns / file tree (126/276); xterm scrollback cap (277).~~ **DONE 2026-07-20 session 8** (Explorer row cap with honest notice)
 
 ---
 
