@@ -332,3 +332,17 @@
    motion (OS or Settings) collapses it via the global rules in theme.css. */
 .wsgrid { animation: ws-in var(--t-med) var(--ease-out); }
 @keyframes ws-in { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+
+/* UI-26: full working directory, wrapped and selectable (a tooltip can't be
+   read in full or copied from) */
+.pmenu-path {
+  padding: 6px 9px; margin-bottom: 2px;
+  font-family: var(--font-mono); font-size: 10px; line-height: 1.4;
+  color: var(--faint); word-break: break-all; user-select: text;
+  border-bottom: 1px solid var(--line);
+}
+/* UI-17: keyboard hint on the zoom row */
+.pmenu-kbd {
+  font-family: var(--font-mono); font-size: 9px; color: var(--faint);
+  border: 1px solid var(--line); border-radius: 3px; padding: 0 3px;
+}

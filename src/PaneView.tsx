@@ -218,6 +218,8 @@ function PaneViewInner({
   };
 
   const displayName = pane.title || vendorShort(pane.vendor);
+  // UI-26: a truncated path with a tooltip can't be read in full or selected;
+  // the menu shows it wrapped and selectable.
 
   // Real git branch for this pane's cwd. Cheap to poll — re-check on mount,
   // on pane restart (epoch bump), and every 30s. Degrades silently: any
@@ -270,6 +272,20 @@ function PaneViewInner({
   // Token chip (UI-3): real numbers from the agent's own session transcript
   // (Claude Code writes ~/.claude/projects/<cwd>/*.jsonl). Agents without a
   // transcript return null and get no chip — never an estimate.
+  // UI-17: the font-zoom controls were mouse-only, buried in the overflow menu.
+  // Ctrl+= / Ctrl+- / Ctrl+0 act on the focused pane.
+  useEffect(() => {
+    if (!focused) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (!e.ctrlKey || e.altKey) return;
+      if (e.key === "=" || e.key === "+") { e.preventDefault(); setFontSize((f) => Math.min(MAX_FONT, f + 1)); }
+      else if (e.key === "-" || e.key === "_") { e.preventDefault(); setFontSize((f) => Math.max(MIN_FONT, f - 1)); }
+      else if (e.key === "0") { e.preventDefault(); setFontSize(DEFAULT_FONT); }
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [focused]);
+
   // UI-132: terminal context menu (copy/paste/clear/find), positioned at the
   // click. Native right-click gives nothing useful inside a canvas terminal.
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; hasSel: boolean } | null>(null);
@@ -506,6 +522,7 @@ Running low — consider /compact in this pane.` : "")
           </button>
           {menuOpen && menuPos && createPortal(
             <div className="pmenu" style={{ top: menuPos.top, left: menuPos.left }} onMouseLeave={closeMenu}>
+              <div className="pmenu-path" title="This pane's working directory">{pane.cwd}</div>
               <button className="pmenu-item" onClick={clearScrollback}>Clear scrollback</button>
               <button className="pmenu-item" onClick={() => { restartPane(pane.id); closeMenu(); }}>
                 <IconRefresh size={13} /> Restart
@@ -531,7 +548,7 @@ Running low — consider /compact in this pane.` : "")
                 <IconFolder size={13} /> Reveal in Explorer
               </button>
               <div className="pmenu-zoom">
-                <span className="pmenu-zoom-label">Font size</span>
+                <span className="pmenu-zoom-label">Font size <kbd className="pmenu-kbd">Ctrl</kbd>+<kbd className="pmenu-kbd">=</kbd></span>
                 <div className="pmenu-zoom-controls">
                   <button onClick={() => setFontSize((f) => Math.max(MIN_FONT, f - 1))} title="Zoom out">&minus;</button>
                   <span>{fontSize}px</span>
