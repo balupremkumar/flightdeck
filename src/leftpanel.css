@@ -24,7 +24,7 @@
 }
 .lp-ws:hover .lp-drag-handle { opacity: 1; }
 .lp-ws.dragging { opacity: .45; }
-.lp-ws.drag-over { box-shadow: inset 0 2px 0 0 var(--ice); }
+.lp-ws.drag-over { box-shadow: inset 0 0 0 2px var(--drop), var(--drop-glow); }
 
 /* ---------- inline rename ---------- */
 .lp-rename-input {

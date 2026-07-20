@@ -555,8 +555,8 @@
 .card-insert {
   height: 3px;
   border-radius: 2px;
-  background: var(--accent);
-  box-shadow: 0 0 8px color-mix(in srgb, var(--accent) 60%, transparent);
+  background: var(--drop);
+  box-shadow: var(--drop-glow);
   margin: -5px 2px 6px;
   animation: slot-in 0.12s var(--ease-out);
 }

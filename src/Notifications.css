@@ -130,3 +130,10 @@
 }
 .aq-row:hover .aq-snooze, .aq-row.sel .aq-snooze { opacity: 1; }
 .aq-snooze:hover { color: var(--text); border-color: var(--line-strong); }
+
+/* The bell's radar ping survived in Icons.tsx (ibell-arc-1/2) and App.css's
+   keyframes, but nothing drove it after the .bell -> .ntf-bell rewrite — the
+   signal was silently lost. Reattached to the active state. */
+.ntf-bell .ibell-arc { opacity: .55; }
+.ntf-bell.on .ibell-arc-1 { animation: radar-ping var(--t-pulse) ease-in-out infinite; }
+.ntf-bell.on .ibell-arc-2 { animation: radar-ping var(--t-pulse) ease-in-out infinite .25s; }

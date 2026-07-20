@@ -85,7 +85,7 @@ body {
 .topbar { height: 40px; flex: none; display: flex; align-items: center; gap: 10px; padding: 0 10px; border-bottom: 1px solid var(--border); background: var(--bg-app); }
 .topbar .tb-toggle { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 26px; border: 0; background: transparent; color: var(--tmuted); border-radius: 6px; cursor: pointer; transition: color .14s ease, background-color .14s ease; }
 .topbar .tb-toggle:hover { color: var(--text-primary); background: rgba(255,255,255,.05); }
-.topbar .tb-toggle:focus-visible, .topbar .tb-ic:focus-visible, .bell:focus-visible { outline: 2px solid var(--ice); outline-offset: 1px; }
+.topbar .tb-toggle:focus-visible, .topbar .tb-ic:focus-visible, .ntf-bell:focus-visible { outline: 2px solid var(--ice); outline-offset: 1px; }
 .topbar .brand-mark { display: inline-flex; color: var(--accent); margin-left: 2px; }
 .topbar .brand { font-weight: 700; font-size: 14.5px; letter-spacing: -0.01em; }
 .topbar .ws { color: var(--text-secondary); font-size: 13.5px; }
@@ -102,24 +102,8 @@ body {
 .apm-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .apm-warn { flex: none; font-size: 10px; font-weight: 600; color: var(--st-waiting); border: 1px solid color-mix(in srgb, var(--st-waiting) 45%, transparent); border-radius: 5px; padding: 1px 6px; }
 
-.bell-wrap { position: relative; }
-.bell { position: relative; display: inline-flex; align-items: center; justify-content: center; background: transparent; border: 0; color: var(--tmuted); cursor: pointer; padding: 4px 6px; border-radius: 7px; transition: color .14s ease, background-color .14s ease; }
-.bell:hover, .bell.on { color: var(--text-primary); background: rgba(255,255,255,.05); }
-.bell.on { color: var(--accent); }
-.bell-badge { position: absolute; top: -1px; right: -1px; min-width: 15px; height: 15px; border-radius: 999px; background: var(--st-waiting); color: var(--on-warn); font-size: 9px; font-weight: 800; display: grid; place-items: center; padding: 0 3px; }
-.bell-menu { position: absolute; right: 0; top: 34px; width: 250px; background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 20px 50px -16px rgba(0,0,0,.7); z-index: 60; overflow: hidden; }
-.bell-h { padding: 10px 12px; font-size: 10.5px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: var(--tmuted); border-bottom: 1px solid var(--border); }
-.bell-empty { padding: 14px 12px; font-size: 12.5px; color: var(--tmuted); }
-.bell-item { display: flex; align-items: center; gap: 9px; padding: 9px 12px; cursor: pointer; transition: background-color .14s ease; }
-.bell-item:hover { background: rgba(255,255,255,.04); }
-.bi-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--st-waiting); flex: none; }
-.bi-ws { font-size: 12.5px; color: var(--text-primary); }
-.bi-ag { margin-left: auto; font-size: 11px; color: var(--tmuted); }
 
 /* radar-beacon notification icon: arcs ping outward only while there's something pending */
-.bell .icon-bell .ibell-arc { opacity: .55; }
-.bell.on .icon-bell .ibell-arc-1 { animation: radar-ping 1.8s ease-in-out infinite; }
-.bell.on .icon-bell .ibell-arc-2 { animation: radar-ping 1.8s ease-in-out infinite .25s; }
 @keyframes radar-ping { 0%, 100% { opacity: .4; } 50% { opacity: 1; } }
 
 .cockpit { flex: 1; min-height: 0; display: flex; }

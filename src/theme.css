@@ -330,3 +330,9 @@ body, .cockpit-root, .topbar, .lpanel, .pane, .set-modal, .explorer {
   width: 6px; height: 6px; border-radius: 50%;
   background: var(--st-waiting); margin-left: 2px;
 }
+
+/* UI-20: drop-target grammar.
+     ring/outline  = "drop ONTO this" (panes, workspace tiles)
+     line          = "insert BETWEEN these" (board cards)
+   The shapes differ because the actions differ; the colour must not. */
+:root { --drop: var(--accent); --drop-glow: 0 0 8px color-mix(in srgb, var(--accent) 55%, transparent); }
