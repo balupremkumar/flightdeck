@@ -294,3 +294,9 @@ button.chip:hover { border-color: var(--accent); color: var(--text); }
   background: color-mix(in srgb, currentColor 14%, transparent);
   line-height: 1; user-select: none;
 }
+
+/* Screen-reader-only live regions (UI-148) */
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}

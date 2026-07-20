@@ -88,6 +88,12 @@ interface UIState {
   maximizedPaneId: number | null;
   setMaximizedPaneId: (id: number | null) => void;
   // UI-143: panes snoozed out of the attention queue until a timestamp.
+  // UI-146/200: opt-in attention behaviours, off by default — an app that
+  // grabs focus or opens overlays uninvited is worse than one that doesn't.
+  autoQueue: boolean;
+  setAutoQueue: (on: boolean) => void;
+  followAttention: boolean;
+  setFollowAttention: (on: boolean) => void;
   snoozed: Record<number, number>;
   snoozePane: (paneId: number, ms: number) => void;
   unsnoozePane: (paneId: number) => void;
@@ -189,6 +195,16 @@ export const useUI = create<UIState>((set) => ({
   setAttentionOpen: (attentionOpen) => set({ attentionOpen }),
   maximizedPaneId: null,
   setMaximizedPaneId: (maximizedPaneId) => set({ maximizedPaneId }),
+  autoQueue: (() => { try { return localStorage.getItem("flightdeck-auto-queue") === "1"; } catch { return false; } })(),
+  setAutoQueue: (on) => {
+    try { localStorage.setItem("flightdeck-auto-queue", on ? "1" : "0"); } catch { /* non-persistent */ }
+    set({ autoQueue: on });
+  },
+  followAttention: (() => { try { return localStorage.getItem("flightdeck-follow-attention") === "1"; } catch { return false; } })(),
+  setFollowAttention: (on) => {
+    try { localStorage.setItem("flightdeck-follow-attention", on ? "1" : "0"); } catch { /* non-persistent */ }
+    set({ followAttention: on });
+  },
   snoozed: {},
   snoozePane: (paneId, ms) => set((s) => ({ snoozed: { ...s.snoozed, [paneId]: Date.now() + ms } })),
   unsnoozePane: (paneId) => set((s) => {

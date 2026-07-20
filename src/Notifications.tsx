@@ -125,10 +125,36 @@ export function Notifications() {
     for (const id of stateSince.keys()) if (!live.has(id)) stateSince.delete(id);
   }, [workspaces, notify, pushNotifyEvent]);
 
+  // UI-146: when several agents are blocked at once, triage beats one-at-a-time
+  // — open the queue. Opt-in, and only on the rising edge so dismissing it
+  // doesn't immediately reopen.
+  const autoQueue = useUI((s) => s.autoQueue);
+  const followAttention = useUI((s) => s.followAttention);
+  const prevApprovals = useRef(0);
+
   // The attention QUEUE (UI-1) — shared ranking in attention.ts.
   const needsAttention = attentionQueue(workspaces, snoozedMap);
   const approvalCount = needsAttention.filter((x) => x.p.state === "permission").length;
   const errCount = needsAttention.filter((x) => x.p.state === "error").length;
+
+  useEffect(() => {
+    if (autoQueue && approvalCount >= 3 && prevApprovals.current < 3) {
+      useUI.getState().setAttentionOpen(true);
+    }
+    prevApprovals.current = approvalCount;
+  }, [approvalCount, autoQueue]);
+
+  // UI-200: opt-in — jump straight to a pane the moment it asks for approval.
+  const lastFollowed = useRef<number | null>(null);
+  useEffect(() => {
+    if (!followAttention) return;
+    const top = needsAttention.find((x) => x.p.state === "permission");
+    if (!top || top.p.id === lastFollowed.current) return;
+    lastFollowed.current = top.p.id;
+    switchWorkspace(top.w.id);
+    focusPane(top.w.id, top.p.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [needsAttention, followAttention]);
 
   const jump = (wsId: number, paneId: number) => {
     switchWorkspace(wsId);
@@ -153,6 +179,15 @@ export function Notifications() {
           <span className="ntf-badge">{needsAttention.length}</span>
         )}
       </button>
+
+      {/* UI-148: the badge is a visual-only signal; announce changes politely
+          so a screen-reader user learns an agent needs them. */}
+      <span className="sr-only" role="status" aria-live="polite">
+        {needsAttention.length === 0
+          ? ""
+          : `${needsAttention.length} pane${needsAttention.length === 1 ? "" : "s"} need attention` +
+            (approvalCount > 0 ? `, ${approvalCount} awaiting approval` : "")}
+      </span>
 
       {panel === "feed" && (
         <div className="ntf-menu" onMouseLeave={() => setPanel("none")} role="menu" aria-label="Notifications">
@@ -239,6 +274,14 @@ export function Notifications() {
             <label className="ntf-check">
               <input type="checkbox" checked={notify.dnd} onChange={(e) => setNotifyDnd(e.target.checked)} />
               Do not disturb (mutes alerts, keeps the feed)
+            </label>
+            <label className="ntf-check">
+              <input type="checkbox" checked={autoQueue} onChange={(e) => useUI.getState().setAutoQueue(e.target.checked)} />
+              Open the attention queue when 3+ agents need approval
+            </label>
+            <label className="ntf-check">
+              <input type="checkbox" checked={followAttention} onChange={(e) => useUI.getState().setFollowAttention(e.target.checked)} />
+              Jump to a pane as soon as it asks for approval
             </label>
           </div>
 
