@@ -61,7 +61,8 @@ export function NewWorkspace() {
     return Array.from({ length: 4 }, (_, i) => ({ vendor: cycle[i % cycle.length], dir: null }));
   });
   // UI-101: recently-used roots, most recent first.
-  const [recents] = useState<string[]>(loadRecentRoots);
+  const recentsAtBoot = loadRecentRoots();
+  const [recents] = useState<string[]>(recentsAtBoot);
   const [showRecents, setShowRecents] = useState(false);
 
   // UI-102: completions for the directory field. Typing a path by hand is the
@@ -103,6 +104,10 @@ export function NewWorkspace() {
   // UI-107: isolation is the least obvious control here and the one with the
   // biggest consequences, so it gets an explainer rather than a tooltip.
   const [showIsolateHelp, setShowIsolateHelp] = useState(false);
+  // UI-10: "first ever launch" and "you just closed your last workspace" are
+  // different moments — only one of them needs explaining what this app is.
+  // Having ever used a folder is the honest signal; hasWorkspaces isn't.
+  const [firstEver] = useState(() => recentsAtBoot.length === 0);
 
   // Vendor list + install detection both come from the Rust registry (216).
   const vendors = useVendors((s) => s.vendors);
@@ -295,9 +300,16 @@ export function NewWorkspace() {
     <div className={"launcher" + (hasWorkspaces ? " overlay" : "")}>
       <div className="dialog">
         <div className="dh">
-          <h2>New Workspace</h2>
+          <h2>{firstEver ? "Welcome to Flightdeck" : "New Workspace"}</h2>
           {hasWorkspaces && <span className="dh-x" onClick={cancelCreate}><IconClose size={13} /></span>}
         </div>
+        {firstEver && (
+          <div className="launcher-intro">
+            Flightdeck runs several AI coding agents side by side, each in its own terminal.
+            Point it at a project folder, choose how many panes and which agent goes in each,
+            and they start together.
+          </div>
+        )}
         <div className="db">
           <div>
             <span className="lbl">Layout</span>

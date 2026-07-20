@@ -24,6 +24,8 @@ const MIN_QUIET_SEC = 1;
 const MAX_QUIET_SEC = 30;
 const DEFAULT_QUIET_SEC = 3;
 const GIT_POLL_MS = 30000;
+/** UI-151: drag payload identifying a pane being moved between workspaces. */
+export const PANE_DRAG_TYPE = "application/x-flightdeck-pane";
 
 interface GitStatus {
   isRepo: boolean;
@@ -449,7 +451,13 @@ function PaneViewInner({
             className="pgrip"
             draggable
             title="Drag to reorder"
-            onDragStart={(e) => { e.dataTransfer.effectAllowed = "move"; onDragStart(index); }}
+            onDragStart={(e) => {
+              e.dataTransfer.effectAllowed = "move";
+              // UI-151: carry identity so a workspace tile can accept this pane.
+              // The in-grid reorder path ignores it and still works on position.
+              e.dataTransfer.setData(PANE_DRAG_TYPE, JSON.stringify({ wsId, paneId: pane.id }));
+              onDragStart(index);
+            }}
             onDragEnd={onDragEnd}
           >
             <IconDrag size={12} />

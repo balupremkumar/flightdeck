@@ -5,7 +5,9 @@ import { useUI } from "./ui";
 import { defaultCycle } from "./vendors";
 import { closeWorkspaceWithCleanup, preparePanes, isolationPref, rememberedOrSuggestedSetup } from "./worktrees";
 import { IconPlus, IconClose, IconBoard, IconDrag, IconBranch } from "./Icons";
-import { relTime as fmtRel, timeTitle } from "./format";
+import { relTime as fmtRel, timeTitle, compact, num } from "./format";
+import { cachedInvoke, usePoll } from "./poll";
+import { PANE_DRAG_TYPE } from "./PaneView";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { revealItemInDir, openUrl } from "@tauri-apps/plugin-opener";
@@ -98,6 +100,24 @@ export function LeftPanel({ expanded, view, setView }: { expanded: boolean; view
   const reorderWorkspaces = useApp((s) => s.reorderWorkspaces);
   const requestConfirm = useUI((s) => s.requestConfirm);
   const pushToast = useUI((s) => s.pushToast);
+  const movePaneToWorkspace = useApp((s) => s.movePaneToWorkspace);
+  // UI-232: token spend is per-pane today, so "how heavy is this workspace"
+  // needed adding up by eye. Shares PaneView's cache — no extra backend calls.
+  const [tokens, setTokens] = useState<Record<number, number>>({});
+  usePoll(async () => {
+    const next: Record<number, number> = {};
+    for (const w of useApp.getState().workspaces) {
+      let total = 0;
+      for (const p of w.panes) {
+        try {
+          const u = await cachedInvoke<{ contextTokens: number } | null>("pane_usage", { cwd: p.cwd }, 7000);
+          if (u) total += u.contextTokens;
+        } catch { /* pane has no transcript — contributes nothing */ }
+      }
+      if (total > 0) next[w.id] = total;
+    }
+    setTokens(next);
+  }, 20000, [], expanded);
 
   const [search, setSearch] = useState("");
   const [menu, setMenu] = useState<MenuState>(null);
@@ -295,13 +315,37 @@ export function LeftPanel({ expanded, view, setView }: { expanded: boolean; view
     setDragId(id);
     e.dataTransfer.effectAllowed = "move";
   };
+  // UI-151: a tile accepts two different drags — another TILE (reorder) or a
+  // PANE from the grid (move it here). Distinguished by the payload type, since
+  // dragId is only set by tile drags.
+  const isPaneDrag = (e: ReactDragEvent) => e.dataTransfer.types.includes(PANE_DRAG_TYPE);
+
   const onRowDragOver = (e: ReactDragEvent, id: number) => {
+    if (isPaneDrag(e)) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      setDragOverId(id);
+      return;
+    }
     if (dragId == null || dragId === id) return;
     e.preventDefault();
     setDragOverId(id);
   };
   const onRowDrop = (e: ReactDragEvent, id: number) => {
     e.preventDefault();
+    if (isPaneDrag(e)) {
+      try {
+        const { wsId, paneId } = JSON.parse(e.dataTransfer.getData(PANE_DRAG_TYPE));
+        if (wsId !== id) {
+          movePaneToWorkspace(wsId, paneId, id);
+          const target = workspaces.find((w) => w.id === id);
+          pushToast("success", `Moved the pane to ${target?.name ?? "that workspace"}.`);
+        }
+      } catch { /* malformed payload — ignore rather than crash the drop */ }
+      setDragId(null);
+      setDragOverId(null);
+      return;
+    }
     if (dragId != null && dragId !== id) {
       const from = workspaces.findIndex((w) => w.id === dragId);
       const to = workspaces.findIndex((w) => w.id === id);
@@ -481,6 +525,11 @@ export function LeftPanel({ expanded, view, setView }: { expanded: boolean; view
                   {r.waiting > 0 && <span className="lp-stat wait"><i />{r.waiting}</span>}
                   {r.error > 0 && <span className="lp-stat err"><i />{r.error}</span>}
                   {r.total === 0 && <span className="lp-stat empty">empty</span>}
+                  {tokens[w.id] > 0 && (
+                    <span className="lp-stat lp-tok" title={`${num(tokens[w.id])} tokens of context across this workspace's agents`}>
+                      {compact(tokens[w.id])}
+                    </span>
+                  )}
                   {last && (
                     <span className="lp-stat lp-last" title={lastActive[w.id] ? timeTitle(lastActive[w.id]) : undefined}>
                       {last}

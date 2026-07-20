@@ -180,6 +180,12 @@ if (cockpit) {
 }
 
 console.log("\n== Accessibility (UI-215/218) ==");
+// KNOWN BLIND SPOT: this only measures what is currently RENDERED. Controls
+// behind a condition that can't be true in a browser preview — anything gated
+// on a vendor being installed, a pane running, or a merge conflict existing —
+// are invisible to it. A 15px `.agent-chip` shipped past this check for exactly
+// that reason and had to be caught by reading the CSS. Treat a pass here as
+// "nothing visible is too small", not "nothing is too small".
 const a11y = await page.evaluate(() => {
   const small = [];
   for (const el of document.querySelectorAll("button, [role=button], a, input, select")) {

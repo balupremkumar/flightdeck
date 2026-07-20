@@ -50,6 +50,7 @@ export const SESSION_KEYS = [
   // safe direction, but a surprise prompt after a colour reset is still wrong.)
   "flightdeck-trusted-repos",
   "flightdeck-clean-exit",
+  "flightdeck-broadcast-snippets",
   "flightdeck-recent-roots",
   "flightdeck-cmdp-recent",
   "flightdeck-ws-lastactive",

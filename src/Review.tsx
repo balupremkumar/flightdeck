@@ -59,6 +59,12 @@ export function Review() {
   const [selected, setSelected] = useState<string | null>(null);
   const [patch, setPatch] = useState<string>("");
   const [merging, setMerging] = useState(false);
+  // UI-168: files DESELECTED from the merge (empty = everything selected, the
+  // default and by far the common case). Tracking the deselected set rather
+  // than the selected one means "nothing deselected" is a single cheap check
+  // (`size === 0`) that the merge call turns into `files: null` — the exact
+  // all-files code path, unchanged from before this feature existed.
+  const [deselected, setDeselected] = useState<Set<string>>(() => new Set());
   const [handing, setHanding] = useState(false);
   // UI-5: a failed merge surfaces its conflicted files + a way forward here,
   // instead of vanishing into a toast.
@@ -101,6 +107,13 @@ export function Review() {
         .catch(() => setCtx(null));
       // Keep the selection if the file is still changed; else pick the first.
       setSelected((sel) => (sel && s.files.some((f) => f.path === sel) ? sel : s.files[0]?.path ?? null));
+      // Drop deselections for files that no longer appear in the diff (e.g.
+      // the agent reverted them) — a stale checkbox state shouldn't outlive
+      // the file it refers to.
+      setDeselected((d) => {
+        const next = new Set([...d].filter((p) => s.files.some((f) => f.path === p)));
+        return next.size === d.size ? d : next;
+      });
     } catch (e) {
       setSummary(null);
       setError(String(e));
@@ -124,7 +137,7 @@ export function Review() {
   }, 8000, [pane?.cwd, pane?.baseBranch], paneId != null);
 
   useEffect(() => { seenTotals.current = ""; setStaleSince(null); }, [paneId, selected]);
-  useEffect(() => { setConflict(null); }, [paneId]);
+  useEffect(() => { setConflict(null); setDeselected(new Set()); }, [paneId]);
 
   // Load the selected file's patch.
   useEffect(() => {
@@ -170,37 +183,67 @@ export function Review() {
     el?.scrollIntoView({ block: "center" });
   };
 
+  // UI-168: files still selected for the merge, in diff order.
+  const selectedFiles = useMemo(
+    () => (summary?.files ?? []).map((f) => f.path).filter((p) => !deselected.has(p)),
+    [summary, deselected]
+  );
+  const toggleFileSelected = (path: string) => {
+    setDeselected((d) => {
+      const next = new Set(d);
+      if (next.has(path)) next.delete(path); else next.add(path);
+      return next;
+    });
+  };
+
   const mergeBack = () => {
     if (!pane?.worktreePath || merging) return;
+    const allSelected = deselected.size === 0;
+    // null = "everything" — the exact call the backend has always taken;
+    // a partial selection sends only the paths still checked.
+    const files = allSelected ? null : selectedFiles;
+    if (files && files.length === 0) return; // guarded by the button's disabled state too
+    const n = files?.length ?? 0;
     requestConfirm({
-      title: `Merge ${pane.branch ?? "this branch"} into ${pane.baseBranch ?? "base"}?`,
-      body: "Outstanding work is committed to the pane's branch first. A conflict aborts cleanly and leaves both branches untouched.",
-      confirmLabel: "Merge back",
+      title: allSelected
+        ? `Merge ${pane.branch ?? "this branch"} into ${pane.baseBranch ?? "base"}?`
+        : `Merge ${n} of ${fileCount} file${fileCount === 1 ? "" : "s"} from ${pane.branch ?? "this branch"} into ${pane.baseBranch ?? "base"}?`,
+      body: allSelected
+        ? "Outstanding work is committed to the pane's branch first. A conflict aborts cleanly and leaves both branches untouched."
+        : "Only the checked files are committed to the pane's branch and merged. Everything else stays uncommitted in the worktree so the agent can keep working on it. A conflict aborts cleanly and leaves both branches untouched.",
+      confirmLabel: allSelected ? "Merge back" : `Merge ${n} file${n === 1 ? "" : "s"}`,
       onConfirm: () => {
         setMerging(true);
         setConflict(null);
-        invoke<MergeOutcome>("git_merge_back", { worktreePath: pane.worktreePath })
+        invoke<MergeOutcome>("git_merge_back", { worktreePath: pane.worktreePath, files })
           .then((m) => {
             if (m.status === "merged") {
-              pushToast("success", `Merged ${pane.branch} into ${pane.baseBranch}.`);
+              pushToast("success", allSelected
+                ? `Merged ${pane.branch} into ${pane.baseBranch}.`
+                : `Merged ${n} file${n === 1 ? "" : "s"} from ${pane.branch} into ${pane.baseBranch}.`);
               // UI-159: a merge is the ONLY unambiguous "this work landed"
               // signal. The obvious heuristic — the pane's diff going to zero —
               // fires identically on `git reset --hard`, on the agent reverting
               // itself, and after Update-from-base, so it would happily mark
               // lost work as Done. Driving it from here instead.
-              completeCardForPane(pane.id, pane.branch ?? "this branch");
-              // UI-176: a merged pane is usually finished work. Offer the tidy-up
-              // in the moment rather than leaving a stale worktree behind for the
-              // user to remember about later.
-              requestConfirm({
-                title: "Close this pane and clean up its worktree?",
-                body: `${pane.branch} is merged into ${pane.baseBranch}. Closing ends the agent session and removes the isolated worktree; the branch itself stays.`,
-                confirmLabel: "Close & clean up",
-                onConfirm: () => {
-                  setReviewPane(null);
-                  closePaneGuarded(hit!.wsId, pane);
-                },
-              });
+              // UI-168: a partial merge deliberately leaves work outstanding —
+              // the card isn't done and the pane isn't ready to close, so
+              // neither of these fires unless everything landed.
+              if (allSelected) {
+                completeCardForPane(pane.id, pane.branch ?? "this branch");
+                // UI-176: a merged pane is usually finished work. Offer the tidy-up
+                // in the moment rather than leaving a stale worktree behind for the
+                // user to remember about later.
+                requestConfirm({
+                  title: "Close this pane and clean up its worktree?",
+                  body: `${pane.branch} is merged into ${pane.baseBranch}. Closing ends the agent session and removes the isolated worktree; the branch itself stays.`,
+                  confirmLabel: "Close & clean up",
+                  onConfirm: () => {
+                    setReviewPane(null);
+                    closePaneGuarded(hit!.wsId, pane);
+                  },
+                });
+              }
             }
             else if (m.status === "nothing-to-merge") pushToast("info", "Nothing to merge — the branch has no new work.");
             else if (m.status === "conflict") setConflict(m); // stays in the drawer, not a toast
@@ -309,34 +352,55 @@ export function Review() {
 
   const title = pane.title || vendorShort(pane.vendor);
   const fileCount = summary?.files.length ?? 0;
+  // UI-168: "Merge back" reads exactly as it always has when nothing is
+  // deselected; only a real subset changes the wording.
+  const mergeAllSelected = deselected.size === 0;
+  const mergeNothingSelected = fileCount > 0 && selectedFiles.length === 0;
+  const mergeLabel = mergeAllSelected
+    ? "Merge back"
+    : `Merge ${selectedFiles.length} of ${fileCount} file${fileCount === 1 ? "" : "s"}`;
 
-  // Shared by the flat and grouped (UI-167) file lists.
+  // Shared by the flat and grouped (UI-167) file lists. The checkbox is a
+  // sibling of the file button, not nested inside it — a <button> may not
+  // contain other interactive content (its existing role="button" span gets
+  // away with that because it isn't a real control; a real checkbox needs
+  // its own place). Only isolated panes get one: only they can merge back.
   const renderFile = (f: DiffFile) => (
-    <button
-      key={f.path}
-      className={"rv-file" + (selected === f.path ? " sel" : "")}
-      onClick={() => setSelected(f.path)}
-      title={f.path}
-    >
-      <span className="rv-file-path">{f.path}</span>
-      <span
-        className="rv-file-open"
-        role="button"
-        tabIndex={-1}
-        title="Open this file"
-        onClick={(e) => {
-          e.stopPropagation();
-          const sep = pane.cwd.includes("/") && !pane.cwd.includes("\\") ? "/" : "\\";
-          void openPath(pane.cwd.replace(/[\\\/]+$/, "") + sep + f.path.replace(/\//g, sep))
-            .catch(() => pushToast("error", "Couldn't open that file."));
-        }}
+    <div key={f.path} className={"rv-file-row" + (deselected.has(f.path) ? " excluded" : "")}>
+      {pane.worktreePath && (
+        <input
+          type="checkbox"
+          className="rv-file-check"
+          checked={!deselected.has(f.path)}
+          onChange={() => toggleFileSelected(f.path)}
+          aria-label={`Include ${f.path} in the merge`}
+        />
+      )}
+      <button
+        className={"rv-file" + (selected === f.path ? " sel" : "")}
+        onClick={() => setSelected(f.path)}
+        title={f.path}
       >
-        open
-      </span>
-      {f.binary
-        ? <span className="rv-file-bin">binary</span>
-        : <span className="rv-file-stat"><em className="add">+{f.added}</em><em className="del">−{f.deleted}</em></span>}
-    </button>
+        <span className="rv-file-path">{f.path}</span>
+        <span
+          className="rv-file-open"
+          role="button"
+          tabIndex={-1}
+          title="Open this file"
+          onClick={(e) => {
+            e.stopPropagation();
+            const sep = pane.cwd.includes("/") && !pane.cwd.includes("\\") ? "/" : "\\";
+            void openPath(pane.cwd.replace(/[\\\/]+$/, "") + sep + f.path.replace(/\//g, sep))
+              .catch(() => pushToast("error", "Couldn't open that file."));
+          }}
+        >
+          open
+        </span>
+        {f.binary
+          ? <span className="rv-file-bin">binary</span>
+          : <span className="rv-file-stat"><em className="add">+{f.added}</em><em className="del">−{f.deleted}</em></span>}
+      </button>
+    </div>
   );
 
   return (
@@ -561,8 +625,8 @@ export function Review() {
               <button className="rv-pr" onClick={createPr} disabled={handing || fileCount === 0 && !pane.branch} title="Push this branch to origin and open a pull request">
                 <IconBranch size={13} /> {handing ? "Pushing…" : "Create PR"}
               </button>
-              <button className="rv-merge" onClick={mergeBack} disabled={merging || fileCount === 0 && !pane.branch}>
-                <IconMerge size={14} /> {merging ? "Merging…" : "Merge back"}
+              <button className="rv-merge" onClick={mergeBack} disabled={merging || fileCount === 0 && !pane.branch || mergeNothingSelected}>
+                <IconMerge size={14} /> {merging ? "Merging…" : mergeLabel}
               </button>
             </>
           ) : (

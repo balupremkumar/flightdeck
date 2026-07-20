@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type KeyboardEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useApp, type PaneModel } from "./store";
 import { useUI } from "./ui";
@@ -10,6 +10,23 @@ type Scope = "workspace" | "all";
 type Target = { w: { id: number; name: string }; p: PaneModel };
 
 import { vendorShort } from "./vendors";
+
+// UI-202: saved snippets — common prompts ("run the tests and fix what
+// fails") the user deliberately wants to reuse. Separate storage and a
+// separate affordance from the ArrowUp message history below: history is
+// "what was sent recently", snippets are "what I chose to keep".
+const SNIPPETS_KEY = "flightdeck-broadcast-snippets";
+interface Snippet { id: string; text: string; }
+function loadSnippets(): Snippet[] {
+  try {
+    const raw = localStorage.getItem(SNIPPETS_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch { /* non-persistent */ }
+  return [];
+}
+function persistSnippets(list: Snippet[]) {
+  try { localStorage.setItem(SNIPPETS_KEY, JSON.stringify(list)); } catch { /* non-persistent */ }
+}
 
 
 // Self-contained broadcast composer: one message, sent to all (or a chosen
@@ -95,6 +112,45 @@ export function Broadcast() {
   );
   const [histIdx, setHistIdx] = useState(-1);
 
+  // UI-202: saved snippets — see the loadSnippets/persistSnippets note above.
+  const [snippets, setSnippets] = useState<Snippet[]>(loadSnippets);
+  const [snipOpen, setSnipOpen] = useState(false);
+  const snipRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!snipOpen) return;
+    const onKey = (e: globalThis.KeyboardEvent) => { if (e.key === "Escape") setSnipOpen(false); };
+    const onMouseDown = (e: MouseEvent) => {
+      if (snipRef.current && !snipRef.current.contains(e.target as Node)) setSnipOpen(false);
+    };
+    window.addEventListener("keydown", onKey, true);
+    window.addEventListener("mousedown", onMouseDown);
+    return () => {
+      window.removeEventListener("keydown", onKey, true);
+      window.removeEventListener("mousedown", onMouseDown);
+    };
+  }, [snipOpen]);
+
+  const saveCurrentSnippet = () => {
+    const msg = text.trim();
+    if (!msg) return;
+    if (snippets.some((s) => s.text === msg)) { pushToast("info", "Already saved."); return; }
+    const next = [{ id: crypto.randomUUID(), text: msg }, ...snippets];
+    setSnippets(next);
+    persistSnippets(next);
+    pushToast("success", "Snippet saved.");
+  };
+  const loadSnippet = (s: Snippet) => {
+    setText(s.text);
+    setHistIdx(-1); // a snippet load is a fresh edit, not a history step
+    setSnipOpen(false);
+  };
+  const deleteSnippet = (id: string) => {
+    const next = snippets.filter((s) => s.id !== id);
+    setSnippets(next);
+    persistSnippets(next);
+  };
+
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); setHistIdx(-1); void send(); return; }
     // UI-201: shell-style history. Only from an empty/unedited field or at the
@@ -142,6 +198,38 @@ export function Broadcast() {
           )}
         </div>
         <span className="sp" />
+        {/* UI-202: saved snippets — a dropdown, not another segmented control,
+            since the count is unbounded and each entry needs its own delete. */}
+        <div className="bc-snip-wrap" ref={snipRef}>
+          <button
+            type="button"
+            className="bc-snip-toggle"
+            aria-haspopup="true"
+            aria-expanded={snipOpen}
+            onClick={() => setSnipOpen((v) => !v)}
+            title="Saved snippets — common prompts you send often"
+          >
+            Snippets{snippets.length > 0 ? ` (${snippets.length})` : ""}
+          </button>
+          {snipOpen && (
+            <div className="bc-snip-menu" role="menu" aria-label="Saved snippets">
+              <button className="bc-snip-save" onClick={saveCurrentSnippet} disabled={!text.trim()}>
+                Save current message
+              </button>
+              {snippets.length === 0 && <div className="bc-snip-empty">No snippets saved yet.</div>}
+              {snippets.length > 0 && (
+                <div className="bc-snip-list">
+                  {snippets.map((s) => (
+                    <div className="bc-snip-item" key={s.id}>
+                      <button className="bc-snip-text" onClick={() => loadSnippet(s)} title={s.text}>{s.text}</button>
+                      <button className="bc-snip-del" onClick={() => deleteSnippet(s.id)} title="Delete this snippet" aria-label="Delete this snippet">×</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
         <button className="bc-x" onClick={() => setOpen(false)} title="Collapse"><IconClose size={13} /></button>
       </div>
 

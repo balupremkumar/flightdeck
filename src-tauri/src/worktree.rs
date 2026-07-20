@@ -591,6 +591,73 @@ fn commit_outstanding(dir: &Path, branch: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// UI-168 (partial merge-back): commit ONLY `paths`, leaving everything else
+/// exactly as the agent left it — dirty, on disk, in the worktree.
+///
+/// Why this approach and not the alternatives:
+///   - `git` has no "merge a subset of files" primitive; the merge unit is
+///     always a commit. So the subset has to become a real commit on the
+///     agent's branch before `merge_back`'s existing --no-ff merge runs —
+///     everything downstream of this function (conflict detection, abort-
+///     on-conflict, dirty-base / wrong-branch guards) is then reused unchanged.
+///   - Cherry-picking a hand-built commit, or `checkout <rev> -- <paths>`
+///     straight into the base checkout, were the other candidates. Both
+///     still require SOME commit to exist for the selected paths (a cherry-
+///     pick needs a source commit; a targeted checkout needs a tree to read
+///     from) — they don't avoid this step, they just add one on top of it.
+///     Committing directly on the agent's branch is simplest and keeps the
+///     merge commit's parentage honest (it really did come from that branch).
+///   - We `git reset` (unstage everything) before staging only `paths`. This
+///     is defensive, not load-bearing for the common case: an agent worktree
+///     normally has nothing staged going into a merge. But an agent can run
+///     arbitrary shell commands, including its own `git add` — without the
+///     reset, leftover staged content outside `paths` would ride along into
+///     the commit and defeat the whole point of "only this subset". The
+///     reset only touches the index; nothing on disk moves.
+///
+/// What this does NOT handle:
+///   - A file created/changed AFTER the caller computed its file list but
+///     BEFORE this runs (a race with the agent still working) is simply not
+///     part of `paths` and stays uncommitted — correct, but the caller must
+///     re-diff to select it in a later merge.
+///   - A rename shows up as two independent paths (delete + add) because the
+///     diff this UI is built on doesn't request `-M`; selecting only one side
+///     partially applies the rename (e.g. lands the new file but leaves the
+///     old one in place). That mirrors what the two checkboxes actually mean
+///     to the user, so it isn't "wrong", but it's worth knowing.
+///   - `paths` are trusted pathspecs from the caller (the review drawer's own
+///     diff listing) — this is not a general-purpose sandboxed pathspec
+///     filter for adversarial input.
+fn commit_outstanding_selected(dir: &Path, branch: &str, paths: &[String]) -> Result<(), String> {
+    // Never silently fall back to "everything" — an empty selection commits
+    // nothing and the caller (merge_back) turns that into "nothing-to-merge".
+    if paths.is_empty() {
+        return Ok(());
+    }
+    let r = git(dir, &["reset"])?;
+    if !r.ok() {
+        return Err(format!("git reset failed: {}", r.stderr.trim()));
+    }
+    let mut args: Vec<&str> = vec!["add", "-A", "--"];
+    args.extend(paths.iter().map(|p| p.as_str()));
+    let a = git(dir, &args)?;
+    if !a.ok() {
+        return Err(format!("git add failed: {}", a.stderr.trim()));
+    }
+    let staged = !git(dir, &["diff", "--cached", "--name-only"])?.stdout.trim().is_empty();
+    if !staged {
+        return Ok(()); // the selected paths matched nothing changed — nothing to commit
+    }
+    let c = git(
+        dir,
+        &["commit", "-m", &format!("flightdeck: agent work on {branch} (partial merge)")],
+    )?;
+    if !c.ok() && !c.stdout.contains("nothing to commit") {
+        return Err(format!("git commit failed: {}", c.stderr.trim()));
+    }
+    Ok(())
+}
+
 /// Commits the branch is ahead of base by ("0" = nothing to land).
 fn ahead_count(dir: &Path, base_branch: &str) -> Result<String, String> {
     Ok(git_line(dir, &["rev-list", "--count", &format!("{base_branch}..HEAD")])?.unwrap_or_default())
@@ -598,7 +665,14 @@ fn ahead_count(dir: &Path, base_branch: &str) -> Result<String, String> {
 
 /// Auto-commit the worktree, then merge its branch into the base branch in the
 /// main checkout. Conflicts abort cleanly (branch intact, base restored).
-pub fn merge_back(wt_root: &Path, worktree_path: &str) -> Result<MergeOutcome, String> {
+///
+/// `selected`: `None` means "everything" and takes the exact code path this
+/// function always has — the review drawer sends `None` whenever nothing is
+/// deselected, so the all-files merge is byte-for-byte the pre-UI-168
+/// behaviour, not a subset that happens to cover every file. `Some(paths)`
+/// commits only `paths` (commit_outstanding_selected) and leaves the rest of
+/// the worktree exactly as the agent left it, uncommitted.
+pub fn merge_back(wt_root: &Path, worktree_path: &str, selected: Option<&[String]>) -> Result<MergeOutcome, String> {
     let dir = Path::new(worktree_path);
     ensure_under(wt_root, dir)?;
     let meta = read_meta(dir).ok_or("worktree metadata missing — cannot resolve base branch")?;
@@ -607,8 +681,18 @@ pub fn merge_back(wt_root: &Path, worktree_path: &str) -> Result<MergeOutcome, S
     let lock = repo_lock(&meta.repo);
     let _guard = lock.lock().unwrap();
 
-    // 1. Commit whatever the agent left uncommitted (the common case).
-    commit_outstanding(dir, &meta.branch)?;
+    // An explicit empty selection ("deselected everything") is a no-op, not
+    // an error — same outcome as there being nothing to merge.
+    if selected.is_some_and(|p| p.is_empty()) {
+        return Ok(MergeOutcome { status: "nothing-to-merge".into(), detail: String::new(), conflict_files: vec![] });
+    }
+
+    // 1. Commit whatever the agent left uncommitted (the common case) — or
+    //    just the selected subset for a partial merge (UI-168).
+    match selected {
+        Some(paths) => commit_outstanding_selected(dir, &meta.branch, paths)?,
+        None => commit_outstanding(dir, &meta.branch)?,
+    }
 
     // 2. Anything to merge at all?
     if ahead_count(dir, &meta.base_branch)? == "0" {
@@ -870,9 +954,11 @@ pub fn git_file_diff(app: AppHandle, cwd: String, base: Option<String>, file: St
     file_diff(Path::new(&cwd), base.as_deref(), &file, untracked)
 }
 
+/// UI-168: `files` is `None` for "merge everything" (default, matches the
+/// pre-UI-168 behaviour exactly) or `Some(paths)` to land only those paths.
 #[tauri::command]
-pub fn git_merge_back(app: AppHandle, worktree_path: String) -> Result<MergeOutcome, String> {
-    merge_back(&worktrees_root(&app)?, &worktree_path)
+pub fn git_merge_back(app: AppHandle, worktree_path: String, files: Option<Vec<String>>) -> Result<MergeOutcome, String> {
+    merge_back(&worktrees_root(&app)?, &worktree_path, files.as_deref())
 }
 
 #[tauri::command]
@@ -1192,13 +1278,90 @@ mod tests {
         let t = temp_repo();
         let a = worktree_add(&t.wt_root, &t.repo.to_string_lossy(), "mb-1").unwrap();
         // Nothing yet:
-        let none = merge_back(&t.wt_root, &a.path).unwrap();
+        let none = merge_back(&t.wt_root, &a.path, None).unwrap();
         assert_eq!(none.status, "nothing-to-merge");
         // Agent leaves uncommitted work (the common case) → auto-commit + merge:
         std::fs::write(Path::new(&a.path).join("feature.txt"), "done\n").unwrap();
-        let m = merge_back(&t.wt_root, &a.path).unwrap();
+        let m = merge_back(&t.wt_root, &a.path, None).unwrap();
         assert_eq!(m.status, "merged", "{}", m.detail);
         assert!(t.repo.join("feature.txt").exists(), "merge must land in the main checkout");
+    }
+
+    #[test]
+    fn merge_back_partial_selection_lands_subset_and_preserves_rest() {
+        let t = temp_repo();
+        let a = worktree_add(&t.wt_root, &t.repo.to_string_lossy(), "pm-1").unwrap();
+        let wt = Path::new(&a.path);
+        // Selected: a modification to a tracked file + a brand new untracked file.
+        std::fs::write(wt.join("a.txt"), "changed\n").unwrap();
+        std::fs::write(wt.join("landed.txt"), "land me\n").unwrap();
+        // Unselected: another untracked file the agent is still mid-way through.
+        std::fs::write(wt.join("wip.txt"), "still cooking\n").unwrap();
+
+        let m = merge_back(&t.wt_root, &a.path, Some(&["a.txt".to_string(), "landed.txt".to_string()])).unwrap();
+        assert_eq!(m.status, "merged", "{}", m.detail);
+
+        // Only the selected paths reached the base branch. (Windows core.autocrlf
+        // may translate LF to CRLF on checkout, so compare trimmed.)
+        assert_eq!(std::fs::read_to_string(t.repo.join("a.txt")).unwrap().trim_end(), "changed");
+        assert!(t.repo.join("landed.txt").exists());
+        assert!(!t.repo.join("wip.txt").exists(), "unselected file must not land in the base branch");
+
+        // The unselected work SURVIVES, uncommitted, in the worktree — the
+        // agent can pick straight back up on it.
+        assert_eq!(std::fs::read_to_string(wt.join("wip.txt")).unwrap().trim_end(), "still cooking");
+        let st = git(wt, &["status", "--porcelain"]).unwrap();
+        assert!(st.stdout.contains("wip.txt"), "unselected file must remain uncommitted: {}", st.stdout);
+    }
+
+    #[test]
+    fn merge_back_partial_selection_handles_deletions() {
+        let t = temp_repo();
+        let a = worktree_add(&t.wt_root, &t.repo.to_string_lossy(), "pm-2").unwrap();
+        let wt = Path::new(&a.path);
+        std::fs::remove_file(wt.join("a.txt")).unwrap(); // selected deletion
+        std::fs::write(wt.join("also.txt"), "leave me\n").unwrap(); // unselected addition
+
+        let m = merge_back(&t.wt_root, &a.path, Some(&["a.txt".to_string()])).unwrap();
+        assert_eq!(m.status, "merged", "{}", m.detail);
+        assert!(!t.repo.join("a.txt").exists(), "the deletion must land in the base branch");
+        assert!(!t.repo.join("also.txt").exists(), "unselected addition must not land");
+        assert!(wt.join("also.txt").exists(), "unselected file must survive in the worktree");
+    }
+
+    #[test]
+    fn merge_back_partial_selection_conflict_aborts_cleanly() {
+        let t = temp_repo();
+        let a = worktree_add(&t.wt_root, &t.repo.to_string_lossy(), "pm-3").unwrap();
+        let wt = Path::new(&a.path);
+        std::fs::write(wt.join("a.txt"), "worktree version\n").unwrap(); // selected, will conflict
+        std::fs::write(wt.join("safe.txt"), "unselected work\n").unwrap(); // unselected
+        std::fs::write(t.repo.join("a.txt"), "main version\n").unwrap();
+        sh(&t.repo, &["commit", "-am", "diverge"]);
+
+        let m = merge_back(&t.wt_root, &a.path, Some(&["a.txt".to_string()])).unwrap();
+        assert_eq!(m.status, "conflict");
+        assert_eq!(m.conflict_files, vec!["a.txt".to_string()]);
+        let st = git(&t.repo, &["status", "--porcelain"]).unwrap();
+        assert!(st.stdout.trim().is_empty(), "base left dirty after abort: {}", st.stdout);
+        // Branch intact and the unselected file is still sitting, uncommitted,
+        // in the worktree — a conflict on the selected subset must not touch it.
+        let ok = git(&t.repo, &["rev-parse", "--verify", "flightdeck/pm-3"]).unwrap();
+        assert!(ok.ok());
+        assert_eq!(std::fs::read_to_string(wt.join("safe.txt")).unwrap(), "unselected work\n");
+    }
+
+    #[test]
+    fn merge_back_empty_selection_is_nothing_to_merge() {
+        let t = temp_repo();
+        let a = worktree_add(&t.wt_root, &t.repo.to_string_lossy(), "pm-4").unwrap();
+        std::fs::write(Path::new(&a.path).join("x.txt"), "x\n").unwrap();
+        let m = merge_back(&t.wt_root, &a.path, Some(&[])).unwrap();
+        assert_eq!(m.status, "nothing-to-merge");
+        assert!(!t.repo.join("x.txt").exists());
+        // Nothing was committed — the file is still sitting there uncommitted.
+        let st = git(Path::new(&a.path), &["status", "--porcelain"]).unwrap();
+        assert!(st.stdout.contains("x.txt"));
     }
 
     #[test]
@@ -1208,7 +1371,7 @@ mod tests {
         std::fs::write(Path::new(&a.path).join("a.txt"), "worktree version\n").unwrap();
         std::fs::write(t.repo.join("a.txt"), "main version\n").unwrap();
         sh(&t.repo, &["commit", "-am", "diverge"]);
-        let m = merge_back(&t.wt_root, &a.path).unwrap();
+        let m = merge_back(&t.wt_root, &a.path, None).unwrap();
         assert_eq!(m.status, "conflict");
         // UI-5: the conflicted file is reported by name.
         assert_eq!(m.conflict_files, vec!["a.txt".to_string()]);
@@ -1226,11 +1389,11 @@ mod tests {
         let a = worktree_add(&t.wt_root, &t.repo.to_string_lossy(), "md-1").unwrap();
         std::fs::write(Path::new(&a.path).join("x.txt"), "x\n").unwrap();
         std::fs::write(t.repo.join("a.txt"), "local edit\n").unwrap(); // dirty base
-        let m = merge_back(&t.wt_root, &a.path).unwrap();
+        let m = merge_back(&t.wt_root, &a.path, None).unwrap();
         assert_eq!(m.status, "dirty-base");
         sh(&t.repo, &["checkout", "--", "a.txt"]);
         sh(&t.repo, &["checkout", "-b", "elsewhere"]);
-        let m2 = merge_back(&t.wt_root, &a.path).unwrap();
+        let m2 = merge_back(&t.wt_root, &a.path, None).unwrap();
         assert_eq!(m2.status, "wrong-branch");
     }
 

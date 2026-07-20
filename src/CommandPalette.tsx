@@ -154,6 +154,17 @@ export function CommandPalette() {
     }
     list.push({ id: "act:new-workspace", section: "Actions", label: "New workspace", run: () => startCreate() });
     list.push({ id: "act:settings", section: "Actions", label: "Open settings", hint: "Ctrl+,", run: () => setSettingsOpen(true) });
+    // UI-181: eleven Settings sections is more than anyone scrolls willingly —
+    // the palette is already how people navigate, so let it land on one.
+    for (const sec of ["Appearance", "Terminal", "Agents", "Shortcuts", "Startup", "Session", "Diagnostics", "Reset", "About"]) {
+      list.push({
+        id: `act:settings:${sec}`,
+        section: "Actions",
+        label: `Settings: ${sec}`,
+        keywords: `settings ${sec} preferences`,
+        run: () => useUI.getState().openSettingsAt(sec),
+      });
+    }
     list.push({ id: "act:theme-dark", section: "Actions", label: "Switch to dark theme", run: () => setTheme("dark") });
     list.push({ id: "act:theme-light", section: "Actions", label: "Switch to light theme", run: () => setTheme("light") });
     list.push({ id: "act:toggle-panel", section: "Actions", label: "Toggle side panel", hint: "Ctrl+B", run: toggleSidePanel });

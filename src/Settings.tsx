@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { save, open as openDialog } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir, openUrl } from "@tauri-apps/plugin-opener";
@@ -594,6 +595,20 @@ export function Settings() {
     return () => clearInterval(id);
   }, []);
 
+  // UI-181: the palette can ask for a specific section. Consume the request
+  // once and scroll to it — leaving it set would re-jump on the next open.
+  const jumpTo = useUI((s) => s.settingsJumpTo);
+  useEffect(() => {
+    if (!open || !jumpTo) return;
+    const root = bodyRef.current;
+    if (!root) return;
+    const target = Array.from(root.querySelectorAll<HTMLElement>(".set-section")).find((sec) =>
+      sec.querySelector(".set-label")?.textContent?.trim().toLowerCase() === jumpTo.toLowerCase()
+    );
+    target?.scrollIntoView({ block: "start", behavior: "smooth" });
+    useUI.getState().clearSettingsJump();
+  }, [open, jumpTo]);
+
   // UI-180: live section filter. Matching is done on rendered text rather than
   // a hand-maintained keyword table, so a new section is searchable for free.
   const [q, setQ] = useState("");
@@ -618,6 +633,35 @@ export function Settings() {
   // K0a: repos the user has granted a trust-requiring agent access to.
   const [trusted, setTrusted] = useState<string[]>(() => trustedRepos());
   useEffect(() => { setTrusted(trustedRepos()); }, []);
+
+  // UI-111: "not installed" / "not signed in" chips open a popover instead of
+  // cramming copy/get-it/run-login buttons into the chip itself. Portalled to
+  // <body> and positioned via the trigger's own rect (fixed), the same
+  // pattern as the pane overflow menu, so it isn't clipped by set-body's own
+  // scroll/mask.
+  const [popover, setPopover] = useState<{ vendorId: string; kind: "install" | "auth" } | null>(null);
+  const [popoverPos, setPopoverPos] = useState<{ top: number; left: number } | null>(null);
+  function openAgentPopover(e: React.MouseEvent<HTMLButtonElement>, vendorId: string, kind: "install" | "auth") {
+    if (popover?.vendorId === vendorId && popover.kind === kind) { setPopover(null); return; }
+    const r = e.currentTarget.getBoundingClientRect();
+    setPopoverPos({ top: r.bottom + 6, left: Math.min(r.left, window.innerWidth - 296) });
+    setPopover({ vendorId, kind });
+  }
+  useEffect(() => {
+    if (!popover) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setPopover(null); };
+    const onMouseDown = (e: MouseEvent) => {
+      const el = e.target as HTMLElement;
+      if (!el.closest(".agent-popover") && !el.closest(".agent-popover-trigger")) setPopover(null);
+    };
+    window.addEventListener("keydown", onKey, true);
+    window.addEventListener("mousedown", onMouseDown);
+    return () => {
+      window.removeEventListener("keydown", onKey, true);
+      window.removeEventListener("mousedown", onMouseDown);
+    };
+  }, [popover]);
+  const popoverVendor = popover ? vendors.find((v) => v.id === popover.vendorId) ?? null : null;
 
   // UI-189: manifests that failed to parse — silently skipping them made a
   // typo'd vendor file indistinguishable from a missing one.
@@ -669,11 +713,11 @@ export function Settings() {
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !capturing) setOpen(false);
+      if (e.key === "Escape" && !capturing && !popover) setOpen(false);
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [open, capturing, setOpen]);
+  }, [open, capturing, popover, setOpen]);
 
   if (!open) return null;
 
@@ -1065,48 +1109,29 @@ export function Settings() {
                   <span className="agent-row-name">
                     {v.label}
                     {/* #219 install + auth state; sign-in opens a pane so the CLI runs its own login flow. */}
-                    {/* UI-9: 'not installed' with no next step is a dead end. */}
+                    {/* UI-9 / UI-111: 'not installed' with no next step is a dead end — a
+                        popover carries what's wrong plus the fix, rather than crammed
+                        inline buttons on the chip itself. */}
                     {!v.installed && (
-                      <span className="agent-chip warn" title={v.detail}>
+                      <button
+                        type="button"
+                        className="agent-chip warn agent-popover-trigger"
+                        aria-haspopup="dialog"
+                        aria-expanded={popover?.vendorId === v.id && popover.kind === "install"}
+                        onClick={(e) => openAgentPopover(e, v.id, "install")}
+                      >
                         not installed
-                        {v.installHint && (
-                          <button
-                            className="agent-install"
-                            title={`Copy: ${v.installHint}`}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              void navigator.clipboard.writeText(v.installHint)
-                                .then(() => useUI.getState().pushToast("success", "Install command copied — paste it in any pane."))
-                                .catch(() => useUI.getState().pushToast("info", v.installHint));
-                            }}
-                          >
-                            copy install
-                          </button>
-                        )}
-                        {v.installUrl && (
-                          <button
-                            className="agent-install"
-                            title={v.installUrl}
-                            onClick={(e) => { e.stopPropagation(); void openUrl(v.installUrl).catch(() => {}); }}
-                          >
-                            get it ↗
-                          </button>
-                        )}
-                      </span>
+                      </button>
                     )}
                     {v.installed && v.authState === "none" && (
                       <button
-                        className="agent-chip warn agent-login"
-                        title={(v.authDetail || "No stored sign-in.") + " Opens a pane in the current workspace — complete the CLI's login there."}
-                        onClick={() => {
-                          const s = useApp.getState();
-                          const ws = s.workspaces.find((w) => w.id === s.activeId);
-                          if (!ws) { useUI.getState().pushToast("info", "Open a workspace first — sign-in runs in a pane."); return; }
-                          void spawnPane(ws.id, v.id, ws.root, false);
-                          useUI.getState().setSettingsOpen(false);
-                        }}
+                        type="button"
+                        className="agent-chip warn agent-popover-trigger"
+                        aria-haspopup="dialog"
+                        aria-expanded={popover?.vendorId === v.id && popover.kind === "auth"}
+                        onClick={(e) => openAgentPopover(e, v.id, "auth")}
                       >
-                        run login
+                        not signed in
                       </button>
                     )}
                     {v.installed && v.authState === "ok" && v.kind === "agent" && (
@@ -1284,6 +1309,65 @@ export function Settings() {
           </div>
         </div>
       </div>
+      {/* UI-111: install/sign-in popover, portalled so the modal's own
+          scroll/mask can't clip it. */}
+      {popover && popoverPos && popoverVendor && createPortal(
+        <div
+          className="agent-popover"
+          style={{ top: popoverPos.top, left: popoverPos.left }}
+          role="dialog"
+          aria-label={popover.kind === "install" ? `${popoverVendor.label} isn't installed` : `${popoverVendor.label} isn't signed in`}
+        >
+          {popover.kind === "install" ? (
+            <>
+              <div className="agent-pop-title">{popoverVendor.label} isn't installed</div>
+              <div className="agent-pop-body">{popoverVendor.detail || "Flightdeck couldn't find this CLI on your PATH."}</div>
+              {popoverVendor.installHint && (
+                <div className="agent-pop-cmd">
+                  <code>{popoverVendor.installHint}</code>
+                  <button
+                    className="agent-pop-btn"
+                    onClick={() => {
+                      void navigator.clipboard.writeText(popoverVendor.installHint)
+                        .then(() => useUI.getState().pushToast("success", "Install command copied — paste it in any pane."))
+                        .catch(() => useUI.getState().pushToast("info", popoverVendor.installHint));
+                    }}
+                  >
+                    Copy
+                  </button>
+                </div>
+              )}
+              {popoverVendor.installUrl && (
+                <button className="agent-pop-link" onClick={() => void openUrl(popoverVendor.installUrl).catch(() => {})}>
+                  Installation guide ↗
+                </button>
+              )}
+            </>
+          ) : (
+            <>
+              <div className="agent-pop-title">{popoverVendor.label} isn't signed in</div>
+              <div className="agent-pop-body">
+                {popoverVendor.authDetail || "No stored sign-in found."} The CLI handles its own login — running it
+                opens a pane in the current workspace so you can complete sign-in there.
+              </div>
+              <button
+                className="agent-pop-btn"
+                onClick={() => {
+                  const s = useApp.getState();
+                  const ws = s.workspaces.find((w) => w.id === s.activeId);
+                  if (!ws) { useUI.getState().pushToast("info", "Open a workspace first — sign-in runs in a pane."); return; }
+                  void spawnPane(ws.id, popoverVendor.id, ws.root, false);
+                  setPopover(null);
+                  useUI.getState().setSettingsOpen(false);
+                }}
+              >
+                Run login
+              </button>
+            </>
+          )}
+        </div>,
+        document.body
+      )}
     </div>
   );
 }

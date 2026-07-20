@@ -47,6 +47,51 @@ describe("app store", () => {
     expect(ws2.panes[0].needsSetup).toBeUndefined();
   });
 
+  it("movePaneToWorkspace: moves the pane whole, keeping its identity", () => {
+    useApp.getState().createWorkspace("/a", [
+      { vendor: "claude", cwd: "/wt/a", worktreePath: "/wt/a", branch: "flightdeck/a", baseBranch: "main" },
+      { vendor: "agy", cwd: "/a" },
+    ]);
+    useApp.getState().createWorkspace("/b", [{ vendor: "claude", cwd: "/b" }]);
+    const [wsA, wsB] = useApp.getState().workspaces;
+    const moving = wsA.panes[0];
+
+    useApp.getState().movePaneToWorkspace(wsA.id, moving.id, wsB.id);
+    const [a, b] = useApp.getState().workspaces;
+
+    expect(a.panes.map((p) => p.id)).not.toContain(moving.id);
+    expect(b.panes.map((p) => p.id)).toContain(moving.id);
+    // The pane must arrive intact — same id, same worktree. A move that
+    // recreated it would strand the worktree and kill the running PTY.
+    const arrived = b.panes.find((p) => p.id === moving.id)!;
+    expect(arrived.worktreePath).toBe("/wt/a");
+    expect(arrived.branch).toBe("flightdeck/a");
+    expect(b.focused).toBe(moving.id);
+  });
+
+  it("movePaneToWorkspace: hands focus on when the moved pane held it", () => {
+    useApp.getState().createWorkspace("/a", [
+      { vendor: "claude", cwd: "/a" },
+      { vendor: "agy", cwd: "/a" },
+    ]);
+    useApp.getState().createWorkspace("/b", [{ vendor: "claude", cwd: "/b" }]);
+    const [wsA, wsB] = useApp.getState().workspaces;
+    const focused = wsA.focused!;
+    useApp.getState().movePaneToWorkspace(wsA.id, focused, wsB.id);
+    const a = useApp.getState().workspaces[0];
+    expect(a.focused).not.toBe(focused);
+    expect(a.panes.some((p) => p.id === a.focused)).toBe(true);
+  });
+
+  it("movePaneToWorkspace: ignores a move to the same workspace or an unknown pane", () => {
+    useApp.getState().createWorkspace("/a", [{ vendor: "claude", cwd: "/a" }]);
+    const ws = useApp.getState().workspaces[0];
+    const before = JSON.stringify(useApp.getState().workspaces);
+    useApp.getState().movePaneToWorkspace(ws.id, ws.panes[0].id, ws.id);
+    useApp.getState().movePaneToWorkspace(ws.id, 99999, ws.id);
+    expect(JSON.stringify(useApp.getState().workspaces)).toBe(before);
+  });
+
   it("addPane: appends to the target workspace and focuses the new pane", () => {
     useApp.getState().createWorkspace("/tmp/proj", [{ vendor: "claude", cwd: "/tmp/proj" }]);
     const wsId = useApp.getState().workspaces[0].id;

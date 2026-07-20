@@ -137,6 +137,24 @@ export function Notifications() {
   const approvalCount = needsAttention.filter((x) => x.p.state === "permission").length;
   const errCount = needsAttention.filter((x) => x.p.state === "error").length;
 
+  // UI-147: when Flightdeck is behind other windows, the in-app bell is
+  // invisible. Windows can show a count on the taskbar icon — that's the whole
+  // point of the attention queue reaching you when you're not looking at it.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const { getCurrentWindow } = await import("@tauri-apps/api/window");
+        if (cancelled) return;
+        const win = getCurrentWindow();
+        // setBadgeCount is a no-op on platforms without taskbar badges; the
+        // guard is for the browser preview, where the import itself throws.
+        await win.setBadgeCount?.(needsAttention.length || undefined);
+      } catch { /* no Tauri window, or the platform has no badge surface */ }
+    })();
+    return () => { cancelled = true; };
+  }, [needsAttention.length]);
+
   useEffect(() => {
     if (autoQueue && approvalCount >= 3 && prevApprovals.current < 3) {
       useUI.getState().setAttentionOpen(true);

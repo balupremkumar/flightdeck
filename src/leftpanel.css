@@ -177,3 +177,6 @@
 
 /* QOL 352: tell the user what the palette can find */
 .cmdp-empty-hint { display: block; margin-top: 6px; font-size: 11px; color: var(--faint); line-height: 1.5; }
+
+/* UI-232: workspace-level token roll-up */
+.lp-stat.lp-tok { font-family: var(--font-mono); color: var(--faint); }

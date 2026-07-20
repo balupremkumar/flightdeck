@@ -417,17 +417,33 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
       term.focus();
     })();
 
-    const ro = new ResizeObserver(() => { if (visible) { try { fit.fit(); } catch { /* mid-teardown */ } } });
+    // A divider dragged to its minimum can leave the container a few pixels
+    // wide; fit() only guards "not measured yet", not a genuinely degenerate
+    // size, and xterm throws on a zero-column fit.
+    const ro = new ResizeObserver(() => {
+      if (!visible) return;
+      const r = el.getBoundingClientRect();
+      if (r.width < 24 || r.height < 24) return;
+      try { fit.fit(); } catch { /* mid-teardown */ }
+    });
     ro.observe(el);
 
     // Live theme sync: Settings flips `data-theme` on <html> with no event of
     // its own, so watch the attribute directly. Mutates xterm's existing
     // theme option in place — same pattern as the fontSize effect below —
     // never remounts/respawns the PTY.
+    // UI-28: every data-theme mutation rewrote the whole xterm palette. Flipping
+    // themes quickly (or a theme picker previewing on hover) meant a burst of
+    // full repaints. Coalesce to one per frame.
+    let themeRaf = 0;
     const themeObserver = new MutationObserver(() => {
-      const next = terminalThemeFor(activeThemeId());
-      themeRef.current = next;
-      term.options.theme = next;
+      if (themeRaf) return;
+      themeRaf = requestAnimationFrame(() => {
+        themeRaf = 0;
+        const next = terminalThemeFor(activeThemeId());
+        themeRef.current = next;
+        term.options.theme = next;
+      });
     });
     themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
 
@@ -438,6 +454,7 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
       ro.disconnect();
       io.disconnect();
       themeObserver.disconnect();
+      if (themeRaf) cancelAnimationFrame(themeRaf);
       fileLinks.dispose();
       scrollDisp.dispose();
       writeDisp.dispose();

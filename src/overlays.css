@@ -143,9 +143,14 @@ kbd {
 .agent-row { display: grid; grid-template-columns: 108px 1fr 1fr; align-items: center; gap: 8px; }
 .agent-row-name { font-size: 12.5px; color: var(--muted); display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 /* #219 install/auth state chips in Settings > Agents */
+/* UI-218: these compute to ~15px tall on the base padding alone, which is under
+   the 24px minimum. The E2E hit-target check can't see it — 'signed in' and
+   'test launch' only render for an INSTALLED agent, and nothing is installed in
+   the browser preview the test runs in. Found by reading, not by testing. */
 .agent-chip {
+  display: inline-flex; align-items: center; min-height: 24px;
   font-size: 9.5px; font-weight: 600; letter-spacing: .02em;
-  padding: 2px 7px; border-radius: 999px; border: 1px solid var(--line);
+  padding: 2px 7px; border-radius: var(--r-pill); border: 1px solid var(--line);
   color: var(--muted); background: var(--surface); white-space: nowrap;
 }
 .agent-chip.warn { color: var(--st-waiting); border-color: var(--st-waiting); }
@@ -308,13 +313,44 @@ button.agent-chip.agent-test:hover { color: var(--accent); border-color: var(--a
   background: linear-gradient(to bottom, transparent, var(--elevated));
 }
 
-/* UI-9: actionable next step on a missing agent */
-.agent-install {
-  font: inherit; font-size: 9px; font-weight: 700; cursor: pointer;
-  margin-left: 5px; padding: 1px 5px; border-radius: var(--r-sm);
-  border: 1px solid currentColor; background: transparent; color: inherit;
+/* ---------- Agent install/sign-in popover (UI-9 / UI-111) ----------
+   One popover per chip: what's wrong, the fix, and — for sign-in — the note
+   that the CLI runs its own login inside a pane. Portalled to <body> and
+   positioned fixed from the trigger's own rect (see openAgentPopover in
+   Settings.tsx), same pattern as the pane overflow menu, so the modal's
+   own overflow/mask can't clip it. */
+.agent-popover-trigger { cursor: pointer; min-height: 24px; display: inline-flex; align-items: center; }
+.agent-popover {
+  position: fixed; z-index: var(--z-confirm); width: 280px;
+  background: var(--elevated); border: 1px solid var(--line-strong); border-radius: var(--r-md);
+  box-shadow: var(--shadow-3); padding: 12px 14px; display: flex; flex-direction: column; gap: 9px;
+  animation: ov-pop var(--t-med) var(--ease-out);
 }
-.agent-install:hover { filter: brightness(1.2); }
+.agent-pop-title { font-size: 13px; font-weight: 700; color: var(--text); }
+.agent-pop-body { font-size: 12px; line-height: 1.5; color: var(--muted); }
+.agent-pop-cmd {
+  display: flex; align-items: center; gap: 8px;
+  background: var(--surface); border: 1px solid var(--line-strong); border-radius: var(--r-sm);
+  padding: 6px 8px;
+}
+.agent-pop-cmd code {
+  flex: 1; min-width: 0; font-family: var(--font-mono); font-size: 11.5px; color: var(--text);
+  overflow-x: auto; white-space: pre;
+}
+.agent-pop-btn {
+  min-height: 24px; align-self: flex-start;
+  font: inherit; font-size: 12px; font-weight: 600; color: var(--on-accent); background: var(--accent-grad);
+  border: 0; border-radius: var(--r-sm); padding: 6px 12px; cursor: pointer;
+  transition: filter var(--t-fast) ease;
+}
+.agent-pop-btn:hover { filter: brightness(1.07); }
+.agent-pop-cmd .agent-pop-btn { flex: none; padding: 4px 10px; align-self: center; }
+.agent-pop-link {
+  min-height: 24px; align-self: flex-start; text-align: left;
+  font: inherit; font-size: 12px; font-weight: 600; color: var(--ice); background: transparent;
+  border: 0; padding: 0; cursor: pointer;
+}
+.agent-pop-link:hover { text-decoration: underline; }
 
 /* K0a: trusted-folder list */
 .set-row-block { flex-direction: column; align-items: stretch; gap: 8px; }

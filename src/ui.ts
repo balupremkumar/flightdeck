@@ -60,6 +60,11 @@ interface UIState {
 
   settingsOpen: boolean;
   setSettingsOpen: (open: boolean) => void;
+  /** UI-181: a section name to jump to when Settings opens. Consumed (and
+   *  cleared) by Settings itself, so it can't stick across opens. */
+  settingsJumpTo: string | null;
+  openSettingsAt: (section: string) => void;
+  clearSettingsJump: () => void;
 
   notify: NotifySettings;
   setNotifyOn: (state: PaneState, on: boolean) => void;
@@ -154,6 +159,9 @@ export const useUI = create<UIState>((set) => ({
 
   settingsOpen: false,
   setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
+  settingsJumpTo: null,
+  openSettingsAt: (section) => set({ settingsOpen: true, settingsJumpTo: section }),
+  clearSettingsJump: () => set({ settingsJumpTo: null }),
 
   notify: loadNotifySettings(),
   setNotifyOn: (state, on) =>

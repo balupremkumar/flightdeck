@@ -37,6 +37,9 @@ interface AppState {
   renameWorkspace: (wsId: number, name: string) => void;
   reorderWorkspaces: (from: number, to: number) => void;
   movePane: (wsId: number, from: number, to: number) => void;
+  /** UI-151: move a pane to another workspace, keeping its identity (and so its
+   *  worktree, title and epoch) intact — the PTY keeps running. */
+  movePaneToWorkspace: (fromWsId: number, paneId: number, toWsId: number) => void;
   // Session restore (session.ts): replace the whole tree with persisted state.
   hydrate: (workspaces: Workspace[], activeId: number | null) => void;
 }
@@ -166,6 +169,24 @@ export const useApp = create<AppState>((set) => ({
     set((s) => ({
       workspaces: s.workspaces.map((w) => (w.id === wsId ? { ...w, panes: reorder(w.panes, from, to) } : w)),
     })),
+
+  movePaneToWorkspace: (fromWsId, paneId, toWsId) =>
+    set((s) => {
+      if (fromWsId === toWsId) return s;
+      const from = s.workspaces.find((w) => w.id === fromWsId);
+      const pane = from?.panes.find((p) => p.id === paneId);
+      if (!pane) return s;
+      return {
+        workspaces: s.workspaces.map((w) => {
+          if (w.id === fromWsId) {
+            const panes = w.panes.filter((p) => p.id !== paneId);
+            return { ...w, panes, focused: w.focused === paneId ? panes[0]?.id ?? null : w.focused };
+          }
+          if (w.id === toWsId) return { ...w, panes: [...w.panes, pane], focused: pane.id };
+          return w;
+        }),
+      };
+    }),
 
   hydrate: (workspaces, activeId) =>
     set(() => {

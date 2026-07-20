@@ -77,3 +77,49 @@
   cursor: pointer; transition: color var(--t-fast) ease, border-color var(--t-fast) ease;
 }
 .bc-preset:hover { color: var(--text); border-color: var(--accent); }
+
+/* UI-202: saved snippets */
+.bc-snip-wrap { position: relative; flex: none; }
+.bc-snip-toggle {
+  display: inline-flex; align-items: center; min-height: 24px;
+  font: inherit; font-size: 10.5px; font-weight: 600;
+  padding: 3px 9px; border-radius: var(--r-pill);
+  border: 1px solid var(--line); background: transparent; color: var(--muted);
+  cursor: pointer; transition: color var(--t-fast) ease, border-color var(--t-fast) ease;
+}
+.bc-snip-toggle:hover, .bc-snip-toggle[aria-expanded="true"] { color: var(--text); border-color: var(--accent); }
+
+.bc-snip-menu {
+  position: absolute; top: calc(100% + 6px); right: 0; z-index: var(--z-menu);
+  width: 260px; max-height: 260px; overflow-y: auto;
+  background: var(--elevated); border: 1px solid var(--line-strong); border-radius: var(--r-md);
+  box-shadow: var(--shadow-2); padding: 6px; display: flex; flex-direction: column; gap: 4px;
+  animation: ov-pop-sm var(--t-med) var(--ease-out);
+}
+@keyframes ov-pop-sm { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+.bc-snip-save {
+  min-height: 24px; text-align: left;
+  font: inherit; font-size: 11.5px; font-weight: 600; color: var(--text); background: var(--surface);
+  border: 1px solid var(--line-strong); border-radius: var(--r-sm); padding: 6px 8px; cursor: pointer;
+  transition: border-color var(--t-fast) ease;
+}
+.bc-snip-save:hover:not(:disabled) { border-color: var(--accent); }
+.bc-snip-save:disabled { opacity: .45; cursor: not-allowed; }
+.bc-snip-empty { font-size: 11.5px; color: var(--faint); padding: 6px 4px; }
+.bc-snip-list { display: flex; flex-direction: column; gap: 2px; }
+.bc-snip-item { display: flex; align-items: center; gap: 2px; }
+.bc-snip-text {
+  flex: 1; min-width: 0; min-height: 24px; text-align: left;
+  font: inherit; font-size: 12px; color: var(--text); background: transparent; border: 0;
+  border-radius: var(--r-sm); padding: 6px 8px; cursor: pointer;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  transition: background-color var(--t-fast) ease;
+}
+.bc-snip-text:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.bc-snip-del {
+  flex: none; width: 24px; height: 24px; display: inline-flex; align-items: center; justify-content: center;
+  border-radius: var(--r-sm); border: 0; background: transparent; color: var(--faint);
+  font-size: 14px; line-height: 1; cursor: pointer;
+  transition: color var(--t-fast) ease, background-color var(--t-fast) ease;
+}
+.bc-snip-del:hover { color: var(--st-error); background: color-mix(in srgb, var(--st-error) 12%, transparent); }
