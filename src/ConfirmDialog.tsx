@@ -22,7 +22,7 @@ export function ConfirmDialog() {
   const { title, body, confirmLabel, danger, onConfirm } = confirm;
 
   return (
-    <div className="ov-scrim" onMouseDown={dismiss}>
+    <div className="ov-scrim ov-confirm" onMouseDown={dismiss}>
       <div className="confirm-modal" onMouseDown={(e) => e.stopPropagation()} role="alertdialog" aria-label={title}>
         <div className="confirm-title">{title}</div>
         {body && <div className="confirm-body">{body}</div>}

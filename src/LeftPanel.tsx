@@ -5,6 +5,7 @@ import { useUI } from "./ui";
 import { defaultCycle } from "./vendors";
 import { closeWorkspaceWithCleanup, preparePanes, isolationPref, rememberedOrSuggestedSetup } from "./worktrees";
 import { IconPlus, IconClose, IconBoard, IconDrag } from "./Icons";
+import { relTime as fmtRel, timeTitle } from "./format";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
@@ -37,15 +38,7 @@ function saveLastActive(m: Record<number, number>) {
   try { localStorage.setItem(LAST_ACTIVE_KEY, JSON.stringify(m)); } catch { /* non-persistent */ }
 }
 function relTime(ts: number | undefined, now: number): string | null {
-  if (!ts) return null;
-  const s = Math.max(0, Math.round((now - ts) / 1000));
-  if (s < 5) return "now";
-  if (s < 60) return `${s}s ago`;
-  const m = Math.round(s / 60);
-  if (m < 60) return `${m}m ago`;
-  const h = Math.round(m / 60);
-  if (h < 24) return `${h}h ago`;
-  return `${Math.round(h / 24)}d ago`;
+  return ts ? fmtRel(ts, now) : null;
 }
 
 // Default pane mix for a workspace spun up by dropping a folder. Comes from the
@@ -356,7 +349,7 @@ export function LeftPanel({ expanded, view, setView }: { expanded: boolean; view
                   {r.error > 0 && <span className="lp-stat err"><i />{r.error}</span>}
                   {r.total === 0 && <span className="lp-stat empty">empty</span>}
                   {last && (
-                    <span className="lp-stat lp-last" title={lastActive[w.id] ? new Date(lastActive[w.id]).toLocaleString() : undefined}>
+                    <span className="lp-stat lp-last" title={lastActive[w.id] ? timeTitle(lastActive[w.id]) : undefined}>
                       {last}
                     </span>
                   )}

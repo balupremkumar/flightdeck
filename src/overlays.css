@@ -2,12 +2,16 @@
    Consumes the Deep Cove tokens from theme.css. */
 
 .ov-scrim {
-  position: fixed; inset: 0; z-index: 100;
+  position: fixed; inset: 0; z-index: var(--z-settings);
   background: rgba(3, 6, 12, .58);
+  /* A confirm can be raised FROM Settings (reset-all, destructive actions), so
+     it must outrank it — see the z-scale in theme.css. */
   backdrop-filter: blur(3px);
   display: grid; place-items: center;
   animation: ov-fade .16s ease;
 }
+.ov-scrim.ov-confirm { z-index: var(--z-confirm); }
+
 @keyframes ov-fade { from { opacity: 0; } to { opacity: 1; } }
 
 .ov-x {
@@ -166,7 +170,7 @@ button.agent-chip:hover { filter: brightness(1.15); }
 .btn-danger:active { transform: translateY(1px); }
 
 /* ---------- Toasts ---------- */
-.toast-host { position: fixed; right: 16px; bottom: 16px; z-index: 120; display: flex; flex-direction: column; gap: 10px; align-items: flex-end; }
+.toast-host { position: fixed; right: 16px; bottom: 16px; z-index: var(--z-toast); display: flex; flex-direction: column; gap: 10px; align-items: flex-end; }
 .toast {
   display: flex; align-items: center; gap: 10px; min-width: 220px; max-width: 360px;
   background: var(--elevated); border: 1px solid var(--line-strong); border-radius: 11px;

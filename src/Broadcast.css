@@ -3,7 +3,7 @@
    terminal grid rather than sitting there permanently as a floating pill. */
 
 .bc-bar {
-  position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 90;
+  position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: var(--z-notify);
   width: min(640px, calc(100vw - 32px));
   background: var(--elevated); border: 1px solid var(--line-strong); border-radius: 14px;
   box-shadow: var(--shadow-lg); padding: 12px 14px; animation: bc-pop .16s var(--ease-out);

@@ -126,7 +126,7 @@
   border: 1px solid var(--line-strong);
   border-radius: 10px;
   box-shadow: 0 20px 50px -16px rgba(0, 0, 0, .7);
-  z-index: 200;
+  z-index: var(--z-menu);
   overflow: hidden;
   padding: 4px;
   display: flex;

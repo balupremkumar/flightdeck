@@ -6,12 +6,10 @@ export interface PaneStatus {
   rel: string; // "just now" / "12s ago" / "4m ago" — time since the state last changed
 }
 
+import { relTime as fmtRel } from "../format";
+
 function relTime(ms: number): string {
-  const secs = Math.max(0, Math.round(ms / 1000));
-  if (secs < 5) return "just now";
-  if (secs < 60) return `${secs}s ago`;
-  if (secs < 3600) return `${Math.round(secs / 60)}m ago`;
-  return `${Math.round(secs / 3600)}h ago`;
+  return fmtRel(Date.now() - ms);
 }
 
 // Live agent progress for a card dispatched to a pane (BACKLOG D12): a state

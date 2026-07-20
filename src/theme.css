@@ -62,6 +62,47 @@
   /* motion */
   --ease-out:cubic-bezier(0.16,1,0.3,1);
   --ease-soft:cubic-bezier(0.4,0,0.1,1);
+
+  /* Motion durations (UI-247). Scattered .12s/.14s/.16s literals resolve here
+     so the whole app can be slowed/sped as one system. */
+  --t-fast:120ms;   /* hover/press tints, chip borders */
+  --t-med:180ms;    /* overlays in/out, drawer slide, crossfades */
+  --t-slow:320ms;   /* status pulses, attention emphasis */
+  /* One pulse cadence for every animated status dot (UI-240) — pband, pdot and
+     the left-panel dots drifted out of phase when each owned its own timing. */
+  --t-pulse:1800ms;
+
+  /* Elevation scale (UI-241) — was a per-file shadow value in five places. */
+  --shadow-1:0 1px 2px rgba(0,0,0,0.28);
+  --shadow-2:0 6px 18px -6px rgba(0,0,0,0.45);
+  --shadow-3:0 18px 44px -12px rgba(0,0,0,0.6);
+  --shadow-lg:0 30px 70px -20px rgba(0,0,0,0.75);
+
+  /* Radius scale (UI-33 / QOL 339) — pills 999, cards/menus lg, inputs sm. */
+  --r-sm:6px;
+  --r-md:9px;
+  --r-lg:12px;
+  --r-pill:999px;
+
+  /* Overlay z-index scale (UI-245). Single documented stack — every overlay
+     must use one of these, never a fresh literal:
+       explorer/panel chrome  1-10
+       pane menus (portalled)  90
+       bell/notification menu 110
+       review drawer          120
+       attention queue        130
+       command palette        140
+       settings               150
+       confirm dialog         160
+       toasts (always on top) 170 */
+  --z-menu:90;
+  --z-notify:110;
+  --z-drawer:120;
+  --z-queue:130;
+  --z-palette:140;
+  --z-settings:150;
+  --z-confirm:160;
+  --z-toast:170;
 }
 
 :root[data-theme="light"] {
@@ -191,4 +232,55 @@
   animation-iteration-count: 1 !important;
   transition-duration: 0.001ms !important;
   scroll-behavior: auto !important;
+}
+
+/* OS reduced-motion (UI-214): the Settings toggle is an override, but the
+   system preference must be the DEFAULT — a user who set it at OS level
+   shouldn't have to find our checkbox. `[data-reduced-motion="0"]` (explicit
+   opt-in to motion) still wins. */
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-reduced-motion="0"]) *,
+  :root:not([data-reduced-motion="0"]) *::before,
+  :root:not([data-reduced-motion="0"]) *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Windows High Contrast / forced-colors (UI-217). Our colour tokens are
+   ignored by the OS in this mode, so make sure structure survives: keep
+   borders visible and never rely on a background tint alone. */
+@media (forced-colors: active) {
+  .chip, .pdiff, .ptok, .agent-chip, .slot-warn,
+  .aq-row, .ntf-item, .theme-tile, .lp-ws, .pane {
+    border: 1px solid CanvasText;
+  }
+  .pdot, .ntf-dot, .pband { forced-color-adjust: none; }
+  :where(button, a, input, select, [tabindex]):focus-visible {
+    outline: 2px solid Highlight;
+  }
+}
+
+/* Shared chip base (UI-246). slot-warn / agent-chip / rv-branch / pdiff / ptok
+   were five hand-rolled variants of one idea; new chips extend this. */
+.chip {
+  display: inline-flex; align-items: center; gap: 5px; flex: none;
+  font-size: 10.5px; font-weight: 600; white-space: nowrap;
+  padding: 2px 8px; border-radius: var(--r-pill);
+  border: 1px solid var(--line); background: var(--surface); color: var(--muted);
+  transition: border-color var(--t-fast) ease, color var(--t-fast) ease;
+}
+.chip-mono { font-family: var(--font-mono); font-weight: 500; font-size: 10px; }
+.chip-warn { color: var(--st-waiting); border-color: color-mix(in srgb, var(--st-waiting) 45%, transparent); background: color-mix(in srgb, var(--st-waiting) 12%, transparent); }
+.chip-ok { color: var(--st-running); border-color: color-mix(in srgb, var(--st-running) 40%, transparent); }
+.chip-err { color: var(--st-error); border-color: color-mix(in srgb, var(--st-error) 45%, transparent); }
+button.chip { cursor: pointer; font-family: inherit; }
+button.chip:hover { border-color: var(--accent); color: var(--text); }
+
+/* Minimum hit target (UI-218): anything interactive gets 24px of clickable
+   height even when its visual box is smaller. */
+.icon-btn, .rv-ic, .ex-refresh, .ex-toggle, .ntf-gear {
+  min-width: 24px; min-height: 24px;
 }

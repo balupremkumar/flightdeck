@@ -68,7 +68,7 @@
    Command palette
    ============================================================ */
 .cmdp-scrim {
-  position: fixed; inset: 0; z-index: 100;
+  position: fixed; inset: 0; z-index: var(--z-palette);
   background: rgba(3, 6, 12, .55); backdrop-filter: blur(3px);
   display: flex; justify-content: center; padding-top: 12vh;
   animation: ov-fade .14s ease;

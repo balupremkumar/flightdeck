@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useApp, type PaneModel } from "./store";
 import { useUI } from "./ui";
 import { IconClose } from "./Icons";
+import { relTime, timeTitle } from "./format";
 import "./Broadcast.css";
 
 type Scope = "workspace" | "all";
@@ -10,13 +11,6 @@ type Target = { w: { id: number; name: string }; p: PaneModel };
 
 import { vendorShort } from "./vendors";
 
-function relTime(ms: number): string {
-  const secs = Math.max(0, Math.round((Date.now() - ms) / 1000));
-  if (secs < 5) return "just now";
-  if (secs < 60) return `${secs}s ago`;
-  if (secs < 3600) return `${Math.round(secs / 60)}m ago`;
-  return `${Math.round(secs / 3600)}h ago`;
-}
 
 // Self-contained broadcast composer: one message, sent to all (or a chosen
 // subset of) panes via the existing `pty_write` command. Renders nothing when
@@ -132,7 +126,7 @@ export function Broadcast() {
       </div>
 
       {lastBroadcast && (
-        <div className="bc-last" title={new Date(lastBroadcast.at).toLocaleString()}>
+        <div className="bc-last" title={timeTitle(lastBroadcast.at)}>
           Last sent {relTime(lastBroadcast.at)} to {lastBroadcast.sentTo} pane{lastBroadcast.sentTo === 1 ? "" : "s"}
           {lastBroadcast.failed > 0 ? ` (${lastBroadcast.failed} failed)` : ""}
         </div>

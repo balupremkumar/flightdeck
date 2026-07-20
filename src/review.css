@@ -3,7 +3,7 @@
    toasts). Token-driven so all 6 themes work. */
 
 .rv-scrim {
-  position: fixed; inset: 0; z-index: 60;
+  position: fixed; inset: 0; z-index: var(--z-drawer);
   background: color-mix(in srgb, var(--abyss) 55%, transparent);
   animation: ov-fade .16s ease;
 }

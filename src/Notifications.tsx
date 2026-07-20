@@ -2,7 +2,9 @@ import { useEffect, useRef, useState } from "react";
 import { useApp, type PaneState } from "./store";
 import { useUI } from "./ui";
 import { IconBell, IconSettings } from "./Icons";
+import { getCurrentWindow, UserAttentionType } from "@tauri-apps/api/window";
 import { attentionQueue, forMins, stateSince, STATE_LABEL } from "./attention";
+import { timeTitle } from "./format";
 import "./Notifications.css";
 
 // All configurable states, approval/waiting/error first since those are the
@@ -47,7 +49,6 @@ async function osToast(title: string, body: string) {
 // that's added — caught and skipped, per "degrade gracefully" in the brief.
 async function flashTaskbar() {
   try {
-    const { getCurrentWindow, UserAttentionType } = await import("@tauri-apps/api/window");
     await getCurrentWindow().requestUserAttention(UserAttentionType.Informational);
   } catch { /* capability not granted, or not running under Tauri */ }
 }
@@ -183,7 +184,7 @@ export function Notifications() {
             </div>
             {feed.length === 0 && <div className="ntf-empty">No notifications yet — they'll show up here.</div>}
             {feed.slice(0, 12).map((e) => (
-              <div className="ntf-item" key={e.id} onClick={() => jump(e.wsId, e.paneId)} title={new Date(e.at).toLocaleString()}>
+              <div className="ntf-item" key={e.id} onClick={() => jump(e.wsId, e.paneId)} title={timeTitle(e.at)}>
                 <span className={"ntf-dot " + e.state} />
                 <span className="ntf-ws">{e.wsName}</span>
                 <span className="ntf-ag">{e.vendor}</span>

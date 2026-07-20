@@ -34,10 +34,8 @@ export function attentionQueue(workspaces: Workspace[]): AttentionItem[] {
     });
 }
 
-export function forMins(since: number): string {
-  const m = Math.floor((Date.now() - since) / 60000);
-  return m < 1 ? "just now" : m < 60 ? `${m}m` : `${Math.floor(m / 60)}h ${m % 60}m`;
-}
+// Re-exported from the shared formatter (UI-220) so existing imports keep working.
+export { duration as forMins } from "./format";
 
 export const STATE_LABEL: Record<PaneState, string> = {
   starting: "Starting",

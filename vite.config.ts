@@ -8,6 +8,30 @@ const host = process.env.TAURI_DEV_HOST;
 export default defineConfig(async () => ({
   plugins: [react()],
 
+  // UI-225: split the vendor weight out of the app chunk. xterm + its addons
+  // are the bulk and change rarely, so they cache independently of app code
+  // and the first paint doesn't wait on one ~930KB bundle.
+  build: {
+    // xterm alone is ~560KB and is deliberately its own cached vendor chunk;
+    // the app chunk is what we keep small. Limit set above that so the warning
+    // means something again.
+    chunkSizeWarningLimit: 600,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          xterm: [
+            "@xterm/xterm",
+            "@xterm/addon-fit",
+            "@xterm/addon-search",
+            "@xterm/addon-web-links",
+            "@xterm/addon-ligatures",
+          ],
+          react: ["react", "react-dom", "react-dom/client"],
+        },
+      },
+    },
+  },
+
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
   // 1. prevent Vite from obscuring rust errors
