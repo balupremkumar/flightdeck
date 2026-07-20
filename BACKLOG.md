@@ -295,6 +295,13 @@ Balu runs **LM Studio** locally (OpenAI-compatible server on `http://127.0.0.1:1
 This does NOT break the "no paid-API-billing" rule: a local model is free (own machine), not metered cloud billing.
 Reuse the Harness plumbing: `Harness/bin/local-run.ps1`, the `local-model` skill, POLICY rule 9 (loopback-only bind).
 
+**DECISION (Balu 2026-07-20): mode A must be a real CLI experience.**
+**OpenCode is the frontrunner** pane CLI against LM Studio's OpenAI-compatible
+endpoint; evaluate alternatives (Crush, aider --local, mods) before building
+anything; a custom-built thin REPL is the last resort only. **Priority:
+LOWER — schedule after Tier 1 (persistence) + the #218 manifest,** then the
+local adapter becomes a manifest entry rather than code.
+
 Two modes (build B first, most leverage):
 
 **A. Local model as its own pane.**
@@ -655,11 +662,42 @@ partially done ("Preparing worktrees…" busy state).
 - UI-44. Quit-with-live-sessions confirmation — the one unguarded destructive action (373).
 - UI-45. Icon check across OS surfaces (372); friendly probe-detail copy (374).
 
+### K-New. Session 2026-07-20 additions (Balu-requested)
+- UI-50. ⭐ **Custom accent colour picker** — Balu doesn't like being limited to
+  the 5 `ACCENTS` presets. Any colour via hex/wheel input; auto-derive the
+  dark-safe/light-safe `ice`/`azure`/`accent`/`grad` variants (HSL
+  lightness/saturation shifts) so one chosen colour themes the whole app in
+  both modes; persisted alongside the preset choice. Extend
+  `applyAccent()`/`ACCENTS` in `src/themes.ts` — presets stay as quick picks,
+  custom becomes a sixth "your colour" tile. HIGH priority.
+- UI-51. Per-vendor accent overrides riding the same derivation pipeline
+  (ties to I1 #222 branding) — pick a colour per agent, chips/cards/pane
+  accents follow.
+
 ### K-K. Backend-built, UI-missing (QOL §10, minus Diagnostics = UI-4)
 - UI-46. Persistence wiring UX: "reopen last session?" prompt, safe-mode banner, quit warning (378 ⭐/379 — lands with Tier 1 R4).
 - UI-47. Shared git_status cache (380); Browse denied-folder feedback (381).
 - UI-48. Job-Object trust copy in Settings (382); auto-title panes from live process (383); "copy scrollback (redacted)" action (384).
 - UI-49. Virtualise notification feed / board columns / file tree (126/276); xterm scrollback cap (277).
+
+---
+
+## L. Naming (parked 2026-07-20)
+
+Balu dislikes "Flightdeck" but is keeping it for now. Researched shortlist for
+a later rename — all Kove-aligned (cove/harbour; the design system is already
+"Deep Cove"):
+- **Moorage** — where a fleet ties up; verified: no software/AI product found.
+  Front-runner. "Moorage — by Kove", tagline "moor your agents".
+- **Berth** — each agent gets its own berth (literal pane/worktree metaphor);
+  only collision is berthtech.com (Nigerian services co); generic-word
+  trademark risk.
+- **Covework** — tightest Kove tie, zero collisions found; reads like a
+  "cowork" typo until the brand lands.
+Taken / ruled out: Superset (superset.sh = direct competitor), Flotilla,
+Slipstream, Tasman, Keelson, Harbourmaster, Homeport, Headland, Deep Cove
+(crowded), Manifold, Ensemble, Plural, Constellation.
+**Before any rename: IPONZ trademark search + domain check (.nz/.dev/.app).**
 
 ---
 
