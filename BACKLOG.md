@@ -15,11 +15,14 @@ Item IDs reference the detailed catalogue in sections A–H below.
 Per-agent **git worktree isolation** + **Review drawer** (diff/merge surface).
 See STATE.md session 6 + section J below for the market landscape. v1 scope:
 local merge-back (auto-commit → --no-ff, conflict aborts cleanly). Follow-ups:
-- **PR handoff flow** (v2 merge path — what most rivals ship; sidesteps conflict UI).
+- ~~**PR handoff flow**~~ **DONE 2026-07-20 session 8** (Create PR in the Review
+  drawer: auto-commit → push -u origin → opens the GitHub/GitLab/Bitbucket
+  compare URL; other remotes still push, user opens the PR manually).
 - **Merge-conflict resolution surface** (v1 aborts with a message).
-- **Per-workspace worktree setup command** (fresh worktrees have no
-  node_modules — agents can't build/test until `npm ci`; Conductor/Superset
-  solve this with setup scripts).
+- ~~**Per-workspace worktree setup command**~~ **DONE 2026-07-20 session 8**
+  (New Workspace field, lockfile-suggested + per-repo memory; runs in-pane via
+  a pwsh wrapper before the agent, failure = pane error without agent launch;
+  restore re-runs it when a worktree is recreated).
 - **Per-pane Explorer rooting / worktree switcher** (Explorer still shows the
   main checkout, not the focused pane's worktree).
 - **WSL isolation** (excluded in v1: worktree `.git` file embeds a Windows
@@ -94,7 +97,7 @@ The session-3 requests + the supporting polish that makes them land.
 Order is dependency-driven; the vendor adapter is the load-bearing refactor everything else sits on.
 
 - **R1. Vendor adapter trait + registry** — generalise `build_command` in `lib.rs` into a per-vendor contract (launch cmd, detection, status patterns). Foundational; do before more vendors get hand-rolled.
-- **R2. Windows Job Object hardening** — put every spawned child in a Job Object with kill-on-close so even a hard crash of Flightdeck.exe reaps children (clean-exit reaping already shipped).
+- ~~R2. Windows Job Object hardening~~ — **SHIPPED wave 2** (`job.rs`: shared Job Object w/ KILL_ON_JOB_CLOSE, every child assigned at spawn — docs were stale, corrected session 8).
 - **R3. First-run CLI detection** — binary probe (installed + logged in) per vendor; inline "Run login" on an amber slot; folder-open wiring.
 - **R4. SQLite persistence** — workspaces/panes/layout/presets/scrollback/events survive a full restart; restore on reopen (needs the exit/error state fix, now done).
 - **R5. Crashed-pane relaunch + hidden-pane render throttle.**
@@ -108,11 +111,11 @@ Order is dependency-driven; the vendor adapter is the load-bearing refactor ever
 
 ## B. Open known issues / watch-items (not yet fixed)
 
-- **K0a. agy trust in worktrees untested (D9)** — `ensure_agy_trust` appends every pane cwd to `trustedWorkspaces` permanently; per-session worktree paths will accumulate. Test whether agy honors parent-dir trust of the fixed worktrees root; else GC trust entries on worktree removal.
+- ~~K0a. agy trust in worktrees~~ — **FIXED 2026-07-20 session 8**: worktree removal/GC now prunes the dir from agy's `trustedWorkspaces` (case/slash-insensitive, unrelated entries untouched); validated against a real stale entry from the 2026-07-20 E2E run.
 - **K0b. MAX_PATH** — worktrees live under `%LOCALAPPDATA%/Flightdeck/worktrees/<hash>/<slug>`; a deep node_modules inside one can trip Windows path limits without `longPathsEnabled`.
-- **K0c. Fresh worktrees have no build artifacts** — no node_modules/target until the setup-command follow-up ships (Tier 0 list above).
+- ~~K0c. Fresh worktrees have no build artifacts~~ — **FIXED 2026-07-20 session 8** (worktree setup command, Tier 0 list above).
 - ~~K1. Settings ⚙ does nothing~~ — **FIXED session 4** (Settings screen + Ctrl+,).
-- **K2. No Job Object** — clean window-close now reaps child process trees, but a hard crash of Flightdeck.exe itself could still orphan children. -> R2.
+- ~~K2. No Job Object~~ — **SHIPPED wave 2** (see R2; stale claim corrected session 8).
 - **K3. `csp:null`** — acceptable for local-only today, tighten with R6.
 - **K4. StrictMode dev double-spawn** — dev-only; each pane briefly launches two real CLI processes under `npm run tauri dev`. Benign in production build. Watch item.
 - **K5. Resize dropped in a narrow startup gap** — a container resize landing between mount and spawn isn't forwarded to the PTY; self-corrects on next resize. Low.
@@ -480,7 +483,7 @@ Residual cosmetics: hardcoded default ids (`Board.tsx` dispatch fallback
 216. ~~Single source of truth for vendors~~ — **DONE** (`src/vendors.ts`, all UI lists map the registry).
 217. ~~Kill the `Vendor` union type~~ — **DONE** (`board/types.ts:11` is `string`).
 218. ~~User-definable agents via a manifest file~~ — **DONE 2026-07-20** (JSON manifests in `<app-data>/vendors/`, ManifestVendor adapter, env-override strip exemption, hex/token accents, shipped example; see STATE session 7).
-219. **Per-vendor auth state** — extend probe beyond "installed" to `not-installed | installed-not-logged-in | ready`, with a per-vendor `login` command surfaced as an inline "Run login" action.
+219. ~~**Per-vendor auth state**~~ **DONE 2026-07-20 session 8** — `auth()` on the adapter trait (credential-file presence, never read): "not signed in" chip in New Workspace, signed-in/run-login in Settings > Agents (login opens a pane, the CLI drives its own flow); manifests get an optional `authFile`.
 220. **Per-vendor status patterns** — replace the one-size activity heuristic with per-adapter output patterns (waiting/auth-required/error), falling back to the heuristic.
 221. **Per-vendor capability metadata** — supports MCP? model selection? headless? resume? Drives which UI affordances show for that pane.
 222. **Per-vendor branding** — icon + accent per agent, registry-driven, so panes/cards/chips identify the agent visually.
