@@ -14,15 +14,18 @@ import { CommandPalette } from "./CommandPalette";
 import { Explorer } from "./Explorer";
 import { Review } from "./Review";
 import { useUI } from "./ui";
-import { applyTheme, currentThemeId, findTheme } from "./themes";
+import { applyTheme, applyAccent, currentThemeId, currentAccentId, findTheme } from "./themes";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { spawnPane } from "./worktrees";
 
 // Quick light/dark flip. Goes through the themes registry (not a raw data-theme
-// write) so it stays in step with the richer theme picker in Settings.
+// write) so it stays in step with the richer theme picker in Settings, and
+// re-applies the accent so its dark/light variant follows the new mode.
 function toggleTheme() {
   const cur = findTheme(currentThemeId());
-  applyTheme(cur.mode === "light" ? "dark" : "light");
+  const nextId = cur.mode === "light" ? "dark" : "light";
+  applyTheme(nextId);
+  applyAccent(currentAccentId(), findTheme(nextId).mode);
 }
 
 export function Cockpit() {

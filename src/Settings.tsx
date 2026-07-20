@@ -3,7 +3,7 @@ import { useUI, applyUiScale } from "./ui";
 import { useVendors } from "./vendors";
 import { IconClose } from "./Icons";
 import {
-  THEMES, ACCENTS, findTheme, findAccent,
+  THEMES, ACCENTS, findTheme, findAccent, CUSTOM_ACCENT_ID, customAccentHex, setCustomAccent,
   applyTheme, applyAccent, setAccent,
   currentThemeId, currentAccentId,
   isColorBlindSafe, setColorBlindSafe,
@@ -149,6 +149,7 @@ export function Settings() {
 
   const [themeId, setThemeId] = useState(currentThemeId());
   const [accentId, setAccentId] = useState(currentAccentId());
+  const [customHex, setCustomHex] = useState(customAccentHex());
   const [cbSafe, setCbSafe] = useState(isColorBlindSafe());
   const [reducedMotion, setReducedMotionOn] = useState(isReducedMotion());
   const [scale, setScale] = useState(currentScale());
@@ -298,6 +299,29 @@ export function Settings() {
                       aria-label={`Accent: ${a.label}`}
                     />
                   ))}
+                  {/* UI-50: any colour — dark/light variants + gradient derived
+                      from the one picked hex. The swatch doubles as the input. */}
+                  <label
+                    className={"accent-swatch accent-custom" + (accentId === CUSTOM_ACCENT_ID ? " on" : "")}
+                    style={{
+                      background:
+                        accentId === CUSTOM_ACCENT_ID
+                          ? (mode === "light" ? findAccent(CUSTOM_ACCENT_ID).light.accent : findAccent(CUSTOM_ACCENT_ID).dark.accent)
+                          : "conic-gradient(#f55 0deg, #fb0 70deg, #4d4 140deg, #2bd 210deg, #74f 280deg, #f55 360deg)",
+                    }}
+                    title="Custom — pick any colour"
+                    aria-label="Accent: custom colour"
+                  >
+                    <input
+                      type="color"
+                      value={customHex}
+                      onChange={(e) => {
+                        setCustomHex(e.target.value);
+                        setCustomAccent(e.target.value, mode);
+                        setAccentId(CUSTOM_ACCENT_ID);
+                      }}
+                    />
+                  </label>
                 </div>
               </div>
             )}

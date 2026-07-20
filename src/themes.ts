@@ -79,7 +79,88 @@ export const ACCENTS: AccentPreset[] = [
 
 export const DEFAULT_ACCENT_ID = "ice";
 
+// ---------------------------------------------------------------------
+// Custom accent (UI-50): any user-chosen colour. One hex in, both
+// theme-mode variants out — same shape as a hand-tuned preset, derived:
+//   dark mode : accent kept vivid + legible on near-black (L clamped up),
+//               ice = pale tint for text/focus, grad = tint → base → deep.
+//   light mode: accent darkened for contrast on white (L clamped down).
+// ---------------------------------------------------------------------
+export const CUSTOM_ACCENT_ID = "custom";
+const CUSTOM_ACCENT_KEY = "flightdeck-accent-custom";
+
+function hexToHsl(hex: string): { h: number; s: number; l: number } | null {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
+  if (!m) return null;
+  const r = parseInt(m[1].slice(0, 2), 16) / 255;
+  const g = parseInt(m[1].slice(2, 4), 16) / 255;
+  const b = parseInt(m[1].slice(4, 6), 16) / 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  const l = (max + min) / 2;
+  if (max === min) return { h: 0, s: 0, l };
+  const d = max - min;
+  const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+  let h: number;
+  if (max === r) h = ((g - b) / d + (g < b ? 6 : 0)) / 6;
+  else if (max === g) h = ((b - r) / d + 2) / 6;
+  else h = ((r - g) / d + 4) / 6;
+  return { h: h * 360, s, l };
+}
+
+function hsl(h: number, s: number, l: number): string {
+  const c = Math.max(0, Math.min(1, l));
+  const sat = Math.max(0, Math.min(1, s));
+  return `hsl(${Math.round(((h % 360) + 360) % 360)} ${Math.round(sat * 100)}% ${Math.round(c * 100)}%)`;
+}
+
+/** Derive a full AccentPreset from one hex colour. Exported for tests/tools. */
+export function deriveAccent(hex: string): AccentPreset | null {
+  const c = hexToHsl(hex);
+  if (!c) return null;
+  const { h, s } = c;
+  // Dark mode: keep the hue, force enough lightness to read on --abyss.
+  const dL = Math.min(Math.max(c.l, 0.52), 0.68);
+  const dAccent = hsl(h, Math.max(s, 0.35), dL);
+  const dIce = hsl(h, Math.max(s * 0.85, 0.3), Math.max(dL + 0.2, 0.78));
+  const dDeep = hsl(h + 12, Math.min(Math.max(s, 0.35) + 0.08, 1), Math.max(dL - 0.16, 0.3));
+  // Light mode: same hue, darkened so it holds contrast on white surfaces.
+  const lL = Math.min(c.l, 0.38);
+  const lAccent = hsl(h, Math.max(s, 0.45), lL);
+  const lHi = hsl(h - 8, Math.max(s, 0.45), Math.min(lL + 0.12, 0.5));
+  const lDeep = hsl(h + 12, Math.min(Math.max(s, 0.45) + 0.08, 1), Math.max(lL - 0.1, 0.16));
+  return {
+    id: CUSTOM_ACCENT_ID,
+    label: "Custom",
+    dark: {
+      ice: dIce,
+      azure: dAccent,
+      accent: dAccent,
+      grad: `linear-gradient(125deg,${dIce} 0%,${dAccent} 48%,${dDeep} 100%)`,
+    },
+    light: {
+      ice: lAccent,
+      azure: lAccent,
+      accent: lAccent,
+      grad: `linear-gradient(125deg,${lHi} 0%,${lAccent} 48%,${lDeep} 100%)`,
+    },
+  };
+}
+
+export function customAccentHex(): string {
+  try { return localStorage.getItem(CUSTOM_ACCENT_KEY) ?? "#43A6F5"; } catch { return "#43A6F5"; }
+}
+
+/** Store the chosen hex, select the custom accent, and apply it. */
+export function setCustomAccent(hex: string, mode: "dark" | "light") {
+  try { localStorage.setItem(CUSTOM_ACCENT_KEY, hex); } catch { /* non-persistent */ }
+  setAccent(CUSTOM_ACCENT_ID, mode);
+}
+
 export function findAccent(id: string): AccentPreset {
+  if (id === CUSTOM_ACCENT_ID) {
+    const derived = deriveAccent(customAccentHex());
+    if (derived) return derived;
+  }
   return ACCENTS.find((a) => a.id === id) ?? ACCENTS[0];
 }
 

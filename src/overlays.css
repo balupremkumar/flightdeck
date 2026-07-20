@@ -83,6 +83,13 @@ kbd {
 }
 .accent-swatch:hover { transform: scale(1.08); }
 .accent-swatch.on { border-color: var(--text); }
+/* UI-50: the custom-colour swatch is a label wrapping a hidden <input type=color>
+   so the whole dot is the picker trigger. Rainbow conic fill until chosen. */
+.accent-custom { display: inline-flex; overflow: hidden; position: relative; }
+.accent-custom input {
+  position: absolute; inset: 0; opacity: 0; width: 100%; height: 100%;
+  cursor: pointer; border: 0; padding: 0;
+}
 
 /* ---------- Toggle switch ---------- */
 .toggle {
