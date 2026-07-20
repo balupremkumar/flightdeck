@@ -11,6 +11,7 @@ import { useUI } from "./ui";
 import { vendorShort } from "./vendors";
 import { IconBranch, IconClose, IconChevron, IconDiff, IconMerge, IconRefresh } from "./Icons";
 import type { DiffSummary, MergeOutcome } from "./worktrees";
+import { invalidateCwd } from "./poll";
 import "./review.css";
 
 // Patch-line classes for the unified diff view.
@@ -101,6 +102,7 @@ export function Review() {
             else if (m.status === "nothing-to-merge") pushToast("info", "Nothing to merge — the branch has no new work.");
             else if (m.status === "conflict") setConflict(m); // stays in the drawer, not a toast
             else pushToast("error", m.detail || m.status);
+            invalidateCwd(pane.cwd); // merge/PR changed git state — force fresh polls
             void load();
           })
           .catch((e) => pushToast("error", `Merge failed: ${String(e)}`))

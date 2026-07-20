@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { invoke } from "@tauri-apps/api/core";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { useApp, type PaneModel, type PaneState } from "./store";
 import { useUI } from "./ui";
@@ -10,6 +9,9 @@ import {
   IconMaximizePane, IconMinimize, IconFolder, IconChevron, IconDiff,
 } from "./Icons";
 import type { DiffSummary } from "./worktrees";
+import { cachedInvoke, usePoll, useVisible } from "./poll";
+import { compact, num, duration } from "./format";
+import { stateSince, STATE_LABEL as STATE_TITLE } from "./attention";
 import "./panes.css";
 
 import { vendorShort } from "./vendors";
@@ -26,12 +28,6 @@ interface GitStatus {
   isRepo: boolean;
   branch: string | null;
   dirty: boolean;
-}
-
-function fmtTokens(n: number): string {
-  if (n < 1000) return String(n);
-  if (n < 10000) return (n / 1000).toFixed(1) + "k";
-  return Math.round(n / 1000) + "k";
 }
 
 function baseName(p: string): string {
@@ -80,6 +76,9 @@ export function PaneView({
   const setPaneState = useApp((s) => s.setPaneState);
   const restartPane = useApp((s) => s.restartPane);
   const clearNeedsSetup = useApp((s) => s.clearNeedsSetup);
+  // Off-screen panes (background workspace, or a sibling maximised) stop polling.
+  const paneRef = useRef<HTMLDivElement>(null);
+  const paneVisible = useVisible(paneRef);
   const setupCmd = useApp((s) => s.workspaces.find((w) => w.id === wsId)?.setupCmd);
   const renamePane = useApp((s) => s.renamePane);
   const pushToast = useUI((s) => s.pushToast);
@@ -202,59 +201,48 @@ export function PaneView({
   // Real git branch for this pane's cwd. Cheap to poll — re-check on mount,
   // on pane restart (epoch bump), and every 30s. Degrades silently: any
   // invoke failure (git missing, cwd gone) just hides the pill.
-  useEffect(() => {
-    let cancelled = false;
-    const poll = async () => {
-      try {
-        const status = await invoke<GitStatus>("git_status", { cwd: pane.cwd });
-        if (!cancelled) setGitStatus(status);
-      } catch {
-        if (!cancelled) setGitStatus(null);
-      }
-    };
-    poll();
-    const id = setInterval(poll, GIT_POLL_MS);
-    return () => { cancelled = true; clearInterval(id); };
-  }, [pane.cwd, pane.epoch]);
+  // Shared cache (UI-234): six panes on one repo now make ONE git_status call
+  // per cycle instead of six. Poll stands down when this pane is off-screen or
+  // the window is hidden (UI-227/228).
+  usePoll(async () => {
+    try {
+      setGitStatus(await cachedInvoke<GitStatus>("git_status", { cwd: pane.cwd }, GIT_POLL_MS / 2));
+    } catch {
+      setGitStatus(null);
+    }
+  }, GIT_POLL_MS, [pane.cwd, pane.epoch], paneVisible);
 
   // Diff-stat badge (UI-23): isolated panes diff against their recorded base
   // branch; plain repo panes diff against HEAD (uncommitted changes) — either
   // way, a glanceable "what's changed here" that opens the review drawer.
   const inRepo = !!pane.worktreePath || !!gitStatus?.isRepo;
-  useEffect(() => {
+  usePoll(async () => {
     if (!inRepo) { setDiffStat(null); return; }
-    let cancelled = false;
-    const poll = async () => {
-      try {
-        const s = await invoke<DiffSummary>("git_diff_summary", { cwd: pane.cwd, base: pane.baseBranch ?? null });
-        if (!cancelled) setDiffStat({ files: s.files.length, added: s.totalAdded, deleted: s.totalDeleted });
-      } catch {
-        if (!cancelled) setDiffStat(null);
-      }
-    };
-    poll();
-    const id = setInterval(poll, GIT_POLL_MS);
-    return () => { cancelled = true; clearInterval(id); };
-  }, [pane.cwd, pane.epoch, pane.baseBranch, inRepo]);
+    try {
+      const s = await cachedInvoke<DiffSummary>(
+        "git_diff_summary",
+        { cwd: pane.cwd, base: pane.baseBranch ?? null },
+        GIT_POLL_MS / 2
+      );
+      setDiffStat({ files: s.files.length, added: s.totalAdded, deleted: s.totalDeleted });
+    } catch {
+      setDiffStat(null);
+    }
+  }, GIT_POLL_MS, [pane.cwd, pane.epoch, pane.baseBranch, inRepo], paneVisible);
 
   // Token chip (UI-3): real numbers from the agent's own session transcript
   // (Claude Code writes ~/.claude/projects/<cwd>/*.jsonl). Agents without a
   // transcript return null and get no chip — never an estimate.
   const [usage, setUsage] = useState<{ contextTokens: number; outputTokens: number; turns: number } | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    const poll = async () => {
-      try {
-        const u = await invoke<{ contextTokens: number; outputTokens: number; turns: number } | null>("pane_usage", { cwd: pane.cwd });
-        if (!cancelled) setUsage(u);
-      } catch {
-        if (!cancelled) setUsage(null);
-      }
-    };
-    poll();
-    const id = setInterval(poll, 15000);
-    return () => { cancelled = true; clearInterval(id); };
-  }, [pane.cwd, pane.epoch]);
+  usePoll(async () => {
+    try {
+      setUsage(await cachedInvoke<{ contextTokens: number; outputTokens: number; turns: number } | null>(
+        "pane_usage", { cwd: pane.cwd }, 7000
+      ));
+    } catch {
+      setUsage(null);
+    }
+  }, 15000, [pane.cwd, pane.epoch], paneVisible);
 
   return (
     <div
@@ -265,6 +253,7 @@ export function PaneView({
         (dragging ? " dragging" : "") +
         (dragOver ? " drop-target" : "")
       }
+      ref={paneRef}
       onMouseDown={() => focusPane(wsId, pane.id)}
       onDragOver={(e) => { if (canReorder) { e.preventDefault(); onDragEnter(); } }}
       onDrop={(e) => { if (canReorder) { e.preventDefault(); onDropHere(); } }}
@@ -282,7 +271,12 @@ export function PaneView({
             <IconDrag size={12} />
           </span>
         )}
-        <span className={"pdot " + pane.state} />
+        {/* UI-115: the dot is the primary status signal — say what it means
+            and how long it's been that way. */}
+        <span
+          className={"pdot " + pane.state}
+          title={`${STATE_TITLE[pane.state]} · ${duration(stateSince.get(pane.id) ?? Date.now())}`}
+        />
         {editing ? (
           <input
             ref={nameRef}
@@ -319,9 +313,9 @@ export function PaneView({
         {usage && (
           <span
             className="ptok"
-            title={`Session tokens (from the agent's own transcript)\ncontext now: ${usage.contextTokens.toLocaleString()}\noutput so far: ${usage.outputTokens.toLocaleString()} across ${usage.turns} turns`}
+            title={`Session tokens (from the agent's own transcript)\ncontext now: ${num(usage.contextTokens)}\noutput so far: ${num(usage.outputTokens)} across ${num(usage.turns)} turns`}
           >
-            {fmtTokens(usage.contextTokens)} ctx
+            {compact(usage.contextTokens)} ctx
           </span>
         )}
         {diffStat && diffStat.files > 0 && (

@@ -8,6 +8,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { IconFolder, IconFile, IconChevron, IconBranch, IconAgent, IconRefresh } from "./Icons";
 import { spawnPane } from "./worktrees";
+import { cachedInvoke } from "./poll";
 import "./explorer.css";
 
 interface Entry { name: string; dir: boolean; }
@@ -246,8 +247,9 @@ export function Explorer({ root, wsId, vendor = "pwsh", paneRoot, paneLabel }: E
     invoke<Entry[]>("fs_list_dir", { path: effectiveRoot })
       .then((e) => { if (seq.current === mySeq) { setEntries(e); setStatus("loaded"); } })
       .catch(() => { if (seq.current === mySeq) setStatus("error"); });
-    // Degrade silently for non-repos — the pill just doesn't render.
-    invoke<GitInfo>("git_status", { cwd: effectiveRoot })
+    // Shared with every PaneView on this cwd (UI-234) — one git subprocess,
+    // not one per surface. Degrades silently for non-repos.
+    cachedInvoke<GitInfo>("git_status", { cwd: effectiveRoot }, 15000)
       .then((g) => { if (seq.current === mySeq) setGit(g); })
       .catch(() => { if (seq.current === mySeq) setGit(null); });
   };
