@@ -335,6 +335,9 @@ function PaneViewInner({
   const [bell, setBell] = useState(false);
   // UI-128: how far the user has scrolled off the live tail, in new lines.
   const [behind, setBehind] = useState(0);
+  // UI-136: progress reported by the child via OSC 9;4 (npm/winget/cargo all
+  // emit it). -1 means indeterminate.
+  const [progress, setProgress] = useState<number | null>(null);
   // UI-125: how the process ended, so Restart can say what it's recovering from.
   const [lastExit, setLastExit] = useState<string | null>(null);
   const bellTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -417,7 +420,17 @@ function PaneViewInner({
       onDragOver={(e) => { if (canReorder) { e.preventDefault(); onDragEnter(index); } }}
       onDrop={(e) => { if (canReorder) { e.preventDefault(); onDropHere(index); } }}
     >
-      <div className={"pband " + pane.state} />
+      <div className={"pband " + pane.state}>
+        {/* UI-136: the status band already means "what is this pane doing" —
+            a real progress figure belongs there, not in a separate widget. */}
+        {progress != null && (
+          <span
+            className={"pband-fill" + (progress < 0 ? " indet" : "")}
+            style={progress >= 0 ? { width: `${progress}%` } : undefined}
+            title={progress >= 0 ? `${progress}% complete` : "Working…"}
+          />
+        )}
+      </div>
       <div
         className="phead"
         onDoubleClick={(e) => {
@@ -726,6 +739,7 @@ Running low — consider /compact in this pane.` : "")
           onBell={pulseBell}
           onLine={(l) => lastLine.set(pane.id, l)}
           onScrollAway={setBehind}
+          onProgress={setProgress}
         />
       </div>
       {ctxMenu && createPortal(

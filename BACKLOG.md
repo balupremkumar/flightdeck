@@ -605,7 +605,7 @@ partially done ("Preparing worktrees…" busy state).
 - ~~UI-1. **Attention Queue**~~ **DONE 2026-07-20** (v1 bell 2026-07-20; v2 standalone overlay session 8 — Ctrl+Shift+A / palette / bell "See all", keyboard-driven, shared ranking in attention.ts).
 - ~~UI-2. Richer status vocabulary~~ **v1 DONE 2026-07-20** ("permission" state from output-pattern detection, ranked first in the attention queue; per-vendor patterns = #220 full; "stalled" still open).
 - ~~UI-3. **Per-pane token/cost** chip~~ **DONE 2026-07-20 session 8** (real numbers from Claude Code's own session transcript, incremental jsonl scan; no-transcript agents get no chip — never an estimate). [Paneflow]
-- UI-4. **Dashboard / overview** — all workspaces/panes/health at a glance; Settings > Diagnostics exposing the already-built pane_health / recover_orphans / support-bundle (375/376/377 ⭐ — biggest built-vs-shipped gap).
+- ~~UI-4. **Dashboard / overview** — all workspaces/panes/health at a glance; Settings > Diagnostics exposing the already-built pane_health / recover_orphans / support-bundle (375/376/377 ⭐ — biggest built-vs-shipped gap).~~ **ALREADY SHIPPED — stale §K entry, verified against code 2026-07-20 session 8** (Settings > Diagnostics (pane health, orphans, support bundle, worktrees))
 - ~~UI-5. **Merge-conflict resolution surface**~~ **DONE 2026-07-20 session 8** (in-drawer panel: conflicted file list, both-branches-intact note, "Create PR instead"; full local resolution UI not planned — PR flow owns conflicts).
 - UI-6. **In-app browser + port management** for dev-server previews. [Superset]
 - UI-7. **Agent transcript / run-history browser.**
@@ -615,7 +615,7 @@ partially done ("Preparing worktrees…" busy state).
 ### K-B. First-five-minutes (QOL §1, open)
 - UI-10. First-launch vs closed-all-workspaces framing copy (286, partially done).
 - ~~UI-11. Human copy on failed spawn instead of raw JS error (289).~~ **DONE 2026-07-20 session 8** (human spawn-failure copy)
-- UI-12. "Launching…" copy for the starting state — slow agent looks stuck (293 ⭐).
+- ~~UI-12. "Launching…" copy for the starting state — slow agent looks stuck (293 ⭐).~~ **ALREADY SHIPPED — stale §K entry, verified against code 2026-07-20 session 8** ('Launching…' overlay incl. slow-start and setup-phase copy)
 - ~~UI-13. Explorer toggle dead-click feedback outside terminals view (294).~~ **DONE 2026-07-20 session 8** (already fixed (verified: toggle is disabled with a reason))
 
 ### K-C. Micro-interactions (QOL §2)
@@ -663,24 +663,24 @@ partially done ("Preparing worktrees…" busy state).
 ### K-J. Trust signals (QOL §9)
 - ~~UI-42. Changelog "what's new"~~ **DONE 2026-07-20** (Settings > About, collapsible). Version-visibility beyond About (366) still open.
 - UI-43. OS-toast permission explainer (369); min-window-size + small-resize test (370).
-- UI-44. Quit-with-live-sessions confirmation — the one unguarded destructive action (373).
+- ~~UI-44. Quit-with-live-sessions confirmation — the one unguarded destructive action (373).~~ **ALREADY SHIPPED — stale §K entry, verified against code 2026-07-20 session 8** (quit guard, itemised)
 - UI-45. Icon check across OS surfaces (372); friendly probe-detail copy (374).
 
 ### K-New. Session 2026-07-20 additions (Balu-requested)
-- UI-50. ⭐ **Custom accent colour picker** — Balu doesn't like being limited to
+- ~~UI-50. ⭐ **Custom accent colour picker** — Balu doesn't like being limited to~~ **ALREADY SHIPPED — stale §K entry, verified against code 2026-07-20 session 8** (custom accent picker)
   the 5 `ACCENTS` presets. Any colour via hex/wheel input; auto-derive the
   dark-safe/light-safe `ice`/`azure`/`accent`/`grad` variants (HSL
   lightness/saturation shifts) so one chosen colour themes the whole app in
   both modes; persisted alongside the preset choice. Extend
   `applyAccent()`/`ACCENTS` in `src/themes.ts` — presets stay as quick picks,
   custom becomes a sixth "your colour" tile. HIGH priority.
-- UI-51. Per-vendor accent overrides riding the same derivation pipeline
+- ~~UI-51. Per-vendor accent overrides riding the same derivation pipeline~~ **ALREADY SHIPPED — stale §K entry, verified against code 2026-07-20 session 8** (per-vendor accent overrides)
   (ties to I1 #222 branding) — pick a colour per agent, chips/cards/pane
   accents follow.
 
 ### K-K. Backend-built, UI-missing (QOL §10, minus Diagnostics = UI-4)
-- UI-46. Persistence wiring UX: "reopen last session?" prompt, safe-mode banner, quit warning (378 ⭐/379 — lands with Tier 1 R4).
-- UI-47. Shared git_status cache (380); Browse denied-folder feedback (381).
+- ~~UI-46. Persistence wiring UX: "reopen last session?" prompt, safe-mode banner, quit warning (378 ⭐/379 — lands with Tier 1 R4).~~ **ALREADY SHIPPED — stale §K entry, verified against code 2026-07-20 session 8** (reopen prompt, safe-mode banner, quit warning)
+- ~~UI-47. Shared git_status cache (380); Browse denied-folder feedback (381).~~ **ALREADY SHIPPED — stale §K entry, verified against code 2026-07-20 session 8** (shared git_status cache (superseded by UI-234))
 - UI-48. Job-Object trust copy in Settings (382); auto-title panes from live process (383); "copy scrollback (redacted)" action (384).
 - ~~UI-49. Virtualise notification feed / board columns / file tree (126/276); xterm scrollback cap (277).~~ **DONE 2026-07-20 session 8** (Explorer row cap with honest notice)
 
@@ -755,7 +755,7 @@ grouped by surface only for navigation; work in any order, all at once.
 - ~~UI-133. Multi-line paste confirm (togglable) before feeding shells.~~ **DONE 2026-07-20 session 8** (multi-line paste confirm)
 - ~~UI-134. Clear-scrollback action (overflow menu + palette).~~ **DONE 2026-07-20 session 8** (clear scrollback)
 - ~~UI-135. BEL character pulses the pane (agent rang the terminal bell).~~ **DONE 2026-07-20 session 8** (BEL pulse)
-- UI-136. OSC 9;4 progress protocol → real progress strip on the pane band
+- ~~UI-136. OSC 9;4 progress protocol → real progress strip on the pane band~~ **DONE 2026-07-20 session 8** (OSC 9;4 progress rendered into the pane status band)
   (Windows Terminal convention; npm/winget already emit it).
 - ~~UI-137. Persist last find query per pane; reopen with it prefilled.~~ **DONE 2026-07-20 session 8** (find query remembered)
 - ~~UI-138. Font preview in Settings > Terminal font picker.~~ **DONE 2026-07-20 session 8** (font preview)
@@ -861,7 +861,7 @@ grouped by surface only for navigation; work in any order, all at once.
 ### Accessibility
 - ~~UI-214. Honour the OS prefers-reduced-motion query as the default.~~ **DONE 2026-07-20 session 8** (OS reduced-motion default)
 - ~~UI-215. Focus-visible outlines on every custom clickable (tiles, dh-x, chips).~~ **DONE 2026-07-20 session 8** (focus-visible outlines)
-- UI-216. Launcher tiles + slot rows keyboard-operable (role, tabindex, Enter).
+- ~~UI-216. Launcher tiles + slot rows keyboard-operable (role, tabindex, Enter).~~ **ALREADY SHIPPED — stale §K entry, verified against code 2026-07-20 session 8** (launcher tiles keyboard-operable)
 - ~~UI-217. forced-colors (Windows High Contrast) media-query support.~~ **DONE 2026-07-20 session 8** (forced-colors support)
 - ~~UI-218. Hit-target audit: nothing interactive under 24×24.~~ **DONE 2026-07-20 session 8** (24px hit targets)
 - ~~UI-219. Second channel for colour-only status signals (shape/icon per state).~~ **DONE 2026-07-20 session 8** (glyph as second channel for vendor identity)
@@ -910,7 +910,7 @@ grouped by surface only for navigation; work in any order, all at once.
   currently drift out of phase).
 - ~~UI-241. Shadow/elevation scale tokens (--shadow-1..3) replacing per-file values.~~ **DONE 2026-07-20 session 8** (elevation tokens)
 - ~~UI-242. Dim non-focused pane headers slightly when one pane is maximised.~~ **DONE 2026-07-20 session 8** (focus-mode dimming)
-- UI-243. Empty pane-grid state offers recent workspaces, not only "add pane".
+- ~~UI-243. Empty pane-grid state offers recent workspaces, not only "add pane".~~ **DONE 2026-07-20 session 8** (recent folders offered from an emptied workspace)
 - ~~UI-244. Board column header shows WIP as "3/5" fraction, not only a red flip.~~ **DONE 2026-07-20 session 8** (WIP fraction (already shipped))
 - ~~UI-245. Consistent overlay z-index scale documented in a comment block~~ **DONE 2026-07-20 session 8** (z-index scale + 2 layering bugs fixed)
   (scrim stack: toast > confirm > palette > queue > drawer > settings).

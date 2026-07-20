@@ -109,6 +109,9 @@ interface TerminalProps {
   /** UI-128: user has scrolled off the live tail; carries how many new lines
    *  have arrived since. 0 means they're back at the bottom. */
   onScrollAway?: (linesBehind: number) => void;
+  /** UI-136: ConEmu/Windows-Terminal OSC 9;4 progress. null = no progress
+   *  reported; otherwise 0-100, or -1 for an indeterminate/error state. */
+  onProgress?: (pct: number | null) => void;
 }
 
 // Cap on buffered bytes for a pane hidden behind another workspace / focus mode —
@@ -117,7 +120,7 @@ const HIDDEN_BUFFER_CAP = 262144; // 256KB
 
 // One live terminal bound to a PTY in the Rust core.
 export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Terminal(
-  { vendor, cwd, setup, onSetupConsumed, fontSize = 12.5, ligatures = false, quietThresholdMs = 3000, onExit, onState, onProc, onBell, onLine, onScrollAway },
+  { vendor, cwd, setup, onSetupConsumed, fontSize = 12.5, ligatures = false, quietThresholdMs = 3000, onExit, onState, onProc, onBell, onLine, onScrollAway, onProgress },
   ref
 ) {
   const elRef = useRef<HTMLDivElement>(null);
@@ -295,6 +298,16 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
       // (many CLIs ring on "done" or "needs input").
       if (text.includes("\x07")) onBell?.();
       outTail = (outTail + text).slice(-600);
+      // UI-136: npm, winget and cargo already emit OSC 9;4 progress that
+      // Windows Terminal renders on its taskbar. We're a terminal too — read it
+      // and show it, rather than making the user guess how far `npm ci` is.
+      //   ESC ] 9 ; 4 ; <state> ; <pct> BEL    state: 0 clear, 1 set, 2 error, 3 indeterminate
+      for (const m of text.matchAll(/\x1b\]9;4;(\d)(?:;(\d{1,3}))?(?:\x07|\x1b\\)/g)) {
+        const state = m[1];
+        if (state === "0") onProgress?.(null);
+        else if (state === "3") onProgress?.(-1);
+        else onProgress?.(Math.min(100, parseInt(m[2] ?? "0", 10)));
+      }
       // UI-141: keep the last meaningful line for the attention queue.
       const clean = outTail.replace(OSC_RE, "").replace(ANSI_RE, "");
       const lines = clean.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);

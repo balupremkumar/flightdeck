@@ -3,7 +3,7 @@ import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { PaneView } from "./PaneView";
 import { useApp, type Workspace } from "./store";
 import { useUI } from "./ui";
-import { closeWorkspaceGuarded } from "./worktrees";
+import { closeWorkspaceGuarded, preparePanes, isolationPref, rememberedOrSuggestedSetup } from "./worktrees";
 import { IconWorkspace } from "./Icons";
 import { defaultCycle } from "./vendors";
 import { spawnPane } from "./worktrees";
@@ -25,6 +25,26 @@ function rows(n: number): number[][] {
       return r;
     }
   }
+}
+
+// UI-243: the same recent-roots list New Workspace maintains, minus wherever
+// we already are.
+function loadRecentRoots(exclude: string): string[] {
+  try {
+    const v = JSON.parse(localStorage.getItem("flightdeck-recent-roots") ?? "[]");
+    if (!Array.isArray(v)) return [];
+    return v.filter((x): x is string => typeof x === "string" && x.toLowerCase() !== exclude.toLowerCase());
+  } catch { return []; }
+}
+
+/** Open a recent folder as a new workspace, via the same path the folder-drop
+ *  flow uses — so isolation, setup command and vendor mix all behave alike. */
+async function openRecent(path: string) {
+  const cycle = defaultCycle();
+  const slots = Array.from({ length: 4 }, (_, i) => ({ vendor: cycle[i % cycle.length], cwd: path }));
+  const panes = await preparePanes(slots, isolationPref());
+  useApp.getState().createWorkspace(path, panes, await rememberedOrSuggestedSetup(path));
+  useUI.getState().pushToast("success", `Opened ${path}`);
 }
 
 export function PaneGrid({ ws }: { ws: Workspace }) {
@@ -80,6 +100,23 @@ export function PaneGrid({ ws }: { ws: Workspace }) {
       <div className="grid-empty-sub">
         Every pane here was closed. Add one to keep working in {ws.name} — or press <kbd>Ctrl</kbd>+<kbd>K</kbd> for the command palette.
       </div>
+      {/* UI-243: an emptied workspace is a fork in the road — carry on here, or
+          go back to somewhere you were working. Offer both, not just "add a pane". */}
+      {(() => {
+        const recents = loadRecentRoots(ws.root).slice(0, 4);
+        if (recents.length === 0) return null;
+        return (
+          <div className="grid-empty-recents">
+            <span className="grid-empty-recents-t">Or open a recent folder</span>
+            {recents.map((r) => (
+              <button key={r} className="grid-empty-recent" title={r} onClick={() => void openRecent(r)}>
+                {r.replace(/[\/]+$/, "").split(/[\/]/).pop()}
+                <span className="grid-empty-recent-path">{r}</span>
+              </button>
+            ))}
+          </div>
+        );
+      })()}
       {/* UI-29: an empty workspace is usually finished with. Offer the exit
           here rather than as a prompt fired straight after the close confirm. */}
       <button className="grid-empty-close" onClick={() => closeWorkspaceGuarded(ws)}>
