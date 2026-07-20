@@ -81,6 +81,17 @@ export function Notifications() {
 
   const [panel, setPanel] = useState<Panel>("none");
   const prevStates = useRef(new Map<number, PaneState>());
+  // When each pane entered its current state — powers the queue's "waiting 4m"
+  // durations and its longest-waiting-first ordering (UI-1).
+  const stateSince = useRef(new Map<number, number>());
+  const [, setTick] = useState(0);
+
+  // Re-render on a slow tick while the feed is open so durations stay honest.
+  useEffect(() => {
+    if (panel !== "feed") return;
+    const id = setInterval(() => setTick((t) => t + 1), 15000);
+    return () => clearInterval(id);
+  }, [panel]);
 
   // Watch every pane for a state transition into a configured "notify" state.
   useEffect(() => {
@@ -89,6 +100,7 @@ export function Notifications() {
         const prev = prevStates.current.get(p.id);
         if (prev === p.state) continue;
         prevStates.current.set(p.id, p.state);
+        stateSince.current.set(p.id, Date.now());
         // Skip the first observation of a pane (mount) — only real transitions notify.
         if (prev === undefined) continue;
         if (!notify.notifyOn[p.state]) continue;
@@ -107,11 +119,25 @@ export function Notifications() {
     // Prune panes that no longer exist so closed panes don't leak in the map.
     const live = new Set(workspaces.flatMap((w) => w.panes.map((p) => p.id)));
     for (const id of prevStates.current.keys()) if (!live.has(id)) prevStates.current.delete(id);
+    for (const id of stateSince.current.keys()) if (!live.has(id)) stateSince.current.delete(id);
   }, [workspaces, notify, pushNotifyEvent]);
 
-  const needsAttention = workspaces.flatMap((w) =>
-    w.panes.filter((p) => p.state === "waiting" || p.state === "error").map((p) => ({ w, p }))
-  );
+  // The attention QUEUE (UI-1): errors outrank waiting, and within a rank the
+  // pane that has needed you longest comes first — a scan order, not a pile.
+  const needsAttention = workspaces
+    .flatMap((w) =>
+      w.panes
+        .filter((p) => p.state === "waiting" || p.state === "error")
+        .map((p) => ({ w, p, since: stateSince.current.get(p.id) ?? Date.now() }))
+    )
+    .sort((a, b) =>
+      a.p.state === b.p.state ? a.since - b.since : a.p.state === "error" ? -1 : 1
+    );
+
+  const forMins = (since: number) => {
+    const m = Math.floor((Date.now() - since) / 60000);
+    return m < 1 ? "just now" : m < 60 ? `${m}m` : `${Math.floor(m / 60)}h ${m % 60}m`;
+  };
 
   const jump = (wsId: number, paneId: number) => {
     switchWorkspace(wsId);
@@ -142,13 +168,15 @@ export function Notifications() {
 
           {needsAttention.length > 0 && (
             <div className="ntf-section">
-              <div className="ntf-label">Needs attention</div>
-              {needsAttention.map(({ w, p }) => (
+              <div className="ntf-label">Needs you now</div>
+              {needsAttention.map(({ w, p, since }) => (
                 <div className="ntf-item" key={p.id} onClick={() => jump(w.id, p.id)}>
                   <span className={"ntf-dot " + p.state} />
                   <span className="ntf-ws">{w.name}</span>
-                  <span className="ntf-ag">{p.vendor}</span>
-                  <span className="ntf-state">{STATE_LABEL[p.state]}</span>
+                  <span className="ntf-ag">{p.title || p.vendor}</span>
+                  <span className="ntf-state">
+                    {STATE_LABEL[p.state]} · {forMins(since)}
+                  </span>
                 </div>
               ))}
             </div>

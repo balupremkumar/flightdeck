@@ -159,6 +159,7 @@ body {
 .lp-meta { display: flex; align-items: center; gap: 9px; }
 .lp-stat { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--tmuted); font-variant-numeric: tabular-nums; }
 .lp-stat i { width: 6px; height: 6px; border-radius: 50%; background: var(--st-idle); }
+.lp-stat.start i { background: var(--st-starting); }
 .lp-stat.run i { background: var(--st-running); }
 .lp-stat.wait i { background: var(--st-waiting); }
 .lp-stat.err i { background: var(--st-error); }
@@ -266,3 +267,10 @@ body {
 .step-btn:hover:not(:disabled) { color: var(--text-primary); border-color: var(--border-focus); }
 .step-btn:disabled { opacity: .4; cursor: default; }
 .step-n { min-width: 16px; text-align: center; font-size: 13px; font-weight: 700; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+
+/* UI-14: acknowledge the click — every icon/action button gets a press state. */
+.tb-ic:active, .lp-ic:active, .lp-add:active, .rv-ic:active, .set-btn:active,
+.ntf-bell:active, .browse:active, .pfindbtn:active, .pmaxbtn:active,
+.pmenubtn:active, .board-icon-btn:active, .btn-primary:active, .rv-merge:active {
+  transform: translateY(1px) scale(.96);
+}

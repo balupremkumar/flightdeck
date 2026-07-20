@@ -14,10 +14,13 @@ function initial(name: string): string {
   return (name.trim()[0] || "?").toUpperCase();
 }
 
+// UI-22: "starting" counts separately — a workspace reading "3 running" when
+// all three are still launching is a lie the roll-up used to tell.
 function rollup(panes: PaneModel[]) {
   return {
     total: panes.length,
-    running: panes.filter((p) => p.state === "running" || p.state === "starting").length,
+    starting: panes.filter((p) => p.state === "starting").length,
+    running: panes.filter((p) => p.state === "running").length,
     waiting: panes.filter((p) => p.state === "waiting").length,
     error: panes.filter((p) => p.state === "error").length,
   };
@@ -347,6 +350,7 @@ export function LeftPanel({ expanded, view, setView }: { expanded: boolean; view
                   <span className="lp-name" onDoubleClick={(e) => { e.stopPropagation(); startRename(w); }}>{w.name}</span>
                 )}
                 <span className="lp-meta">
+                  {r.starting > 0 && <span className="lp-stat start" title="Still launching"><i />{r.starting}</span>}
                   {r.running > 0 && <span className="lp-stat run"><i />{r.running}</span>}
                   {r.waiting > 0 && <span className="lp-stat wait"><i />{r.waiting}</span>}
                   {r.error > 0 && <span className="lp-stat err"><i />{r.error}</span>}
