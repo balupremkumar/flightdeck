@@ -646,7 +646,7 @@ partially done ("Preparing worktrees…" busy state).
 - UI-32. Full keyboard-nav + focus-order audit; screen-reader labels; colour-blind status audit (121/122/207-209).
 
 ### K-G. Visual coherence (QOL §6)
-- UI-33. Token gaps: .btn-danger #fff, High-Contrast --glow, radius scale, shared .icon-btn (335/337/338/339).
+- ~~UI-33. Token gaps: .btn-danger #fff, High-Contrast --glow, radius scale, shared .icon-btn (335/337/338/339).~~ **DONE 2026-07-20 session 8** (glow tokenised, shared .icon-btn base, radius scale (btn-danger already token-driven))
 - UI-34. Terminal-vs-chrome palette cross-check per theme (340).
 - UI-35. Board empty-glyph → real icon (341); dead .bell CSS cleanup (342); shared signal-thickness scale (343/344).
 
