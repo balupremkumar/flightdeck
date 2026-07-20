@@ -733,7 +733,7 @@ grouped by surface only for navigation; work in any order, all at once.
 - ~~UI-115. Status-dot tooltip: state + how long it's been in it (stateSince).~~ **DONE 2026-07-20 session 8** (status-dot duration tooltip)
 - ~~UI-116. Double-click empty header area toggles maximise.~~ **DONE 2026-07-20 session 8** (double-click maximise)
 - ~~UI-117. Middle-click a pane header closes the pane (same confirm rules).~~ **DONE 2026-07-20 session 8** (middle-click close)
-- UI-118. Diff badge pulses subtly when its counts change.
+- ~~UI-118. Diff badge pulses subtly when its counts change.~~ **DONE 2026-07-20 session 8** (diff badge pulse)
 - ~~UI-119. Branch pill click copies the branch name (toast).~~ **DONE 2026-07-20 session 8** (branch pill copies)
 - ~~UI-120. cwd chip click reveals the folder in the OS (now menu-only).~~ **DONE 2026-07-20 session 8** (cwd chip reveals)
 - UI-121. Focused pane border tints with the vendor accent (ties UI-51).
@@ -757,7 +757,7 @@ grouped by surface only for navigation; work in any order, all at once.
 - ~~UI-135. BEL character pulses the pane (agent rang the terminal bell).~~ **DONE 2026-07-20 session 8** (BEL pulse)
 - UI-136. OSC 9;4 progress protocol → real progress strip on the pane band
   (Windows Terminal convention; npm/winget already emit it).
-- UI-137. Persist last find query per pane; reopen with it prefilled.
+- ~~UI-137. Persist last find query per pane; reopen with it prefilled.~~ **DONE 2026-07-20 session 8** (find query remembered)
 - UI-138. Font preview in Settings > Terminal font picker.
 - UI-139. Cursor-style setting shows a live preview glyph.
 - UI-140. Per-vendor default font-zoom remembered across panes.
@@ -768,17 +768,17 @@ grouped by surface only for navigation; work in any order, all at once.
 - ~~UI-143. Snooze a pane from the queue (mute it 10m).~~ **DONE 2026-07-20 session 8** (snooze)
 - UI-144. Feed groups consecutive transitions of the same pane.
 - ~~UI-145. Auto-DND while a pane is maximised (focus mode).~~ **DONE 2026-07-20 session 8** (auto-DND in focus mode)
-- UI-146. Optional auto-open queue when ≥3 approvals are pending.
+- ~~UI-146. Optional auto-open queue when ≥3 approvals are pending.~~ **DONE 2026-07-20 session 8** (auto-open queue (opt-in))
 - UI-147. Taskbar overlay badge with the queue count (Tauri set_overlay_icon).
-- UI-148. aria-live polite region announces queue additions for screen readers.
+- ~~UI-148. aria-live polite region announces queue additions for screen readers.~~ **DONE 2026-07-20 session 8** (aria-live queue announcements)
 
 ### Left panel / workspaces
 - ~~UI-149. Tile mini-grid preview: tiny squares mirroring pane layout + states.~~ **DONE 2026-07-20 session 8** (tile mini-grid preview)
 - ~~UI-150. Tile badge: worktree count + dirty-worktree count.~~ **DONE 2026-07-20 session 8** (worktree badge)
 - UI-151. Drag a pane onto another workspace tile to move it.
-- UI-152. Auto-collapse the panel under a window-width threshold.
+- ~~UI-152. Auto-collapse the panel under a window-width threshold.~~ **DONE 2026-07-20 session 8** (narrow-window auto-collapse)
 - UI-153. Workspace colour derived from repo-path hash, overridable.
-- UI-154. "Open repo on GitHub" context item when origin exists.
+- ~~UI-154. "Open repo on GitHub" context item when origin exists.~~ **DONE 2026-07-20 session 8** (open repo on host)
 - UI-155. Sort-by-last-active toggle.
 - ~~UI-156. Ctrl+Tab cycles workspaces most-recent-first.~~ **DONE 2026-07-20 session 8** (Ctrl+Tab MRU)
 
@@ -836,7 +836,7 @@ grouped by surface only for navigation; work in any order, all at once.
 - UI-197. Non-clean-exit sentinel: next launch offers the support bundle.
 - UI-198. Session-restore failure names the workspace and reason.
 - ~~UI-199. Worktree-GC toast gains "view details" (which branches were kept).~~ **DONE 2026-07-20 session 8** (GC toast names what it reaped)
-- UI-200. Focus-follows-attention option: auto-jump to a pane on approval
+- ~~UI-200. Focus-follows-attention option: auto-jump to a pane on approval~~ **DONE 2026-07-20 session 8** (follow-attention (opt-in))
   prompt (opt-in, default off).
 
 ### Broadcast
@@ -909,7 +909,7 @@ grouped by surface only for navigation; work in any order, all at once.
 - ~~UI-240. One pulse-timing token for all animated dots (pband/pdot/lp dots~~ **DONE 2026-07-20 session 8** (pulse-cadence token)
   currently drift out of phase).
 - ~~UI-241. Shadow/elevation scale tokens (--shadow-1..3) replacing per-file values.~~ **DONE 2026-07-20 session 8** (elevation tokens)
-- UI-242. Dim non-focused pane headers slightly when one pane is maximised.
+- ~~UI-242. Dim non-focused pane headers slightly when one pane is maximised.~~ **DONE 2026-07-20 session 8** (focus-mode dimming)
 - UI-243. Empty pane-grid state offers recent workspaces, not only "add pane".
 - ~~UI-244. Board column header shows WIP as "3/5" fraction, not only a red flip.~~ **DONE 2026-07-20 session 8** (WIP fraction (already shipped))
 - ~~UI-245. Consistent overlay z-index scale documented in a comment block~~ **DONE 2026-07-20 session 8** (z-index scale + 2 layering bugs fixed)
