@@ -61,6 +61,10 @@ pub struct VendorInfo {
     /// UI-237: seconds of silence before this vendor is considered "waiting".
     /// agy streams sparsely and looked idle at claude's 3s; shells are instant.
     pub quiet_seconds: u32,
+    /// UI-9: how to actually get this agent, for the not-installed state.
+    /// Empty when there's nothing useful to say (shells ship with Windows).
+    pub install_hint: String,
+    pub install_url: String,
 }
 
 // Resolve an executable through the shell's PATH (Windows `where`).
@@ -279,6 +283,11 @@ pub trait VendorAdapter: Send + Sync {
     fn accent(&self) -> &str {
         "--accent"
     }
+    /// UI-9: (command, url) telling the user how to install this vendor.
+    fn install(&self) -> (&'static str, &'static str) {
+        ("", "")
+    }
+
     /// UI-237: how long THIS vendor must be quiet before it counts as waiting.
     fn quiet_seconds(&self) -> u32 {
         3
@@ -317,6 +326,9 @@ impl VendorAdapter for Claude {
             None => (false, "`claude` not on PATH".into()),
         }
     }
+    fn install(&self) -> (&'static str, &'static str) {
+        ("npm install -g @anthropic-ai/claude-code", "https://claude.com/claude-code")
+    }
     fn command(&self, cwd: &str) -> CommandBuilder {
         // Launch via pwsh so the npm shim resolves; inherits the login +
         // ~/.claude config untouched.
@@ -349,6 +361,9 @@ impl VendorAdapter for Agy {
         } else {
             (false, format!("not found at {}", p))
         }
+    }
+    fn install(&self) -> (&'static str, &'static str) {
+        ("", "https://antigravity.google/")
     }
     fn command(&self, cwd: &str) -> CommandBuilder {
         let mut c = CommandBuilder::new(agy_path());
@@ -783,6 +798,8 @@ pub fn detect() -> Vec<VendorInfo> {
                 auth_state: auth_state.into(),
                 auth_detail,
                 quiet_seconds: v.quiet_seconds(),
+                install_hint: v.install().0.into(),
+                install_url: v.install().1.into(),
             }
         })
         .collect()

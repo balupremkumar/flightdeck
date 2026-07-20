@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { save, open as openDialog } from "@tauri-apps/plugin-dialog";
-import { revealItemInDir } from "@tauri-apps/plugin-opener";
+import { revealItemInDir, openUrl } from "@tauri-apps/plugin-opener";
 import { useUI, applyUiScale } from "./ui";
 import { useApp } from "./store";
 import { bytes, relTime, absTime } from "./format";
@@ -905,7 +905,35 @@ export function Settings() {
                   <span className="agent-row-name">
                     {v.label}
                     {/* #219 install + auth state; sign-in opens a pane so the CLI runs its own login flow. */}
-                    {!v.installed && <span className="agent-chip warn" title={v.detail}>not installed</span>}
+                    {/* UI-9: 'not installed' with no next step is a dead end. */}
+                    {!v.installed && (
+                      <span className="agent-chip warn" title={v.detail}>
+                        not installed
+                        {v.installHint && (
+                          <button
+                            className="agent-install"
+                            title={`Copy: ${v.installHint}`}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void navigator.clipboard.writeText(v.installHint)
+                                .then(() => useUI.getState().pushToast("success", "Install command copied — paste it in any pane."))
+                                .catch(() => useUI.getState().pushToast("info", v.installHint));
+                            }}
+                          >
+                            copy install
+                          </button>
+                        )}
+                        {v.installUrl && (
+                          <button
+                            className="agent-install"
+                            title={v.installUrl}
+                            onClick={(e) => { e.stopPropagation(); void openUrl(v.installUrl).catch(() => {}); }}
+                          >
+                            get it ↗
+                          </button>
+                        )}
+                      </span>
+                    )}
                     {v.installed && v.authState === "none" && (
                       <button
                         className="agent-chip warn agent-login"

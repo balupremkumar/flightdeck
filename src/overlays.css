@@ -276,3 +276,11 @@ button.agent-chip.agent-test:hover { color: var(--accent); border-color: var(--a
   height: 22px; margin-top: -22px; pointer-events: none;
   background: linear-gradient(to bottom, transparent, var(--elevated));
 }
+
+/* UI-9: actionable next step on a missing agent */
+.agent-install {
+  font: inherit; font-size: 9px; font-weight: 700; cursor: pointer;
+  margin-left: 5px; padding: 1px 5px; border-radius: var(--r-sm);
+  border: 1px solid currentColor; background: transparent; color: inherit;
+}
+.agent-install:hover { filter: brightness(1.2); }

@@ -391,8 +391,20 @@ export function NewWorkspace() {
                   <select className="vsel" value={s.vendor} onChange={(e) => setVendor(i, e.target.value)}>
                     {vendors.map((o) => (<option key={o.id} value={o.id}>{o.label}</option>))}
                   </select>
+                  {/* UI-9/351: an actionable sentence, not a bare fragment. */}
                   {vendorsLoaded && !vendorMeta(s.vendor).installed && (
-                    <span className="slot-warn" title={vendorMeta(s.vendor).detail}>not installed</span>
+                    <span
+                      className="slot-warn"
+                      title={
+                        `${vendorMeta(s.vendor).label} isn't installed, so this pane will fail to start. ` +
+                        (vendorMeta(s.vendor).installHint
+                          ? `Install it with: ${vendorMeta(s.vendor).installHint} — or pick another agent. `
+                          : "Pick another agent, or install it first. ") +
+                        `(${vendorMeta(s.vendor).detail})`
+                      }
+                    >
+                      not installed
+                    </span>
                   )}
                   {vendorsLoaded && vendorMeta(s.vendor).installed && vendorMeta(s.vendor).authState === "none" && (
                     <span className="slot-warn" title={vendorMeta(s.vendor).authDetail || "No stored sign-in — the pane will ask you to log in on first launch."}>not signed in</span>
