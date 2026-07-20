@@ -76,9 +76,13 @@ export function Cockpit() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.ctrlKey && e.key === ",") { e.preventDefault(); setSettingsOpen(true); return; }
-      // Attention queue (UI-1 v2); skip while typing in a terminal so agents keep their keys.
+      // Attention queue (UI-1 v2). Deliberately NOT skipped when a terminal has
+      // focus: this is a global "what needs me" shortcut, and no agent TUI binds
+      // Ctrl+Shift+A. Guarding it meant the app's own advertised shortcut did
+      // nothing whenever the user was actually typing at an agent — which is
+      // most of the time. Ctrl+W keeps its guard; closing a pane by accident is
+      // a real cost, opening an overlay isn't.
       if (e.ctrlKey && e.shiftKey && (e.key === "a" || e.key === "A")) {
-        if ((e.target as HTMLElement)?.closest?.(".pbody")) return;
         e.preventDefault();
         useUI.getState().setAttentionOpen(!useUI.getState().attentionOpen);
         return;
@@ -139,8 +143,16 @@ export function Cockpit() {
         setExpanded((x) => !x);
       }
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    // CAPTURE phase. xterm stops propagation for keys it handles, so a
+    // bubble-phase listener never sees anything while a terminal has focus —
+    // which is the normal working state. Every app shortcut here (attention
+    // queue, workspace switching, settings) was silently dead whenever the user
+    // was actually typing at an agent. Individual shortcuts still yield to the
+    // terminal where that's right: Ctrl+W and Ctrl+B check for .pbody below,
+    // because closing a pane or stealing tmux's prefix by accident has a real
+    // cost. Opening an overlay does not.
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
   }, [setSettingsOpen]);
 
   // Quit guard (UI-44 / QOL 373): closing a pane or workspace confirms, but the

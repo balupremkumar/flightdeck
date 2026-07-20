@@ -329,7 +329,14 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
       }, quietThresholdRef.current);
     };
     const bumpActivity = () => {
-      if (!currentlyAlive) return;
+      // Output IS proof of life. The backend also emits pty://state "running",
+      // but relying on that alone means a pane can sit showing "Launching…"
+      // while visibly streaming text if that one event is missed — the UI
+      // contradicting what the user can plainly see.
+      if (!currentlyAlive) {
+        currentlyAlive = true;
+        onState?.("running");
+      }
       if (localWaiting) { localWaiting = false; onState?.("running"); }
       armQuietTimer();
     };

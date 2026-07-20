@@ -10,7 +10,13 @@
 
 .rv-drawer {
   position: absolute; top: 0; right: 0; bottom: 0;
+  /* 720px fits the unified view comfortably. Side-by-side needs two code
+     columns plus two gutters in the same space, which clipped the right-hand
+     side badly enough to look broken — so the drawer widens when split is on.
+     Caught on a demo frame, but it's a real defect: nobody wants to
+     horizontally scroll a diff they're reviewing. */
   width: min(720px, 88vw);
+  transition: width var(--t-med) var(--ease-out);
   display: flex; flex-direction: column;
   background: var(--bg);
   border-left: 1px solid var(--line-strong);
@@ -349,3 +355,6 @@ em.del { color: var(--st-error); margin-left: 5px; }
 .launcher-intro {
   padding: 0 20px 4px; font-size: 12.5px; line-height: 1.55; color: var(--muted);
 }
+
+/* UI-165: split needs the room. */
+.rv-drawer:has(.rv-split) { width: min(1180px, 96vw); }

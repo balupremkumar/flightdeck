@@ -180,7 +180,14 @@ button.agent-chip:hover { filter: brightness(1.15); }
   box-shadow: var(--shadow-lg); padding: 22px; animation: ov-pop .18s var(--ease-out);
 }
 .confirm-title { font-size: 16px; font-weight: 700; letter-spacing: -0.01em; color: var(--text); }
-.confirm-body { margin-top: 10px; font-size: 13.5px; line-height: 1.55; color: var(--muted); }
+/* pre-line: callers write multi-paragraph bodies with 
+
+ (the trust prompt
+   leads with the folder path, the quit guard itemises what's live). Without
+   this, HTML collapses those breaks and the path runs straight into the
+   sentence — caught on a demo frame reading "C:\devcme-api Antigravity
+   only runs in...". */
+.confirm-body { margin-top: 10px; font-size: 13.5px; line-height: 1.55; color: var(--muted); white-space: pre-line; }
 .confirm-actions { margin-top: 22px; display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
 .confirm-actions .btn-primary { margin-left: 0; }
 
