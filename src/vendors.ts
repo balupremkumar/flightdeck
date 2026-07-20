@@ -86,9 +86,28 @@ export function accentCss(accent: string): string {
   return accent.startsWith("--") ? `var(${accent})` : accent;
 }
 
-/** Ready-to-use CSS colour for a vendor, theme-reactive via the token. */
+// Per-vendor accent overrides (UI-51 / #222): pick a colour per agent in
+// Settings > Agents; chips, dots and cards follow. Persisted as {id: hex}.
+const VENDOR_ACCENT_KEY = "flightdeck-vendor-accents";
+
+export function vendorAccentOverrides(): Record<string, string> {
+  try { return JSON.parse(localStorage.getItem(VENDOR_ACCENT_KEY) ?? "{}"); } catch { return {}; }
+}
+
+export function setVendorAccentOverride(id: string, hex: string | null) {
+  const map = vendorAccentOverrides();
+  if (hex) map[id] = hex;
+  else delete map[id];
+  try { localStorage.setItem(VENDOR_ACCENT_KEY, JSON.stringify(map)); } catch { /* non-persistent */ }
+  // Poke subscribers (new array identity) so open surfaces repaint live.
+  useVendors.setState((s) => ({ vendors: [...s.vendors] }));
+}
+
+/** Ready-to-use CSS colour for a vendor, theme-reactive via the token.
+ *  A user override (Settings > Agents) wins over the registry accent. */
 export function vendorColor(id: string): string {
-  return accentCss(vendorMeta(id).accent);
+  const override = vendorAccentOverrides()[id];
+  return override ?? accentCss(vendorMeta(id).accent);
 }
 
 /**

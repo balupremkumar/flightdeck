@@ -149,6 +149,14 @@ export function PaneView({
   };
   const closeMenu = () => setMenuOpen(false);
 
+  // Esc closes the overflow menu (UI-30) — was mouse-leave only.
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setMenuOpen(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [menuOpen]);
+
   useEffect(() => {
     if (!editing) return;
     setDraft(pane.title ?? "");

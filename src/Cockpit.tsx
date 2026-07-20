@@ -146,7 +146,12 @@ export function Cockpit() {
         <Notifications />
         <button
           className={"tb-ic" + (showExplorer ? " on" : "")}
-          title="Toggle file explorer"
+          title={
+            !active || view !== "terminals"
+              ? "File explorer opens in the terminal view of a workspace"
+              : "Toggle file explorer"
+          }
+          disabled={!active || view !== "terminals"}
           onClick={() => setShowExplorer(!showExplorer)}
         >
           <IconFile size={17} />

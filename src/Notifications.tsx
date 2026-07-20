@@ -98,6 +98,15 @@ export function Notifications() {
     return () => clearInterval(id);
   }, [panel]);
 
+  // Esc closes (UI-30) — the menu previously only closed on mouse-leave,
+  // which stranded keyboard/touch users.
+  useEffect(() => {
+    if (panel === "none") return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setPanel("none"); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [panel]);
+
   // Watch every pane for a state transition into a configured "notify" state.
   useEffect(() => {
     for (const w of workspaces) {

@@ -278,3 +278,16 @@ body {
 .pmenubtn:active, .board-icon-btn:active, .btn-primary:active, .rv-merge:active {
   transform: translateY(1px) scale(.96);
 }
+
+/* UI-13: a dead toggle should look dead. */
+.tb-ic:disabled { opacity: .35; cursor: default; }
+.tb-ic:disabled:active { transform: none; }
+
+/* UI-39: workspace switch crossfades instead of hard-cutting (display:none ->
+   flex restarts the animation); theme flips ease the chrome. Both are killed
+   globally by the reduced-motion rule in theme.css. */
+.wsgrid { animation: ws-fade .16s ease; }
+@keyframes ws-fade { from { opacity: .4; } to { opacity: 1; } }
+.topbar, .lpanel, .pane, .phead, .dialog, .set-modal, .board, .explorer, .rv-drawer {
+  transition: background-color .15s ease, border-color .15s ease, color .15s ease;
+}

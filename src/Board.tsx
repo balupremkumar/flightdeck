@@ -290,7 +290,7 @@ export function Board() {
           <span className="board-glyph"><IconBoard size={17} /></span>
           <div className="board-title-group">
             <div className="board-title">Board</div>
-            <div className="board-subtitle">drag a card to In Progress and an agent picks it up</div>
+            <div className="board-subtitle">drag a card to In Progress to dispatch it to an agent pane</div>
           </div>
           <span className="board-spacer" />
           <button className="board-icon-btn" title="Copy board as Markdown" onClick={doExport}><IconExport size={13} /></button>
@@ -386,7 +386,7 @@ export function Board() {
                 )}
                 {list.length === 0 && !(col.id === "todo" && showComposer) && (
                   <div className="col-empty">
-                    <span className="col-empty-icon">▢</span>
+                    <span className="col-empty-icon"><IconBoard size={16} /></span>
                     <span>{filtering ? "No cards match" : "No tasks yet"}</span>
                   </div>
                 )}

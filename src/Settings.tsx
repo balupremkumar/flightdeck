@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { useUI, applyUiScale } from "./ui";
-import { useVendors } from "./vendors";
+import { useVendors, vendorColor, vendorAccentOverrides, setVendorAccentOverride } from "./vendors";
 import { IconClose } from "./Icons";
 import {
   THEMES, ACCENTS, findTheme, findAccent, CUSTOM_ACCENT_ID, customAccentHex, setCustomAccent,
@@ -582,6 +582,18 @@ export function Settings() {
                     value={agents.binaryPaths[v.id] ?? ""}
                     onChange={(e) => updateAgents({ ...agents, binaryPaths: { ...agents.binaryPaths, [v.id]: e.target.value } })}
                   />
+                  {/* UI-51: per-agent colour — chips/dots/cards follow. */}
+                  <label className="agent-color" title={`Colour for ${v.label} — chips and status dots follow`}>
+                    <span className="agent-color-dot" style={{ background: vendorColor(v.id) }} />
+                    <input
+                      type="color"
+                      value={vendorAccentOverrides()[v.id] ?? "#43A6F5"}
+                      onChange={(e) => setVendorAccentOverride(v.id, e.target.value)}
+                    />
+                  </label>
+                  {vendorAccentOverrides()[v.id] && (
+                    <button className="agent-color-reset" title="Reset to the default colour" onClick={() => setVendorAccentOverride(v.id, null)}>×</button>
+                  )}
                 </div>
               ))}
             </div>

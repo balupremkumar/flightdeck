@@ -131,17 +131,19 @@ export const useApp = create<AppState>((set) => ({
       })),
     })),
 
+  // Rename guards (UI-26): cap length so a pasted novel can't overflow the
+  // fixed-width header/tile layouts.
   renamePane: (paneId, title) =>
     set((s) => ({
       workspaces: s.workspaces.map((w) => ({
         ...w,
-        panes: w.panes.map((p) => (p.id === paneId ? { ...p, title: title.trim() || undefined } : p)),
+        panes: w.panes.map((p) => (p.id === paneId ? { ...p, title: title.trim().slice(0, 60) || undefined } : p)),
       })),
     })),
 
   renameWorkspace: (wsId, name) =>
     set((s) => ({
-      workspaces: s.workspaces.map((w) => (w.id === wsId ? { ...w, name: name.trim() || w.name } : w)),
+      workspaces: s.workspaces.map((w) => (w.id === wsId ? { ...w, name: name.trim().slice(0, 60) || w.name } : w)),
     })),
 
   reorderWorkspaces: (from, to) => set((s) => ({ workspaces: reorder(s.workspaces, from, to) })),
