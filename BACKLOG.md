@@ -614,14 +614,14 @@ partially done ("Preparing worktrees…" busy state).
 
 ### K-B. First-five-minutes (QOL §1, open)
 - UI-10. First-launch vs closed-all-workspaces framing copy (286, partially done).
-- UI-11. Human copy on failed spawn instead of raw JS error (289).
+- ~~UI-11. Human copy on failed spawn instead of raw JS error (289).~~ **DONE 2026-07-20 session 8** (human spawn-failure copy)
 - UI-12. "Launching…" copy for the starting state — slow agent looks stuck (293 ⭐).
 - UI-13. Explorer toggle dead-click feedback outside terminals view (294).
 
 ### K-C. Micro-interactions (QOL §2)
 - ~~UI-14. Press/:active states~~ **DONE 2026-07-20**.
-- UI-15. Designed tooltips for the collapsed rail (297).
-- UI-16. Drag affordances: card grab cursor, Explorer resize hover cue (298/299).
+- ~~UI-15. Designed tooltips for the collapsed rail (297).~~ **DONE 2026-07-20 session 8** (designed rail tooltips)
+- ~~UI-16. Drag affordances: card grab cursor, Explorer resize hover cue (298/299).~~ **DONE 2026-07-20 session 8** (drag affordances)
 - UI-17. Keyboard path for pane font-zoom controls (300).
 - ~~UI-18. Toast pause-on-hover~~ **DONE 2026-07-20**.
 - UI-19. Scroll-fade cues on Settings/palette lists (302/303).
@@ -800,7 +800,7 @@ grouped by surface only for navigation; work in any order, all at once.
 - UI-167. Collapse file list by directory when >15 files.
 - UI-168. Include/exclude files from a merge (partial merge-back).
 - ~~UI-169. Copy-patch-to-clipboard button.~~ **DONE 2026-07-20 session 8** (copy patch)
-- UI-170. Auto-refresh diff while the drawer is open ("changed since opened" pill).
+- ~~UI-170. Auto-refresh diff while the drawer is open ("changed since opened" pill).~~ **DONE 2026-07-20 session 8** (diff staleness pill)
 - UI-171. Lightweight syntax highlighting in the patch by file extension.
 - ~~UI-172. j/k file navigation to match the n/p hunk keys.~~ **DONE 2026-07-20 session 8** (j/k file nav, n/p hunks)
 - ~~UI-173. "Open in editor" on each file row.~~ **DONE 2026-07-20 session 8** (open-in-editor per file row)
