@@ -8,6 +8,7 @@ import { bytes, relTime, absTime } from "./format";
 import { useFocusTrap } from "./useFocusTrap";
 import { listRestorePoints, restoreFromPoint, exportBackup, importBackup, type RestorePointInfo } from "./persist";
 import { adoptSession, lastSessionSaveAt } from "./session";
+import { clearPreferences } from "./storageKeys";
 import { spawnPane } from "./worktrees";
 import { useVendors, vendorColor, vendorAccentOverrides, setVendorAccentOverride } from "./vendors";
 import { IconClose } from "./Icons";
@@ -637,18 +638,9 @@ export function Settings() {
       confirmLabel: "Reset settings",
       danger: true,
       onConfirm: () => {
-        // Verified against every localStorage key the app actually writes —
-        // a reset that leaves state behind is worse than no reset.
-        const keys = [
-          "flightdeck-theme", "flightdeck-theme-id",
-          "flightdeck-accent", "flightdeck-accent-custom", "flightdeck-custom-accent",
-          "flightdeck-vendor-accents", "flightdeck-colorblind", "flightdeck-reduced-motion",
-          "flightdeck-terminal-settings", "flightdeck-terminal-settings-changed",
-          "flightdeck-shortcuts", "flightdeck-agent-settings",
-          "flightdeck-startup", "flightdeck-ui-scale", "flightdeck-notify-settings",
-          "flightdeck-explorer-width", "flightdeck-explorer-scope", "flightdeck-explorer-expanded",
-        ];
-        for (const k of keys) { try { localStorage.removeItem(k); } catch { /* non-persistent */ } }
+        // Single source of truth in storageKeys.ts, enforced by
+        // storageKeys.test.ts — this list drifted twice before.
+        clearPreferences();
         useUI.getState().pushToast("success", "Settings reset — reloading.");
         window.setTimeout(() => window.location.reload(), 600);
       },
