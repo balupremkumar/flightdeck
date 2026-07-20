@@ -89,11 +89,15 @@ export async function spawnPane(
  *  per repo anyway) into the NewPane list createWorkspace expects. */
 export async function preparePanes(
   slots: { vendor: string; cwd: string }[],
-  isolate: boolean
+  isolate: boolean,
+  /** UI-112: called after each slot resolves so the caller can show
+   *  "worktree 2 of 4…" instead of one opaque spinner. */
+  onProgress?: (done: number, total: number) => void
 ) {
   const out = [];
   for (const s of slots) {
     const prep = await prepareCwd(s.cwd, s.vendor, isolate);
+    onProgress?.(out.length + 1, slots.length);
     out.push({
       vendor: s.vendor,
       cwd: prep.cwd,

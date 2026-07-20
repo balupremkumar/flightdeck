@@ -169,3 +169,39 @@ em.del { color: var(--st-error); margin-left: 5px; }
 }
 .setup-input::placeholder { color: var(--faint); }
 .setup-input:focus { outline: none; border-color: var(--ice); }
+
+/* New Workspace: recent folders, validation, slot actions (UI-101/103/104/105/106/109) */
+.dir { position: relative; }
+.dir.bad { outline: 1px solid var(--st-error); outline-offset: 1px; border-radius: var(--r-md); }
+.dir-err { margin-top: 5px; font-size: 11px; color: var(--st-error); }
+.recents-menu {
+  position: absolute; left: 0; right: 0; top: calc(100% + 4px);
+  background: var(--elevated); border: 1px solid var(--line-strong);
+  border-radius: var(--r-md); box-shadow: var(--shadow-3);
+  z-index: var(--z-menu); overflow: hidden; max-height: 240px; overflow-y: auto;
+}
+.recents-item {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  font: inherit; font-size: 12px; text-align: left;
+  padding: 7px 10px; border: 0; background: transparent; color: var(--text); cursor: pointer;
+}
+.recents-item:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.recents-name { font-weight: 600; flex: none; }
+.recents-path { color: var(--faint); font-size: 10.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.setup-src { font-size: 10px; color: var(--faint); white-space: nowrap; }
+.slot-collision {
+  margin-top: 8px; padding: 8px 10px; border-radius: var(--r-md);
+  border: 1px solid color-mix(in srgb, var(--st-waiting) 45%, transparent);
+  background: color-mix(in srgb, var(--st-waiting) 10%, transparent);
+  font-size: 11.5px; color: var(--st-waiting); line-height: 1.45;
+}
+.slot-actions { display: inline-flex; gap: 2px; flex: none; }
+.slot-act {
+  width: 24px; height: 24px; display: inline-flex; align-items: center; justify-content: center;
+  font: inherit; font-size: 12px; line-height: 1;
+  border: 1px solid transparent; border-radius: var(--r-sm);
+  background: transparent; color: var(--faint); cursor: pointer;
+  transition: color var(--t-fast) ease, background-color var(--t-fast) ease;
+}
+.slot-act:hover:not(:disabled) { color: var(--text); background: color-mix(in srgb, var(--text) 8%, transparent); }
+.slot-act:disabled { opacity: .3; cursor: default; }
