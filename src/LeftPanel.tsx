@@ -271,7 +271,7 @@ export function LeftPanel({ expanded, view, setView }: { expanded: boolean; view
   if (!expanded) {
     return (
       <div className={"lpanel" + (folderOver ? " lp-drop-over" : "")} ref={panelRef}>
-        <button className="lp-ic add" onClick={startCreate} title="New workspace"><IconPlus size={18} /></button>
+        <button className="lp-ic add" onClick={startCreate} title="New workspace" data-tip="New workspace"><IconPlus size={18} /></button>
         {workspaces.map((w) => {
           const r = rollup(w.panes);
           const active = w.id === activeId && view === "terminals";
@@ -282,6 +282,7 @@ export function LeftPanel({ expanded, view, setView }: { expanded: boolean; view
               onClick={() => openWs(w.id)}
               onContextMenu={(e) => openMenu(e, w.id)}
               title={w.name}
+              data-tip={w.name}
             >
               {initial(w.name)}
               <span className="lp-badge sm">{r.total}</span>
@@ -290,7 +291,7 @@ export function LeftPanel({ expanded, view, setView }: { expanded: boolean; view
           );
         })}
         <div className="lp-rail-sep" />
-        <button className={"lp-ic board-ic" + (view === "board" ? " active" : "")} onClick={() => setView("board")} title="Board"><IconBoard size={19} /></button>
+        <button className={"lp-ic board-ic" + (view === "board" ? " active" : "")} onClick={() => setView("board")} title="Board" data-tip="Board"><IconBoard size={19} /></button>
         {dropHint}
         {contextMenu}
       </div>

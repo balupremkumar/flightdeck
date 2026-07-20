@@ -269,3 +269,6 @@
   background: transparent; cursor: pointer;
 }
 .ex-ctx-item:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+
+/* UI-16: the resize handle was invisible until you were already dragging it */
+.ex-resize:hover { background: color-mix(in srgb, var(--accent) 45%, transparent); }

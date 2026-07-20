@@ -127,3 +127,20 @@
 @keyframes lp-mini-pulse { 0%,100% { opacity: 1; } 50% { opacity: .4; } }
 /* UI-150: worktree count badge */
 .lp-stat.lp-wt { display: inline-flex; align-items: center; gap: 2px; color: var(--faint); }
+
+/* UI-15: designed tooltips for the collapsed rail. Native title= has
+   browser-default timing and chrome that clashes with everything else; these
+   match the app and appear instantly. The title attribute stays for
+   assistive tech. */
+.lpanel .lp-ic[data-tip] { position: relative; }
+.lpanel .lp-ic[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute; left: calc(100% + 10px); top: 50%; transform: translateY(-50%);
+  padding: 5px 9px; border-radius: var(--r-sm);
+  background: var(--elevated); border: 1px solid var(--line-strong); box-shadow: var(--shadow-2);
+  color: var(--text); font-size: 11.5px; font-weight: 500; white-space: nowrap;
+  opacity: 0; pointer-events: none; z-index: var(--z-menu);
+  transition: opacity var(--t-fast) ease;
+}
+.lpanel .lp-ic[data-tip]:hover::after,
+.lpanel .lp-ic[data-tip]:focus-visible::after { opacity: 1; }

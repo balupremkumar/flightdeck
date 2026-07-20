@@ -898,3 +898,7 @@
   color: var(--accent); cursor: pointer;
 }
 .card-pr:hover { filter: brightness(1.12); }
+
+/* UI-16: the whole card is draggable, not just the grip — say so on hover */
+.card:hover { cursor: grab; }
+.card:active { cursor: grabbing; }
