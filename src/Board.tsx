@@ -236,8 +236,8 @@ export function Board() {
         setSelectedId(null);
       }
     }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId, detailId, cards, manualOrder]);
 

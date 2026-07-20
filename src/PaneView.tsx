@@ -160,8 +160,8 @@ export function PaneView({
   useEffect(() => {
     if (!menuOpen) return;
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setMenuOpen(false); };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
   }, [menuOpen]);
 
   useEffect(() => {
@@ -261,8 +261,8 @@ export function PaneView({
     const close = () => setCtxMenu(null);
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setCtxMenu(null); };
     window.addEventListener("mousedown", close);
-    window.addEventListener("keydown", onKey);
-    return () => { window.removeEventListener("mousedown", close); window.removeEventListener("keydown", onKey); };
+    window.addEventListener("keydown", onKey, true);
+    return () => { window.removeEventListener("mousedown", close); window.removeEventListener("keydown", onKey, true); };
   }, [ctxMenu]);
 
   // UI-133: pasting many lines into a shell can execute them all — confirm

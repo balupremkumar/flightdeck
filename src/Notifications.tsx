@@ -91,8 +91,8 @@ export function Notifications() {
   useEffect(() => {
     if (panel === "none") return;
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setPanel("none"); };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
   }, [panel]);
 
   // Watch every pane for a state transition into a configured "notify" state.

@@ -14,8 +14,8 @@ export function ConfirmDialog() {
       // so confirmation must be a deliberate click.
       if (e.key === "Escape") dismiss();
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
   }, [confirm, dismiss]);
 
   if (!confirm) return null;

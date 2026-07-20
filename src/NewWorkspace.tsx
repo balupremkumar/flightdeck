@@ -93,7 +93,15 @@ export function NewWorkspace() {
       // used to fail silently at Create time.
       void invoke<unknown[]>("fs_list_dir", { path: dir })
         .then(() => { if (!cancelled) setPathOk(true); })
-        .catch(() => { if (!cancelled) { setPathOk(false); setIsRepo(null); } });
+        .catch((e) => {
+          if (cancelled) return;
+          // Only claim a folder is unreadable when the backend actually
+          // answered. With no Tauri bridge at all (browser preview) we can't
+          // know, and a false "missing" warning is worse than staying quiet.
+          const noBridge = /__TAURI|transformCallback|not a function|undefined/i.test(String(e));
+          setPathOk(noBridge ? null : false);
+          if (!noBridge) setIsRepo(null);
+        });
 
       void repoToplevel(dir).then(async (top) => {
         if (cancelled) return;
@@ -212,8 +220,8 @@ export function NewWorkspace() {
         void create();
       }
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasWorkspaces, busy, root, slots, isolate, setupCmd, count]);
 
@@ -221,14 +229,19 @@ export function NewWorkspace() {
   useEffect(() => {
     let un: (() => void) | undefined;
     let cancelled = false;
-    void getCurrentWebview()
+    // getCurrentWebview() throws SYNCHRONOUSLY outside a real Tauri window
+    // (it reads __TAURI_INTERNALS__), so a .catch() on the promise never sees
+    // it — same guard as LeftPanel's folder-drop.
+    let webview: ReturnType<typeof getCurrentWebview>;
+    try { webview = getCurrentWebview(); } catch { return; }
+    webview
       .onDragDropEvent((e) => {
         if (e.payload.type !== "drop") return;
         const p = e.payload.paths[0];
         if (p) { setRoot(p); setShowRecents(false); }
       })
       .then((fn) => { if (cancelled) fn(); else un = fn; })
-      .catch(() => { /* browser preview */ });
+      .catch(() => { /* drag-drop unavailable — Browse still works */ });
     return () => { cancelled = true; un?.(); };
   }, []);
 
@@ -241,7 +254,7 @@ export function NewWorkspace() {
 
   const counts = slots.reduce<Record<string, number>>((m, s) => ((m[s.vendor] = (m[s.vendor] || 0) + 1), m), {});
   const summary = Object.entries(counts).map(([v, c]) => `${c}× ${vendorShort(v)}`).join(", ");
-  const canCreate = !!root.trim() && pathOk !== false;
+  const canCreate = !!root.trim();
 
   return (
     <div className={"launcher" + (hasWorkspaces ? " overlay" : "")}>
@@ -322,7 +335,12 @@ export function NewWorkspace() {
                 </div>
               )}
             </div>
-            {pathOk === false && <div className="dir-err">That folder doesn't exist — check the path or use Browse.</div>}
+            {pathOk === false && (
+              <div className="dir-err">
+                Couldn't read that folder — check the path, or use Browse. You can still create the
+                workspace; panes will report the error if it really is missing.
+              </div>
+            )}
             <label className={"isolate-row" + (isRepo === false ? " off" : "")} title={
               isRepo === false
                 ? "This folder isn't a git repository — panes run directly in it."

@@ -84,8 +84,8 @@ export function CommandPalette() {
       e.preventDefault();
       setOpen((o) => !o);
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
   }, []);
 
   useEffect(() => {
@@ -225,8 +225,8 @@ export function CommandPalette() {
       else if (e.key === "ArrowUp") { e.preventDefault(); setIndex((i) => Math.max(i - 1, 0)); }
       else if (e.key === "Enter") { e.preventDefault(); const it = results[index]; if (it) runItem(it); }
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, results, index]);
 

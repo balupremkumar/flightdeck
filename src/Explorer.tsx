@@ -285,8 +285,8 @@ export function Explorer({ root, wsId, vendor = "pwsh", paneRoot, paneLabel }: E
     const close = () => setCtx(null);
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setCtx(null); };
     window.addEventListener("mousedown", close);
-    window.addEventListener("keydown", onKey);
-    return () => { window.removeEventListener("mousedown", close); window.removeEventListener("keydown", onKey); };
+    window.addEventListener("keydown", onKey, true);
+    return () => { window.removeEventListener("mousedown", close); window.removeEventListener("keydown", onKey, true); };
   }, [ctx]);
 
   const load = () => {

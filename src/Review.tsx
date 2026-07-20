@@ -177,8 +177,8 @@ export function Review() {
   useEffect(() => {
     if (paneId == null) return;
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setReviewPane(null); };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
   }, [paneId, setReviewPane]);
 
   if (paneId == null) return null;

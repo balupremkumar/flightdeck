@@ -50,8 +50,8 @@ export function AttentionQueue() {
       const n = parseInt(e.key, 10);
       if (n >= 1 && n <= Math.min(9, queue.length)) { e.preventDefault(); jump(queue[n - 1].w.id, queue[n - 1].p.id); }
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, queue, sel]);
 

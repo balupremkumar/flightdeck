@@ -95,8 +95,8 @@ export function LeftPanel({ expanded, view, setView }: { expanded: boolean; view
         if (w) { e.preventDefault(); openWs(w.id); }
       }
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspaces]);
 
@@ -147,8 +147,8 @@ export function LeftPanel({ expanded, view, setView }: { expanded: boolean; view
     const close = () => setMenu(null);
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setMenu(null); };
     window.addEventListener("mousedown", close);
-    window.addEventListener("keydown", onKey);
-    return () => { window.removeEventListener("mousedown", close); window.removeEventListener("keydown", onKey); };
+    window.addEventListener("keydown", onKey, true);
+    return () => { window.removeEventListener("mousedown", close); window.removeEventListener("keydown", onKey, true); };
   }, [menu]);
 
   useEffect(() => {

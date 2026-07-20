@@ -36,8 +36,8 @@ export function Broadcast() {
     const onKey = (e: globalThis.KeyboardEvent) => {
       if (e.key === "Escape") setOpen(false);
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
   }, [open, setOpen]);
 
   // Every pane in scope, live or not — dead panes are shown greyed-out and

@@ -260,7 +260,13 @@
 .plaunching-sub { font-size: 10.5px; color: var(--faint); }
 
 /* Pane header affordances (UI-116/117/119/120/129) */
-.phead .branch-copy, .phead .prepo-click { cursor: pointer; }
+/* UI-218: making these clickable means giving them a real hit target — a
+   15px-tall chip is a miss-magnet. Padding keeps the visual size unchanged. */
+.phead .branch-copy, .phead .prepo-click {
+  cursor: pointer;
+  display: inline-flex; align-items: center;
+  min-height: 24px; padding-block: 4px;
+}
 .phead .branch-copy:hover, .phead .prepo-click:hover { color: var(--text); }
 .phead .prepo-click:focus-visible, .phead .branch-copy:focus-visible { outline: 2px solid var(--ice); outline-offset: 2px; border-radius: var(--r-sm); }
 /* UI-129: attention chip — the pane says it needs you, not just the bell. */

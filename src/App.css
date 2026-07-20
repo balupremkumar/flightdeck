@@ -167,7 +167,7 @@ body {
 .lp-ws.active .lp-name { color: var(--text-primary); font-weight: 600; }
 .lp-wait { width: 7px; height: 7px; border-radius: 50%; background: var(--st-waiting); flex: none; animation: hud-pulse 1.8s ease-in-out infinite; }
 .lp-badge { min-width: 18px; height: 18px; border-radius: 999px; background: var(--bg-elevated); color: var(--text-secondary); font-size: 10px; font-weight: 700; display: grid; place-items: center; padding: 0 5px; flex: none; }
-.lp-x { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border: 0; background: transparent; color: var(--tmuted); border-radius: 5px; cursor: pointer; opacity: 0; flex: none; transition: opacity .14s ease, color .14s ease, background-color .14s ease; }
+.lp-x { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border: 0; background: transparent; color: var(--tmuted); border-radius: 5px; cursor: pointer; opacity: 0; flex: none; transition: opacity .14s ease, color .14s ease, background-color .14s ease; }
 .lp-ws:hover .lp-x { opacity: 1; }
 .lp-x:hover { color: var(--st-error); background: rgba(255,255,255,.06); }
 .lp-sep { height: 1px; background: var(--border); margin: 10px 14px; }

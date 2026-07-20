@@ -400,8 +400,8 @@ export function Settings() {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape" && !capturing) setOpen(false);
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
   }, [open, capturing, setOpen]);
 
   if (!open) return null;
