@@ -323,6 +323,9 @@ pub fn worktree_remove(wt_root: &Path, worktree_path: &str, mode: &str) -> Resul
     }
     let _ = std::fs::remove_file(meta_path(dir));
     let _ = git(top_path, &["worktree", "prune"]);
+    // K0a: the worktree may have been agy-trusted at spawn — drop the entry so
+    // per-session paths don't accumulate in the user's agy settings.
+    crate::vendors::prune_agy_trust(&[dir_s]);
     Ok(RemoveOutcome { status: "removed".into(), detail: String::new() })
 }
 

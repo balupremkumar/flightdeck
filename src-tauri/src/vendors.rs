@@ -106,40 +106,89 @@ fn git_bash_path() -> Option<String> {
 
 // agy (Antigravity) only operates in trusted workspaces. Since Flightdeck can
 // root a pane at any folder, ensure the folder is in agy's trustedWorkspaces
-// before spawning. Sticky (never revoked). Serialised so concurrent agy panes
-// opened at once can't interleave a read-modify-write of settings.json.
+// before spawning. Serialised so concurrent agy panes opened at once can't
+// interleave a read-modify-write of settings.json. Worktree entries are pruned
+// again on worktree removal (K0a) — per-session paths must not accumulate
+// forever in the user's agy settings.
 static AGY_TRUST_LOCK: OnceLock<std::sync::Mutex<()>> = OnceLock::new();
+
+fn agy_settings_path() -> Option<std::path::PathBuf> {
+    let home = std::env::var("USERPROFILE").ok()?;
+    Some(
+        std::path::Path::new(&home)
+            .join(".gemini")
+            .join("antigravity-cli")
+            .join("settings.json"),
+    )
+}
+
+fn read_trust_doc(path: &std::path::Path) -> serde_json::Value {
+    let mut val: serde_json::Value = std::fs::read_to_string(path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_else(|| serde_json::json!({}));
+    if !val.get("trustedWorkspaces").map(|v| v.is_array()).unwrap_or(false) {
+        val["trustedWorkspaces"] = serde_json::json!([]);
+    }
+    val
+}
+
+fn write_trust_doc(path: &std::path::Path, val: &serde_json::Value) {
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(s) = serde_json::to_string_pretty(val) {
+        let _ = std::fs::write(path, s);
+    }
+}
+
+fn trust_file_add(path: &std::path::Path, work_dir: &str) {
+    let mut val = read_trust_doc(path);
+    let list = val["trustedWorkspaces"].as_array_mut().unwrap();
+    if !list.iter().any(|x| x.as_str() == Some(work_dir)) {
+        list.push(serde_json::Value::String(work_dir.to_string()));
+        write_trust_doc(path, &val);
+    }
+}
+
+/// Windows paths compare case-insensitively and slash-agnostically.
+fn same_path(a: &str, b: &str) -> bool {
+    a.replace('\\', "/").to_lowercase() == b.replace('\\', "/").to_lowercase()
+}
+
+fn trust_file_prune(path: &std::path::Path, dirs: &[String]) {
+    let mut val = read_trust_doc(path);
+    let list = val["trustedWorkspaces"].as_array_mut().unwrap();
+    let before = list.len();
+    list.retain(|x| {
+        x.as_str()
+            .map(|s| !dirs.iter().any(|d| same_path(s, d)))
+            .unwrap_or(true)
+    });
+    if list.len() != before {
+        write_trust_doc(path, &val);
+    }
+}
 
 fn ensure_agy_trust(work_dir: &str) {
     let lock = AGY_TRUST_LOCK.get_or_init(|| std::sync::Mutex::new(()));
     let _guard = lock.lock().unwrap();
-
-    let home = match std::env::var("USERPROFILE") {
-        Ok(h) => h,
-        Err(_) => return,
-    };
-    let path = std::path::Path::new(&home)
-        .join(".gemini")
-        .join("antigravity-cli")
-        .join("settings.json");
-
-    let mut val: serde_json::Value = std::fs::read_to_string(&path)
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_else(|| serde_json::json!({}));
-
-    if !val.get("trustedWorkspaces").map(|v| v.is_array()).unwrap_or(false) {
-        val["trustedWorkspaces"] = serde_json::json!([]);
+    if let Some(path) = agy_settings_path() {
+        trust_file_add(&path, work_dir);
     }
-    let list = val["trustedWorkspaces"].as_array_mut().unwrap();
-    if !list.iter().any(|x| x.as_str() == Some(work_dir)) {
-        list.push(serde_json::Value::String(work_dir.to_string()));
-        if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        if let Ok(s) = serde_json::to_string_pretty(&val) {
-            let _ = std::fs::write(&path, s);
-        }
+}
+
+/// K0a: drop removed worktree paths from agy's trustedWorkspaces so a session's
+/// throwaway dirs don't pile up in the user's settings. Called by worktree
+/// removal/GC; a path that was never trusted (non-agy pane) is a no-op.
+pub fn prune_agy_trust(dirs: &[String]) {
+    if dirs.is_empty() {
+        return;
+    }
+    let lock = AGY_TRUST_LOCK.get_or_init(|| std::sync::Mutex::new(()));
+    let _guard = lock.lock().unwrap();
+    if let Some(path) = agy_settings_path() {
+        trust_file_prune(&path, dirs);
     }
 }
 
@@ -714,6 +763,34 @@ mod tests {
             cmd.get_cwd().map(|c| c.to_string_lossy().into_owned()),
             Some("D:\\test\\dir".to_string())
         );
+    }
+
+    // --- agy trust add/prune (K0a) -----------------------------------------
+
+    #[test]
+    fn agy_trust_add_then_prune_round_trips() {
+        let dir = temp_manifest_dir(); // any temp dir works
+        let file = dir.join("settings.json");
+        // Seed with an unrelated user entry that must survive.
+        std::fs::write(&file, r#"{"trustedWorkspaces":["D:\\my\\project"],"other":42}"#).unwrap();
+
+        trust_file_add(&file, "C:\\app\\worktrees\\abc\\p1");
+        trust_file_add(&file, "C:\\app\\worktrees\\abc\\p1"); // idempotent
+        let v = read_trust_doc(&file);
+        assert_eq!(v["trustedWorkspaces"].as_array().unwrap().len(), 2);
+
+        // Prune matches case/slash-insensitively; unrelated entries + keys stay.
+        trust_file_prune(&file, &["c:/app/worktrees/abc/P1".to_string()]);
+        let v = read_trust_doc(&file);
+        let list = v["trustedWorkspaces"].as_array().unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].as_str(), Some("D:\\my\\project"));
+        assert_eq!(v["other"], 42);
+
+        // Pruning a path that isn't there is a no-op.
+        trust_file_prune(&file, &["C:\\nope".to_string()]);
+        assert_eq!(read_trust_doc(&file)["trustedWorkspaces"].as_array().unwrap().len(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     // --- Setup wrapper (Tier 0 follow-up) ----------------------------------
