@@ -102,6 +102,8 @@ interface TerminalProps {
   onProc?: (name: string) => void;
   /** UI-135: the child emitted BEL (). */
   onBell?: () => void;
+  /** UI-141: latest non-empty output line, ANSI-stripped, for the queue. */
+  onLine?: (line: string) => void;
 }
 
 // Cap on buffered bytes for a pane hidden behind another workspace / focus mode —
@@ -110,7 +112,7 @@ const HIDDEN_BUFFER_CAP = 262144; // 256KB
 
 // One live terminal bound to a PTY in the Rust core.
 export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Terminal(
-  { vendor, cwd, setup, onSetupConsumed, fontSize = 12.5, ligatures = false, quietThresholdMs = 3000, onExit, onState, onProc, onBell },
+  { vendor, cwd, setup, onSetupConsumed, fontSize = 12.5, ligatures = false, quietThresholdMs = 3000, onExit, onState, onProc, onBell, onLine },
   ref
 ) {
   const elRef = useRef<HTMLDivElement>(null);
@@ -273,6 +275,10 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
       // (many CLIs ring on "done" or "needs input").
       if (text.includes("\x07")) onBell?.();
       outTail = (outTail + text).slice(-600);
+      // UI-141: keep the last meaningful line for the attention queue.
+      const clean = outTail.replace(OSC_RE, "").replace(ANSI_RE, "");
+      const lines = clean.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+      if (lines.length) onLine?.(lines[lines.length - 1].slice(0, 120));
     };
     const tailShowsPermissionPrompt = () =>
       PERMISSION_PATTERNS.some((re) => re.test(outTail.replace(OSC_RE, "").replace(ANSI_RE, "")));

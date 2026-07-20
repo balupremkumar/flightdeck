@@ -11,7 +11,7 @@ import {
 import type { DiffSummary } from "./worktrees";
 import { cachedInvoke, usePoll, useVisible } from "./poll";
 import { compact, num, duration } from "./format";
-import { stateSince, STATE_LABEL as STATE_TITLE } from "./attention";
+import { stateSince, lastLine, STATE_LABEL as STATE_TITLE } from "./attention";
 import "./panes.css";
 
 import { vendorShort } from "./vendors";
@@ -577,6 +577,7 @@ export function PaneView({
           onState={(st) => setPaneState(pane.id, st as PaneState)}
           onProc={setProcName}
           onBell={pulseBell}
+          onLine={(l) => lastLine.set(pane.id, l)}
         />
       </div>
       {ctxMenu && createPortal(

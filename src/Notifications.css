@@ -121,3 +121,12 @@
 .ntf-badge.err { background: var(--st-error); color: var(--on-accent); }
 .ntf-badge.warn { background: var(--st-waiting); color: var(--on-warn); }
 .ntf-badge.second { transform: translate(-14px, 0); }
+
+/* UI-143: snooze affordance on a queue row */
+.aq-snooze {
+  flex: none; font-size: 10px; color: var(--faint); cursor: pointer;
+  padding: 3px 7px; border-radius: var(--r-pill); border: 1px solid transparent;
+  opacity: 0; transition: opacity var(--t-fast) ease, color var(--t-fast) ease, border-color var(--t-fast) ease;
+}
+.aq-row:hover .aq-snooze, .aq-row.sel .aq-snooze { opacity: 1; }
+.aq-snooze:hover { color: var(--text); border-color: var(--line-strong); }

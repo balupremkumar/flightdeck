@@ -6,7 +6,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useApp } from "./store";
 import { useUI } from "./ui";
-import { attentionQueue, forMins, STATE_LABEL } from "./attention";
+import { attentionQueue, forMins, lastLine, STATE_LABEL } from "./attention";
 import { vendorShort } from "./vendors";
 import { IconBell, IconClose } from "./Icons";
 import "./Notifications.css";
@@ -20,7 +20,9 @@ export function AttentionQueue() {
   const [sel, setSel] = useState(0);
   const [, setTick] = useState(0);
 
-  const queue = useMemo(() => attentionQueue(workspaces), [workspaces]);
+  const snoozed = useUI((s) => s.snoozed);
+  const snoozePane = useUI((s) => s.snoozePane);
+  const queue = useMemo(() => attentionQueue(workspaces, snoozed), [workspaces, snoozed]);
 
   // Keep durations honest while open.
   useEffect(() => {
@@ -71,7 +73,10 @@ export function AttentionQueue() {
         {queue.length === 0 ? (
           <div className="aq-empty">
             Nothing needs you — every agent is working or idle.
-            <span className="aq-empty-sub">Panes land here when they hit an approval prompt, error out, or go quiet.</span>
+            <span className="aq-empty-sub">
+              Panes land here when they hit an approval prompt, error out, or go quiet.
+              Press <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd> any time to check.
+            </span>
           </div>
         ) : (
           <div className="aq-list">
@@ -86,10 +91,21 @@ export function AttentionQueue() {
                 <span className={"ntf-dot " + p.state} />
                 <span className="aq-main">
                   <span className="aq-pane">{p.title || vendorShort(p.vendor)}</span>
-                  <span className="aq-ws">{w.name}</span>
+                  {/* UI-141: what it's actually asking, not just that it asked. */}
+                  <span className="aq-ws">{lastLine.get(p.id) || w.name}</span>
                 </span>
                 <span className="aq-state">{STATE_LABEL[p.state]}</span>
                 <span className="aq-since">{forMins(since)}</span>
+                {/* UI-143: park a pane you've decided to deal with later. */}
+                <span
+                  className="aq-snooze"
+                  role="button"
+                  tabIndex={-1}
+                  title="Snooze for 10 minutes"
+                  onClick={(e) => { e.stopPropagation(); snoozePane(p.id, 10 * 60_000); }}
+                >
+                  snooze
+                </span>
               </button>
             ))}
           </div>

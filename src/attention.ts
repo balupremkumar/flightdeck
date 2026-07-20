@@ -20,11 +20,14 @@ export interface AttentionItem {
 
 /** Ranked "needs you now" list: approval > error > waiting, and within a rank
  *  the pane that has needed you longest comes first — a scan order, not a pile. */
-export function attentionQueue(workspaces: Workspace[]): AttentionItem[] {
+export function attentionQueue(workspaces: Workspace[], snoozed: Record<number, number> = {}): AttentionItem[] {
+  const now = Date.now();
   return workspaces
     .flatMap((w) =>
       w.panes
         .filter((p) => p.state in ATTENTION_RANK)
+        // UI-143: a snoozed pane drops out of the queue until its timer expires.
+        .filter((p) => !(snoozed[p.id] && snoozed[p.id] > now))
         .map((p) => ({ w, p, since: stateSince.get(p.id) ?? Date.now() }))
     )
     .sort((a, b) => {
@@ -45,3 +48,8 @@ export const STATE_LABEL: Record<PaneState, string> = {
   permission: "Needs approval",
   error: "Error",
 };
+
+/** UI-141: the pane's most recent output line, so the queue says WHAT it's
+ *  asking rather than just that it's asking. Written by Terminal's tail
+ *  tracker; capped, ANSI already stripped by the caller. */
+export const lastLine = new Map<number, string>();

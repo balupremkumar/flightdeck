@@ -50,7 +50,10 @@ export function PaneGrid({ ws }: { ws: Workspace }) {
     <div className="grid-empty">
       <IconWorkspace size={26} />
       <div className="grid-empty-title">No panes in this workspace</div>
-      <div className="grid-empty-sub">Every pane here was closed. Add one to keep working in {ws.name}.</div>
+      {/* UI-223: an empty state should name the way out of it. */}
+      <div className="grid-empty-sub">
+        Every pane here was closed. Add one to keep working in {ws.name} — or press <kbd>Ctrl</kbd>+<kbd>K</kbd> for the command palette.
+      </div>
       <button
         className="grid-empty-add"
         onClick={() => void spawnPane(ws.id, defaultCycle()[0], ws.root)}

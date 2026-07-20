@@ -72,6 +72,7 @@ export function Notifications() {
   const feed = useUI((s) => s.feed);
   // UI-145: a maximised pane means focus mode — alerts stand down, feed keeps recording.
   const focusMode = useUI((s) => s.maximizedPaneId != null);
+  const snoozedMap = useUI((s) => s.snoozed);
   const pushNotifyEvent = useUI((s) => s.pushNotifyEvent);
   const clearFeed = useUI((s) => s.clearFeed);
 
@@ -125,7 +126,7 @@ export function Notifications() {
   }, [workspaces, notify, pushNotifyEvent]);
 
   // The attention QUEUE (UI-1) — shared ranking in attention.ts.
-  const needsAttention = attentionQueue(workspaces);
+  const needsAttention = attentionQueue(workspaces, snoozedMap);
   const approvalCount = needsAttention.filter((x) => x.p.state === "permission").length;
   const errCount = needsAttention.filter((x) => x.p.state === "error").length;
 

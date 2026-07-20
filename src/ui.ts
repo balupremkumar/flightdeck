@@ -87,6 +87,10 @@ interface UIState {
   // so Notifications can treat focus mode as do-not-disturb.
   maximizedPaneId: number | null;
   setMaximizedPaneId: (id: number | null) => void;
+  // UI-143: panes snoozed out of the attention queue until a timestamp.
+  snoozed: Record<number, number>;
+  snoozePane: (paneId: number, ms: number) => void;
+  unsnoozePane: (paneId: number) => void;
 
   // Review drawer (worktree diff/merge surface): pane id being reviewed, or
   // null when closed. Store-level so the pane header, command palette, and
@@ -185,6 +189,13 @@ export const useUI = create<UIState>((set) => ({
   setAttentionOpen: (attentionOpen) => set({ attentionOpen }),
   maximizedPaneId: null,
   setMaximizedPaneId: (maximizedPaneId) => set({ maximizedPaneId }),
+  snoozed: {},
+  snoozePane: (paneId, ms) => set((s) => ({ snoozed: { ...s.snoozed, [paneId]: Date.now() + ms } })),
+  unsnoozePane: (paneId) => set((s) => {
+    const next = { ...s.snoozed };
+    delete next[paneId];
+    return { snoozed: next };
+  }),
 
   reviewPaneId: null,
   setReviewPane: (reviewPaneId) => set({ reviewPaneId }),
