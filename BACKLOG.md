@@ -60,7 +60,7 @@ The session-3 requests + the supporting polish that makes them land.
 - Settings depth: multiple themes [85], terminal settings [88], shortcut editor [89], agents settings [90], accent picker [92].
 
 ### Phase 4 — Cross-platform & shippable build (a downloadable product)
-- macOS [165], Linux [166], ARM64 [167], high-DPI/multi-monitor [168/169], shell selection per pane [170].
+- ~~macOS [165], Linux [166], ARM64 [167]~~ — **PARKED (Balu 2026-07-20): Windows-first, revisit only if going to market demands it.** High-DPI/multi-monitor [168/169] and shell selection per pane [170] stay (Windows-relevant).
 - Signed installer [127], auto-update [128], winget/choco [129], MSIX/Store [130], portable [131], delta [133], rollback [134].
 - Signed/notarized binaries [158], secret redaction [159], app lock [160], audit log [161], capability review [162], encrypted-at-rest [164].
 - Local-only trust badge [157], OSS attributions [155], local crash log + log-export [152-local / 204].
@@ -76,6 +76,7 @@ The session-3 requests + the supporting polish that makes them land.
 - Interactive web demo / sandbox for the landing page [215].
 
 ### Parked — not now (single-user; revisit if productised for others)
+- **Cross-platform: macOS [165], Linux [166], ARM64 [167]** (Balu 2026-07-20: Windows-first for now).
 - Licensing & monetization [144-150].
 - Full onboarding/docs suite [135-143] — keep only the light checklist [213].
 - Team & collaboration [179-184].
@@ -578,6 +579,87 @@ diff review + merge/PR (SHIPPED v1), live agent status (have), multi-vendor
 config-drop agent manifest (unbuilt), focused single-user polish. Rival feature
 categories to watch: setup scripts, PR-based merge, session resume/checkpoint,
 cloud/remote execution.
+
+---
+
+## K. UI ENHANCEMENTS — consolidated master list (2026-07-20)
+
+One place for every open UI/UX item, gathered from QOL-AUDIT.md (285-384),
+BACKLOG sections D/Q, and the session-6 market visual-gap analysis. Balu flags
+keeps/drops against THIS list. Already fixed (wave 4 + session 6, excluded):
+285, 292, 319, 328, 336, 348, 365, 368, 371 (error boundary), and 355 is
+partially done ("Preparing worktrees…" busy state).
+
+### K-A. Competitive visual gaps (from the market research — highest leverage)
+- UI-1. **Attention Queue** — ranked "needs you now" surface (vs the bell feed). [Paneflow]
+- UI-2. **Richer status vocabulary** — blocked-on-permission / stalled badges on panes + cards. [Warp]
+- UI-3. **Per-pane token/cost estimate** chip. [Paneflow]
+- UI-4. **Dashboard / overview** — all workspaces/panes/health at a glance; Settings > Diagnostics exposing the already-built pane_health / recover_orphans / support-bundle (375/376/377 ⭐ — biggest built-vs-shipped gap).
+- UI-5. **Merge-conflict resolution surface** (v1 aborts with a message).
+- UI-6. **In-app browser + port management** for dev-server previews. [Superset]
+- UI-7. **Agent transcript / run-history browser.**
+- UI-8. **Markdown/notes panes.** [Paneflow]
+- UI-9. **Onboarding**: first-run tour + demo workspace + "not installed" guidance with install links (287/288/290/291/123/135-136/282).
+
+### K-B. First-five-minutes (QOL §1, open)
+- UI-10. First-launch vs closed-all-workspaces framing copy (286, partially done).
+- UI-11. Human copy on failed spawn instead of raw JS error (289).
+- UI-12. "Launching…" copy for the starting state — slow agent looks stuck (293 ⭐).
+- UI-13. Explorer toggle dead-click feedback outside terminals view (294).
+
+### K-C. Micro-interactions (QOL §2)
+- UI-14. Press/:active states on all icon buttons (295/296).
+- UI-15. Designed tooltips for the collapsed rail (297).
+- UI-16. Drag affordances: card grab cursor, Explorer resize hover cue (298/299).
+- UI-17. Keyboard path for pane font-zoom controls (300).
+- UI-18. Toast pause-on-hover (301).
+- UI-19. Scroll-fade cues on Settings/palette lists (302/303).
+- UI-20. One shared drop-target visual grammar (304).
+
+### K-D. Information honesty (QOL §3)
+- UI-21. Absolute timestamps on hover everywhere (305/306/307/310).
+- UI-22. Roll-up: separate "starting" from "running" (308).
+- UI-23. Branch pill changed-file count (309) — partially covered by the new diff-stat badge on isolated panes; plain panes still lack it.
+- UI-24. WIP-limit breach explanation in place (312).
+- UI-25. Unified dirty-dot + empty-state signals (313/314); proc-chip tooltip (311).
+
+### K-E. Error & edge paths (QOL §4)
+- UI-26. Rename length guard (315); 9-pane min-width guard (316); full-cwd reveal (317).
+- UI-27. Distinguish non-repo / git-missing / git-timeout (318); git_status timeout (321).
+- UI-28. Theme-flip debounce (320); degenerate pane-size guard (322).
+- UI-29. Explorer virtualisation for huge dirs (323); close-last-pane prompt (324).
+
+### K-F. Keyboard & a11y (QOL §5 + BACKLOG 121/122/207-210)
+- UI-30. Focus traps: Settings + CardDetail (325/326); Esc on Notifications + pane menu (329/332).
+- UI-31. Keyboard paths: card select/move, workspace context menu, stable pane-header tab order (331/333/334); rename aria-labels (330); Broadcast close affordance (327).
+- UI-32. Full keyboard-nav + focus-order audit; screen-reader labels; colour-blind status audit (121/122/207-209).
+
+### K-G. Visual coherence (QOL §6)
+- UI-33. Token gaps: .btn-danger #fff, High-Contrast --glow, radius scale, shared .icon-btn (335/337/338/339).
+- UI-34. Terminal-vs-chrome palette cross-check per theme (340).
+- UI-35. Board empty-glyph → real icon (341); dead .bell CSS cleanup (342); shared signal-thickness scale (343/344).
+
+### K-H. Copy polish (QOL §7)
+- UI-36. One destructive-warning phrase; toast house style; shared create/save verbs (346/349/353/354).
+- UI-37. Board subtitle overpromise (345); broadcast exclusion reasons (347); explorer error tone (350); "not installed" as actionable sentence (351 ⭐); palette empty-state hint (352).
+
+### K-I. Perceived performance (QOL §8)
+- UI-38. Restart/dispatch/spawn progress states ("restarting…", "dispatching…", "spawning 3 of 6…") (359/360/363).
+- UI-39. Workspace-switch crossfade (358); theme-switch transition (361).
+- UI-40. Broadcast per-chip progress (357); hidden-pane flush chunking (362); palette debounce (364); shared skeleton primitive (356).
+- UI-41. Motion system: one easing/duration language + reduced-motion honoured everywhere (116/284); loading skeletons (117); empty/error/loading treatment audit (120/283); success micro-animations (25).
+
+### K-J. Trust signals (QOL §9)
+- UI-42. Changelog / "what's new" surface (367); version visibility beyond About (366).
+- UI-43. OS-toast permission explainer (369); min-window-size + small-resize test (370).
+- UI-44. Quit-with-live-sessions confirmation — the one unguarded destructive action (373).
+- UI-45. Icon check across OS surfaces (372); friendly probe-detail copy (374).
+
+### K-K. Backend-built, UI-missing (QOL §10, minus Diagnostics = UI-4)
+- UI-46. Persistence wiring UX: "reopen last session?" prompt, safe-mode banner, quit warning (378 ⭐/379 — lands with Tier 1 R4).
+- UI-47. Shared git_status cache (380); Browse denied-folder feedback (381).
+- UI-48. Job-Object trust copy in Settings (382); auto-title panes from live process (383); "copy scrollback (redacted)" action (384).
+- UI-49. Virtualise notification feed / board columns / file tree (126/276); xterm scrollback cap (277).
 
 ---
 
