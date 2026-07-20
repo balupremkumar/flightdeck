@@ -15,6 +15,8 @@ interface CardItemProps {
   onDragStart: (e: DragEvent<HTMLDivElement>, card: Card) => void;
   onDragEnd: () => void;
   onCardDragOver: (e: DragEvent<HTMLDivElement>, card: Card) => void;
+  /** UI-38: worktree prep is in flight for this card. */
+  isDispatching?: boolean;
   onSelect: (id: string) => void;
   onOpenDetail: (id: string) => void;
 }
@@ -28,6 +30,7 @@ export function CardItem({
   onDragStart,
   onDragEnd,
   onCardDragOver,
+  isDispatching,
   onSelect,
   onOpenDetail,
 }: CardItemProps) {
@@ -85,6 +88,9 @@ export function CardItem({
 
             {/* UI-157: the PR this card's agent opened — the card stays the
                 thread from task to agent to review. */}
+            {isDispatching && (
+              <span className="card-dispatching">Preparing worktree…</span>
+            )}
             {card.prUrl && (
               <button
                 type="button"

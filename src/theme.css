@@ -315,3 +315,10 @@ button.chip:hover { border-color: var(--accent); color: var(--text); }
 .icon-btn:active { transform: translateY(1px); }
 .icon-btn:disabled { opacity: .4; cursor: default; transform: none; }
 .icon-btn.danger:hover { color: var(--st-error); background: color-mix(in srgb, var(--st-error) 12%, transparent); }
+
+/* UI-40: theme switching snapped every surface at once. A short colour
+   transition on the big planes makes the six-theme system feel deliberate
+   without animating every element (which would be sluggish). */
+body, .cockpit-root, .topbar, .lpanel, .pane, .set-modal, .explorer {
+  transition: background-color var(--t-med) ease, border-color var(--t-med) ease, color var(--t-med) ease;
+}

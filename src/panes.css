@@ -326,3 +326,9 @@
   transition: color var(--t-fast) ease, border-color var(--t-fast) ease;
 }
 .grid-empty-close:hover { color: var(--st-error); border-color: var(--st-error); }
+
+/* UI-39: workspace switching was an instant display:none/flex cut, which reads
+   as a glitch on a large grid. A short fade makes it a transition. Reduced
+   motion (OS or Settings) collapses it via the global rules in theme.css. */
+.wsgrid { animation: ws-in var(--t-med) var(--ease-out); }
+@keyframes ws-in { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }

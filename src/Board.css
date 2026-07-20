@@ -902,3 +902,13 @@
 /* UI-16: the whole card is draggable, not just the grip — say so on hover */
 .card:hover { cursor: grab; }
 .card:active { cursor: grabbing; }
+
+/* UI-38: card mid-dispatch */
+.card-dispatching {
+  align-self: flex-start; font-size: 10px; font-weight: 600;
+  color: var(--st-starting); padding: 2px 7px; border-radius: var(--r-pill);
+  border: 1px solid color-mix(in srgb, var(--st-starting) 45%, transparent);
+  background: color-mix(in srgb, var(--st-starting) 10%, transparent);
+  animation: card-dispatch-pulse var(--t-pulse) ease-in-out infinite;
+}
+@keyframes card-dispatch-pulse { 0%,100% { opacity: 1; } 50% { opacity: .55; } }

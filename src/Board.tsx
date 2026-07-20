@@ -43,6 +43,8 @@ export function Board() {
   const [dragOverCol, setDragOverCol] = useState<ColumnId | null>(null);
   const [dragOverCard, setDragOverCard] = useState<{ id: string; before: boolean } | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // UI-38: cards mid-dispatch, so the wait is visible on the card itself.
+  const [dispatching, setDispatching] = useState<Set<string>>(new Set());
   const [detailId, setDetailId] = useState<string | null>(null);
   const [completing, setCompleting] = useState<Set<string>>(new Set());
   const [showComposer, setShowComposer] = useState(false);
@@ -94,13 +96,21 @@ export function Board() {
     if (!ws) return;
     // Prefer the card's agent, else the first installed agent the registry knows.
     const vendor: Vendor = card.agent ?? agentVendors().find((a) => a.installed)?.id ?? "claude";
+    // UI-38: worktree prep can take a few seconds; without a pending state the
+    // card sits there looking like the drop did nothing.
+    setDispatching((d) => new Set(d).add(card.id));
     // UI-162: the dispatched worktree/branch takes the card's title.
-    void spawnPane(activeId, vendor, ws.root, undefined, card.title).then((newPaneId) => {
-      if (newPaneId != null) {
-        linkPane(card.id, activeId, newPaneId);
-        pushToast("success", `Dispatched "${card.title}" to ${vendorShort(vendor)}`);
-      }
-    });
+    void spawnPane(activeId, vendor, ws.root, undefined, card.title)
+      .then((newPaneId) => {
+        if (newPaneId != null) {
+          linkPane(card.id, activeId, newPaneId);
+          pushToast("success", `Dispatched "${card.title}" to ${vendorShort(vendor)}`);
+        } else {
+          pushToast("error", `Couldn't dispatch "${card.title}" — the pane didn't start.`);
+        }
+      })
+      .catch((e) => pushToast("error", `Couldn't dispatch "${card.title}": ${String(e)}`))
+      .finally(() => setDispatching((d) => { const n = new Set(d); n.delete(card.id); return n; }));
   }
 
   function flashComplete(id: string) {
@@ -411,6 +421,7 @@ export function Board() {
                     isDragging={dragId === card.id}
                     isSelected={selectedId === card.id}
                     isCompleting={completing.has(card.id)}
+                    isDispatching={dispatching.has(card.id)}
                     insertLine={dragOverCard && dragOverCard.id === card.id ? (dragOverCard.before ? "before" : "after") : null}
                     onDragStart={handleDragStart}
                     onDragEnd={handleDragEnd}
