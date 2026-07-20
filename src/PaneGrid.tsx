@@ -3,6 +3,7 @@ import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { PaneView } from "./PaneView";
 import { useApp, type Workspace } from "./store";
 import { useUI } from "./ui";
+import { closeWorkspaceGuarded } from "./worktrees";
 import { IconWorkspace } from "./Icons";
 import { defaultCycle } from "./vendors";
 import { spawnPane } from "./worktrees";
@@ -79,6 +80,11 @@ export function PaneGrid({ ws }: { ws: Workspace }) {
       <div className="grid-empty-sub">
         Every pane here was closed. Add one to keep working in {ws.name} — or press <kbd>Ctrl</kbd>+<kbd>K</kbd> for the command palette.
       </div>
+      {/* UI-29: an empty workspace is usually finished with. Offer the exit
+          here rather than as a prompt fired straight after the close confirm. */}
+      <button className="grid-empty-close" onClick={() => closeWorkspaceGuarded(ws)}>
+        Close this workspace
+      </button>
       <button
         className="grid-empty-add"
         onClick={() => void spawnPane(ws.id, defaultCycle()[0], ws.root)}

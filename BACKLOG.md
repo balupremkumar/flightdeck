@@ -624,21 +624,21 @@ partially done ("Preparing worktrees…" busy state).
 - ~~UI-16. Drag affordances: card grab cursor, Explorer resize hover cue (298/299).~~ **DONE 2026-07-20 session 8** (drag affordances)
 - UI-17. Keyboard path for pane font-zoom controls (300).
 - ~~UI-18. Toast pause-on-hover~~ **DONE 2026-07-20**.
-- UI-19. Scroll-fade cues on Settings/palette lists (302/303).
+- ~~UI-19. Scroll-fade cues on Settings/palette lists (302/303).~~ **DONE 2026-07-20 session 8** (scroll-fade cue on Settings)
 - UI-20. One shared drop-target visual grammar (304).
 
 ### K-D. Information honesty (QOL §3)
 - ~~UI-21. Absolute timestamps on hover~~ **DONE 2026-07-20** (feed rows also gained relative age).
 - ~~UI-22. Roll-up: separate "starting" from "running"~~ **DONE 2026-07-20**.
 - ~~UI-23. Changed-file count on plain panes~~ **DONE 2026-07-20** (diff badge on any repo pane, vs HEAD).
-- UI-24. WIP-limit breach explanation in place (312).
+- ~~UI-24. WIP-limit breach explanation in place (312).~~ **DONE 2026-07-20 session 8** (WIP breach explained in place)
 - UI-25. Unified dirty-dot + empty-state signals (313/314); proc-chip tooltip (311).
 
 ### K-E. Error & edge paths (QOL §4)
 - UI-26. Rename length guard (315); 9-pane min-width guard (316); full-cwd reveal (317).
-- UI-27. Distinguish non-repo / git-missing / git-timeout (318); git_status timeout (321).
+- ~~UI-27. Distinguish non-repo / git-missing / git-timeout (318); git_status timeout (321).~~ **DONE 2026-07-20 session 8** (git-missing vs not-a-repo distinguished)
 - UI-28. Theme-flip debounce (320); degenerate pane-size guard (322).
-- UI-29. Explorer virtualisation for huge dirs (323); close-last-pane prompt (324).
+- ~~UI-29. Explorer virtualisation for huge dirs (323); close-last-pane prompt (324).~~ **DONE 2026-07-20 session 8** (close-workspace exit from the empty grid)
 
 ### K-F. Keyboard & a11y (QOL §5 + BACKLOG 121/122/207-210)
 - UI-30. Focus traps: Settings + CardDetail (325/326); Esc on Notifications + pane menu (329/332).
@@ -651,7 +651,7 @@ partially done ("Preparing worktrees…" busy state).
 - UI-35. Board empty-glyph → real icon (341); dead .bell CSS cleanup (342); shared signal-thickness scale (343/344).
 
 ### K-H. Copy polish (QOL §7)
-- UI-36. One destructive-warning phrase; toast house style; shared create/save verbs (346/349/353/354).
+- ~~UI-36. One destructive-warning phrase~~ **CLOSED 2026-07-20 session 8 — premise didn't hold**: "can't be brought back" (ending a live agent process) and "can't be undone" (discarding stored data) describe genuinely different things, and each is already used consistently within its class. Collapsing them to one phrase would be less accurate, not more. Toast house style + shared verbs (the rest of 346/349/353/354) remain open.
 - UI-37. Board subtitle overpromise (345); broadcast exclusion reasons (347); explorer error tone (350); "not installed" as actionable sentence (351 ⭐); palette empty-state hint (352).
 
 ### K-I. Perceived performance (QOL §8)

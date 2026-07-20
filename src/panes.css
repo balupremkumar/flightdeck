@@ -316,3 +316,13 @@
   flex: none; font-family: var(--font-mono); font-size: 10px;
   color: var(--st-waiting); opacity: .8; cursor: help;
 }
+
+/* UI-29: exit route from an emptied workspace */
+.grid-empty-close {
+  margin-top: 10px; font: inherit; font-size: 12px;
+  padding: 6px 14px; border-radius: var(--r-md);
+  border: 1px solid var(--line-strong); background: transparent;
+  color: var(--muted); cursor: pointer;
+  transition: color var(--t-fast) ease, border-color var(--t-fast) ease;
+}
+.grid-empty-close:hover { color: var(--st-error); border-color: var(--st-error); }
