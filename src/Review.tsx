@@ -13,6 +13,7 @@ import { IconBranch, IconClose, IconChevron, IconDiff, IconMerge, IconRefresh, I
 import type { DiffSummary, MergeOutcome, BranchContext } from "./worktrees";
 import { absTime, relTime } from "./format";
 import { wordDiffMap } from "./worddiff";
+import { toSplitRows } from "./splitdiff";
 import { invalidateCwd, usePoll } from "./poll";
 import { closePaneGuarded } from "./worktrees";
 import { useBoardStore } from "./board/boardStore";
@@ -54,6 +55,17 @@ export function Review() {
   const [updating, setUpdating] = useState(false);
   // UI-175: the PR page for this branch, remembered so it can be reopened.
   const [prUrl, setPrUrl] = useState<string | null>(null);
+  // UI-165: unified is compact; split answers "what did this line become"
+  // spatially. Preference sticks — people have a strong habit either way.
+  const [split, setSplit] = useState(() => {
+    try { return localStorage.getItem("flightdeck-diff-split") === "1"; } catch { return false; }
+  });
+  const toggleSplit = () => {
+    setSplit((v) => {
+      try { localStorage.setItem("flightdeck-diff-split", v ? "0" : "1"); } catch { /* non-persistent */ }
+      return !v;
+    });
+  };
   const patchRef = useRef<HTMLPreElement>(null);
   const [hunkIdx, setHunkIdx] = useState(0);
 
@@ -108,6 +120,7 @@ export function Review() {
   const lines = useMemo(() => patch.split("\n"), [patch]);
   // UI-166: which tokens actually changed within each paired -/+ line.
   const wordMarks = useMemo(() => wordDiffMap(lines), [lines]);
+  const splitRows = useMemo(() => (split ? toSplitRows(lines) : []), [split, lines]);
   const hunkLines = useMemo(() => lines.reduce<number[]>((acc, l, i) => (l.startsWith("@@") ? [...acc, i] : acc), []), [lines]);
 
   const jumpHunk = (dir: 1 | -1) => {
@@ -336,6 +349,14 @@ export function Review() {
                 <button className="rv-ic" onClick={() => jumpHunk(-1)} disabled={hunkLines.length === 0} title="Previous hunk">
                   <IconChevron size={12} style={{ transform: "rotate(-90deg)" }} />
                 </button>
+                <button
+                  className={"rv-ic" + (split ? " on" : "")}
+                  onClick={toggleSplit}
+                  title={split ? "Show unified diff" : "Show side-by-side diff"}
+                  aria-pressed={split}
+                >
+                  {split ? "║" : "≡"}
+                </button>
                 <button className="rv-ic" onClick={() => void copyPatch()} disabled={!patch} title="Copy this file's patch">
                   <IconCopy size={12} />
                 </button>
@@ -343,6 +364,24 @@ export function Review() {
                   <IconChevron size={12} style={{ transform: "rotate(90deg)" }} />
                 </button>
               </div>
+              {split ? (
+                <div className="rv-split" ref={patchRef as unknown as React.RefObject<HTMLDivElement>}>
+                  {splitRows.map((r, k) => (
+                    <div key={k} data-line={r.index} className={"rv-srow " + r.kind}>
+                      {r.kind === "hunk" || r.kind === "meta" ? (
+                        <div className="rv-sfull">{r.left}</div>
+                      ) : (
+                        <>
+                          <span className="rv-sno">{r.leftNo ?? ""}</span>
+                          <span className="rv-sside left">{r.left ?? ""}</span>
+                          <span className="rv-sno">{r.rightNo ?? ""}</span>
+                          <span className="rv-sside right">{r.right ?? ""}</span>
+                        </>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ) : (
               <pre className="rv-patch" ref={patchRef}>
                 {lines.map((l, i) => (
                   <span key={i} data-line={i} className={"rv-line " + lineClass(l)}>
@@ -360,6 +399,7 @@ export function Review() {
                   </span>
                 ))}
               </pre>
+              )}
             </div>
           </div>
         )}

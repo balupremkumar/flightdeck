@@ -250,3 +250,32 @@ em.del { color: var(--st-error); margin-left: 5px; }
   background: color-mix(in srgb, var(--st-starting) 10%, transparent);
 }
 .rv-stale:hover { filter: brightness(1.15); }
+
+/* UI-165: side-by-side diff */
+.rv-split {
+  flex: 1; min-height: 0; overflow: auto;
+  font-family: var(--mono); font-size: 11.5px; line-height: 1.55;
+}
+.rv-srow { display: grid; grid-template-columns: 42px 1fr 42px 1fr; min-width: max-content; }
+.rv-sno {
+  padding: 0 6px; text-align: right; color: var(--faint);
+  background: color-mix(in srgb, var(--text) 4%, transparent);
+  user-select: none; font-size: 10.5px;
+}
+.rv-sside { padding: 0 8px; white-space: pre; }
+/* Deleted side red, added side green; a half-row's empty side is inert. */
+.rv-srow.change .rv-sside.left, .rv-srow.del .rv-sside.left {
+  background: color-mix(in srgb, var(--st-error) 13%, transparent);
+}
+.rv-srow.change .rv-sside.right, .rv-srow.add .rv-sside.right {
+  background: color-mix(in srgb, var(--st-running) 13%, transparent);
+}
+.rv-srow.del .rv-sside.right, .rv-srow.add .rv-sside.left {
+  background: color-mix(in srgb, var(--text) 3%, transparent);
+}
+.rv-srow.hunk .rv-sfull, .rv-srow.meta .rv-sfull {
+  grid-column: 1 / -1; padding: 3px 8px; color: var(--azure);
+  background: color-mix(in srgb, var(--azure) 8%, transparent);
+}
+.rv-srow.meta .rv-sfull { color: var(--faint); background: transparent; }
+.rv-ic.on { color: var(--accent); }
