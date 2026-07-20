@@ -824,8 +824,8 @@ grouped by surface only for navigation; work in any order, all at once.
 - ~~UI-189. Invalid manifest files listed with their parse error in~~ **DONE 2026-07-20 session 8** (manifest parse errors surfaced)
   Settings > Agents (currently skipped silently).
 - UI-190. Shortcut editor warns on conflicting bindings.
-- UI-191. Restore-points browser (backend list/restore built, zero UI).
-- UI-192. One-file backup/import buttons (backend built, zero UI).
+- ~~UI-191. Restore-points browser (backend list/restore built, zero UI).~~ **DONE 2026-07-20 session 8** (restore-points browser)
+- ~~UI-192. One-file backup/import buttons (backend built, zero UI).~~ **DONE 2026-07-20 session 8** (backup export/import)
 - UI-193. Theme picker shows mini preview thumbnails per theme.
 - UI-194. Custom accent: Kove preset swatches + recently-used row.
 
@@ -878,7 +878,7 @@ grouped by surface only for navigation; work in any order, all at once.
 ### Perceived performance / internals with visible effect
 - ~~UI-225. Bundle split (manualChunks) — kills the 933KB build warning and~~ **DONE 2026-07-20 session 8** (bundle split)
   speeds first paint.
-- UI-226. React.memo pass on PaneView/LeftPanel rows (store churn re-renders
+- ~~UI-226. React.memo pass on PaneView/LeftPanel rows (store churn re-renders~~ **DONE 2026-07-20 session 8** (PaneView memoised (drag path proven))
   every pane every second).
 - ~~UI-227. Pause usage/git polls for hidden panes (IntersectionObserver exists,~~ **DONE 2026-07-20 session 8** (hidden panes stop polling)
   polls ignore it).
@@ -898,11 +898,11 @@ grouped by surface only for navigation; work in any order, all at once.
 ### Vendor / agent depth
 - UI-235. Per-vendor spawn counts on the New Workspace summary line get icons.
 - UI-236. Vendor glyphs (not just colours) in chips, selects, and palette rows.
-- UI-237. Per-vendor "waiting" quiet-threshold defaults (agy idles differently
+- ~~UI-237. Per-vendor "waiting" quiet-threshold defaults (agy idles differently~~ **DONE 2026-07-20 session 8** (per-vendor quiet thresholds)
   from claude).
 - ~~UI-238. Manifest schema published as JSON Schema in the vendors folder~~ **DONE 2026-07-20 session 8** (manifest JSON Schema shipped)
   ($schema line in the example → editor autocomplete).
-- UI-239. "Test launch" button per vendor in Settings (spawns a throwaway pane
+- ~~UI-239. "Test launch" button per vendor in Settings (spawns a throwaway pane~~ **DONE 2026-07-20 session 8** (per-vendor test launch)
   in the home dir).
 
 ### Visual system
