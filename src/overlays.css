@@ -253,3 +253,7 @@ button.agent-chip:hover { filter: brightness(1.15); }
 .set-search:focus { outline: none; border-color: var(--ice); }
 .set-search::placeholder { color: var(--faint); }
 .set-noresults { padding: 24px 4px; font-size: 12.5px; color: var(--muted); text-align: center; }
+
+/* UI-239: per-vendor test launch */
+button.agent-chip.agent-test { color: var(--faint); }
+button.agent-chip.agent-test:hover { color: var(--accent); border-color: var(--accent); }

@@ -859,6 +859,28 @@ export function Settings() {
                     {v.installed && v.authState === "ok" && v.kind === "agent" && (
                       <span className="agent-chip ok" title="Stored sign-in found">signed in</span>
                     )}
+                    {/* UI-239: prove a vendor launches without committing a
+                        workspace to it — one throwaway pane, isolation off, so
+                        there's no worktree to clean up afterwards. */}
+                    {v.installed && (
+                      <button
+                        className="agent-chip agent-test"
+                        title={`Open a throwaway ${v.short} pane to check it launches`}
+                        onClick={() => {
+                          const st = useApp.getState();
+                          const ws = st.workspaces.find((w) => w.id === st.activeId);
+                          if (!ws) {
+                            useUI.getState().pushToast("info", "Open a workspace first — the test pane opens inside it.");
+                            return;
+                          }
+                          void spawnPane(ws.id, v.id, ws.root, false);
+                          useUI.getState().setSettingsOpen(false);
+                          useUI.getState().pushToast("info", `Test pane opened for ${v.short}. Close it when you're done.`);
+                        }}
+                      >
+                        test launch
+                      </button>
+                    )}
                   </span>
                   <input
                     className="set-input" placeholder="extra CLI flags"
