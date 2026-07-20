@@ -5,7 +5,7 @@
 // a missing/erroring command degrades silently, never crashes the tree).
 import { useCallback, useEffect, useRef, useState, type SVGProps } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { openPath } from "@tauri-apps/plugin-opener";
+import { openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { IconFolder, IconFile, IconChevron, IconBranch, IconAgent, IconRefresh } from "./Icons";
 import { spawnPane } from "./worktrees";
 import { cachedInvoke } from "./poll";
@@ -78,11 +78,13 @@ function rowIndent(depth: number): number {
 
 type NodeStatus = "idle" | "loading" | "loaded" | "denied";
 
-function Node({ name, path, dir, depth, wsId, vendor, onOpenFile }: {
+function Node({ name, path, dir, depth, wsId, vendor, onOpenFile, onContext, expandKey }: {
   name: string; path: string; dir: boolean; depth: number;
   wsId?: number; vendor: string; onOpenFile: (path: string) => void;
+  onContext: (x: number, y: number, path: string, dir: boolean) => void;
+  expandKey: string;
 }) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(() => isExpanded(expandKey, path));
   const [children, setChildren] = useState<Entry[] | null>(null);
   const [status, setStatus] = useState<NodeStatus>("idle");
   const { head, tail } = splitName(name, dir);
@@ -90,14 +92,15 @@ function Node({ name, path, dir, depth, wsId, vendor, onOpenFile }: {
 
   const toggle = async () => {
     if (!dir) { onOpenFile(path); return; }
-    if (expanded) { setExpanded(false); return; }
-    if (children !== null) { setExpanded(true); return; }
+    if (expanded) { setExpanded(false); rememberExpanded(expandKey, path, false); return; }
+    if (children !== null) { setExpanded(true); rememberExpanded(expandKey, path, true); return; }
     setStatus("loading");
     try {
       const entries = await invoke<Entry[]>("fs_list_dir", { path });
       setChildren(entries);
       setStatus("loaded");
       setExpanded(true);
+      rememberExpanded(expandKey, path, true);
     } catch {
       // Permission-denied (or any other read failure) on this one subfolder —
       // show a lock glyph inline, leave the rest of the tree untouched.
@@ -109,6 +112,16 @@ function Node({ name, path, dir, depth, wsId, vendor, onOpenFile }: {
   const onKey = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); }
   };
+
+  // A folder restored as "expanded" still needs its children fetched once.
+  useEffect(() => {
+    if (!dir || !expanded || children !== null || status === "loading") return;
+    setStatus("loading");
+    invoke<Entry[]>("fs_list_dir", { path })
+      .then((entries) => { setChildren(entries); setStatus("loaded"); })
+      .catch(() => { setStatus("denied"); setExpanded(false); });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dir, expanded]);
 
   const newTerminalHere = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -125,6 +138,7 @@ function Node({ name, path, dir, depth, wsId, vendor, onOpenFile }: {
         title={name}
         onClick={toggle}
         onKeyDown={onKey}
+        onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); onContext(e.clientX, e.clientY, path, dir); }}
       >
         {dir ? (
           <span className={"ex-chev" + (expanded ? " open" : "")}><IconChevron size={11} /></span>
@@ -158,6 +172,8 @@ function Node({ name, path, dir, depth, wsId, vendor, onOpenFile }: {
               wsId={wsId}
               vendor={vendor}
               onOpenFile={onOpenFile}
+              onContext={onContext}
+              expandKey={expandKey}
             />
           ))
         )
@@ -189,6 +205,28 @@ function loadWidth(): number {
 }
 
 const SCOPE_KEY = "flightdeck-explorer-scope";
+
+// UI-212: remember which folders were open, keyed per browsed root, so the
+// tree isn't fully collapsed every time the panel remounts.
+const EXPAND_KEY = "flightdeck-explorer-expanded";
+type ExpandMap = Record<string, string[]>;
+
+function readExpandMap(): ExpandMap {
+  try { return JSON.parse(localStorage.getItem(EXPAND_KEY) ?? "{}") as ExpandMap; } catch { return {}; }
+}
+function isExpanded(key: string, path: string): boolean {
+  return (readExpandMap()[key] ?? []).includes(path);
+}
+function rememberExpanded(key: string, path: string, open: boolean) {
+  try {
+    const map = readExpandMap();
+    const list = new Set(map[key] ?? []);
+    if (open) list.add(path); else list.delete(path);
+    // Cap so a long browsing session can't grow this unbounded.
+    map[key] = [...list].slice(-200);
+    localStorage.setItem(EXPAND_KEY, JSON.stringify(map));
+  } catch { /* non-persistent */ }
+}
 
 export function Explorer({ root, wsId, vendor = "pwsh", paneRoot, paneLabel }: ExplorerProps) {
   const [panelOpen, setPanelOpen] = useState(true);
@@ -239,6 +277,17 @@ export function Explorer({ root, wsId, vendor = "pwsh", paneRoot, paneLabel }: E
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
   }, []);
+
+  // UI-211: right-click path actions (copy path / copy relative / reveal).
+  const [ctx, setCtx] = useState<{ x: number; y: number; path: string; dir: boolean } | null>(null);
+  useEffect(() => {
+    if (!ctx) return;
+    const close = () => setCtx(null);
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setCtx(null); };
+    window.addEventListener("mousedown", close);
+    window.addEventListener("keydown", onKey);
+    return () => { window.removeEventListener("mousedown", close); window.removeEventListener("keydown", onKey); };
+  }, [ctx]);
 
   const load = () => {
     if (!effectiveRoot) { setStatus("empty-root"); return; }
@@ -299,6 +348,32 @@ export function Explorer({ root, wsId, vendor = "pwsh", paneRoot, paneLabel }: E
         </div>
       )}
 
+      {ctx && (
+        <div className="ex-ctx" style={{ top: ctx.y, left: ctx.x }} onMouseDown={(e) => e.stopPropagation()} role="menu">
+          <button className="ex-ctx-item" onClick={() => { void navigator.clipboard.writeText(ctx.path); setCtx(null); }}>
+            Copy path
+          </button>
+          <button
+            className="ex-ctx-item"
+            onClick={() => {
+              const rel = ctx.path.startsWith(effectiveRoot) ? ctx.path.slice(effectiveRoot.length).replace(/^[\/]+/, "") : ctx.path;
+              void navigator.clipboard.writeText(rel);
+              setCtx(null);
+            }}
+          >
+            Copy relative path
+          </button>
+          <button className="ex-ctx-item" onClick={() => { void revealItemInDir(ctx.path).catch(() => {}); setCtx(null); }}>
+            Reveal in Explorer
+          </button>
+          {ctx.dir && wsId != null && (
+            <button className="ex-ctx-item" onClick={() => { void spawnPane(wsId, vendor, ctx.path); setCtx(null); }}>
+              New terminal here
+            </button>
+          )}
+        </div>
+      )}
+
       {panelOpen && (
         <div className="ex-body">
           {status === "empty-root" && <div className="ex-state">No folder open.</div>}
@@ -321,6 +396,8 @@ export function Explorer({ root, wsId, vendor = "pwsh", paneRoot, paneLabel }: E
                   depth={0}
                   wsId={wsId}
                   vendor={vendor}
+                  expandKey={effectiveRoot}
+                  onContext={(x, y, path, isDir) => setCtx({ x, y, path, dir: isDir })}
                   onOpenFile={(p) => { openPath(p).catch(() => { /* no default app / unsupported — ignore */ }); }}
                 />
               ))}

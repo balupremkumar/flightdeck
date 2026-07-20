@@ -50,8 +50,18 @@ export async function repoToplevel(cwd: string): Promise<string | null> {
 }
 
 let slugSeq = 0;
-function newSlug(): string {
-  return `p${Date.now().toString(36)}${(++slugSeq).toString(36)}`;
+function newSlug(label?: string): string {
+  // UI-162: a branch called flightdeck/fix-login-badge beats flightdeck/p1x2f
+  // in git log, PR lists and the review drawer. Fall back to the opaque id when
+  // there's no label (plain "add pane" with nothing to name it after).
+  const slug = (label ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 32)
+    .replace(/-+$/, "");
+  const uniq = `${Date.now().toString(36).slice(-4)}${(++slugSeq).toString(36)}`;
+  return slug ? `${slug}-${uniq}` : `p${uniq}`;
 }
 
 /** Resolve the cwd a pane should actually spawn in. Non-repo dirs, WSL panes,
@@ -60,13 +70,14 @@ function newSlug(): string {
 async function prepareCwd(
   baseCwd: string,
   vendor: string,
-  isolate: boolean
+  isolate: boolean,
+  label?: string
 ): Promise<{ cwd: string; wt?: WorktreeInfo }> {
   if (!isolate || !isolationSupported(vendor) || !baseCwd.trim()) return { cwd: baseCwd };
   const top = await repoToplevel(baseCwd);
   if (!top) return { cwd: baseCwd }; // not a repo — runs directly, by design
   try {
-    const wt = await invoke<WorktreeInfo>("git_worktree_add", { repoDir: baseCwd, slug: newSlug() });
+    const wt = await invoke<WorktreeInfo>("git_worktree_add", { repoDir: baseCwd, slug: newSlug(label) });
     return { cwd: wt.path, wt };
   } catch (e) {
     useUI.getState().pushToast("error", `Worktree isolation failed — ${vendorShort(vendor)} runs in the shared folder. (${String(e)})`);
@@ -79,9 +90,11 @@ export async function spawnPane(
   wsId: number,
   vendor: string,
   baseCwd: string,
-  isolate: boolean = isolationPref()
+  isolate: boolean = isolationPref(),
+  /** UI-162: names the worktree branch (e.g. a board card's title). */
+  label?: string
 ): Promise<number | null> {
-  const prep = await prepareCwd(baseCwd, vendor, isolate);
+  const prep = await prepareCwd(baseCwd, vendor, isolate, label);
   // Fresh worktree + a configured workspace setup command -> run it pre-agent.
   const ws = useApp.getState().workspaces.find((w) => w.id === wsId);
   const needsSetup = !!(prep.wt?.created && ws?.setupCmd);
@@ -226,3 +239,6 @@ export async function runWorktreeGc() {
       useUI.getState().pushToast("info", `Cleaned up ${removed.length} leftover worktree${removed.length === 1 ? "" : "s"} (work kept on branches).`);
   } catch { /* browser preview / git missing — nothing to do */ }
 }
+
+/** Internals exposed for unit tests only. */
+export const __testing = { newSlug };

@@ -255,3 +255,17 @@
   0%, 100% { opacity: .55; }
   50% { opacity: 1; }
 }
+
+/* UI-211: Explorer context menu */
+.ex-ctx {
+  position: fixed; min-width: 168px; z-index: var(--z-menu);
+  background: var(--elevated); border: 1px solid var(--line-strong);
+  border-radius: var(--r-md); box-shadow: var(--shadow-3); padding: 4px;
+}
+.ex-ctx-item {
+  display: block; width: 100%; text-align: left;
+  font: inherit; font-size: 12px; color: var(--text);
+  padding: 6px 9px; border: 0; border-radius: var(--r-sm);
+  background: transparent; cursor: pointer;
+}
+.ex-ctx-item:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }

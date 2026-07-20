@@ -94,7 +94,8 @@ export function Board() {
     if (!ws) return;
     // Prefer the card's agent, else the first installed agent the registry knows.
     const vendor: Vendor = card.agent ?? agentVendors().find((a) => a.installed)?.id ?? "claude";
-    void spawnPane(activeId, vendor, ws.root).then((newPaneId) => {
+    // UI-162: the dispatched worktree/branch takes the card's title.
+    void spawnPane(activeId, vendor, ws.root, undefined, card.title).then((newPaneId) => {
       if (newPaneId != null) {
         linkPane(card.id, activeId, newPaneId);
         pushToast("success", `Dispatched "${card.title}" to ${vendorShort(vendor)}`);
