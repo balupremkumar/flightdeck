@@ -616,7 +616,7 @@ partially done ("Preparing worktrees…" busy state).
 - UI-10. First-launch vs closed-all-workspaces framing copy (286, partially done).
 - ~~UI-11. Human copy on failed spawn instead of raw JS error (289).~~ **DONE 2026-07-20 session 8** (human spawn-failure copy)
 - UI-12. "Launching…" copy for the starting state — slow agent looks stuck (293 ⭐).
-- UI-13. Explorer toggle dead-click feedback outside terminals view (294).
+- ~~UI-13. Explorer toggle dead-click feedback outside terminals view (294).~~ **DONE 2026-07-20 session 8** (already fixed (verified: toggle is disabled with a reason))
 
 ### K-C. Micro-interactions (QOL §2)
 - ~~UI-14. Press/:active states~~ **DONE 2026-07-20**.
@@ -758,8 +758,8 @@ grouped by surface only for navigation; work in any order, all at once.
 - UI-136. OSC 9;4 progress protocol → real progress strip on the pane band
   (Windows Terminal convention; npm/winget already emit it).
 - ~~UI-137. Persist last find query per pane; reopen with it prefilled.~~ **DONE 2026-07-20 session 8** (find query remembered)
-- UI-138. Font preview in Settings > Terminal font picker.
-- UI-139. Cursor-style setting shows a live preview glyph.
+- ~~UI-138. Font preview in Settings > Terminal font picker.~~ **DONE 2026-07-20 session 8** (font preview)
+- ~~UI-139. Cursor-style setting shows a live preview glyph.~~ **DONE 2026-07-20 session 8** (cursor preview)
 - ~~UI-140. Per-vendor default font-zoom remembered across panes.~~ **DONE 2026-07-20 session 8** (per-vendor font zoom remembered)
 
 ### Attention queue / notifications
@@ -777,31 +777,31 @@ grouped by surface only for navigation; work in any order, all at once.
 - ~~UI-150. Tile badge: worktree count + dirty-worktree count.~~ **DONE 2026-07-20 session 8** (worktree badge)
 - UI-151. Drag a pane onto another workspace tile to move it.
 - ~~UI-152. Auto-collapse the panel under a window-width threshold.~~ **DONE 2026-07-20 session 8** (narrow-window auto-collapse)
-- UI-153. Workspace colour derived from repo-path hash, overridable.
+- ~~UI-153. Workspace colour derived from repo-path hash, overridable.~~ **DONE 2026-07-20 session 8** (repo-hash tile colour)
 - ~~UI-154. "Open repo on GitHub" context item when origin exists.~~ **DONE 2026-07-20 session 8** (open repo on host)
-- UI-155. Sort-by-last-active toggle.
+- ~~UI-155. Sort-by-last-active toggle.~~ **DONE 2026-07-20 session 8** (sort by last active)
 - ~~UI-156. Ctrl+Tab cycles workspaces most-recent-first.~~ **DONE 2026-07-20 session 8** (Ctrl+Tab MRU)
 
 ### Board ↔ agents
 - ~~UI-157. Card stores the PR URL after handoff; badge links to it.~~ **DONE 2026-07-20 session 8** (card keeps its PR link)
-- UI-158. "Send to agent…" (choose vendor) from the card context menu.
-- UI-159. Card auto-moves to Done when its linked pane's branch merges.
-- UI-160. Card shows linked pane's token usage.
+- ~~UI-158. "Send to agent…" (choose vendor) from the card context menu.~~ **DONE 2026-07-20 session 8** (send to agent)
+- ~~UI-159. Card auto-moves to Done when its linked pane's branch merges.~~ **DONE 2026-07-20 session 8** (card auto-move on merge)
+- ~~UI-160. Card shows linked pane's token usage.~~ **DONE 2026-07-20 session 8** (card token usage)
 - ~~UI-161. Board search box (parity with palette filtering).~~ **DONE 2026-07-20 session 8** (board search (already shipped))
 - ~~UI-162. Dispatched worktree/branch named from the card title~~ **DONE 2026-07-20 session 8** (task-named branches)
   (flightdeck/fix-login-badge, not flightdeck/p1x2).
-- UI-163. Card can't enter Done while its linked pane has unmerged diff
+- ~~UI-163. Card can't enter Done while its linked pane has unmerged diff~~ **DONE 2026-07-20 session 8** (Done gated on unmerged diff)
   (honesty gate, overridable).
-- UI-164. Priority-stripe legend popover ("what the colours mean").
+- ~~UI-164. Priority-stripe legend popover ("what the colours mean").~~ **DONE 2026-07-20 session 8** (priority legend)
 
 ### Review drawer
 - ~~UI-165. Side-by-side split-diff toggle (unified-only today).~~ **DONE 2026-07-20 session 8** (side-by-side diff (splitdiff.ts, 8 tests))
 - ~~UI-166. Word-level intra-line diff highlighting.~~ **DONE 2026-07-20 session 8** (word-level diff (worddiff.ts, 8 tests))
-- UI-167. Collapse file list by directory when >15 files.
+- ~~UI-167. Collapse file list by directory when >15 files.~~ **DONE 2026-07-20 session 8** (file list grouped by directory)
 - UI-168. Include/exclude files from a merge (partial merge-back).
 - ~~UI-169. Copy-patch-to-clipboard button.~~ **DONE 2026-07-20 session 8** (copy patch)
 - ~~UI-170. Auto-refresh diff while the drawer is open ("changed since opened" pill).~~ **DONE 2026-07-20 session 8** (diff staleness pill)
-- UI-171. Lightweight syntax highlighting in the patch by file extension.
+- ~~UI-171. Lightweight syntax highlighting in the patch by file extension.~~ **DONE 2026-07-20 session 8** (syntax highlighting)
 - ~~UI-172. j/k file navigation to match the n/p hunk keys.~~ **DONE 2026-07-20 session 8** (j/k file nav, n/p hunks)
 - ~~UI-173. "Open in editor" on each file row.~~ **DONE 2026-07-20 session 8** (open-in-editor per file row)
 - ~~UI-174. Commit list of the branch above the file list (what merge brings).~~ **DONE 2026-07-20 session 8** (branch commit list)
@@ -809,16 +809,16 @@ grouped by surface only for navigation; work in any order, all at once.
 - ~~UI-176. Post-merge follow-up offer: close pane + clean worktree in one click.~~ **DONE 2026-07-20 session 8** (post-merge cleanup offer)
 - ~~UI-177. Base-drift pill ("main moved +4 since fork") in the drawer header.~~ **DONE 2026-07-20 session 8** (base-drift pill)
 - ~~UI-178. "Update from base" button (merge base INTO the agent branch).~~ **DONE 2026-07-20 session 8** (update from base)
-- UI-179. Conflict panel: open both versions in editor, per file.
+- ~~UI-179. Conflict panel: open both versions in editor, per file.~~ **DONE 2026-07-20 session 8** (open conflicted file)
 
 ### Settings
 - ~~UI-180. Search/filter box inside Settings.~~ **DONE 2026-07-20 session 8** (settings search)
 - UI-181. Palette deep-links to Settings sections ("Settings: Terminal").
-- UI-182. Export/import ALL settings (not just the theme).
+- ~~UI-182. Export/import ALL settings (not just the theme).~~ **DONE 2026-07-20 session 8** (export/import all settings)
 - ~~UI-183. Reset-everything-to-defaults with confirm.~~ **DONE 2026-07-20 session 8** (scoped reset-all)
 - UI-184. Launch-on-Windows-login toggle (registry Run key).
-- UI-185. Diagnostics: CPU sparkline per pane (last 60s).
-- UI-186. Diagnostics: total footprint roll-up vs system RAM.
+- ~~UI-185. Diagnostics: CPU sparkline per pane (last 60s).~~ **DONE 2026-07-20 session 8** (CPU sparkline)
+- ~~UI-186. Diagnostics: total footprint roll-up vs system RAM.~~ **DONE 2026-07-20 session 8** (memory roll-up)
 - ~~UI-187. Diagnostics: worktrees list with disk size + open/clean actions.~~ **DONE 2026-07-20 session 8** (worktree inventory + cleanup)
 - UI-188. Vendors folder file-watcher: manifests hot-reload, no reopen.
 - ~~UI-189. Invalid manifest files listed with their parse error in~~ **DONE 2026-07-20 session 8** (manifest parse errors surfaced)
@@ -826,8 +826,8 @@ grouped by surface only for navigation; work in any order, all at once.
 - ~~UI-190. Shortcut editor warns on conflicting bindings.~~ **DONE 2026-07-20 session 8** (shortcut conflict detection)
 - ~~UI-191. Restore-points browser (backend list/restore built, zero UI).~~ **DONE 2026-07-20 session 8** (restore-points browser)
 - ~~UI-192. One-file backup/import buttons (backend built, zero UI).~~ **DONE 2026-07-20 session 8** (backup export/import)
-- UI-193. Theme picker shows mini preview thumbnails per theme.
-- UI-194. Custom accent: Kove preset swatches + recently-used row.
+- ~~UI-193. Theme picker shows mini preview thumbnails per theme.~~ **DONE 2026-07-20 session 8** (theme thumbnails)
+- ~~UI-194. Custom accent: Kove preset swatches + recently-used row.~~ **DONE 2026-07-20 session 8** (Kove accent swatches)
 
 ### Lifecycle / trust
 - ~~UI-195. Quit confirm itemises what's live ("3 running, 1 dirty worktree"),~~ **DONE 2026-07-20 session 8** (itemised quit guard)
@@ -853,7 +853,7 @@ grouped by surface only for navigation; work in any order, all at once.
 
 ### Explorer
 - UI-209. Optional in-app file preview (read-only peek) instead of OS open.
-- UI-210. Changed-file dot markers in the tree (from the diff summary).
+- ~~UI-210. Changed-file dot markers in the tree (from the diff summary).~~ **DONE 2026-07-20 session 8** (changed-file dots)
 - ~~UI-211. File context menu: copy path / copy relative path / reveal.~~ **DONE 2026-07-20 session 8** (Explorer context menu)
 - ~~UI-212. Remember expanded folders per workspace.~~ **DONE 2026-07-20 session 8** (expanded folders remembered)
 - ~~UI-213. Auto-refresh on filesystem changes (watcher), not manual only.~~ **DONE 2026-07-20 session 8** (Explorer auto-refresh (timer + focus))
@@ -919,7 +919,7 @@ grouped by surface only for navigation; work in any order, all at once.
 - ~~UI-247. Motion durations tokenised (--t-fast/--t-med) instead of scattered~~ **DONE 2026-07-20 session 8** (motion tokens)
   .12s/.14s/.16s literals.
 - UI-248. Icon stroke-width audit: all SVGs at 1.6 except three outliers.
-- UI-249. Print/export-friendly board view (media print CSS) for standups.
+- ~~UI-249. Print/export-friendly board view (media print CSS) for standups.~~ **DONE 2026-07-20 session 8** (print CSS)
 
 ---
 
