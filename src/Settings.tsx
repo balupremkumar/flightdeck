@@ -480,6 +480,11 @@ export function Settings() {
   const [term, setTerm] = useState(getTerminalSettings());
   const [shortcuts, setShortcuts] = useState(getShortcuts());
   const [capturing, setCapturing] = useState<string | null>(null);
+  // UI-190: a rebind that collides with an existing binding, pending the user's
+  // decision to reassign (which clears the old one) or cancel.
+  const [conflict, setConflict] = useState<
+    { combo: string; otherId?: string; otherLabel: string; forId: string; fixed: boolean } | null
+  >(null);
   const [agents, setAgents] = useState(getAgentSettings());
   const [startup, setStartup] = useState(getStartupBehavior());
   const [importError, setImportError] = useState<string | null>(null);
@@ -524,6 +529,22 @@ export function Settings() {
       if (e.key === "Escape") { setCapturing(null); return; }
       const combo = formatCombo(e);
       if (!combo) return;
+      // UI-190: binding a combo that's already taken silently shadowed the
+      // other action — whichever handler ran first won, with no way to tell.
+      // A clash with a FIXED shortcut can't be reassigned away, so it's a hard
+      // refusal; a clash with another rebindable one offers the swap.
+      const fixed = FIXED_SHORTCUTS.find((f) => f.combo.toLowerCase() === combo.toLowerCase());
+      if (fixed) {
+        setConflict({ combo, otherLabel: fixed.label, forId: capturing, fixed: true });
+        setCapturing(null);
+        return;
+      }
+      const clash = getShortcuts().find((sc) => sc.id !== capturing && sc.combo === combo);
+      if (clash) {
+        setConflict({ combo, otherId: clash.id, otherLabel: clash.label, forId: capturing, fixed: false });
+        setCapturing(null);
+        return;
+      }
       saveShortcut(capturing, combo);
       setShortcuts(getShortcuts());
       setCapturing(null);
@@ -818,6 +839,34 @@ export function Settings() {
               ))}
               <div className="kbd-row"><span>Close settings / dialog</span><span className="kbd-keys"><kbd>Esc</kbd></span></div>
             </div>
+            {conflict && (
+              <div className="kbd-conflict" role="alert">
+                <span>
+                  <kbd>{conflict.combo}</kbd> is already used by <b>{conflict.otherLabel}</b>.
+                  {conflict.fixed
+                    ? " That one is built in and can't be moved — pick a different combination."
+                    : " Reassigning leaves that action without a shortcut."}
+                </span>
+                <span className="kbd-conflict-actions">
+                  {!conflict.fixed && conflict.otherId && (
+                    <button
+                      className="set-btn danger"
+                      onClick={() => {
+                        saveShortcut(conflict.otherId!, "");
+                        saveShortcut(conflict.forId, conflict.combo);
+                        setShortcuts(getShortcuts());
+                        setConflict(null);
+                      }}
+                    >
+                      Reassign
+                    </button>
+                  )}
+                  <button className="set-btn" onClick={() => setConflict(null)}>
+                    {conflict.fixed ? "OK" : "Keep as is"}
+                  </button>
+                </span>
+              </div>
+            )}
             <div className="set-row-sub">Only the shortcuts above with a Change button can be rebound.</div>
             <button className="btn-ghost set-reset" onClick={() => { resetShortcuts(); setShortcuts(getShortcuts()); }}>Reset to defaults</button>
           </section>

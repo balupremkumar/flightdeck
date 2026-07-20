@@ -257,3 +257,14 @@ button.agent-chip:hover { filter: brightness(1.15); }
 /* UI-239: per-vendor test launch */
 button.agent-chip.agent-test { color: var(--faint); }
 button.agent-chip.agent-test:hover { color: var(--accent); border-color: var(--accent); }
+
+/* UI-190: shortcut conflict notice */
+.kbd-conflict {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 9px 11px; border-radius: var(--r-md);
+  border: 1px solid color-mix(in srgb, var(--st-waiting) 45%, transparent);
+  background: color-mix(in srgb, var(--st-waiting) 9%, transparent);
+  font-size: 12px; color: var(--muted);
+}
+.kbd-conflict b { color: var(--text); font-weight: 600; }
+.kbd-conflict-actions { display: inline-flex; gap: 8px; margin-left: auto; }
