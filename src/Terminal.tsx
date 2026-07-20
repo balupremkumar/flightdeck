@@ -343,7 +343,22 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
         paneId = await invoke<number>("pty_spawn", { vendor, cwd, cols: term.cols, rows: term.rows, setup: setup ?? null });
         paneIdRef.current = paneId;
       } catch (err) {
-        term.write(`\r\n\x1b[31m[failed to start ${vendor}: ${String(err)}]\x1b[0m\r\n`);
+        // UI-11: a raw error string tells the user nothing actionable. Name the
+        // likely cause and the fix, keeping the technical detail underneath
+        // rather than instead of it.
+        const raw = String(err);
+        const guess = /not found|no such file|cannot find|not recognized/i.test(raw)
+          ? `${vendor} doesn't look installed, or isn't on your PATH.`
+          : /denied|permission/i.test(raw)
+            ? `Windows blocked launching ${vendor} from this folder.`
+            : /directory|cwd|path/i.test(raw)
+              ? "This pane's folder couldn't be opened — it may have been moved or deleted."
+              : `${vendor} couldn't be started.`;
+        term.write(
+          `\r\n\x1b[31m${guess}\x1b[0m\r\n` +
+          `\x1b[2mCheck Settings > Agents for install and sign-in state, then Restart this pane.\x1b[0m\r\n` +
+          `\x1b[2m${raw}\x1b[0m\r\n`
+        );
         onState?.("error");
         return;
       }
