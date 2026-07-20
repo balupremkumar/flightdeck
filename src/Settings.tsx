@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { save } from "@tauri-apps/plugin-dialog";
+import { save, open as openDialog } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { useUI, applyUiScale } from "./ui";
 import { useApp } from "./store";
-import { bytes } from "./format";
+import { bytes, relTime, absTime } from "./format";
+import { listRestorePoints, restoreFromPoint, exportBackup, importBackup, type RestorePointInfo } from "./persist";
+import { adoptSession } from "./session";
 import { spawnPane } from "./worktrees";
 import { useVendors, vendorColor, vendorAccentOverrides, setVendorAccentOverride } from "./vendors";
 import { IconClose } from "./Icons";
@@ -165,6 +167,125 @@ const CHANGELOG: Array<{ date: string; text: string }> = [
 // ---------------------------------------------------------------------
 interface PaneHealthRow { paneId: number; pid: number; cpuPercent: number; memoryMb: number; procName: string; }
 interface OrphanRow { pid: number; ppid: number; name: string; }
+
+// UI-191/192: restore points and one-file backup. persist.rs has shipped all
+// of this since wave 2 with zero UI — every autosave already writes a snapshot,
+// they were just unreachable.
+function SessionSection() {
+  const [points, setPoints] = useState<RestorePointInfo[] | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const refresh = () => {
+    listRestorePoints()
+      .then(setPoints)
+      .catch(() => setPoints([]));
+  };
+  useEffect(refresh, []);
+
+  const restore = (pt: RestorePointInfo) => {
+    useUI.getState().requestConfirm({
+      title: `Restore the session from ${relTime(pt.savedAt)}?`,
+      body: "Your open workspaces are closed first (their isolated worktrees are cleaned up, keeping any work on its branch), then this snapshot is reopened. Running agents end.",
+      confirmLabel: "Restore this point",
+      danger: true,
+      onConfirm: async () => {
+        setBusy(true);
+        try {
+          const doc = await restoreFromPoint(pt.id);
+          await adoptSession(doc);
+          useUI.getState().pushToast("success", `Restored the session from ${relTime(pt.savedAt)}.`);
+        } catch (e) {
+          useUI.getState().pushToast("error", `Couldn't restore: ${String(e)}`);
+        } finally {
+          setBusy(false);
+        }
+      },
+    });
+  };
+
+  const doExport = async () => {
+    const dest = await save({
+      title: "Save Flightdeck backup",
+      defaultPath: `flightdeck-backup-${new Date().toISOString().slice(0, 10)}.json`,
+      filters: [{ name: "JSON", extensions: ["json"] }],
+    }).catch(() => null);
+    if (!dest) return;
+    try {
+      await exportBackup(dest);
+      useUI.getState().pushToast("success", "Backup saved.");
+    } catch (e) {
+      useUI.getState().pushToast("error", `Backup failed: ${String(e)}`);
+    }
+  };
+
+  const doImport = async () => {
+    const src = await openDialog({
+      title: "Import Flightdeck backup",
+      multiple: false,
+      filters: [{ name: "JSON", extensions: ["json"] }],
+    }).catch(() => null);
+    if (typeof src !== "string") return;
+    useUI.getState().requestConfirm({
+      title: "Import this backup?",
+      body: "It replaces your current session: open workspaces close (worktrees cleaned up, work kept on branches) and the backup's workspaces reopen.",
+      confirmLabel: "Import & replace",
+      danger: true,
+      onConfirm: async () => {
+        try {
+          const doc = await importBackup(src);
+          if (doc) {
+            await adoptSession(doc);
+            useUI.getState().pushToast("success", "Backup imported.");
+          } else {
+            useUI.getState().pushToast("info", "That backup had no session in it — settings only.");
+          }
+          refresh();
+        } catch (e) {
+          useUI.getState().pushToast("error", `Import failed: ${String(e)}`);
+        }
+      },
+    });
+  };
+
+  return (
+    <section className="set-section">
+      <div className="set-label">Session</div>
+      <div className="set-row">
+        <div className="set-row-t">
+          <span className="set-row-name">Restore points</span>
+          <span className="set-row-sub">Automatic snapshots, newest first — taken as you work</span>
+        </div>
+        <button className="set-btn" onClick={refresh}>Refresh</button>
+      </div>
+      {points === null && <div className="diag-empty">Loading…</div>}
+      {points && points.length === 0 && (
+        <div className="diag-empty">No restore points yet — they appear as the session autosaves.</div>
+      )}
+      {points && points.length > 0 && (
+        <div className="diag-table" role="table" aria-label="Restore points">
+          {points.map((pt) => (
+            <div className="diag-tr" role="row" key={pt.id}>
+              <span title={absTime(pt.savedAt)}>{relTime(pt.savedAt)}</span>
+              <span className="diag-proc">{absTime(pt.savedAt)}</span>
+              <span />
+              <span />
+              <button className="set-btn" disabled={busy} onClick={() => restore(pt)}>Restore</button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="set-row">
+        <div className="set-row-t">
+          <span className="set-row-name">Backup</span>
+          <span className="set-row-sub">One file with your session and preferences</span>
+        </div>
+        <button className="set-btn" onClick={() => void doExport()}>Export…</button>
+        <button className="set-btn" onClick={() => void doImport()}>Import…</button>
+      </div>
+    </section>
+  );
+}
 
 interface WorktreeEntry {
   path: string; repo: string; branch: string; baseBranch: string; bytes: number; orphan: boolean;
@@ -806,6 +927,8 @@ export function Settings() {
           </section>
 
           <DiagnosticsSection />
+
+          <SessionSection />
 
           <section className="set-section">
             <div className="set-label">Reset</div>

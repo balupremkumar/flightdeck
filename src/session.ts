@@ -14,7 +14,7 @@ import {
   loadSession, isSafeMode, hasPreviousSession, makeDebouncedSave,
   type SessionDraft, type PersistedWorkspace,
 } from "./persist";
-import { repoToplevel, type WorktreeInfo } from "./worktrees";
+import { repoToplevel, closeWorkspaceWithCleanup, type WorktreeInfo } from "./worktrees";
 import { useBoardStore, getBoardState, setBoardState } from "./board/boardStore";
 import type { BoardCards } from "./board/types";
 import { getStartupBehavior } from "./Settings";
@@ -97,7 +97,7 @@ async function reconcilePane(p: PaneModel, wsRoot: string, wsSetupCmd?: string):
   return { ...p, cwd: wsRoot, worktreePath: undefined, branch: undefined, baseBranch: undefined };
 }
 
-async function hydrateFrom(persisted: PersistedWorkspace[], activeId: number | null) {
+export async function hydrateFrom(persisted: PersistedWorkspace[], activeId: number | null) {
   const workspaces: Workspace[] = [];
   for (const w of persisted) {
     const panes: PaneModel[] = [];
@@ -118,6 +118,16 @@ async function hydrateFrom(persisted: PersistedWorkspace[], activeId: number | n
     workspaces.push({ id: w.id, name: w.name, root: w.root, setupCmd: w.setupCmd, panes, focused: panes[0]?.id ?? null });
   }
   useApp.getState().hydrate(workspaces, activeId);
+}
+
+/** UI-191: adopt a restore point / imported backup as the live session.
+ *  Closes what's open first (cleaning up its worktrees) so nothing is stranded,
+ *  then hydrates and persists the adopted document as current. */
+export async function adoptSession(doc: { workspaces: PersistedWorkspace[]; activeWorkspaceId: number | null }) {
+  for (const w of useApp.getState().workspaces) {
+    closeWorkspaceWithCleanup({ id: w.id, panes: w.panes });
+  }
+  await hydrateFrom(doc.workspaces, doc.activeWorkspaceId);
 }
 
 /** Boot entry: offer to reopen the previous session. Mounting a restored pane
