@@ -1,4 +1,5 @@
 import type { DragEvent } from "react";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import type { Card, ColumnId } from "./types";
 import { PRIORITY_COLORS, STATE_COLORS, STATE_LABELS } from "./palette";
 import { vendorColor, vendorShort } from "../vendors";
@@ -76,6 +77,19 @@ export function CardItem({
             >
               {card.title}
             </button>
+
+            {/* UI-157: the PR this card's agent opened — the card stays the
+                thread from task to agent to review. */}
+            {card.prUrl && (
+              <button
+                type="button"
+                className="card-pr"
+                title={card.prUrl}
+                onClick={(e) => { e.stopPropagation(); void openUrl(card.prUrl!).catch(() => {}); }}
+              >
+                pull request ↗
+              </button>
+            )}
 
             {card.labels.length > 0 && (
               <div className="card-labels">

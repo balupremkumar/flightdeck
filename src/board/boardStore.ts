@@ -87,6 +87,8 @@ interface BoardState {
   addLabel: (cardId: string, label: Label) => void;
   removeLabel: (cardId: string, labelId: string) => void;
   linkPane: (cardId: string, wsId: number, paneId: number) => void;
+  /** UI-157: record the PR opened from this card's pane. */
+  setCardPr: (paneId: number, url: string) => void;
   unlinkPane: (cardId: string) => void;
   reset: () => void;
 }
@@ -165,6 +167,11 @@ export const useBoardStore = create<BoardState>((set) => ({
 
   linkPane: (cardId, wsId, paneId) =>
     set((s) => ({ cards: mapCards(s.cards, (c) => (c.id === cardId ? { ...c, wsId, paneId } : c)) })),
+
+  // Keyed by pane, not card: the Review drawer knows which pane it handed off,
+  // and the card that dispatched that pane is the one to annotate.
+  setCardPr: (paneId, url) =>
+    set((s) => ({ cards: mapCards(s.cards, (c) => (c.paneId === paneId ? { ...c, prUrl: url } : c)) })),
 
   unlinkPane: (cardId) =>
     set((s) => ({

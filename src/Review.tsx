@@ -15,6 +15,7 @@ import { absTime } from "./format";
 import { wordDiffMap } from "./worddiff";
 import { invalidateCwd } from "./poll";
 import { closePaneGuarded } from "./worktrees";
+import { useBoardStore } from "./board/boardStore";
 import "./review.css";
 
 // Patch-line classes for the unified diff view.
@@ -149,7 +150,12 @@ export function Review() {
       .then((r) => {
         if (r.status === "pushed") {
           pushToast("success", `Pushed ${pane.branch} to origin.${r.url ? "" : ` ${r.detail}`}`);
-          if (r.url) { setPrUrl(r.url); void openUrl(r.url).catch(() => pushToast("info", r.url!)); }
+          if (r.url) {
+            setPrUrl(r.url);
+            // UI-157: if this pane came from a board card, the card keeps the link.
+            useBoardStore.getState().setCardPr(pane.id, r.url);
+            void openUrl(r.url).catch(() => pushToast("info", r.url!));
+          }
         } else if (r.status === "nothing-to-push") {
           pushToast("info", "Nothing to push — the branch has no new work.");
         } else {

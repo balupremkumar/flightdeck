@@ -36,6 +36,9 @@ export interface Card {
   // Set once this card has been dispatched to a live agent pane.
   wsId?: number;
   paneId?: number;
+  // UI-157: the pull request opened from this card's agent branch, so the card
+  // stays the thread that ties task -> agent -> review.
+  prUrl?: string;
 }
 
 export interface Column {

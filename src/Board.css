@@ -887,3 +887,14 @@
   padding: 14px 20px;
   border-top: 1px solid var(--line);
 }
+
+/* UI-157: pull-request link on a dispatched card */
+.card-pr {
+  align-self: flex-start;
+  font: inherit; font-size: 10px; font-weight: 600;
+  padding: 2px 7px; border-radius: var(--r-pill);
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent); cursor: pointer;
+}
+.card-pr:hover { filter: brightness(1.12); }
