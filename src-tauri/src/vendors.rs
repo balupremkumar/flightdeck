@@ -65,6 +65,10 @@ pub struct VendorInfo {
     /// Empty when there's nothing useful to say (shells ship with Windows).
     pub install_hint: String,
     pub install_url: String,
+    /// K0a: this agent has its own workspace-trust gate that Flightdeck
+    /// satisfies on the user's behalf (see `prepare`). The UI asks once per
+    /// repo before doing so, rather than silently answering for them.
+    pub needs_trust: bool,
 }
 
 // Resolve an executable through the shell's PATH (Windows `where`).
@@ -283,6 +287,13 @@ pub trait VendorAdapter: Send + Sync {
     fn accent(&self) -> &str {
         "--accent"
     }
+    /// K0a: true when `prepare` grants this agent trust for a folder. Flightdeck
+    /// bypasses the agent's own consent prompt (six panes launching would mean
+    /// six blocking prompts), so the UI has to own that decision instead.
+    fn needs_trust(&self) -> bool {
+        false
+    }
+
     /// UI-9: (command, url) telling the user how to install this vendor.
     fn install(&self) -> (&'static str, &'static str) {
         ("", "")
@@ -373,6 +384,7 @@ impl VendorAdapter for Agy {
     }
     fn root_exe(&self) -> &str { "agy.exe" }
     fn prepare(&self, cwd: &str) { ensure_agy_trust(cwd); }
+    fn needs_trust(&self) -> bool { true }
     // agy thinks in longer silences than claude; 3s flagged it as waiting while
     // it was still working.
     fn quiet_seconds(&self) -> u32 { 6 }
@@ -800,6 +812,7 @@ pub fn detect() -> Vec<VendorInfo> {
                 quiet_seconds: v.quiet_seconds(),
                 install_hint: v.install().0.into(),
                 install_url: v.install().1.into(),
+                needs_trust: v.needs_trust(),
             }
         })
         .collect()
@@ -820,6 +833,20 @@ mod tests {
         ids.sort_unstable();
         ids.dedup();
         assert_eq!(ids.len(), count, "adapter ids must be unique");
+    }
+
+    /// K0a: trust-granting must be declared, or the UI silently answers a
+    /// security prompt on the user's behalf with no way to know.
+    #[test]
+    fn only_trust_granting_adapters_declare_needs_trust() {
+        for v in registry() {
+            if v.kind() == "shell" {
+                assert!(!v.needs_trust(), "{}: a shell has no workspace-trust gate", v.id());
+            }
+        }
+        assert!(find("agy").needs_trust(), "agy's prepare() writes trustedWorkspaces");
+        assert!(!find("claude").needs_trust(), "claude has no such gate");
+        assert!(detect().iter().any(|v| v.needs_trust), "detect() must carry the flag");
     }
 
     #[test]

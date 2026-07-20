@@ -112,7 +112,7 @@ Order is dependency-driven; the vendor adapter is the load-bearing refactor ever
 
 ## B. Open known issues / watch-items (not yet fixed)
 
-- ~~K0a. agy trust in worktrees~~ — **FIXED 2026-07-20 session 8**: worktree removal/GC now prunes the dir from agy's `trustedWorkspaces` (case/slash-insensitive, unrelated entries untouched); validated against a real stale entry from the 2026-07-20 E2E run.
+- ~~K0a. agy trust~~ — **FULLY CLOSED 2026-07-20 session 8** (consent prompt + GC). **FIXED 2026-07-20 session 8**: worktree removal/GC now prunes the dir from agy's `trustedWorkspaces` (case/slash-insensitive, unrelated entries untouched); validated against a real stale entry from the 2026-07-20 E2E run. **Consent half (Balu approved):** Flightdeck was answering agy's own trust question on the user's behalf, which is right for a repo you work in and wrong for one you just cloned. `src/trust.ts` now asks once per REPO ROOT (so six panes and every worktree share one decision) before any trust is granted, gated ahead of worktree creation so declining leaves nothing behind. `needs_trust` is a vendor-adapter property, not a hardcoded "agy" check. Revoke list in Settings > Agents. 8 tests.
 - **K0b. MAX_PATH** — worktrees live under `%LOCALAPPDATA%/Flightdeck/worktrees/<hash>/<slug>`; a deep node_modules inside one can trip Windows path limits without `longPathsEnabled`.
 - ~~K0c. Fresh worktrees have no build artifacts~~ — **FIXED 2026-07-20 session 8** (worktree setup command, Tier 0 list above).
 - ~~K1. Settings ⚙ does nothing~~ — **FIXED session 4** (Settings screen + Ctrl+,).

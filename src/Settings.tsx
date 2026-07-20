@@ -9,6 +9,7 @@ import { useFocusTrap } from "./useFocusTrap";
 import { listRestorePoints, restoreFromPoint, exportBackup, importBackup, type RestorePointInfo } from "./persist";
 import { adoptSession, lastSessionSaveAt } from "./session";
 import { clearPreferences, PREFERENCE_KEYS } from "./storageKeys";
+import { trustedRepos, untrustRepo } from "./trust";
 import { spawnPane } from "./worktrees";
 import { useVendors, vendorColor, vendorAccentOverrides, setVendorAccentOverride } from "./vendors";
 import { IconClose } from "./Icons";
@@ -614,6 +615,10 @@ export function Settings() {
     if (empty) empty.style.display = shown === 0 ? "" : "none";
   });
 
+  // K0a: repos the user has granted a trust-requiring agent access to.
+  const [trusted, setTrusted] = useState<string[]>(() => trustedRepos());
+  useEffect(() => { setTrusted(trustedRepos()); }, []);
+
   // UI-189: manifests that failed to parse — silently skipping them made a
   // typo'd vendor file indistinguishable from a missing one.
   const [manifestProblems, setManifestProblems] = useState<{ file: string; error: string }[]>([]);
@@ -1165,6 +1170,31 @@ export function Settings() {
                     <code>{m.file}</code> — {m.error}
                   </div>
                 ))}
+              </div>
+            )}
+            {/* K0a: the trust dialog promises this exists — so it has to. */}
+            {trusted.length > 0 && (
+              <div className="set-row set-row-block">
+                <div className="set-row-t">
+                  <span className="set-row-name">Trusted folders</span>
+                  <span className="set-row-sub">
+                    Folders you've let a trust-requiring agent (Antigravity) work in. Revoking means
+                    you'll be asked again next time.
+                  </span>
+                </div>
+                <div className="trust-list">
+                  {trusted.map((t) => (
+                    <div className="trust-row" key={t}>
+                      <span className="trust-path" title={t}>{t}</span>
+                      <button
+                        className="set-btn"
+                        onClick={() => { untrustRepo(t); setTrusted(trustedRepos()); }}
+                      >
+                        Revoke
+                      </button>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
             <div className="set-row">

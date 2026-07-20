@@ -3,6 +3,7 @@ import { useApp, type PaneModel } from "./store";
 import { useUI } from "./ui";
 import { vendorShort } from "./vendors";
 import { loadSession } from "./persist";
+import { ensureTrusted } from "./trust";
 
 // worktrees.ts — frontend side of per-agent git worktree isolation (Tier 0).
 // One async spawn path (`spawnPane` / `preparePanes`) owns worktree creation so
@@ -94,6 +95,9 @@ export async function spawnPane(
   /** UI-162: names the worktree branch (e.g. a board card's title). */
   label?: string
 ): Promise<number | null> {
+  // K0a: ask before Flightdeck grants this agent trust for the folder. Gated
+  // BEFORE the worktree is created, so declining leaves nothing behind.
+  if (!(await ensureTrusted(vendor, baseCwd))) return null;
   const prep = await prepareCwd(baseCwd, vendor, isolate, label);
   // Fresh worktree + a configured workspace setup command -> run it pre-agent.
   const ws = useApp.getState().workspaces.find((w) => w.id === wsId);
@@ -117,6 +121,12 @@ export async function preparePanes(
 ) {
   const out = [];
   for (const s of slots) {
+    // K0a: one prompt per repo — the first agy slot asks, the rest inherit the
+    // answer. A declined slot is dropped rather than launched untrusted.
+    if (!(await ensureTrusted(s.vendor, s.cwd))) {
+      onProgress?.(out.length, slots.length);
+      continue;
+    }
     const prep = await prepareCwd(s.cwd, s.vendor, isolate);
     onProgress?.(out.length + 1, slots.length);
     out.push({

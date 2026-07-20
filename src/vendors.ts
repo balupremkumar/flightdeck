@@ -25,15 +25,18 @@ export interface VendorInfo {
   /** UI-9: how to install this agent, for the not-installed state. */
   installHint: string;
   installUrl: string;
+  /** K0a: this agent has its own workspace-trust gate that Flightdeck satisfies
+   *  on the user's behalf, so the UI asks once per repo first. */
+  needsTrust: boolean;
 }
 
 // Used only until the backend responds, and as a safety net if the invoke fails
 // (e.g. unit tests, or a browser preview with no Tauri host). The backend
 // registry is always the truth once it answers.
 const FALLBACK: VendorInfo[] = [
-  { id: "claude", label: "Claude Code", short: "Claude", kind: "agent", accent: "--agent-claude", installed: false, detail: "", authState: "unknown", authDetail: "", quietSeconds: 3, installHint: "", installUrl: "" },
-  { id: "agy", label: "Antigravity", short: "Antigravity", kind: "agent", accent: "--accent", installed: false, detail: "", authState: "unknown", authDetail: "", quietSeconds: 3, installHint: "", installUrl: "" },
-  { id: "pwsh", label: "pwsh (shell)", short: "pwsh", kind: "shell", accent: "--aqua", installed: false, detail: "", authState: "unknown", authDetail: "", quietSeconds: 3, installHint: "", installUrl: "" },
+  { id: "claude", label: "Claude Code", short: "Claude", kind: "agent", accent: "--agent-claude", installed: false, detail: "", authState: "unknown", authDetail: "", quietSeconds: 3, installHint: "", installUrl: "", needsTrust: false },
+  { id: "agy", label: "Antigravity", short: "Antigravity", kind: "agent", accent: "--accent", installed: false, detail: "", authState: "unknown", authDetail: "", quietSeconds: 3, installHint: "", installUrl: "", needsTrust: false },
+  { id: "pwsh", label: "pwsh (shell)", short: "pwsh", kind: "shell", accent: "--aqua", installed: false, detail: "", authState: "unknown", authDetail: "", quietSeconds: 3, installHint: "", installUrl: "", needsTrust: false },
 ];
 
 interface VendorState {
@@ -87,6 +90,7 @@ export function vendorMeta(id: string): VendorInfo {
       quietSeconds: 3,
       installHint: "",
       installUrl: "",
+      needsTrust: false,
     }
   );
 }

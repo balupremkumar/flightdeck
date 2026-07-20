@@ -44,6 +44,11 @@ export const PREFERENCE_KEYS = [
  * nasty surprise.
  */
 export const SESSION_KEYS = [
+  // K0a: repos the user has consciously let a trust-requiring agent into.
+  // Deliberately NOT a preference — "reset all settings" is a cosmetic action
+  // and must not silently clear a security decision. (Re-prompting would be the
+  // safe direction, but a surprise prompt after a colour reset is still wrong.)
+  "flightdeck-trusted-repos",
   "flightdeck-clean-exit",
   "flightdeck-recent-roots",
   "flightdeck-cmdp-recent",

@@ -9,6 +9,9 @@ export interface ConfirmReq {
   confirmLabel?: string;
   danger?: boolean;
   onConfirm: () => void;
+  /** Runs on every non-confirm exit (Cancel, Esc, scrim). Callers awaiting an
+   *  answer must supply this or they hang on dismissal. */
+  onCancel?: () => void;
 }
 export interface Toast {
   id: number;
