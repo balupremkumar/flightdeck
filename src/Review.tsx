@@ -14,6 +14,7 @@ import type { DiffSummary, MergeOutcome, BranchContext } from "./worktrees";
 import { absTime } from "./format";
 import { wordDiffMap } from "./worddiff";
 import { invalidateCwd } from "./poll";
+import { closePaneGuarded } from "./worktrees";
 import "./review.css";
 
 // Patch-line classes for the unified diff view.
@@ -111,7 +112,21 @@ export function Review() {
         setConflict(null);
         invoke<MergeOutcome>("git_merge_back", { worktreePath: pane.worktreePath })
           .then((m) => {
-            if (m.status === "merged") pushToast("success", `Merged ${pane.branch} into ${pane.baseBranch}.`);
+            if (m.status === "merged") {
+              pushToast("success", `Merged ${pane.branch} into ${pane.baseBranch}.`);
+              // UI-176: a merged pane is usually finished work. Offer the tidy-up
+              // in the moment rather than leaving a stale worktree behind for the
+              // user to remember about later.
+              requestConfirm({
+                title: "Close this pane and clean up its worktree?",
+                body: `${pane.branch} is merged into ${pane.baseBranch}. Closing ends the agent session and removes the isolated worktree; the branch itself stays.`,
+                confirmLabel: "Close & clean up",
+                onConfirm: () => {
+                  setReviewPane(null);
+                  closePaneGuarded(hit!.wsId, pane);
+                },
+              });
+            }
             else if (m.status === "nothing-to-merge") pushToast("info", "Nothing to merge — the branch has no new work.");
             else if (m.status === "conflict") setConflict(m); // stays in the drawer, not a toast
             else pushToast("error", m.detail || m.status);

@@ -235,8 +235,16 @@ export async function runWorktreeGc() {
         for (const p of w.panes) if (p.worktreePath) keep.add(p.worktreePath);
     } catch { /* corrupt/absent session doc — GC against live panes only */ }
     const removed = await invoke<string[]>("git_worktree_gc", { keep: [...keep] });
-    if (removed.length > 0)
-      useUI.getState().pushToast("info", `Cleaned up ${removed.length} leftover worktree${removed.length === 1 ? "" : "s"} (work kept on branches).`);
+    if (removed.length > 0) {
+      // UI-199: "cleaned up 3 worktrees" is unverifiable on its own — name what
+      // went, so the claim that work was kept can actually be checked.
+      const names = removed.map((p) => p.replace(/[\\\/]+$/, "").split(/[\\\/]/).pop()).filter(Boolean);
+      useUI.getState().pushToast(
+        "info",
+        `Cleaned up ${removed.length} leftover worktree${removed.length === 1 ? "" : "s"} — ${names.join(", ")}. ` +
+        `Any uncommitted work was committed to its own branch first.`
+      );
+    }
   } catch { /* browser preview / git missing — nothing to do */ }
 }
 
