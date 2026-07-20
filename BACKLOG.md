@@ -796,14 +796,14 @@ grouped by surface only for navigation; work in any order, all at once.
 
 ### Review drawer
 - UI-165. Side-by-side split-diff toggle (unified-only today).
-- UI-166. Word-level intra-line diff highlighting.
+- ~~UI-166. Word-level intra-line diff highlighting.~~ **DONE 2026-07-20 session 8** (word-level diff (worddiff.ts, 8 tests))
 - UI-167. Collapse file list by directory when >15 files.
 - UI-168. Include/exclude files from a merge (partial merge-back).
 - ~~UI-169. Copy-patch-to-clipboard button.~~ **DONE 2026-07-20 session 8** (copy patch)
 - UI-170. Auto-refresh diff while the drawer is open ("changed since opened" pill).
 - UI-171. Lightweight syntax highlighting in the patch by file extension.
-- UI-172. j/k file navigation to match the n/p hunk keys.
-- UI-173. "Open in editor" on each file row.
+- ~~UI-172. j/k file navigation to match the n/p hunk keys.~~ **DONE 2026-07-20 session 8** (j/k file nav, n/p hunks)
+- ~~UI-173. "Open in editor" on each file row.~~ **DONE 2026-07-20 session 8** (open-in-editor per file row)
 - ~~UI-174. Commit list of the branch above the file list (what merge brings).~~ **DONE 2026-07-20 session 8** (branch commit list)
 - ~~UI-175. "Reopen PR page" after a handoff (remember URL per branch).~~ **DONE 2026-07-20 session 8** (reopen PR)
 - UI-176. Post-merge follow-up offer: close pane + clean worktree in one click.
@@ -812,10 +812,10 @@ grouped by surface only for navigation; work in any order, all at once.
 - UI-179. Conflict panel: open both versions in editor, per file.
 
 ### Settings
-- UI-180. Search/filter box inside Settings.
+- ~~UI-180. Search/filter box inside Settings.~~ **DONE 2026-07-20 session 8** (settings search)
 - UI-181. Palette deep-links to Settings sections ("Settings: Terminal").
 - UI-182. Export/import ALL settings (not just the theme).
-- UI-183. Reset-everything-to-defaults with confirm.
+- ~~UI-183. Reset-everything-to-defaults with confirm.~~ **DONE 2026-07-20 session 8** (scoped reset-all)
 - UI-184. Launch-on-Windows-login toggle (registry Run key).
 - UI-185. Diagnostics: CPU sparkline per pane (last 60s).
 - UI-186. Diagnostics: total footprint roll-up vs system RAM.
