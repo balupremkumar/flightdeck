@@ -832,9 +832,9 @@ grouped by surface only for navigation; work in any order, all at once.
 ### Lifecycle / trust
 - ~~UI-195. Quit confirm itemises what's live ("3 running, 1 dirty worktree"),~~ **DONE 2026-07-20 session 8** (itemised quit guard)
   not a generic sentence.
-- UI-196. Subtle autosave tick ("saved 12s ago") in Settings > About.
+- ~~UI-196. Subtle autosave tick ("saved 12s ago") in Settings > About.~~ **DONE 2026-07-20 session 8** (autosave tick in About)
 - UI-197. Non-clean-exit sentinel: next launch offers the support bundle.
-- UI-198. Session-restore failure names the workspace and reason.
+- ~~UI-198. Session-restore failure names the workspace and reason.~~ **DONE 2026-07-20 session 8** (restore failures name the workspace)
 - ~~UI-199. Worktree-GC toast gains "view details" (which branches were kept).~~ **DONE 2026-07-20 session 8** (GC toast names what it reaped)
 - ~~UI-200. Focus-follows-attention option: auto-jump to a pane on approval~~ **DONE 2026-07-20 session 8** (follow-attention (opt-in))
   prompt (opt-in, default off).
@@ -842,7 +842,7 @@ grouped by surface only for navigation; work in any order, all at once.
 ### Broadcast
 - ~~UI-201. Up-arrow recalls previous broadcast messages.~~ **DONE 2026-07-20 session 8** (broadcast history recall)
 - UI-202. Saved snippets/templates for common prompts.
-- UI-203. Target presets ("all Claude", "all in repo X").
+- ~~UI-203. Target presets ("all Claude", "all in repo X").~~ **DONE 2026-07-20 session 8** (broadcast target presets)
 - ~~UI-204. Enter sends / Shift+Enter newline, stated in the placeholder.~~ **DONE 2026-07-20 session 8** (Enter/Shift+Enter stated)
 
 ### Command palette
