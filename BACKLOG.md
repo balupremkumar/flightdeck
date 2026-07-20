@@ -783,11 +783,11 @@ grouped by surface only for navigation; work in any order, all at once.
 - ~~UI-156. Ctrl+Tab cycles workspaces most-recent-first.~~ **DONE 2026-07-20 session 8** (Ctrl+Tab MRU)
 
 ### Board ↔ agents
-- UI-157. Card stores the PR URL after handoff; badge links to it.
+- ~~UI-157. Card stores the PR URL after handoff; badge links to it.~~ **DONE 2026-07-20 session 8** (card keeps its PR link)
 - UI-158. "Send to agent…" (choose vendor) from the card context menu.
 - UI-159. Card auto-moves to Done when its linked pane's branch merges.
 - UI-160. Card shows linked pane's token usage.
-- UI-161. Board search box (parity with palette filtering).
+- ~~UI-161. Board search box (parity with palette filtering).~~ **DONE 2026-07-20 session 8** (board search (already shipped))
 - ~~UI-162. Dispatched worktree/branch named from the card title~~ **DONE 2026-07-20 session 8** (task-named branches)
   (flightdeck/fix-login-badge, not flightdeck/p1x2).
 - UI-163. Card can't enter Done while its linked pane has unmerged diff
@@ -806,7 +806,7 @@ grouped by surface only for navigation; work in any order, all at once.
 - ~~UI-173. "Open in editor" on each file row.~~ **DONE 2026-07-20 session 8** (open-in-editor per file row)
 - ~~UI-174. Commit list of the branch above the file list (what merge brings).~~ **DONE 2026-07-20 session 8** (branch commit list)
 - ~~UI-175. "Reopen PR page" after a handoff (remember URL per branch).~~ **DONE 2026-07-20 session 8** (reopen PR)
-- UI-176. Post-merge follow-up offer: close pane + clean worktree in one click.
+- ~~UI-176. Post-merge follow-up offer: close pane + clean worktree in one click.~~ **DONE 2026-07-20 session 8** (post-merge cleanup offer)
 - ~~UI-177. Base-drift pill ("main moved +4 since fork") in the drawer header.~~ **DONE 2026-07-20 session 8** (base-drift pill)
 - ~~UI-178. "Update from base" button (merge base INTO the agent branch).~~ **DONE 2026-07-20 session 8** (update from base)
 - UI-179. Conflict panel: open both versions in editor, per file.
@@ -835,7 +835,7 @@ grouped by surface only for navigation; work in any order, all at once.
 - UI-196. Subtle autosave tick ("saved 12s ago") in Settings > About.
 - UI-197. Non-clean-exit sentinel: next launch offers the support bundle.
 - UI-198. Session-restore failure names the workspace and reason.
-- UI-199. Worktree-GC toast gains "view details" (which branches were kept).
+- ~~UI-199. Worktree-GC toast gains "view details" (which branches were kept).~~ **DONE 2026-07-20 session 8** (GC toast names what it reaped)
 - UI-200. Focus-follows-attention option: auto-jump to a pane on approval
   prompt (opt-in, default off).
 
