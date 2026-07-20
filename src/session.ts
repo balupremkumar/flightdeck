@@ -17,6 +17,7 @@ import {
 import { repoToplevel, type WorktreeInfo } from "./worktrees";
 import { useBoardStore, getBoardState, setBoardState } from "./board/boardStore";
 import type { BoardCards } from "./board/types";
+import { getStartupBehavior } from "./Settings";
 
 function toDraft(workspaces: Workspace[], activeId: number | null): SessionDraft {
   return {
@@ -136,6 +137,12 @@ export async function offerSessionRestore() {
     if (board && typeof board === "object") setBoardState(board);
     if (doc.workspaces.length === 0) return;
     if (useApp.getState().workspaces.length > 0) return; // user already moving
+    // Settings > Startup (91) — persisted-but-inert until now. "Reopen last
+    // session" skips the prompt entirely; "Show launcher" asks first.
+    if (getStartupBehavior() === "reopen") {
+      void hydrateFrom(doc.workspaces, doc.activeWorkspaceId);
+      return;
+    }
     const nPanes = doc.workspaces.reduce((n, w) => n + w.panes.length, 0);
     useUI.getState().requestConfirm({
       title: "Reopen last session?",

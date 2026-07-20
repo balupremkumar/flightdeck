@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { save } from "@tauri-apps/plugin-dialog";
 import { useUI, applyUiScale } from "./ui";
 import { useVendors } from "./vendors";
 import { IconClose } from "./Icons";
@@ -141,6 +143,119 @@ function saveStartupBehavior(v: StartupBehavior) {
 // Shown in About + useful for bug reports. Keep in step with package.json /
 // tauri.conf.json version bumps.
 export const APP_VERSION = "0.1.0";
+
+// ---------------------------------------------------------------------
+// Diagnostics (UI-4 / QOL 375-377): surfaces three backend capabilities that
+// were built + tested but had zero UI — per-pane health, stray-process
+// recovery, and the redacted support bundle.
+// ---------------------------------------------------------------------
+interface PaneHealthRow { paneId: number; pid: number; cpuPercent: number; memoryMb: number; procName: string; }
+interface OrphanRow { pid: number; ppid: number; name: string; }
+
+function DiagnosticsSection() {
+  const pushToast = useUI((s) => s.pushToast);
+  const [health, setHealth] = useState<PaneHealthRow[] | null>(null);
+  const [orphans, setOrphans] = useState<OrphanRow[] | null>(null);
+  const [scanning, setScanning] = useState(false);
+
+  // Poll health while the section is on screen. First sample reads 0% CPU by
+  // design (delta-based); ticks refine it.
+  useEffect(() => {
+    let cancelled = false;
+    const poll = () => {
+      invoke<PaneHealthRow[]>("pane_health")
+        .then((rows) => { if (!cancelled) setHealth(rows); })
+        .catch(() => { if (!cancelled) setHealth(null); });
+    };
+    poll();
+    const id = setInterval(poll, 3000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, []);
+
+  const scanOrphans = () => {
+    setScanning(true);
+    invoke<OrphanRow[]>("recover_orphans")
+      .then(setOrphans)
+      .catch(() => pushToast("error", "Couldn't scan for stray processes."))
+      .finally(() => setScanning(false));
+  };
+
+  const killOrphans = () => {
+    if (!orphans || orphans.length === 0) return;
+    invoke("kill_orphans", { pids: orphans.map((o) => o.pid) })
+      .then(() => { pushToast("success", `Ended ${orphans.length} stray process tree${orphans.length === 1 ? "" : "s"}.`); setOrphans([]); })
+      .catch(() => pushToast("error", "Couldn't end the stray processes."));
+  };
+
+  const exportBundle = async () => {
+    try {
+      const dest = await save({ defaultPath: "flightdeck-support.json", filters: [{ name: "JSON", extensions: ["json"] }] });
+      if (!dest) return;
+      await invoke("export_support_bundle", { destPath: dest });
+      pushToast("success", "Support bundle exported (secrets redacted).");
+    } catch (e) {
+      pushToast("error", `Couldn't export the bundle: ${String(e)}`);
+    }
+  };
+
+  return (
+    <section className="set-section">
+      <div className="set-label">Diagnostics</div>
+
+      <div className="set-row">
+        <div className="set-row-t">
+          <span className="set-row-name">Pane health</span>
+          <span className="set-row-sub">CPU is % of one core since the last sample</span>
+        </div>
+      </div>
+      {health && health.length > 0 ? (
+        <div className="diag-table" role="table" aria-label="Per-pane process health">
+          <div className="diag-tr diag-th" role="row">
+            <span>Pane</span><span>Process</span><span>PID</span><span>CPU</span><span>Memory</span>
+          </div>
+          {health.map((h) => (
+            <div className="diag-tr" role="row" key={h.paneId}>
+              <span>#{h.paneId}</span>
+              <span className="diag-proc">{h.procName || "—"}</span>
+              <span>{h.pid}</span>
+              <span>{h.cpuPercent.toFixed(1)}%</span>
+              <span>{h.memoryMb.toFixed(0)} MB</span>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="diag-empty">{health === null ? "Health data unavailable in this environment." : "No live panes to sample."}</div>
+      )}
+
+      <div className="set-row">
+        <div className="set-row-t">
+          <span className="set-row-name">Stray agent processes</span>
+          <span className="set-row-sub">Agent trees left running by a crash or force-quit</span>
+        </div>
+        <button className="set-btn" onClick={scanOrphans} disabled={scanning}>{scanning ? "Scanning…" : "Scan"}</button>
+        {orphans && orphans.length > 0 && (
+          <button className="set-btn danger" onClick={killOrphans}>End {orphans.length} stray</button>
+        )}
+      </div>
+      {orphans && orphans.length === 0 && <div className="diag-empty">No strays found — every agent process belongs to a live pane.</div>}
+      {orphans && orphans.length > 0 && (
+        <div className="diag-table">
+          {orphans.map((o) => (
+            <div className="diag-tr" key={o.pid}><span>{o.name}</span><span>PID {o.pid}</span><span /><span /><span /></div>
+          ))}
+        </div>
+      )}
+
+      <div className="set-row">
+        <div className="set-row-t">
+          <span className="set-row-name">Support bundle</span>
+          <span className="set-row-sub">Redacted app + pane snapshot for bug reports</span>
+        </div>
+        <button className="set-btn" onClick={() => void exportBundle()}>Export…</button>
+      </div>
+    </section>
+  );
+}
 
 export function Settings() {
   const open = useUI((s) => s.settingsOpen);
@@ -471,6 +586,8 @@ export function Settings() {
               </div>
             </div>
           </section>
+
+          <DiagnosticsSection />
 
           <section className="set-section">
             <div className="set-label">About</div>
