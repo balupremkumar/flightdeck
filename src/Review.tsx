@@ -11,9 +11,9 @@ import { useUI } from "./ui";
 import { vendorShort } from "./vendors";
 import { IconBranch, IconClose, IconChevron, IconDiff, IconMerge, IconRefresh, IconCopy } from "./Icons";
 import type { DiffSummary, MergeOutcome, BranchContext } from "./worktrees";
-import { absTime } from "./format";
+import { absTime, relTime } from "./format";
 import { wordDiffMap } from "./worddiff";
-import { invalidateCwd } from "./poll";
+import { invalidateCwd, usePoll } from "./poll";
 import { closePaneGuarded } from "./worktrees";
 import { useBoardStore } from "./board/boardStore";
 import "./review.css";
@@ -77,6 +77,22 @@ export function Review() {
   }, [pane?.cwd, pane?.baseBranch, pane?.epoch]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { if (paneId != null) void load(); }, [paneId, load]);
+
+  // UI-170: the agent keeps working while the drawer is open, so a static diff
+  // goes stale in front of you. Poll quietly and flag that it moved.
+  const [staleSince, setStaleSince] = useState<number | null>(null);
+  const seenTotals = useRef<string>("");
+  usePoll(async () => {
+    if (!pane) return;
+    try {
+      const s2 = await invoke<DiffSummary>("git_diff_summary", { cwd: pane.cwd, base: pane.baseBranch ?? null });
+      const sig = `${s2.files.length}:${s2.totalAdded}:${s2.totalDeleted}`;
+      if (seenTotals.current && seenTotals.current !== sig) setStaleSince(Date.now());
+      seenTotals.current = sig;
+    } catch { /* drawer stays on what it has */ }
+  }, 8000, [pane?.cwd, pane?.baseBranch], paneId != null);
+
+  useEffect(() => { seenTotals.current = ""; setStaleSince(null); }, [paneId, selected]);
   useEffect(() => { setConflict(null); }, [paneId]);
 
   // Load the selected file's patch.
@@ -237,6 +253,15 @@ export function Review() {
             <span className="rv-drift" title={`${pane.baseBranch} has ${ctx.baseAhead} commit${ctx.baseAhead === 1 ? "" : "s"} this branch doesn't have. Update from base to catch up before merging.`}>
               {pane.baseBranch} +{ctx.baseAhead}
             </span>
+          )}
+          {staleSince && (
+            <button
+              className="rv-stale"
+              title="The agent has changed files since this diff was loaded"
+              onClick={() => { setStaleSince(null); void load(); }}
+            >
+              changed {relTime(staleSince)} — reload
+            </button>
           )}
           <span className="sp" />
           <button className="rv-ic" onClick={() => void load()} title="Refresh diff"><IconRefresh size={13} /></button>

@@ -241,3 +241,12 @@ em.del { color: var(--st-error); margin-left: 5px; }
 }
 .rv-file:hover .rv-file-open, .rv-file.sel .rv-file-open { opacity: 1; }
 .rv-file-open:hover { color: var(--text); background: color-mix(in srgb, var(--text) 10%, transparent); }
+
+/* UI-170: the diff moved while you were reading it */
+.rv-stale {
+  flex: none; font: inherit; font-size: 10px; font-weight: 600; cursor: pointer;
+  padding: 2px 8px; border-radius: var(--r-pill);
+  color: var(--st-starting); border: 1px solid color-mix(in srgb, var(--st-starting) 45%, transparent);
+  background: color-mix(in srgb, var(--st-starting) 10%, transparent);
+}
+.rv-stale:hover { filter: brightness(1.15); }
