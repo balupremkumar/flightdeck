@@ -73,6 +73,11 @@ export function CardItem({
                 e.stopPropagation();
                 onOpenDetail(card.id);
               }}
+              // UI-31: the card title is already the focusable element, so
+              // letting focus imply selection completes the keyboard path
+              // (Tab to a card, arrows move it, Esc deselects) without
+              // inventing a second selection concept.
+              onFocus={() => onSelect(card.id)}
               title="Open card"
             >
               {card.title}

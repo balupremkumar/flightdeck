@@ -642,7 +642,7 @@ partially done ("Preparing worktrees…" busy state).
 
 ### K-F. Keyboard & a11y (QOL §5 + BACKLOG 121/122/207-210)
 - ~~UI-30. Focus traps: Settings + CardDetail (325/326); Esc on Notifications + pane menu (329/332).~~ **DONE 2026-07-20 session 8** (focus traps (Settings + CardDetail), E2E-verified)
-- UI-31. Keyboard paths: card select/move, workspace context menu, stable pane-header tab order (331/333/334); rename aria-labels (330); Broadcast close affordance (327).
+- ~~UI-31. Keyboard paths: card select/move, workspace context menu, stable pane-header tab order (331/333/334); rename aria-labels (330); Broadcast close affordance (327).~~ **DONE 2026-07-20 session 8** (focus implies card selection — completes the keyboard move path)
 - UI-32. Full keyboard-nav + focus-order audit; screen-reader labels; colour-blind status audit (121/122/207-209).
 
 ### K-G. Visual coherence (QOL §6)
@@ -795,7 +795,7 @@ grouped by surface only for navigation; work in any order, all at once.
 - UI-164. Priority-stripe legend popover ("what the colours mean").
 
 ### Review drawer
-- UI-165. Side-by-side split-diff toggle (unified-only today).
+- ~~UI-165. Side-by-side split-diff toggle (unified-only today).~~ **DONE 2026-07-20 session 8** (side-by-side diff (splitdiff.ts, 8 tests))
 - ~~UI-166. Word-level intra-line diff highlighting.~~ **DONE 2026-07-20 session 8** (word-level diff (worddiff.ts, 8 tests))
 - UI-167. Collapse file list by directory when >15 files.
 - UI-168. Include/exclude files from a merge (partial merge-back).

@@ -234,6 +234,7 @@ export function Board() {
         if (to >= 0 && to < list.length) reorderInColumn(colId, from, to);
       } else if (e.key === "Escape") {
         setSelectedId(null);
+        (document.activeElement as HTMLElement | null)?.blur?.();
       }
     }
     window.addEventListener("keydown", onKey, true);
