@@ -28,6 +28,12 @@ interface GitStatus {
   dirty: boolean;
 }
 
+function fmtTokens(n: number): string {
+  if (n < 1000) return String(n);
+  if (n < 10000) return (n / 1000).toFixed(1) + "k";
+  return Math.round(n / 1000) + "k";
+}
+
 function baseName(p: string): string {
   const s = p.replace(/[\\/]+$/, "");
   const i = Math.max(s.lastIndexOf("\\"), s.lastIndexOf("/"));
@@ -231,6 +237,25 @@ export function PaneView({
     return () => { cancelled = true; clearInterval(id); };
   }, [pane.cwd, pane.epoch, pane.baseBranch, inRepo]);
 
+  // Token chip (UI-3): real numbers from the agent's own session transcript
+  // (Claude Code writes ~/.claude/projects/<cwd>/*.jsonl). Agents without a
+  // transcript return null and get no chip — never an estimate.
+  const [usage, setUsage] = useState<{ contextTokens: number; outputTokens: number; turns: number } | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const u = await invoke<{ contextTokens: number; outputTokens: number; turns: number } | null>("pane_usage", { cwd: pane.cwd });
+        if (!cancelled) setUsage(u);
+      } catch {
+        if (!cancelled) setUsage(null);
+      }
+    };
+    poll();
+    const id = setInterval(poll, 15000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [pane.cwd, pane.epoch]);
+
   return (
     <div
       className={
@@ -289,6 +314,14 @@ export function PaneView({
                 style={{ display: "inline-block", width: 6, height: 6, borderRadius: "50%", background: "var(--st-waiting)", marginLeft: 2 }}
               />
             )}
+          </span>
+        )}
+        {usage && (
+          <span
+            className="ptok"
+            title={`Session tokens (from the agent's own transcript)\ncontext now: ${usage.contextTokens.toLocaleString()}\noutput so far: ${usage.outputTokens.toLocaleString()} across ${usage.turns} turns`}
+          >
+            {fmtTokens(usage.contextTokens)} ctx
           </span>
         )}
         {diffStat && diffStat.files > 0 && (

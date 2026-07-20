@@ -11,6 +11,7 @@ mod orphans;
 mod persist;
 mod procname;
 mod support;
+mod usage;
 mod vendors;
 mod worktree;
 
@@ -481,6 +482,7 @@ pub fn run() {
             worktree::git_merge_back,
             worktree::detect_setup_command,
             worktree::git_pr_handoff,
+            usage::pane_usage,
             persist::save_session,
             persist::load_session,
             persist::has_previous_session,
