@@ -887,7 +887,7 @@ grouped by surface only for navigation; work in any order, all at once.
 
 ### Worktree / git depth
 - UI-230. Worktree disk-size line in the pane overflow menu.
-- UI-231. Token chip context-limit awareness: amber ≥70%, red ≥90% of the
+- ~~UI-231. Token chip context-limit awareness: amber ≥70%, red ≥90% of the~~ **DONE 2026-07-20 session 8** (context-window colour thresholds)
   window, tooltip suggests /compact.
 - UI-232. Workspace tile tooltip: token roll-up across its panes.
 - UI-233. Optional costPerMTok field in vendor manifests → real $ on the chip
@@ -900,7 +900,7 @@ grouped by surface only for navigation; work in any order, all at once.
 - UI-236. Vendor glyphs (not just colours) in chips, selects, and palette rows.
 - UI-237. Per-vendor "waiting" quiet-threshold defaults (agy idles differently
   from claude).
-- UI-238. Manifest schema published as JSON Schema in the vendors folder
+- ~~UI-238. Manifest schema published as JSON Schema in the vendors folder~~ **DONE 2026-07-20 session 8** (manifest JSON Schema shipped)
   ($schema line in the example → editor autocomplete).
 - UI-239. "Test launch" button per vendor in Settings (spawns a throwaway pane
   in the home dir).
