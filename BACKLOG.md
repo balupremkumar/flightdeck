@@ -11,6 +11,23 @@ Scope decision (Balu 2026-07-19): **single-user tool for now.** Licensing, docs 
 
 Item IDs reference the detailed catalogue in sections A–H below.
 
+### Tier 0 (market table-stakes) — SHIPPED 2026-07-19 (session 6, commit fcf717f)
+Per-agent **git worktree isolation** + **Review drawer** (diff/merge surface).
+See STATE.md session 6 + section J below for the market landscape. v1 scope:
+local merge-back (auto-commit → --no-ff, conflict aborts cleanly). Follow-ups:
+- **PR handoff flow** (v2 merge path — what most rivals ship; sidesteps conflict UI).
+- **Merge-conflict resolution surface** (v1 aborts with a message).
+- **Per-workspace worktree setup command** (fresh worktrees have no
+  node_modules — agents can't build/test until `npm ci`; Conductor/Superset
+  solve this with setup scripts).
+- **Per-pane Explorer rooting / worktree switcher** (Explorer still shows the
+  main checkout, not the focused pane's worktree).
+- **WSL isolation** (excluded in v1: worktree `.git` file embeds a Windows
+  gitdir path WSL git can't resolve).
+- **Attention Queue** (ranked "needs you now" vs the bell feed), richer status
+  vocabulary (blocked-on-permission / stalled), per-pane token/cost — the
+  visual gaps vs Paneflow/Warp.
+
 ### Phase 1 — Feel & polish (do first; what you notice immediately)
 The session-3 requests + the supporting polish that makes them land.
 - Settings screen so the ⚙ actually works [U8 / R8 / K1] — host for themes, type-scale, shortcuts.
@@ -90,12 +107,15 @@ Order is dependency-driven; the vendor adapter is the load-bearing refactor ever
 
 ## B. Open known issues / watch-items (not yet fixed)
 
-- **K1. Settings ⚙ (top-right) does nothing** — placeholder; blocks R8. (Balu-confirmed.)
+- **K0a. agy trust in worktrees untested (D9)** — `ensure_agy_trust` appends every pane cwd to `trustedWorkspaces` permanently; per-session worktree paths will accumulate. Test whether agy honors parent-dir trust of the fixed worktrees root; else GC trust entries on worktree removal.
+- **K0b. MAX_PATH** — worktrees live under `%LOCALAPPDATA%/Flightdeck/worktrees/<hash>/<slug>`; a deep node_modules inside one can trip Windows path limits without `longPathsEnabled`.
+- **K0c. Fresh worktrees have no build artifacts** — no node_modules/target until the setup-command follow-up ships (Tier 0 list above).
+- ~~K1. Settings ⚙ does nothing~~ — **FIXED session 4** (Settings screen + Ctrl+,).
 - **K2. No Job Object** — clean window-close now reaps child process trees, but a hard crash of Flightdeck.exe itself could still orphan children. -> R2.
 - **K3. `csp:null`** — acceptable for local-only today, tighten with R6.
 - **K4. StrictMode dev double-spawn** — dev-only; each pane briefly launches two real CLI processes under `npm run tauri dev`. Benign in production build. Watch item.
 - **K5. Resize dropped in a narrow startup gap** — a container resize landing between mount and spawn isn't forwarded to the PTY; self-corrects on next resize. Low.
-- **K6. Close-workspace has no active-session warning** -> U9.
+- ~~K6. Close-workspace has no active-session warning~~ — **FIXED session 4** (ConfirmDialog; session 6 added worktree cleanup to the same flow).
 - **K7. Dark mode lags light mode visually** -> U7.
 - **K8. Icons / the Kanban icon button are too small** -> U4/U6.
 
@@ -291,7 +311,12 @@ Recommended model: Qwen2.5-coder. Engine stays model-agnostic (endpoint + model 
 
 ## F. Dropped from v1 (per Balu 2026-07-19)
 
-- **BridgeSwarm** (multi-agent role orchestration): not needed.
+- **BridgeSwarm** (multi-agent role orchestration): not needed. *(Session-6 note:
+  "BridgeSwarm" is literally a shipping BridgeMind product — roles
+  builder/reviewer/scout/coordinator, file ownership, quality gates, shared
+  mailbox, inside their BridgeSpace ADE. Keeping this dropped is now a
+  positioning decision against our closest competitor, not just scope trimming —
+  re-decide deliberately if Flightdeck goes to market. See section J.)*
 - **Billing / accounts / multi-user**: personal tool; only if ever productised.
 
 ---
@@ -433,10 +458,19 @@ Framed for a productised release (some assume the "if productised" path that F p
 Written after 8 parallel agents landed Phase 1 + much of Phase 2/3.
 Organising theme per Balu: **adding a new LLM/agent must be trivial**, and the app should be gold-plated.
 
-### I1. Extensibility — make adding an agent a CONFIG drop, not a code hunt (TOP PRIORITY)
-The Rust side now has a `vendors.rs` trait/registry, but the frontend still hardcodes the vendor list in **five** places. Adding Kimi today means editing all of them.
-216. **Single source of truth for vendors** — frontend must read the vendor list from the backend (`detect_vendors`) instead of duplicating it. Kill the hardcoded lists in `NewWorkspace.tsx` (`VENDORS`, `SHORT`), `PaneView.tsx` (`LABEL`), `Board.tsx`/`board/boardStore.ts` (`VENDOR_META`, `VENDORS`), `LeftPanel.tsx` (`DROP_CYCLE`).
-217. **Kill the `Vendor` union type** — `board/types.ts` has `Vendor = "claude"|"agy"|"pwsh"`, which structurally blocks new agents. Make it `string` + runtime validation against the registry.
+### I1. Extensibility — make adding an agent a CONFIG drop, not a code hunt
+STATUS CORRECTION (2026-07-19, session 6 audit): **216, 217 and 227 are DONE** —
+the frontend reads the runtime registry via `src/vendors.ts` (`useVendors` /
+`detect_vendors`), `board/types.ts` has `Vendor = string`, and vendors.rs has
+conformance tests. The old "five hardcoded lists" claim was stale. What remains
+of I1 is 218-226 + 228, and **218 is now the headline market differentiator**
+(rivals hardcode ~3 vendors; "add any LLM via config, no recompile" is our edge).
+Residual cosmetics: hardcoded default ids (`Board.tsx` dispatch fallback
+`"claude"`, `Settings.tsx` `defaultVendor`, `vendors.ts` `defaultCycle`
+`["pwsh"]`, `Explorer.tsx` `vendor = "pwsh"`) and the per-vendor CSS token
+`--agent-claude` (6 themes) with no generic accent scheme for new vendors.
+216. ~~Single source of truth for vendors~~ — **DONE** (`src/vendors.ts`, all UI lists map the registry).
+217. ~~Kill the `Vendor` union type~~ — **DONE** (`board/types.ts:11` is `string`).
 218. **User-definable agents via a manifest file** — a TOML/JSON vendor manifest (id, label, exe, arg template, cwd handling, env allow/deny, probe command, icon, colour) loaded at runtime so adding an agent needs NO recompile. This is the real "easy to add any LLM" unlock.
 219. **Per-vendor auth state** — extend probe beyond "installed" to `not-installed | installed-not-logged-in | ready`, with a per-vendor `login` command surfaced as an inline "Run login" action.
 220. **Per-vendor status patterns** — replace the one-size activity heuristic with per-adapter output patterns (waiting/auth-required/error), falling back to the heuristic.
@@ -446,7 +480,7 @@ The Rust side now has a `vendors.rs` trait/registry, but the frontend still hard
 224. **Local LLM adapter (LM Studio)** — vendor + lifecycle (ensure server up, load model, unload on close). See section E.
 225. **MCP offload server** — `local_complete` stdio MCP so Claude can hand cheap subtasks to a local model. See section E.
 226. **Kimi + Codex adapters** — once 218/219 land these should be manifest entries, not code.
-227. **Adapter conformance tests** — one test suite every adapter must pass (probe, build_command, env-strip, cwd), so a new agent is proven wired before shipping.
+227. ~~Adapter conformance tests~~ — **DONE** (vendors.rs test module: registry coverage, unique ids, env-strip, cwd targeting, presentation fields).
 228. **`CROSS_VENDOR_KEYS` per-adapter** — each adapter declares the env it must strip, instead of one hand-maintained global list that already has a TODO on it.
 
 ### I2. Architecture debt
@@ -507,6 +541,43 @@ The Rust side now has a `vendors.rs` trait/registry, but the frontend still hard
 282. Onboarding: first-run tour + a demo workspace.
 283. Consistent empty/loading/error treatment audited across every surface.
 284. Motion audit — one easing/duration system, honoured by the reduced-motion toggle.
+
+---
+
+## J. Market landscape snapshot (researched 2026-07-19, session 6)
+
+Category: desktop cockpits for running parallel AI coding agents. Ranked by
+closeness to Flightdeck:
+
+1. **BridgeMind / BridgeSpace** (bridgemind.ai) — closest full-concept rival,
+   ahead of us: up to 16 agents in terminal grids, BridgeBoard (agent-dispatching
+   Kanban = our R7), BridgeSwarm (role orchestration), BridgeMemory (shared agent
+   memory), built-in editor + browser, BridgeMCP, BridgeVoice. Cross-platform.
+   Community moat ~86k YouTube / ~13k Discord.
+2. **Paneflow** (paneflow.dev, OSS Rust/GPUI) — closest on cockpit+review:
+   side-by-side per-worktree diff columns + hunk nav, Attention Queue, tab-dot
+   status, read-only MCP bridge (list/read/search_pane, untrusted-wrapped),
+   markdown panes, per-pane token/cost, CLI/JSON-RPC control plane.
+3. **Superset** (superset.sh) — 10+ agents per-worktree, diff/file editor, chat,
+   in-app browser + port management. Free 3 agents / $30·mo Pro.
+4. **Conductor** (Mac) — the polish bar: status + diffs + PRs + browser preview;
+   per-repo worktree setup scripts.
+5. **Warp 2.0** — vertical-tab pane per agent w/ status badge
+   (thinking / blocked-on-permission / done), review pane, mobile remote.
+6. First-party threats: Claude Code **Agent Teams + Dynamic Workflows**,
+   **Cursor parallel agents** (worktree-based), OpenAI **Codex** app/cloud
+   agents, **Google Antigravity's own Agent Manager** (first-party manager for
+   our own `agy` vendor's users), GitHub **Copilot coding agent** / VS Code
+   agent sessions.
+7. Also: Vibe Kanban (OSS, community-run), Claude Squad (tmux TUI), Crystal
+   (OSS, deprecated → Nimbalyst), Clave, Parallel Code.
+
+**Table-stakes across the category:** per-agent worktree isolation (SHIPPED),
+diff review + merge/PR (SHIPPED v1), live agent status (have), multi-vendor
+(have). **Our realistic wedge:** local-first/no-account privacy, the I1 #218
+config-drop agent manifest (unbuilt), focused single-user polish. Rival feature
+categories to watch: setup scripts, PR-based merge, session resume/checkpoint,
+cloud/remote execution.
 
 ---
 
