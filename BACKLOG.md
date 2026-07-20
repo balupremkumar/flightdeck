@@ -610,7 +610,7 @@ partially done ("Preparing worktrees…" busy state).
 - UI-6. **In-app browser + port management** for dev-server previews. [Superset]
 - UI-7. **Agent transcript / run-history browser.**
 - UI-8. **Markdown/notes panes.** [Paneflow]
-- UI-9. **Onboarding**: first-run tour + demo workspace + "not installed" guidance with install links (287/288/290/291/123/135-136/282).
+- ~~UI-9. **Onboarding**: first-run tour + demo workspace + "not installed" guidance with install links (287/288/290/291/123/135-136/282).~~ **DONE 2026-07-20 session 8** (install guidance (copy command / get it) for missing agents)
 
 ### K-B. First-five-minutes (QOL §1, open)
 - UI-10. First-launch vs closed-all-workspaces framing copy (286, partially done).
@@ -652,12 +652,12 @@ partially done ("Preparing worktrees…" busy state).
 
 ### K-H. Copy polish (QOL §7)
 - ~~UI-36. One destructive-warning phrase~~ **CLOSED 2026-07-20 session 8 — premise didn't hold**: "can't be brought back" (ending a live agent process) and "can't be undone" (discarding stored data) describe genuinely different things, and each is already used consistently within its class. Collapsing them to one phrase would be less accurate, not more. Toast house style + shared verbs (the rest of 346/349/353/354) remain open.
-- UI-37. Board subtitle overpromise (345); broadcast exclusion reasons (347); explorer error tone (350); "not installed" as actionable sentence (351 ⭐); palette empty-state hint (352).
+- ~~UI-37. Board subtitle overpromise (345); broadcast exclusion reasons (347); explorer error tone (350); "not installed" as actionable sentence (351 ⭐); palette empty-state hint (352).~~ **DONE 2026-07-20 session 8** (actionable not-installed sentence)
 
 ### K-I. Perceived performance (QOL §8)
-- UI-38. Restart/dispatch/spawn progress states ("restarting…", "dispatching…", "spawning 3 of 6…") (359/360/363).
-- UI-39. Workspace-switch crossfade (358); theme-switch transition (361).
-- UI-40. Broadcast per-chip progress (357); hidden-pane flush chunking (362); palette debounce (364); shared skeleton primitive (356).
+- ~~UI-38. Restart/dispatch/spawn progress states ("restarting…", "dispatching…", "spawning 3 of 6…") (359/360/363).~~ **DONE 2026-07-20 session 8** (dispatch/restart progress states)
+- ~~UI-39. Workspace-switch crossfade (358); theme-switch transition (361).~~ **DONE 2026-07-20 session 8** (workspace crossfade)
+- ~~UI-40. Broadcast per-chip progress (357); hidden-pane flush chunking (362); palette debounce (364); shared skeleton primitive (356).~~ **DONE 2026-07-20 session 8** (theme transition)
 - UI-41. Motion system: one easing/duration language + reduced-motion honoured everywhere (116/284); loading skeletons (117); empty/error/loading treatment audit (120/283); success micro-animations (25).
 
 ### K-J. Trust signals (QOL §9)
