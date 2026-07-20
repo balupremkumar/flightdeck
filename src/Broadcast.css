@@ -68,3 +68,12 @@
 }
 .bc-send:hover:not(:disabled) { filter: brightness(1.07); }
 .bc-send:disabled { opacity: .45; cursor: not-allowed; }
+
+/* UI-203: target presets */
+.bc-preset {
+  font: inherit; font-size: 10.5px; font-weight: 600;
+  padding: 3px 9px; border-radius: var(--r-pill);
+  border: 1px solid var(--line); background: transparent; color: var(--muted);
+  cursor: pointer; transition: color var(--t-fast) ease, border-color var(--t-fast) ease;
+}
+.bc-preset:hover { color: var(--text); border-color: var(--accent); }

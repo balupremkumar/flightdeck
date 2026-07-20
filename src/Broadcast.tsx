@@ -53,6 +53,11 @@ export function Broadcast() {
 
   const isDead = (p: PaneModel) => p.state === "idle" || p.state === "error";
   const targets = pool.filter(({ p }) => !isDead(p) && !excluded.has(p.id));
+  // Distinct vendors present in the current scope — drives the presets.
+  const vendorsInPool = useMemo(
+    () => Array.from(new Set(pool.filter(({ p }) => !isDead(p)).map(({ p }) => p.vendor))),
+    [pool]
+  );
   const lastBroadcast = broadcasts[0];
 
   const toggle = (paneId: number) => {
@@ -117,6 +122,24 @@ export function Broadcast() {
         <div className="bc-seg">
           <button className={scope === "workspace" ? "on" : ""} onClick={() => setScope("workspace")}>This workspace</button>
           <button className={scope === "all" ? "on" : ""} onClick={() => setScope("all")}>All workspaces</button>
+          {/* UI-203: deselecting nine of eleven chips by hand is the common
+              case this replaces. Presets are derived from the live pool, so
+              they only offer vendors that are actually there. */}
+          {vendorsInPool.length > 1 && vendorsInPool.map((v) => (
+            <button
+              key={v}
+              className="bc-preset"
+              title={`Target only the ${vendorShort(v)} panes in scope`}
+              onClick={() => setExcluded(new Set(pool.filter(({ p }) => p.vendor !== v).map(({ p }) => p.id)))}
+            >
+              only {vendorShort(v)}
+            </button>
+          ))}
+          {excluded.size > 0 && (
+            <button className="bc-preset" onClick={() => setExcluded(new Set())} title="Re-include every pane in scope">
+              select all
+            </button>
+          )}
         </div>
         <span className="sp" />
         <button className="bc-x" onClick={() => setOpen(false)} title="Collapse"><IconClose size={13} /></button>
