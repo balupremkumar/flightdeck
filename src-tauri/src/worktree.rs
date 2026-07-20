@@ -478,6 +478,87 @@ pub fn file_diff(dir: &Path, base: Option<&str>, file: &str, include_untracked: 
 }
 
 // ---------------------------------------------------------------------------
+// Branch context for the review drawer (UI-174/177)
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BranchCommit {
+    pub hash: String,
+    pub subject: String,
+    /// Unix seconds — the UI formats it.
+    pub at: i64,
+}
+
+#[derive(Clone, Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct BranchContext {
+    /// Commits on this branch that the base doesn't have (what a merge brings).
+    pub commits: Vec<BranchCommit>,
+    /// Commits the BASE has gained since this worktree forked (drift) — the
+    /// number that decides whether a merge is likely to conflict.
+    pub base_ahead: u32,
+    pub base_branch: String,
+    pub branch: String,
+}
+
+pub fn branch_context(dir: &Path, base: Option<&str>) -> Result<BranchContext, String> {
+    let branch = git_line(dir, &["rev-parse", "--abbrev-ref", "HEAD"])?.unwrap_or_default();
+    let Some(base) = base else {
+        return Ok(BranchContext { branch, ..Default::default() });
+    };
+    let out = git(dir, &["log", "--format=%H%x1f%s%x1f%ct", &format!("{base}..HEAD")])?;
+    let commits = out
+        .stdout
+        .lines()
+        .filter_map(|l| {
+            let mut parts = l.split('\u{1f}');
+            Some(BranchCommit {
+                hash: parts.next()?.chars().take(8).collect(),
+                subject: parts.next()?.to_string(),
+                at: parts.next()?.parse().unwrap_or(0),
+            })
+        })
+        .collect();
+    // How far the base has moved since the fork point.
+    let base_ahead = git_line(dir, &["rev-list", "--count", &format!("HEAD..{base}")])?
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+    Ok(BranchContext { commits, base_ahead, base_branch: base.to_string(), branch })
+}
+
+/// UI-178: bring the base branch's new commits INTO the agent's branch, so a
+/// drifted worktree can catch up (and hit conflicts here, in its own sandbox,
+/// rather than at merge time against the user's checkout).
+pub fn update_from_base(wt_root: &Path, worktree_path: &str) -> Result<MergeOutcome, String> {
+    let dir = Path::new(worktree_path);
+    ensure_under(wt_root, dir)?;
+    let meta = read_meta(dir).ok_or("worktree metadata missing — cannot resolve base branch")?;
+    let lock = repo_lock(&meta.repo);
+    let _guard = lock.lock().unwrap();
+
+    commit_outstanding(dir, &meta.branch)?;
+    let m = git(dir, &["merge", "--no-edit", &meta.base_branch])?;
+    if m.ok() {
+        let already = m.stdout.contains("Already up to date");
+        return Ok(MergeOutcome {
+            status: if already { "nothing-to-merge".into() } else { "merged".into() },
+            detail: String::new(),
+            conflict_files: vec![],
+        });
+    }
+    let conflict_files: Vec<String> = git(dir, &["diff", "--name-only", "--diff-filter=U"])
+        .map(|o| o.stdout.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect())
+        .unwrap_or_default();
+    let _ = git(dir, &["merge", "--abort"]);
+    Ok(MergeOutcome {
+        status: "conflict".into(),
+        detail: format!("'{}' conflicts with '{}' — the worktree is unchanged", meta.base_branch, meta.branch),
+        conflict_files,
+    })
+}
+
+// ---------------------------------------------------------------------------
 // Merge-back (D7)
 // ---------------------------------------------------------------------------
 
@@ -731,6 +812,16 @@ pub fn detect_setup_command(cwd: String) -> Option<String> {
 }
 
 #[tauri::command]
+pub fn git_branch_context(cwd: String, base: Option<String>) -> Result<BranchContext, String> {
+    branch_context(Path::new(&cwd), base.as_deref())
+}
+
+#[tauri::command]
+pub fn git_update_from_base(app: AppHandle, worktree_path: String) -> Result<MergeOutcome, String> {
+    update_from_base(&worktrees_root(&app)?, &worktree_path)
+}
+
+#[tauri::command]
 pub fn git_pr_handoff(app: AppHandle, worktree_path: String) -> Result<PrOutcome, String> {
     pr_handoff(&worktrees_root(&app)?, &worktree_path)
 }
@@ -788,6 +879,62 @@ mod tests {
         std::fs::write(t.repo.join("package-lock.json"), "{}").unwrap();
         assert_eq!(setup_suggestion(&t.repo).as_deref(), Some("npm ci"));
         assert_eq!(setup_suggestion(&std::env::temp_dir()), None, "non-repo — no suggestion");
+    }
+
+    #[test]
+    fn branch_context_lists_commits_and_base_drift() {
+        let t = temp_repo();
+        let a = worktree_add(&t.wt_root, &t.repo.to_string_lossy(), "bc-1").unwrap();
+        let wt = Path::new(&a.path);
+        std::fs::write(wt.join("f1.txt"), "one
+").unwrap();
+        sh(wt, &["add", "-A"]);
+        sh(wt, &["commit", "-m", "agent: first"]);
+        std::fs::write(wt.join("f2.txt"), "two
+").unwrap();
+        sh(wt, &["add", "-A"]);
+        sh(wt, &["commit", "-m", "agent: second"]);
+
+        let ctx = branch_context(wt, Some("main")).unwrap();
+        assert_eq!(ctx.commits.len(), 2, "both agent commits are ahead of base");
+        assert_eq!(ctx.commits[0].subject, "agent: second", "newest first");
+        assert_eq!(ctx.base_ahead, 0);
+        assert_eq!(ctx.branch, "flightdeck/bc-1");
+
+        // Base moves on -> drift is reported.
+        std::fs::write(t.repo.join("main-only.txt"), "x
+").unwrap();
+        sh(&t.repo, &["add", "-A"]);
+        sh(&t.repo, &["commit", "-m", "main moved"]);
+        assert_eq!(branch_context(wt, Some("main")).unwrap().base_ahead, 1);
+    }
+
+    #[test]
+    fn update_from_base_merges_then_reports_conflict() {
+        let t = temp_repo();
+        let a = worktree_add(&t.wt_root, &t.repo.to_string_lossy(), "uf-1").unwrap();
+        let wt = Path::new(&a.path);
+        // Non-conflicting base commit merges in cleanly.
+        std::fs::write(t.repo.join("newfile.txt"), "base
+").unwrap();
+        sh(&t.repo, &["add", "-A"]);
+        sh(&t.repo, &["commit", "-m", "base work"]);
+        let m = update_from_base(&t.wt_root, &a.path).unwrap();
+        assert_eq!(m.status, "merged", "{}", m.detail);
+        assert!(wt.join("newfile.txt").exists(), "base commit landed in the worktree");
+
+        // Now make both sides touch the same file -> conflict, worktree intact.
+        std::fs::write(wt.join("a.txt"), "agent version
+").unwrap();
+        sh(wt, &["commit", "-am", "agent edit"]);
+        std::fs::write(t.repo.join("a.txt"), "base version
+").unwrap();
+        sh(&t.repo, &["commit", "-am", "base edit"]);
+        let c = update_from_base(&t.wt_root, &a.path).unwrap();
+        assert_eq!(c.status, "conflict");
+        assert_eq!(c.conflict_files, vec!["a.txt".to_string()]);
+        let st = git(wt, &["status", "--porcelain"]).unwrap();
+        assert!(st.stdout.trim().is_empty(), "worktree left dirty after abort: {}", st.stdout);
     }
 
     #[test]

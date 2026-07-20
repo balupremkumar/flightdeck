@@ -161,3 +161,11 @@ export const IconWipe = (p: IconProps) => (
     <path d="M11.3 9 V13.2" />
   </Svg>
 );
+
+// Copy — two offset sheets (clipboard-adjacent), for copy-patch / copy-path actions.
+export const IconCopy = (p: IconProps) => (
+  <Svg {...p}>
+    <rect x="7.2" y="7.2" width="9" height="9" rx="1.6" />
+    <path d="M12.8 4.4 H5.4 a1.6 1.6 0 0 0 -1.6 1.6 V13" />
+  </Svg>
+);

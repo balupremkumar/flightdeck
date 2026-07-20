@@ -482,6 +482,8 @@ pub fn run() {
             worktree::git_merge_back,
             worktree::detect_setup_command,
             worktree::git_pr_handoff,
+            worktree::git_branch_context,
+            worktree::git_update_from_base,
             usage::pane_usage,
             persist::save_session,
             persist::load_session,

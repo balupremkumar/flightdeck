@@ -9,8 +9,9 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { useApp } from "./store";
 import { useUI } from "./ui";
 import { vendorShort } from "./vendors";
-import { IconBranch, IconClose, IconChevron, IconDiff, IconMerge, IconRefresh } from "./Icons";
-import type { DiffSummary, MergeOutcome } from "./worktrees";
+import { IconBranch, IconClose, IconChevron, IconDiff, IconMerge, IconRefresh, IconCopy } from "./Icons";
+import type { DiffSummary, MergeOutcome, BranchContext } from "./worktrees";
+import { absTime } from "./format";
 import { invalidateCwd } from "./poll";
 import "./review.css";
 
@@ -44,6 +45,12 @@ export function Review() {
   // UI-5: a failed merge surfaces its conflicted files + a way forward here,
   // instead of vanishing into a toast.
   const [conflict, setConflict] = useState<MergeOutcome | null>(null);
+  // UI-174/177: what a merge would actually bring, and how far base has drifted.
+  const [ctx, setCtx] = useState<BranchContext | null>(null);
+  const [showCommits, setShowCommits] = useState(false);
+  const [updating, setUpdating] = useState(false);
+  // UI-175: the PR page for this branch, remembered so it can be reopened.
+  const [prUrl, setPrUrl] = useState<string | null>(null);
   const patchRef = useRef<HTMLPreElement>(null);
   const [hunkIdx, setHunkIdx] = useState(0);
 
@@ -55,6 +62,9 @@ export function Review() {
     try {
       const s = await invoke<DiffSummary>("git_diff_summary", { cwd: pane.cwd, base: pane.baseBranch ?? null });
       setSummary(s);
+      invoke<BranchContext>("git_branch_context", { cwd: pane.cwd, base: pane.baseBranch ?? null })
+        .then(setCtx)
+        .catch(() => setCtx(null));
       // Keep the selection if the file is still changed; else pick the first.
       setSelected((sel) => (sel && s.files.some((f) => f.path === sel) ? sel : s.files[0]?.path ?? null));
     } catch (e) {
@@ -121,7 +131,7 @@ export function Review() {
       .then((r) => {
         if (r.status === "pushed") {
           pushToast("success", `Pushed ${pane.branch} to origin.${r.url ? "" : ` ${r.detail}`}`);
-          if (r.url) void openUrl(r.url).catch(() => pushToast("info", r.url!));
+          if (r.url) { setPrUrl(r.url); void openUrl(r.url).catch(() => pushToast("info", r.url!)); }
         } else if (r.status === "nothing-to-push") {
           pushToast("info", "Nothing to push — the branch has no new work.");
         } else {
@@ -131,6 +141,36 @@ export function Review() {
       })
       .catch((e) => pushToast("error", `PR handoff failed: ${String(e)}`))
       .finally(() => setHanding(false));
+  };
+
+  // UI-178: pull the base branch's new work into the agent's branch, so drift
+  // is resolved inside the sandbox instead of at merge time.
+  const updateFromBase = () => {
+    if (!pane?.worktreePath || updating) return;
+    setUpdating(true);
+    setConflict(null);
+    invoke<MergeOutcome>("git_update_from_base", { worktreePath: pane.worktreePath })
+      .then((m) => {
+        if (m.status === "merged") pushToast("success", `Updated ${pane.branch} from ${pane.baseBranch}.`);
+        else if (m.status === "nothing-to-merge") pushToast("info", "Already up to date with the base branch.");
+        else if (m.status === "conflict") setConflict(m);
+        else pushToast("error", m.detail || m.status);
+        invalidateCwd(pane.cwd);
+        void load();
+      })
+      .catch((e) => pushToast("error", `Update failed: ${String(e)}`))
+      .finally(() => setUpdating(false));
+  };
+
+  // UI-169: hand the whole patch to the clipboard for pasting elsewhere.
+  const copyPatch = async () => {
+    if (!patch) return;
+    try {
+      await navigator.clipboard.writeText(patch);
+      pushToast("success", `Copied the patch for ${selected}.`);
+    } catch {
+      pushToast("error", "Couldn't copy — clipboard unavailable.");
+    }
   };
 
   // Esc closes (matches Settings behavior).
@@ -156,6 +196,12 @@ export function Review() {
           {pane.branch && (
             <span className="rv-branch"><IconBranch size={11} /> {pane.branch} → {pane.baseBranch}</span>
           )}
+          {/* UI-177: base moved since the fork — the number that predicts a conflict. */}
+          {ctx && ctx.baseAhead > 0 && (
+            <span className="rv-drift" title={`${pane.baseBranch} has ${ctx.baseAhead} commit${ctx.baseAhead === 1 ? "" : "s"} this branch doesn't have. Update from base to catch up before merging.`}>
+              {pane.baseBranch} +{ctx.baseAhead}
+            </span>
+          )}
           <span className="sp" />
           <button className="rv-ic" onClick={() => void load()} title="Refresh diff"><IconRefresh size={13} /></button>
           <button className="rv-ic" onClick={() => setReviewPane(null)} title="Close (Esc)"><IconClose size={13} /></button>
@@ -171,6 +217,24 @@ export function Review() {
         {!error && fileCount > 0 && summary && (
           <div className="rv-body">
             <div className="rv-files">
+              {/* UI-174: the commits a merge would bring, collapsed by default. */}
+              {ctx && ctx.commits.length > 0 && (
+                <div className="rv-commits">
+                  <button className="rv-commits-t" onClick={() => setShowCommits((v) => !v)} aria-expanded={showCommits}>
+                    <IconChevron size={11} style={{ transform: showCommits ? "rotate(90deg)" : "none" }} />
+                    {ctx.commits.length} commit{ctx.commits.length === 1 ? "" : "s"} to merge
+                  </button>
+                  {showCommits && (
+                    <ul className="rv-commit-list">
+                      {ctx.commits.map((c) => (
+                        <li key={c.hash} title={absTime(c.at * 1000)}>
+                          <code>{c.hash}</code> {c.subject}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
               <div className="rv-files-head">
                 {fileCount} file{fileCount === 1 ? "" : "s"}
                 <span className="rv-stat"><em className="add">+{summary.totalAdded}</em> <em className="del">−{summary.totalDeleted}</em></span>
@@ -196,6 +260,9 @@ export function Review() {
                 <span className="rv-hunk-count">{hunkLines.length > 0 ? `hunk ${hunkIdx + 1}/${hunkLines.length}` : ""}</span>
                 <button className="rv-ic" onClick={() => jumpHunk(-1)} disabled={hunkLines.length === 0} title="Previous hunk">
                   <IconChevron size={12} style={{ transform: "rotate(-90deg)" }} />
+                </button>
+                <button className="rv-ic" onClick={() => void copyPatch()} disabled={!patch} title="Copy this file's patch">
+                  <IconCopy size={12} />
                 </button>
                 <button className="rv-ic" onClick={() => jumpHunk(1)} disabled={hunkLines.length === 0} title="Next hunk">
                   <IconChevron size={12} style={{ transform: "rotate(90deg)" }} />
@@ -238,6 +305,16 @@ export function Review() {
           {pane.worktreePath ? (
             <>
               <span className="rv-foot-note">Merge lands the agent's work on {pane.baseBranch} locally; Create PR pushes the branch and reviews on your git host.</span>
+              {ctx && ctx.baseAhead > 0 && (
+                <button className="rv-pr" onClick={updateFromBase} disabled={updating} title={`Merge ${pane.baseBranch} into ${pane.branch} so this agent is working on current code`}>
+                  <IconRefresh size={13} /> {updating ? "Updating…" : "Update from base"}
+                </button>
+              )}
+              {prUrl && (
+                <button className="rv-pr" onClick={() => void openUrl(prUrl).catch(() => pushToast("info", prUrl))} title={prUrl}>
+                  <IconBranch size={13} /> Reopen PR
+                </button>
+              )}
               <button className="rv-pr" onClick={createPr} disabled={handing || fileCount === 0 && !pane.branch} title="Push this branch to origin and open a pull request">
                 <IconBranch size={13} /> {handing ? "Pushing…" : "Create PR"}
               </button>

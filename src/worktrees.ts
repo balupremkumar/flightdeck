@@ -19,6 +19,14 @@ export interface WorktreeInfo {
 export interface DiffFile { path: string; added: number; deleted: number; binary: boolean; }
 export interface DiffSummary { base: string; files: DiffFile[]; totalAdded: number; totalDeleted: number; }
 export interface MergeOutcome { status: string; detail: string; conflictFiles: string[]; }
+/** UI-174/177: what a merge would bring, and how far the base has drifted. */
+export interface BranchCommit { hash: string; subject: string; at: number; }
+export interface BranchContext {
+  commits: BranchCommit[];
+  baseAhead: number;
+  baseBranch: string;
+  branch: string;
+}
 export interface RemoveOutcome { status: string; detail: string; }
 
 const ISOLATE_KEY = "flightdeck-isolate";
