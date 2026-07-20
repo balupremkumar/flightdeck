@@ -45,6 +45,27 @@ export function Cockpit() {
   const broadcastOpen = useUI((s) => s.broadcastOpen);
   const setBroadcastOpen = useUI((s) => s.setBroadcastOpen);
 
+  // UI-152: below this width the panel costs more than it gives, so collapse it
+  // to the rail. A manual toggle after that is respected until the window
+  // crosses the threshold again — auto-behaviour must never fight the user.
+  const NARROW_PX = 1000;
+  const autoCollapsed = useRef(false);
+  useEffect(() => {
+    const onResize = () => {
+      const narrow = window.innerWidth < NARROW_PX;
+      if (narrow && !autoCollapsed.current) {
+        autoCollapsed.current = true;
+        setExpanded(false);
+      } else if (!narrow && autoCollapsed.current) {
+        autoCollapsed.current = false;
+        setExpanded(true);
+      }
+    };
+    onResize();
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
   // UI-156: most-recently-used workspace order for Ctrl+Tab.
   const mruRef = useRef<number[]>([]);
   useEffect(() => {

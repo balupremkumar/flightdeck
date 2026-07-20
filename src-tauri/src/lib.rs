@@ -489,6 +489,7 @@ pub fn run() {
             worktree::detect_setup_command,
             worktree::git_pr_handoff,
             worktree::git_branch_context,
+            worktree::git_repo_web_url,
             worktree::git_worktree_list,
             worktree::git_update_from_base,
             usage::pane_usage,

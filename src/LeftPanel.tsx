@@ -8,7 +8,7 @@ import { IconPlus, IconClose, IconBoard, IconDrag, IconBranch } from "./Icons";
 import { relTime as fmtRel, timeTitle } from "./format";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { revealItemInDir } from "@tauri-apps/plugin-opener";
+import { revealItemInDir, openUrl } from "@tauri-apps/plugin-opener";
 import "./leftpanel.css";
 
 function initial(name: string): string {
@@ -207,6 +207,20 @@ export function LeftPanel({ expanded, view, setView }: { expanded: boolean; view
     });
   };
 
+  // UI-154: derive the browser URL from the repo's origin remote. Reuses the
+  // same host parsing as the PR handoff, so an unrecognised remote says so
+  // instead of opening something wrong.
+  const openRepoOnHost = async (w: Workspace) => {
+    setMenu(null);
+    try {
+      const url = await invoke<string | null>("git_repo_web_url", { cwd: w.root });
+      if (!url) { pushToast("info", "No recognised origin remote for this workspace."); return; }
+      await openUrl(url);
+    } catch {
+      pushToast("error", "Couldn't work out this repo's web address.");
+    }
+  };
+
   const reveal = async (w: Workspace) => {
     setMenu(null);
     try { await revealItemInDir(w.root); }
@@ -246,6 +260,8 @@ export function LeftPanel({ expanded, view, setView }: { expanded: boolean; view
       <button onClick={() => startRename(menuWs)}>Rename</button>
       <button onClick={() => duplicate(menuWs)}>Duplicate</button>
       <button onClick={() => reveal(menuWs)}>Reveal in Explorer</button>
+      {/* UI-154: jump straight to the repo's host page when there's an origin. */}
+      <button onClick={() => void openRepoOnHost(menuWs)}>Open repo on GitHub</button>
       <div className="lp-menu-sep" />
       <button className="danger" onClick={() => { setMenu(null); doClose(menuWs); }}>Close</button>
     </div>

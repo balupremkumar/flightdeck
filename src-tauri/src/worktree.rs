@@ -885,6 +885,26 @@ pub fn git_worktree_list(app: AppHandle, claimed: Vec<String>) -> Result<Vec<Wor
     Ok(worktree_list(&worktrees_root(&app)?, &claimed))
 }
 
+/// UI-154: the repo's browsable web URL, from its origin remote. Reuses
+/// compare_url's host parsing so recognition stays consistent with PR handoff.
+#[tauri::command]
+pub fn git_repo_web_url(cwd: String) -> Option<String> {
+    let dir = Path::new(&cwd);
+    let remote = git(dir, &["remote", "get-url", "origin"]).ok()?;
+    if !remote.ok() {
+        return None;
+    }
+    // compare_url() gives ".../compare/base...branch?expand=1"; the repo root is
+    // everything before the host-specific suffix.
+    let url = compare_url(remote.stdout.trim(), "main", "main")?;
+    for marker in ["/compare/", "/-/merge_requests/", "/pull-requests/"] {
+        if let Some(i) = url.find(marker) {
+            return Some(url[..i].to_string());
+        }
+    }
+    None
+}
+
 #[tauri::command]
 pub fn git_branch_context(cwd: String, base: Option<String>) -> Result<BranchContext, String> {
     branch_context(Path::new(&cwd), base.as_deref())
@@ -1027,6 +1047,25 @@ mod tests {
         assert_eq!(c.conflict_files, vec!["a.txt".to_string()]);
         let st = git(wt, &["status", "--porcelain"]).unwrap();
         assert!(st.stdout.trim().is_empty(), "worktree left dirty after abort: {}", st.stdout);
+    }
+
+    #[test]
+    fn repo_web_url_strips_the_compare_suffix() {
+        // Exercises the same derivation git_repo_web_url performs.
+        let cases = [
+            ("git@github.com:balu/flightdeck.git", "https://github.com/balu/flightdeck"),
+            ("https://gitlab.com/team/app.git", "https://gitlab.com/team/app"),
+            ("https://bitbucket.org/team/app.git", "https://bitbucket.org/team/app"),
+        ];
+        for (remote, want) in cases {
+            let url = compare_url(remote, "main", "main").unwrap();
+            let root = ["/compare/", "/-/merge_requests/", "/pull-requests/"]
+                .iter()
+                .find_map(|m| url.find(m).map(|i| url[..i].to_string()))
+                .unwrap();
+            assert_eq!(root, want);
+        }
+        assert!(compare_url("D:/local/bare", "main", "main").is_none());
     }
 
     #[test]
