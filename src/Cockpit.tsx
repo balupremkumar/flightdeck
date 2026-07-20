@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useApp } from "./store";
 import { LeftPanel } from "./LeftPanel";
 import { PaneGrid } from "./PaneGrid";
@@ -45,6 +45,13 @@ export function Cockpit() {
   const broadcastOpen = useUI((s) => s.broadcastOpen);
   const setBroadcastOpen = useUI((s) => s.setBroadcastOpen);
 
+  // UI-156: most-recently-used workspace order for Ctrl+Tab.
+  const mruRef = useRef<number[]>([]);
+  useEffect(() => {
+    if (activeId == null) return;
+    mruRef.current = [activeId, ...mruRef.current.filter((id) => id !== activeId)].slice(0, 20);
+  }, [activeId]);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.ctrlKey && e.key === ",") { e.preventDefault(); setSettingsOpen(true); return; }
@@ -53,6 +60,20 @@ export function Cockpit() {
         if ((e.target as HTMLElement)?.closest?.(".pbody")) return;
         e.preventDefault();
         useUI.getState().setAttentionOpen(!useUI.getState().attentionOpen);
+        return;
+      }
+      // UI-156: Ctrl+Tab cycles workspaces most-recently-used first, like a
+      // browser — Ctrl+1..9 is positional, this is "back to what I was on".
+      if (e.ctrlKey && e.key === "Tab") {
+        e.preventDefault();
+        const st = useApp.getState();
+        if (st.workspaces.length < 2) return;
+        const order = mruRef.current.filter((id) => st.workspaces.some((w) => w.id === id));
+        const rest = st.workspaces.map((w) => w.id).filter((id) => !order.includes(id));
+        const ring = [...order, ...rest];
+        const cur = ring.indexOf(st.activeId ?? ring[0]);
+        const next = ring[(cur + (e.shiftKey ? -1 : 1) + ring.length) % ring.length];
+        st.switchWorkspace(next);
         return;
       }
       // UI-124: Alt+1..9 focuses pane N in the active workspace.
@@ -101,15 +122,25 @@ export function Cockpit() {
           // Read live state at close time (not render time) — the listener is
           // registered once and must see the current panes.
           const wss = useApp.getState().workspaces;
-          const anyLive = wss.some((w) =>
-            w.panes.some((p) => p.state === "running" || p.state === "starting" || p.state === "waiting")
-          );
+          const all = wss.flatMap((w) => w.panes);
+          const anyLive = all.some((p) => p.state === "running" || p.state === "starting" || p.state === "waiting" || p.state === "permission");
           if (!anyLive) return; // nothing live — close straight through
           e.preventDefault();
-          const n = wss.reduce((c, w) => c + w.panes.length, 0);
+          // UI-195: itemise what's actually at stake instead of a flat count —
+          // "3 running, 1 waiting on you" is a decision, "4 panes" is a shrug.
+          const parts: string[] = [];
+          const count = (st: string) => all.filter((p) => p.state === st).length;
+          if (count("running")) parts.push(`${count("running")} running`);
+          if (count("starting")) parts.push(`${count("starting")} still starting`);
+          if (count("permission")) parts.push(`${count("permission")} waiting on your approval`);
+          if (count("waiting")) parts.push(`${count("waiting")} idle-waiting`);
+          const dirty = all.filter((p) => !!p.worktreePath).length;
+          const worktreeNote = dirty > 0
+            ? ` ${dirty} isolated worktree${dirty === 1 ? "" : "s"} stay on disk and reattach next launch.`
+            : "";
           requestConfirm({
             title: "Quit Flightdeck?",
-            body: `Agent sessions are still live across ${n} pane${n === 1 ? "" : "s"}. Quitting ends them — your workspaces reopen next launch, but running sessions can't be brought back.`,
+            body: `${parts.join(", ")}. Quitting ends those sessions — your workspaces reopen next launch, but running agents can't be brought back.${worktreeNote}`,
             confirmLabel: "Quit & end sessions",
             danger: true,
             onConfirm: () => { void getCurrentWindow().destroy(); },

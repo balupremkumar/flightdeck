@@ -4,7 +4,7 @@ import { useApp, type PaneModel, type Workspace } from "./store";
 import { useUI } from "./ui";
 import { defaultCycle } from "./vendors";
 import { closeWorkspaceWithCleanup, preparePanes, isolationPref, rememberedOrSuggestedSetup } from "./worktrees";
-import { IconPlus, IconClose, IconBoard, IconDrag } from "./Icons";
+import { IconPlus, IconClose, IconBoard, IconDrag, IconBranch } from "./Icons";
 import { relTime as fmtRel, timeTitle } from "./format";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
@@ -343,6 +343,24 @@ export function LeftPanel({ expanded, view, setView }: { expanded: boolean; view
                   <span className="lp-name" onDoubleClick={(e) => { e.stopPropagation(); startRename(w); }}>{w.name}</span>
                 )}
                 <span className="lp-meta">
+                  {/* UI-149: the tile shows this workspace's actual pane layout
+                      and per-pane state — a glanceable mirror of the grid. */}
+                  {r.total > 0 && (
+                    <span
+                      className="lp-mini"
+                      style={{ gridTemplateColumns: `repeat(${Math.min(3, Math.ceil(Math.sqrt(w.panes.length)))}, 1fr)` }}
+                      title={`${w.panes.length} pane${w.panes.length === 1 ? "" : "s"}`}
+                      aria-hidden
+                    >
+                      {w.panes.slice(0, 9).map((p) => (<i key={p.id} className={"lp-mini-c " + p.state} />))}
+                    </span>
+                  )}
+                  {/* UI-150: isolated panes mean worktrees on disk — say how many. */}
+                  {w.panes.some((p) => p.worktreePath) && (
+                    <span className="lp-stat lp-wt" title={`${w.panes.filter((p) => p.worktreePath).length} isolated worktree(s)`}>
+                      <IconBranch size={9} />{w.panes.filter((p) => p.worktreePath).length}
+                    </span>
+                  )}
                   {r.starting > 0 && <span className="lp-stat start" title="Still launching"><i />{r.starting}</span>}
                   {r.running > 0 && <span className="lp-stat run"><i />{r.running}</span>}
                   {r.waiting > 0 && <span className="lp-stat wait"><i />{r.waiting}</span>}

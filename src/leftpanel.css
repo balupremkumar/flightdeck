@@ -109,3 +109,21 @@
   background: var(--surface); border: 1px solid var(--line-strong); border-bottom-width: 2px;
   border-radius: 5px; padding: 1px 5px; margin-right: 3px;
 }
+
+/* UI-149: mini pane-layout preview on each workspace tile */
+.lp-mini {
+  display: grid; gap: 1.5px; flex: none;
+  width: 18px; margin-right: 2px;
+}
+.lp-mini-c {
+  width: 100%; aspect-ratio: 1; border-radius: 1px;
+  background: var(--st-idle); display: block;
+}
+.lp-mini-c.running { background: var(--st-running); }
+.lp-mini-c.starting { background: var(--st-starting); }
+.lp-mini-c.waiting { background: var(--st-waiting); }
+.lp-mini-c.permission { background: var(--st-waiting); animation: lp-mini-pulse var(--t-pulse) ease-in-out infinite; }
+.lp-mini-c.error { background: var(--st-error); }
+@keyframes lp-mini-pulse { 0%,100% { opacity: 1; } 50% { opacity: .4; } }
+/* UI-150: worktree count badge */
+.lp-stat.lp-wt { display: inline-flex; align-items: center; gap: 2px; color: var(--faint); }
