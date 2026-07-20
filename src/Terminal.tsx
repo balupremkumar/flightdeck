@@ -74,6 +74,13 @@ export interface TerminalHandle {
   findPrevious: (query: string) => boolean;
   clearSearch: () => void;
   onSearchResults: (cb: (e: ISearchResultChangeEvent) => void) => () => void;
+  /** UI-134: wipe the scrollback without restarting the agent. */
+  clearScrollback: () => void;
+  /** UI-132: selection helpers for the context menu. */
+  getSelection: () => string;
+  selectAll: () => void;
+  copySelection: () => Promise<void>;
+  paste: (text: string) => void;
 }
 
 interface TerminalProps {
@@ -93,6 +100,8 @@ interface TerminalProps {
   onState?: (state: string) => void;
   /** Live foreground process name (backend `pty://proc`), e.g. "claude" -> "node". */
   onProc?: (name: string) => void;
+  /** UI-135: the child emitted BEL (). */
+  onBell?: () => void;
 }
 
 // Cap on buffered bytes for a pane hidden behind another workspace / focus mode —
@@ -101,7 +110,7 @@ const HIDDEN_BUFFER_CAP = 262144; // 256KB
 
 // One live terminal bound to a PTY in the Rust core.
 export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Terminal(
-  { vendor, cwd, setup, onSetupConsumed, fontSize = 12.5, ligatures = false, quietThresholdMs = 3000, onExit, onState, onProc },
+  { vendor, cwd, setup, onSetupConsumed, fontSize = 12.5, ligatures = false, quietThresholdMs = 3000, onExit, onState, onProc, onBell },
   ref
 ) {
   const elRef = useRef<HTMLDivElement>(null);
@@ -111,6 +120,9 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
   const ligAddonRef = useRef<LigaturesAddon | null>(null);
   const quietThresholdRef = useRef(quietThresholdMs);
   const themeRef = useRef<ITheme>(terminalThemeFor(activeThemeId()));
+  // Mirrors the effect-local paneId so imperative handle methods (paste, etc.)
+  // can reach the live PTY.
+  const paneIdRef = useRef(0);
 
   useImperativeHandle(ref, () => ({
     findNext: (query, opts) =>
@@ -122,6 +134,14 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
       const d = searchAddonRef.current?.onDidChangeResults(cb);
       return () => d?.dispose();
     },
+    clearScrollback: () => termRef.current?.clear(),
+    getSelection: () => termRef.current?.getSelection() ?? "",
+    selectAll: () => termRef.current?.selectAll(),
+    copySelection: async () => {
+      const sel = termRef.current?.getSelection() ?? "";
+      if (sel) await navigator.clipboard.writeText(sel);
+    },
+    paste: (text: string) => { if (paneIdRef.current) invoke("pty_write", { paneId: paneIdRef.current, data: text }); },
   }), []);
 
   useEffect(() => {
@@ -170,7 +190,27 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
       for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
       return bytes;
     };
-    const writeBytes = (bytes: Uint8Array) => term.write(bytes);
+    // UI-229: a chatty agent emits many small chunks; writing each one
+    // separately makes xterm re-render per event. Coalesce into one write per
+    // animation frame (still ordered, still lossless).
+    let writeQueue: Uint8Array[] = [];
+    let writeRaf = 0;
+    const flushWrites = () => {
+      writeRaf = 0;
+      if (writeQueue.length === 0) return;
+      if (writeQueue.length === 1) { term.write(writeQueue[0]); writeQueue = []; return; }
+      let total = 0;
+      for (const b of writeQueue) total += b.length;
+      const merged = new Uint8Array(total);
+      let off = 0;
+      for (const b of writeQueue) { merged.set(b, off); off += b.length; }
+      writeQueue = [];
+      term.write(merged);
+    };
+    const writeBytes = (bytes: Uint8Array) => {
+      writeQueue.push(bytes);
+      if (writeRaf === 0) writeRaf = requestAnimationFrame(flushWrites);
+    };
     const writeB64 = (b64: string) => writeBytes(decodeB64(b64));
 
     // Hidden-pane render throttle: while this pane's container is display:none
@@ -228,7 +268,11 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
     const textDecoder = new TextDecoder("utf-8", { fatal: false });
     let outTail = "";
     const appendTail = (bytes: Uint8Array) => {
-      outTail = (outTail + textDecoder.decode(bytes)).slice(-600);
+      const text = textDecoder.decode(bytes);
+      // UI-135: the agent rang the terminal bell — surface it as a visual pulse
+      // (many CLIs ring on "done" or "needs input").
+      if (text.includes("\x07")) onBell?.();
+      outTail = (outTail + text).slice(-600);
     };
     const tailShowsPermissionPrompt = () =>
       PERMISSION_PATTERNS.some((re) => re.test(outTail.replace(OSC_RE, "").replace(ANSI_RE, "")));
@@ -291,6 +335,7 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
 
       try {
         paneId = await invoke<number>("pty_spawn", { vendor, cwd, cols: term.cols, rows: term.rows, setup: setup ?? null });
+        paneIdRef.current = paneId;
       } catch (err) {
         term.write(`\r\n\x1b[31m[failed to start ${vendor}: ${String(err)}]\x1b[0m\r\n`);
         onState?.("error");
@@ -334,6 +379,7 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
 
     return () => {
       disposed = true;
+      if (writeRaf) cancelAnimationFrame(writeRaf);
       clearQuietTimer();
       ro.disconnect();
       io.disconnect();
@@ -344,6 +390,7 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
       unState?.();
       unProc?.();
       if (paneId) invoke("pty_kill", { paneId });
+      paneIdRef.current = 0;
       term.dispose();
       termRef.current = null;
       fitRef.current = null;

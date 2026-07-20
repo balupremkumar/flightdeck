@@ -243,6 +243,55 @@ export function PaneView({
   // Token chip (UI-3): real numbers from the agent's own session transcript
   // (Claude Code writes ~/.claude/projects/<cwd>/*.jsonl). Agents without a
   // transcript return null and get no chip — never an estimate.
+  // UI-132: terminal context menu (copy/paste/clear/find), positioned at the
+  // click. Native right-click gives nothing useful inside a canvas terminal.
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; hasSel: boolean } | null>(null);
+  // UI-135: brief visual pulse when the child rings BEL.
+  const [bell, setBell] = useState(false);
+  const bellTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const pulseBell = () => {
+    setBell(true);
+    clearTimeout(bellTimer.current);
+    bellTimer.current = setTimeout(() => setBell(false), 900);
+  };
+  useEffect(() => () => clearTimeout(bellTimer.current), []);
+
+  useEffect(() => {
+    if (!ctxMenu) return;
+    const close = () => setCtxMenu(null);
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setCtxMenu(null); };
+    window.addEventListener("mousedown", close);
+    window.addEventListener("keydown", onKey);
+    return () => { window.removeEventListener("mousedown", close); window.removeEventListener("keydown", onKey); };
+  }, [ctxMenu]);
+
+  // UI-133: pasting many lines into a shell can execute them all — confirm
+  // first. Single-line pastes go straight through.
+  const pasteFromClipboard = async () => {
+    setCtxMenu(null);
+    let text = "";
+    try { text = await navigator.clipboard.readText(); } catch { pushToast("error", "Couldn't read the clipboard."); return; }
+    if (!text) return;
+    const lines = text.split(/\r?\n/).filter((l) => l.length > 0).length;
+    if (lines > 1) {
+      requestConfirm({
+        title: `Paste ${lines} lines into ${displayName}?`,
+        body: "Multi-line pastes can run every line at once in a shell. Check it's what you meant to send.",
+        confirmLabel: `Paste ${lines} lines`,
+        onConfirm: () => terminalRef.current?.paste(text),
+      });
+      return;
+    }
+    terminalRef.current?.paste(text);
+  };
+
+  const clearScrollback = () => {
+    setCtxMenu(null);
+    setMenuOpen(false);
+    terminalRef.current?.clearScrollback();
+    pushToast("info", "Cleared this pane's scrollback.");
+  };
+
   // UI-126: escalate the "starting" copy once the wait stops looking normal.
   const [slowStart, setSlowStart] = useState(false);
   useEffect(() => {
@@ -410,6 +459,7 @@ export function PaneView({
           </button>
           {menuOpen && menuPos && createPortal(
             <div className="pmenu" style={{ top: menuPos.top, left: menuPos.left }} onMouseLeave={closeMenu}>
+              <button className="pmenu-item" onClick={clearScrollback}>Clear scrollback</button>
               <button className="pmenu-item" onClick={() => { restartPane(pane.id); closeMenu(); }}>
                 <IconRefresh size={13} /> Restart
               </button>
@@ -468,7 +518,13 @@ export function PaneView({
         </div>
         <button className="x" onClick={tryClosePane} title="Close pane"><IconClose size={12} /></button>
       </div>
-      <div className="pbody">
+      <div
+        className={"pbody" + (bell ? " bell" : "")}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          setCtxMenu({ x: e.clientX, y: e.clientY, hasSel: !!terminalRef.current?.getSelection() });
+        }}
+      >
         {pane.state === "starting" && (
           <div className="plaunching" aria-live="polite">
             {/* UI-127: a setup phase is a different wait from a slow agent — say which. */}
@@ -520,8 +576,27 @@ export function PaneView({
           onExit={(crashed) => setPaneState(pane.id, crashed ? "error" : "idle")}
           onState={(st) => setPaneState(pane.id, st as PaneState)}
           onProc={setProcName}
+          onBell={pulseBell}
         />
       </div>
+      {ctxMenu && createPortal(
+        <div
+          className="pmenu pctx"
+          style={{ top: ctxMenu.y, left: ctxMenu.x }}
+          onMouseDown={(e) => e.stopPropagation()}
+          role="menu"
+        >
+          <button className="pmenu-item" disabled={!ctxMenu.hasSel} onClick={() => { void terminalRef.current?.copySelection(); setCtxMenu(null); }}>
+            Copy
+          </button>
+          <button className="pmenu-item" onClick={() => void pasteFromClipboard()}>Paste</button>
+          <button className="pmenu-item" onClick={() => { terminalRef.current?.selectAll(); setCtxMenu(null); }}>Select all</button>
+          <div className="pmenu-sep" />
+          <button className="pmenu-item" onClick={() => { setCtxMenu(null); setSearchOpen(true); }}>Find…</button>
+          <button className="pmenu-item" onClick={clearScrollback}>Clear scrollback</button>
+        </div>,
+        document.body
+      )}
     </div>
   );
 }

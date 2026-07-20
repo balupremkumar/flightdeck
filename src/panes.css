@@ -279,3 +279,15 @@
   padding: 1px 5px; border-radius: var(--r-sm);
   background: color-mix(in srgb, var(--text) 8%, transparent);
 }
+
+/* UI-132: terminal context menu (reuses .pmenu chrome, positioned at cursor) */
+.pmenu.pctx { min-width: 170px; }
+.pmenu-item:disabled { opacity: .4; cursor: default; }
+.pmenu-item:disabled:hover { background: transparent; }
+/* UI-135: BEL pulse — a brief accent ring, no sound, honours reduced motion */
+.pbody.bell { animation: pbody-bell var(--t-slow) ease-out 2; }
+@keyframes pbody-bell {
+  0%   { box-shadow: inset 0 0 0 0 transparent; }
+  35%  { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--st-waiting) 70%, transparent); }
+  100% { box-shadow: inset 0 0 0 0 transparent; }
+}
