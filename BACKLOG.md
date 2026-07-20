@@ -23,8 +23,9 @@ local merge-back (auto-commit → --no-ff, conflict aborts cleanly). Follow-ups:
   (New Workspace field, lockfile-suggested + per-repo memory; runs in-pane via
   a pwsh wrapper before the agent, failure = pane error without agent launch;
   restore re-runs it when a worktree is recreated).
-- **Per-pane Explorer rooting / worktree switcher** (Explorer still shows the
-  main checkout, not the focused pane's worktree).
+- ~~**Per-pane Explorer rooting / worktree switcher**~~ **DONE 2026-07-20
+  session 8** (Workspace/Pane scope toggle; tree, git pill, new-terminal-here
+  follow the focused pane's worktree).
 - **WSL isolation** (excluded in v1: worktree `.git` file embeds a Windows
   gitdir path WSL git can't resolve).
 - **Attention Queue** (ranked "needs you now" vs the bell feed), richer status
@@ -116,7 +117,7 @@ Order is dependency-driven; the vendor adapter is the load-bearing refactor ever
 - ~~K0c. Fresh worktrees have no build artifacts~~ — **FIXED 2026-07-20 session 8** (worktree setup command, Tier 0 list above).
 - ~~K1. Settings ⚙ does nothing~~ — **FIXED session 4** (Settings screen + Ctrl+,).
 - ~~K2. No Job Object~~ — **SHIPPED wave 2** (see R2; stale claim corrected session 8).
-- **K3. `csp:null`** — acceptable for local-only today, tighten with R6.
+- ~~K3. `csp:null`~~ — **STALE: CSP was tightened in wave 2** (tauri.conf.json has a full policy; applies to production builds only). Session 8: release exe boots under it; full visual verify of the prod UI still pending a free screen (fullscreen game was up).
 - **K4. StrictMode dev double-spawn** — dev-only; each pane briefly launches two real CLI processes under `npm run tauri dev`. Benign in production build. Watch item.
 - **K5. Resize dropped in a narrow startup gap** — a container resize landing between mount and spawn isn't forwarded to the PTY; self-corrects on next resize. Low.
 - ~~K6. Close-workspace has no active-session warning~~ — **FIXED session 4** (ConfirmDialog; session 6 added worktree cleanup to the same flow).
@@ -601,11 +602,11 @@ keeps/drops against THIS list. Already fixed (wave 4 + session 6, excluded):
 partially done ("Preparing worktrees…" busy state).
 
 ### K-A. Competitive visual gaps (from the market research — highest leverage)
-- UI-1. **Attention Queue** — ~~ranked "needs you now" surface~~ **v1 DONE 2026-07-20** (bell: error-first + longest-waiting-first + durations). Full standalone surface = later.
+- ~~UI-1. **Attention Queue**~~ **DONE 2026-07-20** (v1 bell 2026-07-20; v2 standalone overlay session 8 — Ctrl+Shift+A / palette / bell "See all", keyboard-driven, shared ranking in attention.ts).
 - ~~UI-2. Richer status vocabulary~~ **v1 DONE 2026-07-20** ("permission" state from output-pattern detection, ranked first in the attention queue; per-vendor patterns = #220 full; "stalled" still open).
-- UI-3. **Per-pane token/cost estimate** chip. [Paneflow]
+- ~~UI-3. **Per-pane token/cost** chip~~ **DONE 2026-07-20 session 8** (real numbers from Claude Code's own session transcript, incremental jsonl scan; no-transcript agents get no chip — never an estimate). [Paneflow]
 - UI-4. **Dashboard / overview** — all workspaces/panes/health at a glance; Settings > Diagnostics exposing the already-built pane_health / recover_orphans / support-bundle (375/376/377 ⭐ — biggest built-vs-shipped gap).
-- UI-5. **Merge-conflict resolution surface** (v1 aborts with a message).
+- ~~UI-5. **Merge-conflict resolution surface**~~ **DONE 2026-07-20 session 8** (in-drawer panel: conflicted file list, both-branches-intact note, "Create PR instead"; full local resolution UI not planned — PR flow owns conflicts).
 - UI-6. **In-app browser + port management** for dev-server previews. [Superset]
 - UI-7. **Agent transcript / run-history browser.**
 - UI-8. **Markdown/notes panes.** [Paneflow]
