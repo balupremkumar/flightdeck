@@ -8,7 +8,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { IconFolder, IconFile, IconChevron, IconBranch, IconAgent, IconRefresh } from "./Icons";
 import { spawnPane } from "./worktrees";
-import { cachedInvoke } from "./poll";
+import { cachedInvoke, usePoll } from "./poll";
 import "./explorer.css";
 
 interface Entry { name: string; dir: boolean; }
@@ -289,13 +289,15 @@ export function Explorer({ root, wsId, vendor = "pwsh", paneRoot, paneLabel }: E
     return () => { window.removeEventListener("mousedown", close); window.removeEventListener("keydown", onKey, true); };
   }, [ctx]);
 
-  const load = () => {
+  /** `quiet` re-reads without flipping to the skeleton state — an automatic
+   *  refresh must never make a settled tree flash every few seconds. */
+  const load = (quiet = false) => {
     if (!effectiveRoot) { setStatus("empty-root"); return; }
     const mySeq = ++seq.current;
-    setStatus("loading");
+    if (!quiet) setStatus("loading");
     invoke<Entry[]>("fs_list_dir", { path: effectiveRoot })
       .then((e) => { if (seq.current === mySeq) { setEntries(e); setStatus("loaded"); } })
-      .catch(() => { if (seq.current === mySeq) setStatus("error"); });
+      .catch(() => { if (seq.current === mySeq && !quiet) setStatus("error"); });
     // Shared with every PaneView on this cwd (UI-234) — one git subprocess,
     // not one per surface. Degrades silently for non-repos.
     cachedInvoke<GitInfo>("git_status", { cwd: effectiveRoot }, 15000)
@@ -304,6 +306,22 @@ export function Explorer({ root, wsId, vendor = "pwsh", paneRoot, paneLabel }: E
   };
 
   useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [effectiveRoot]);
+
+  // UI-213: agents change files behind your back, so a manually-refreshed tree
+  // goes stale within seconds. This is a periodic re-read, not a true OS
+  // watcher (that would mean a new crate + a watcher thread; persist.rs set the
+  // no-new-dependency precedent). usePoll already stands down when the panel is
+  // hidden or the window is minimised, and refreshes immediately on return, so
+  // the common case — alt-tab back and look — is covered with no extra cost.
+  usePoll(() => { load(true); }, 10000, [effectiveRoot], panelOpen && !!effectiveRoot);
+
+  // Refresh the moment the window regains focus, ahead of the next tick.
+  useEffect(() => {
+    const onFocus = () => { if (panelOpen && effectiveRoot) load(true); };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [panelOpen, effectiveRoot]);
 
   return (
     <div className="explorer" style={{ width }}>
@@ -326,7 +344,7 @@ export function Explorer({ root, wsId, vendor = "pwsh", paneRoot, paneLabel }: E
           </span>
         )}
         <span className="sp" />
-        <button className="ex-refresh" onClick={load} title="Refresh"><IconRefresh size={12} /></button>
+        <button className="ex-refresh" onClick={() => load()} title="Refresh"><IconRefresh size={12} /></button>
       </div>
 
       {paneRoot && paneRoot !== root && (
@@ -381,7 +399,7 @@ export function Explorer({ root, wsId, vendor = "pwsh", paneRoot, paneLabel }: E
           {status === "error" && (
             <div className="ex-state">
               Couldn't read this folder.
-              <button className="ex-retry" onClick={load}>Retry</button>
+              <button className="ex-retry" onClick={() => load()}>Retry</button>
             </div>
           )}
           {status === "loaded" && entries.length === 0 && <div className="ex-state">Empty folder.</div>}
