@@ -641,7 +641,7 @@ partially done ("Preparing worktrees…" busy state).
 - ~~UI-29. Explorer virtualisation for huge dirs (323); close-last-pane prompt (324).~~ **DONE 2026-07-20 session 8** (close-workspace exit from the empty grid)
 
 ### K-F. Keyboard & a11y (QOL §5 + BACKLOG 121/122/207-210)
-- UI-30. Focus traps: Settings + CardDetail (325/326); Esc on Notifications + pane menu (329/332).
+- ~~UI-30. Focus traps: Settings + CardDetail (325/326); Esc on Notifications + pane menu (329/332).~~ **DONE 2026-07-20 session 8** (focus traps (Settings + CardDetail), E2E-verified)
 - UI-31. Keyboard paths: card select/move, workspace context menu, stable pane-header tab order (331/333/334); rename aria-labels (330); Broadcast close affordance (327).
 - UI-32. Full keyboard-nav + focus-order audit; screen-reader labels; colour-blind status audit (121/122/207-209).
 
