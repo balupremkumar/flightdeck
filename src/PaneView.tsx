@@ -201,10 +201,12 @@ export function PaneView({
     return () => { cancelled = true; clearInterval(id); };
   }, [pane.cwd, pane.epoch]);
 
-  // Diff-stat badge (isolated panes only — plain panes would just mirror the
-  // user's own uncommitted work, which isn't this pane's doing).
+  // Diff-stat badge (UI-23): isolated panes diff against their recorded base
+  // branch; plain repo panes diff against HEAD (uncommitted changes) — either
+  // way, a glanceable "what's changed here" that opens the review drawer.
+  const inRepo = !!pane.worktreePath || !!gitStatus?.isRepo;
   useEffect(() => {
-    if (!pane.worktreePath) { setDiffStat(null); return; }
+    if (!inRepo) { setDiffStat(null); return; }
     let cancelled = false;
     const poll = async () => {
       try {
@@ -217,7 +219,7 @@ export function PaneView({
     poll();
     const id = setInterval(poll, GIT_POLL_MS);
     return () => { cancelled = true; clearInterval(id); };
-  }, [pane.cwd, pane.epoch, pane.worktreePath, pane.baseBranch]);
+  }, [pane.cwd, pane.epoch, pane.baseBranch, inRepo]);
 
   return (
     <div

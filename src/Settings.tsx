@@ -145,6 +145,16 @@ function saveStartupBehavior(v: StartupBehavior) {
 // tauri.conf.json version bumps.
 export const APP_VERSION = "0.1.0";
 
+// Newest first; trim to the last ~10 entries as it grows.
+const CHANGELOG: Array<{ date: string; text: string }> = [
+  { date: "2026-07-20", text: "\"Needs approval\" badge when an agent is blocked on a permission prompt; attention queue ranks it first." },
+  { date: "2026-07-20", text: "Add any agent by dropping a JSON manifest in the vendors folder — no rebuild (see Agents above)." },
+  { date: "2026-07-20", text: "Sessions persist: workspaces, panes, worktrees and the Board survive a restart, with a reopen prompt." },
+  { date: "2026-07-20", text: "Custom accent colour — pick any colour; dark & light variants are derived automatically." },
+  { date: "2026-07-20", text: "Diagnostics: per-pane CPU/memory, stray-process cleanup, redacted support-bundle export." },
+  { date: "2026-07-19", text: "Worktree isolation: each agent works on its own branch in its own folder copy, with a review & merge drawer." },
+];
+
 // ---------------------------------------------------------------------
 // Diagnostics (UI-4 / QOL 375-377): surfaces three backend capabilities that
 // were built + tested but had zero UI — per-pane health, stray-process
@@ -609,6 +619,15 @@ export function Settings() {
           <section className="set-section">
             <div className="set-label">About</div>
             <div className="set-about">Flightdeck v{APP_VERSION} — a multi-agent terminal cockpit. Deep Cove build.</div>
+            {/* UI-42: a real "what's new" — the cheapest active-development signal. */}
+            <details className="set-changelog">
+              <summary>What's new</summary>
+              <ul>
+                {CHANGELOG.map((c) => (
+                  <li key={c.date + c.text}><span className="set-cl-date">{c.date}</span> {c.text}</li>
+                ))}
+              </ul>
+            </details>
           </section>
         </div>
       </div>
