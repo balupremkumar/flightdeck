@@ -625,7 +625,7 @@ partially done ("Preparing worktrees…" busy state).
 - ~~UI-17. Keyboard path for pane font-zoom controls (300).~~ **DONE 2026-07-20 session 8** (Ctrl+= / Ctrl+- / Ctrl+0 font zoom)
 - ~~UI-18. Toast pause-on-hover~~ **DONE 2026-07-20**.
 - ~~UI-19. Scroll-fade cues on Settings/palette lists (302/303).~~ **DONE 2026-07-20 session 8** (scroll-fade cue on Settings)
-- UI-20. One shared drop-target visual grammar (304).
+- ~~UI-20. One shared drop-target visual grammar (304).~~ **DONE 2026-07-20 session 8** (one drop-target colour grammar)
 
 ### K-D. Information honesty (QOL §3)
 - ~~UI-21. Absolute timestamps on hover~~ **DONE 2026-07-20** (feed rows also gained relative age).
@@ -648,7 +648,7 @@ partially done ("Preparing worktrees…" busy state).
 ### K-G. Visual coherence (QOL §6)
 - ~~UI-33. Token gaps: .btn-danger #fff, High-Contrast --glow, radius scale, shared .icon-btn (335/337/338/339).~~ **DONE 2026-07-20 session 8** (glow tokenised, shared .icon-btn base, radius scale (btn-danger already token-driven))
 - UI-34. Terminal-vs-chrome palette cross-check per theme (340).
-- UI-35. Board empty-glyph → real icon (341); dead .bell CSS cleanup (342); shared signal-thickness scale (343/344).
+- ~~UI-35. Board empty-glyph → real icon (341); dead .bell CSS cleanup (342); shared signal-thickness scale (343/344).~~ **DONE 2026-07-20 session 8** (dead bell CSS removed; lost radar-ping restored)
 
 ### K-H. Copy polish (QOL §7)
 - ~~UI-36. One destructive-warning phrase~~ **CLOSED 2026-07-20 session 8 — premise didn't hold**: "can't be brought back" (ending a live agent process) and "can't be undone" (discarding stored data) describe genuinely different things, and each is already used consistently within its class. Collapsing them to one phrase would be less accurate, not more. Toast house style + shared verbs (the rest of 346/349/353/354) remain open.
