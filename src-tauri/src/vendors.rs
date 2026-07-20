@@ -144,8 +144,8 @@ fn ensure_agy_trust(work_dir: &str) {
 }
 
 pub trait VendorAdapter: Send + Sync {
-    fn id(&self) -> &'static str;
-    fn label(&self) -> &'static str;
+    fn id(&self) -> &str;
+    fn label(&self) -> &str;
     /// (installed, detail) — detail is a resolved path when installed, or a
     /// human-readable reason when not.
     fn probe(&self) -> (bool, String);
@@ -154,21 +154,21 @@ pub trait VendorAdapter: Send + Sync {
     fn command(&self, cwd: &str) -> CommandBuilder;
     /// Base image name of the root process this adapter launches, used by the
     /// orphan scanner (203) to recognise stray Flightdeck-spawned trees.
-    fn root_exe(&self) -> &'static str;
+    fn root_exe(&self) -> &str;
 
     /// Pre-spawn side effect hook. No-op by default.
     fn prepare(&self, _cwd: &str) {}
 
     /// Compact display name. Defaults to the full label.
-    fn short(&self) -> &'static str {
+    fn short(&self) -> &str {
         self.label()
     }
     /// "agent" or "shell". Agents are the AI CLIs; shells are plain terminals.
-    fn kind(&self) -> &'static str {
+    fn kind(&self) -> &str {
         "agent"
     }
     /// CSS custom-property name used to colour this vendor in the UI.
-    fn accent(&self) -> &'static str {
+    fn accent(&self) -> &str {
         "--accent"
     }
     /// Env vars this adapter must not inherit. Always a superset of
@@ -182,10 +182,10 @@ pub trait VendorAdapter: Send + Sync {
 
 struct Claude;
 impl VendorAdapter for Claude {
-    fn id(&self) -> &'static str { "claude" }
-    fn label(&self) -> &'static str { "Claude Code" }
-    fn short(&self) -> &'static str { "Claude" }
-    fn accent(&self) -> &'static str { "--agent-claude" }
+    fn id(&self) -> &str { "claude" }
+    fn label(&self) -> &str { "Claude Code" }
+    fn short(&self) -> &str { "Claude" }
+    fn accent(&self) -> &str { "--agent-claude" }
     fn probe(&self) -> (bool, String) {
         match which("claude") {
             Some(p) => (true, p),
@@ -200,15 +200,15 @@ impl VendorAdapter for Claude {
         c.cwd(cwd);
         c
     }
-    fn root_exe(&self) -> &'static str { "pwsh.exe" }
+    fn root_exe(&self) -> &str { "pwsh.exe" }
 }
 
 struct Agy;
 impl VendorAdapter for Agy {
-    fn id(&self) -> &'static str { "agy" }
-    fn label(&self) -> &'static str { "Antigravity" }
-    fn short(&self) -> &'static str { "Antigravity" }
-    fn accent(&self) -> &'static str { "--accent" }
+    fn id(&self) -> &str { "agy" }
+    fn label(&self) -> &str { "Antigravity" }
+    fn short(&self) -> &str { "Antigravity" }
+    fn accent(&self) -> &str { "--accent" }
     fn probe(&self) -> (bool, String) {
         let p = agy_path();
         if std::path::Path::new(&p).exists() {
@@ -223,7 +223,7 @@ impl VendorAdapter for Agy {
         c.cwd(cwd);
         c
     }
-    fn root_exe(&self) -> &'static str { "agy.exe" }
+    fn root_exe(&self) -> &str { "agy.exe" }
     fn prepare(&self, cwd: &str) { ensure_agy_trust(cwd); }
 }
 
@@ -231,11 +231,11 @@ impl VendorAdapter for Agy {
 
 struct Pwsh;
 impl VendorAdapter for Pwsh {
-    fn id(&self) -> &'static str { "pwsh" }
-    fn label(&self) -> &'static str { "pwsh (shell)" }
-    fn short(&self) -> &'static str { "pwsh" }
-    fn kind(&self) -> &'static str { "shell" }
-    fn accent(&self) -> &'static str { "--aqua" }
+    fn id(&self) -> &str { "pwsh" }
+    fn label(&self) -> &str { "pwsh (shell)" }
+    fn short(&self) -> &str { "pwsh" }
+    fn kind(&self) -> &str { "shell" }
+    fn accent(&self) -> &str { "--aqua" }
     fn probe(&self) -> (bool, String) {
         match which("pwsh.exe").or_else(|| which("pwsh")) {
             Some(p) => (true, p),
@@ -247,16 +247,16 @@ impl VendorAdapter for Pwsh {
         c.cwd(cwd);
         c
     }
-    fn root_exe(&self) -> &'static str { "pwsh.exe" }
+    fn root_exe(&self) -> &str { "pwsh.exe" }
 }
 
 struct Cmd;
 impl VendorAdapter for Cmd {
-    fn id(&self) -> &'static str { "cmd" }
-    fn label(&self) -> &'static str { "cmd (shell)" }
-    fn short(&self) -> &'static str { "cmd" }
-    fn kind(&self) -> &'static str { "shell" }
-    fn accent(&self) -> &'static str { "--muted" }
+    fn id(&self) -> &str { "cmd" }
+    fn label(&self) -> &str { "cmd (shell)" }
+    fn short(&self) -> &str { "cmd" }
+    fn kind(&self) -> &str { "shell" }
+    fn accent(&self) -> &str { "--muted" }
     fn probe(&self) -> (bool, String) {
         match which("cmd.exe") {
             Some(p) => (true, p),
@@ -268,16 +268,16 @@ impl VendorAdapter for Cmd {
         c.cwd(cwd);
         c
     }
-    fn root_exe(&self) -> &'static str { "cmd.exe" }
+    fn root_exe(&self) -> &str { "cmd.exe" }
 }
 
 struct GitBash;
 impl VendorAdapter for GitBash {
-    fn id(&self) -> &'static str { "git-bash" }
-    fn label(&self) -> &'static str { "Git Bash" }
-    fn short(&self) -> &'static str { "Git Bash" }
-    fn kind(&self) -> &'static str { "shell" }
-    fn accent(&self) -> &'static str { "--st-waiting" }
+    fn id(&self) -> &str { "git-bash" }
+    fn label(&self) -> &str { "Git Bash" }
+    fn short(&self) -> &str { "Git Bash" }
+    fn kind(&self) -> &str { "shell" }
+    fn accent(&self) -> &str { "--st-waiting" }
     fn probe(&self) -> (bool, String) {
         match git_bash_path() {
             Some(p) => (true, p),
@@ -291,16 +291,16 @@ impl VendorAdapter for GitBash {
         c.cwd(cwd);
         c
     }
-    fn root_exe(&self) -> &'static str { "bash.exe" }
+    fn root_exe(&self) -> &str { "bash.exe" }
 }
 
 struct Wsl;
 impl VendorAdapter for Wsl {
-    fn id(&self) -> &'static str { "wsl" }
-    fn label(&self) -> &'static str { "WSL" }
-    fn short(&self) -> &'static str { "WSL" }
-    fn kind(&self) -> &'static str { "shell" }
-    fn accent(&self) -> &'static str { "--ice" }
+    fn id(&self) -> &str { "wsl" }
+    fn label(&self) -> &str { "WSL" }
+    fn short(&self) -> &str { "WSL" }
+    fn kind(&self) -> &str { "shell" }
+    fn accent(&self) -> &str { "--ice" }
     fn probe(&self) -> (bool, String) {
         match which("wsl.exe") {
             Some(p) => (true, p),
@@ -314,18 +314,200 @@ impl VendorAdapter for Wsl {
         c.cwd(cwd);
         c
     }
-    fn root_exe(&self) -> &'static str { "wsl.exe" }
+    fn root_exe(&self) -> &str { "wsl.exe" }
+}
+
+// --- Manifest vendors (I1 #218) --------------------------------------------
+// The "add any LLM without recompiling" unlock: a JSON file dropped into
+// <app-data>/vendors/ becomes a launchable vendor on the next detect. Files
+// whose names start with '_' are ignored (used for the shipped example).
+//
+//   { "id": "opencode-local", "label": "OpenCode (Local)", "short": "OpenCode",
+//     "kind": "agent", "accent": "#3FD79B",
+//     "exe": "opencode", "args": ["--model", "qwen2.5-coder"],
+//     "env": { "OPENAI_BASE_URL": "http://127.0.0.1:1234/v1",
+//              "OPENAI_API_KEY": "lm-studio" },
+//     "probe": "opencode" }
+//
+// `accent` may be a theme token ("--aqua") or a hex colour — the frontend
+// resolves either. `env` values are EXPLICIT overrides: a key set here is
+// exempted from the ambient-key strip (the user opted in on purpose; that is
+// exactly how a local endpoint gets its dummy API key), while every other
+// BASE/PROXY key is still stripped.
+
+use std::path::{Path, PathBuf};
+use std::sync::RwLock;
+
+static MANIFEST_DIR: RwLock<Option<PathBuf>> = RwLock::new(None);
+
+const EXAMPLE_MANIFEST: &str = r##"{
+  "_comment": "Rename to <something>.json (files starting with _ are ignored) to add this agent. Restart Flightdeck or reopen New Workspace to detect it.",
+  "id": "opencode-local",
+  "label": "OpenCode (Local)",
+  "short": "OpenCode",
+  "kind": "agent",
+  "accent": "#3FD79B",
+  "exe": "opencode",
+  "args": [],
+  "env": {
+    "OPENAI_BASE_URL": "http://127.0.0.1:1234/v1",
+    "OPENAI_API_KEY": "lm-studio"
+  },
+  "probe": "opencode"
+}
+"##;
+
+/// Called once at app start with `<app-data>/vendors`. Creates the dir and
+/// drops the example manifest on first run so the format is discoverable.
+pub fn set_manifest_dir(dir: PathBuf) {
+    let _ = std::fs::create_dir_all(&dir);
+    let example = dir.join("_example-opencode.json");
+    if !example.exists() {
+        let _ = std::fs::write(&example, EXAMPLE_MANIFEST);
+    }
+    *MANIFEST_DIR.write().unwrap() = Some(dir);
+}
+
+pub fn manifest_dir() -> Option<PathBuf> {
+    MANIFEST_DIR.read().unwrap().clone()
+}
+
+#[derive(Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct VendorManifest {
+    id: String,
+    label: String,
+    #[serde(default)]
+    short: Option<String>,
+    #[serde(default)]
+    kind: Option<String>,
+    #[serde(default)]
+    accent: Option<String>,
+    exe: String,
+    #[serde(default)]
+    args: Vec<String>,
+    #[serde(default)]
+    env: std::collections::HashMap<String, String>,
+    #[serde(default)]
+    probe: Option<String>,
+}
+
+struct ManifestVendor {
+    m: VendorManifest,
+    /// Base image name of `exe`, for the orphan scanner.
+    root: String,
+}
+
+impl ManifestVendor {
+    fn new(m: VendorManifest) -> Self {
+        let root = Path::new(&m.exe)
+            .file_name()
+            .map(|f| f.to_string_lossy().into_owned())
+            .unwrap_or_else(|| m.exe.clone());
+        ManifestVendor { m, root }
+    }
+}
+
+impl VendorAdapter for ManifestVendor {
+    fn id(&self) -> &str { &self.m.id }
+    fn label(&self) -> &str { &self.m.label }
+    fn short(&self) -> &str { self.m.short.as_deref().unwrap_or(&self.m.label) }
+    fn kind(&self) -> &str {
+        match self.m.kind.as_deref() {
+            Some("shell") => "shell",
+            _ => "agent",
+        }
+    }
+    fn accent(&self) -> &str { self.m.accent.as_deref().unwrap_or("--accent") }
+    fn root_exe(&self) -> &str { &self.root }
+
+    fn probe(&self) -> (bool, String) {
+        let target = self.m.probe.as_deref().unwrap_or(&self.m.exe);
+        // A path-looking probe checks the filesystem; a bare name goes
+        // through PATH resolution like the builtin adapters.
+        if target.contains('\\') || target.contains('/') {
+            if Path::new(target).exists() {
+                (true, target.to_string())
+            } else {
+                (false, format!("not found at {target}"))
+            }
+        } else {
+            match which(target) {
+                Some(p) => (true, p),
+                None => (false, format!("`{target}` not on PATH")),
+            }
+        }
+    }
+
+    fn command(&self, cwd: &str) -> CommandBuilder {
+        let mut c = CommandBuilder::new(&self.m.exe);
+        c.args(&self.m.args);
+        for (k, v) in &self.m.env {
+            c.env(k, v);
+        }
+        c.cwd(cwd);
+        c
+    }
+
+    /// Ambient-key stripping still applies — EXCEPT keys the manifest sets
+    /// explicitly (build_command strips after `command()`, so an un-exempted
+    /// key would delete the manifest's own value, breaking e.g. the dummy
+    /// OPENAI_API_KEY a local endpoint needs).
+    fn env_strip(&self) -> Vec<&'static str> {
+        BASE_ENV_STRIP
+            .iter()
+            .chain(PROXY_ENV_STRIP.iter())
+            .filter(|k| !self.m.env.contains_key(**k))
+            .copied()
+            .collect()
+    }
+}
+
+/// Load every valid manifest in `dir`. Invalid JSON, missing fields, blank
+/// ids/exes, and ids colliding with builtins or earlier files are skipped —
+/// a bad file must never break the registry.
+fn load_manifests_from(dir: &Path, taken: &[String]) -> Vec<ManifestVendor> {
+    let mut out: Vec<ManifestVendor> = Vec::new();
+    let Ok(entries) = std::fs::read_dir(dir) else { return out };
+    let mut files: Vec<PathBuf> = entries
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| {
+            p.extension().map(|x| x == "json").unwrap_or(false)
+                && !p.file_name().map(|f| f.to_string_lossy().starts_with('_')).unwrap_or(true)
+        })
+        .collect();
+    files.sort(); // deterministic precedence for duplicate ids
+    for f in files {
+        let Ok(s) = std::fs::read_to_string(&f) else { continue };
+        let Ok(m) = serde_json::from_str::<VendorManifest>(&s) else { continue };
+        if m.id.trim().is_empty() || m.exe.trim().is_empty() {
+            continue;
+        }
+        if taken.iter().any(|t| t == &m.id) || out.iter().any(|v| v.m.id == m.id) {
+            continue;
+        }
+        out.push(ManifestVendor::new(m));
+    }
+    out
 }
 
 pub fn registry() -> Vec<Box<dyn VendorAdapter>> {
-    vec![
+    let mut reg: Vec<Box<dyn VendorAdapter>> = vec![
         Box::new(Claude),
         Box::new(Agy),
         Box::new(Pwsh),
         Box::new(Cmd),
         Box::new(GitBash),
         Box::new(Wsl),
-    ]
+    ];
+    if let Some(dir) = manifest_dir() {
+        let taken: Vec<String> = reg.iter().map(|v| v.id().to_string()).collect();
+        for mv in load_manifests_from(&dir, &taken) {
+            reg.push(Box::new(mv));
+        }
+    }
+    reg
 }
 
 /// Falls back to the plain shell (pwsh) for an unknown id, matching the
@@ -381,8 +563,8 @@ mod tests {
             assert!(!v.short().is_empty(), "{} has no short name", v.id());
             assert!(!v.root_exe().is_empty(), "{} has no root_exe", v.id());
             assert!(
-                v.accent().starts_with("--"),
-                "{} accent must be a CSS custom property, got {}",
+                v.accent().starts_with("--") || v.accent().starts_with('#'),
+                "{} accent must be a CSS custom property or hex colour, got {}",
                 v.id(),
                 v.accent()
             );
@@ -434,5 +616,72 @@ mod tests {
     #[test]
     fn detect_covers_the_whole_registry() {
         assert_eq!(detect().len(), registry().len());
+    }
+
+    // --- Manifest vendors (#218) -------------------------------------------
+
+    fn temp_manifest_dir() -> PathBuf {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        static N: AtomicU32 = AtomicU32::new(0);
+        let d = std::env::temp_dir().join(format!(
+            "fd-manifest-test-{}-{}",
+            std::process::id(),
+            N.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    const GOOD: &str = r##"{
+        "id": "opencode-local", "label": "OpenCode (Local)", "short": "OpenCode",
+        "kind": "agent", "accent": "#3FD79B",
+        "exe": "opencode", "args": ["--fast"],
+        "env": { "OPENAI_BASE_URL": "http://127.0.0.1:1234/v1", "OPENAI_API_KEY": "lm-studio" }
+    }"##;
+
+    #[test]
+    fn manifests_load_and_skip_bad_files() {
+        let dir = temp_manifest_dir();
+        std::fs::write(dir.join("opencode.json"), GOOD).unwrap();
+        std::fs::write(dir.join("broken.json"), "{ not json").unwrap();
+        std::fs::write(dir.join("noexe.json"), r#"{"id":"x","label":"X","exe":""}"#).unwrap();
+        std::fs::write(dir.join("collide.json"), r#"{"id":"claude","label":"Fake","exe":"evil.exe"}"#).unwrap();
+        std::fs::write(dir.join("_example.json"), GOOD).unwrap(); // underscore = ignored
+        let loaded = load_manifests_from(&dir, &["claude".to_string()]);
+        assert_eq!(loaded.len(), 1, "only the one valid, non-colliding manifest loads");
+        assert_eq!(loaded[0].id(), "opencode-local");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn manifest_vendor_meets_the_adapter_contract() {
+        let m: VendorManifest = serde_json::from_str(GOOD).unwrap();
+        let v = ManifestVendor::new(m);
+        assert_eq!(v.short(), "OpenCode");
+        assert_eq!(v.kind(), "agent");
+        assert!(v.accent().starts_with('#'));
+        assert_eq!(v.root_exe(), "opencode");
+        let cmd = v.command("D:\\test\\dir");
+        assert_eq!(
+            cmd.get_cwd().map(|c| c.to_string_lossy().into_owned()),
+            Some("D:\\test\\dir".to_string())
+        );
+    }
+
+    /// Explicitly-set env keys are exempt from the ambient strip (or
+    /// build_command would delete the manifest's own values); everything
+    /// else in BASE/PROXY is still stripped.
+    #[test]
+    fn manifest_env_exemption_is_exact() {
+        let m: VendorManifest = serde_json::from_str(GOOD).unwrap();
+        let v = ManifestVendor::new(m);
+        let strip = v.env_strip();
+        assert!(!strip.contains(&"OPENAI_API_KEY"), "explicit key must be exempt");
+        for key in BASE_ENV_STRIP.iter().filter(|k| **k != "OPENAI_API_KEY") {
+            assert!(strip.contains(key), "still strips {key}");
+        }
+        for key in PROXY_ENV_STRIP {
+            assert!(strip.contains(key), "still strips proxy var {key}");
+        }
     }
 }

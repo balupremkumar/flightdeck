@@ -89,6 +89,13 @@ fn detect_vendors() -> Vec<vendors::VendorInfo> {
     vendors::detect()
 }
 
+// The user-facing manifest folder (#218): where JSON vendor files live. The
+// Settings > Agents "Open vendors folder" button reveals it.
+#[tauri::command]
+fn vendors_dir() -> Option<String> {
+    vendors::manifest_dir().map(|p| p.to_string_lossy().into_owned())
+}
+
 fn build_command(vendor: &str, cwd: &str) -> CommandBuilder {
     let adapter = vendors::find(vendor);
     let mut cmd = adapter.command(cwd);
@@ -448,6 +455,7 @@ pub fn run() {
             pty_kill,
             fs_list_dir,
             detect_vendors,
+            vendors_dir,
             pane_health,
             recover_orphans,
             kill_orphans,
@@ -471,6 +479,12 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
+
+    // Manifest vendors (#218): point the registry at <app-data>/vendors so a
+    // dropped JSON file becomes a launchable agent — no recompile.
+    if let Ok(data_dir) = app.handle().path().app_data_dir() {
+        vendors::set_manifest_dir(data_dir.join("vendors"));
+    }
 
     spawn_proc_sampler(app.handle().clone());
 

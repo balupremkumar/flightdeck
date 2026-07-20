@@ -80,9 +80,15 @@ export function vendorShort(id: string): string {
   return vendorMeta(id).short;
 }
 
+/** An accent value from the registry is either a theme token ("--aqua") or,
+ *  for manifest vendors (#218), a literal colour ("#3FD79B"). */
+export function accentCss(accent: string): string {
+  return accent.startsWith("--") ? `var(${accent})` : accent;
+}
+
 /** Ready-to-use CSS colour for a vendor, theme-reactive via the token. */
 export function vendorColor(id: string): string {
-  return `var(${vendorMeta(id).accent})`;
+  return accentCss(vendorMeta(id).accent);
 }
 
 /**

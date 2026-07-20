@@ -4,7 +4,7 @@ import { LeftPanel } from "./LeftPanel";
 import { PaneGrid } from "./PaneGrid";
 import { Board } from "./Board";
 import { IconBrand, IconPanel, IconSettings, IconTheme, IconFile, IconBroadcast, IconTerminalPlus } from "./Icons";
-import { useVendors } from "./vendors";
+import { useVendors, accentCss } from "./vendors";
 import { Settings } from "./Settings";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { ToastHost } from "./ToastHost";
@@ -131,7 +131,7 @@ export function Cockpit() {
                     key={v.id}
                     onClick={() => { void spawnPane(active.id, v.id, active.root); setAddOpen(false); }}
                   >
-                    <span className="apm-dot" style={{ background: `var(${v.accent})` }} />
+                    <span className="apm-dot" style={{ background: accentCss(v.accent) }} />
                     <span className="apm-name">{v.label}</span>
                     {!v.installed && <span className="apm-warn" title={v.detail}>not installed</span>}
                   </button>

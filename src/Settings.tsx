@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
+import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { useUI, applyUiScale } from "./ui";
 import { useVendors } from "./vendors";
 import { IconClose } from "./Icons";
@@ -573,6 +574,22 @@ export function Settings() {
                   />
                 </div>
               ))}
+            </div>
+            <div className="set-row">
+              <div className="set-row-t">
+                <span className="set-row-name">Add your own agent</span>
+                <span className="set-row-sub">Drop a JSON manifest in the vendors folder — no rebuild. Start from _example-opencode.json.</span>
+              </div>
+              <button
+                className="set-btn"
+                onClick={() => {
+                  invoke<string | null>("vendors_dir")
+                    .then((dir) => { if (dir) return revealItemInDir(dir); })
+                    .catch(() => useUI.getState().pushToast("error", "Couldn't open the vendors folder."));
+                }}
+              >
+                Open vendors folder
+              </button>
             </div>
           </section>
 
