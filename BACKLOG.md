@@ -599,7 +599,7 @@ partially done ("Preparing worktrees…" busy state).
 
 ### K-A. Competitive visual gaps (from the market research — highest leverage)
 - UI-1. **Attention Queue** — ~~ranked "needs you now" surface~~ **v1 DONE 2026-07-20** (bell: error-first + longest-waiting-first + durations). Full standalone surface = later.
-- UI-2. **Richer status vocabulary** — blocked-on-permission / stalled badges on panes + cards. [Warp]
+- ~~UI-2. Richer status vocabulary~~ **v1 DONE 2026-07-20** ("permission" state from output-pattern detection, ranked first in the attention queue; per-vendor patterns = #220 full; "stalled" still open).
 - UI-3. **Per-pane token/cost estimate** chip. [Paneflow]
 - UI-4. **Dashboard / overview** — all workspaces/panes/health at a glance; Settings > Diagnostics exposing the already-built pane_health / recover_orphans / support-bundle (375/376/377 ⭐ — biggest built-vs-shipped gap).
 - UI-5. **Merge-conflict resolution surface** (v1 aborts with a message).
@@ -624,9 +624,9 @@ partially done ("Preparing worktrees…" busy state).
 - UI-20. One shared drop-target visual grammar (304).
 
 ### K-D. Information honesty (QOL §3)
-- UI-21. Absolute timestamps on hover everywhere (305/306/307/310).
+- ~~UI-21. Absolute timestamps on hover~~ **DONE 2026-07-20** (feed rows also gained relative age).
 - ~~UI-22. Roll-up: separate "starting" from "running"~~ **DONE 2026-07-20**.
-- UI-23. Branch pill changed-file count (309) — partially covered by the new diff-stat badge on isolated panes; plain panes still lack it.
+- ~~UI-23. Changed-file count on plain panes~~ **DONE 2026-07-20** (diff badge on any repo pane, vs HEAD).
 - UI-24. WIP-limit breach explanation in place (312).
 - UI-25. Unified dirty-dot + empty-state signals (313/314); proc-chip tooltip (311).
 
@@ -657,7 +657,7 @@ partially done ("Preparing worktrees…" busy state).
 - UI-41. Motion system: one easing/duration language + reduced-motion honoured everywhere (116/284); loading skeletons (117); empty/error/loading treatment audit (120/283); success micro-animations (25).
 
 ### K-J. Trust signals (QOL §9)
-- UI-42. Changelog / "what's new" surface (367); version visibility beyond About (366).
+- ~~UI-42. Changelog "what's new"~~ **DONE 2026-07-20** (Settings > About, collapsible). Version-visibility beyond About (366) still open.
 - UI-43. OS-toast permission explainer (369); min-window-size + small-resize test (370).
 - UI-44. Quit-with-live-sessions confirmation — the one unguarded destructive action (373).
 - UI-45. Icon check across OS surfaces (372); friendly probe-detail copy (374).
