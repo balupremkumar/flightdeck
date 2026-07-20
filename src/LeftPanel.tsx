@@ -4,8 +4,8 @@ import { useApp, type PaneModel, type Workspace } from "./store";
 import { useUI } from "./ui";
 import { defaultCycle } from "./vendors";
 import { closeWorkspaceWithCleanup, preparePanes, isolationPref, rememberedOrSuggestedSetup } from "./worktrees";
-import { IconPlus, IconClose, IconBoard, IconDrag, IconBranch } from "./Icons";
-import { relTime as fmtRel, timeTitle, compact, num } from "./format";
+import { IconPlus, IconClose, IconBoard, IconDrag } from "./Icons";
+import { relTime as fmtRel, timeTitle, num } from "./format";
 import { cachedInvoke, usePoll } from "./poll";
 import { PANE_DRAG_TYPE } from "./PaneView";
 import { invoke } from "@tauri-apps/api/core";
@@ -481,6 +481,16 @@ export function LeftPanel({ expanded, view, setView }: { expanded: boolean; view
               onDragEnd={onRowDragEnd}
               onClick={() => openWs(w.id)}
               onContextMenu={(e) => openMenu(e, w.id)}
+              /* The meta row is a glance surface and only fits signals that
+                 demand action. Worktree count and token spend are worth knowing
+                 but not worth crowding it out — they live here instead. */
+              title={[
+                w.root,
+                w.panes.some((p) => p.worktreePath)
+                  ? `${w.panes.filter((p) => p.worktreePath).length} isolated worktree${w.panes.filter((p) => p.worktreePath).length === 1 ? "" : "s"}`
+                  : null,
+                tokens[w.id] > 0 ? `${num(tokens[w.id])} tokens of context across its agents` : null,
+              ].filter(Boolean).join(" · ")}
             >
               <span className="lp-drag-handle"><IconDrag size={12} /></span>
               <span className="lp-i" style={{ boxShadow: `inset 0 0 0 2px ${tintFor(w)}` }}>{initial(w.name)}</span>
@@ -514,22 +524,11 @@ export function LeftPanel({ expanded, view, setView }: { expanded: boolean; view
                       {w.panes.slice(0, 9).map((p) => (<i key={p.id} className={"lp-mini-c " + p.state} />))}
                     </span>
                   )}
-                  {/* UI-150: isolated panes mean worktrees on disk — say how many. */}
-                  {w.panes.some((p) => p.worktreePath) && (
-                    <span className="lp-stat lp-wt" title={`${w.panes.filter((p) => p.worktreePath).length} isolated worktree(s)`}>
-                      <IconBranch size={9} />{w.panes.filter((p) => p.worktreePath).length}
-                    </span>
-                  )}
                   {r.starting > 0 && <span className="lp-stat start" title="Still launching"><i />{r.starting}</span>}
                   {r.running > 0 && <span className="lp-stat run"><i />{r.running}</span>}
                   {r.waiting > 0 && <span className="lp-stat wait"><i />{r.waiting}</span>}
                   {r.error > 0 && <span className="lp-stat err"><i />{r.error}</span>}
                   {r.total === 0 && <span className="lp-stat empty">empty</span>}
-                  {tokens[w.id] > 0 && (
-                    <span className="lp-stat lp-tok" title={`${num(tokens[w.id])} tokens of context across this workspace's agents`}>
-                      {compact(tokens[w.id])}
-                    </span>
-                  )}
                   {last && (
                     <span className="lp-stat lp-last" title={lastActive[w.id] ? timeTitle(lastActive[w.id]) : undefined}>
                       {last}

@@ -141,14 +141,20 @@
 }
 
 /* UI-149: mini pane-layout preview on each workspace tile */
+/* Sized down hard after seeing it rendered: at 18px with 8px cells this read as
+   a SECOND avatar competing with the workspace monogram beside it, rather than
+   as quiet metadata. It's a glyph, not a chart — the dot-counts next to it carry
+   the precise numbers. Idle cells are dimmed so only active panes draw the eye. */
 .lp-mini {
-  display: grid; gap: 1.5px; flex: none;
-  width: 18px; margin-right: 2px;
+  display: grid; gap: 1px; flex: none;
+  width: 11px; margin-right: 1px;
 }
 .lp-mini-c {
-  width: 100%; aspect-ratio: 1; border-radius: 1px;
-  background: var(--st-idle); display: block;
+  width: 100%; aspect-ratio: 1; border-radius: 0.5px;
+  background: var(--st-idle); opacity: .45; display: block;
 }
+.lp-mini-c.running, .lp-mini-c.starting, .lp-mini-c.waiting,
+.lp-mini-c.permission, .lp-mini-c.error { opacity: 1; }
 .lp-mini-c.running { background: var(--st-running); }
 .lp-mini-c.starting { background: var(--st-starting); }
 .lp-mini-c.waiting { background: var(--st-waiting); }
