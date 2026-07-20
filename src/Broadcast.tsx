@@ -132,7 +132,7 @@ export function Broadcast() {
       </div>
 
       {lastBroadcast && (
-        <div className="bc-last">
+        <div className="bc-last" title={new Date(lastBroadcast.at).toLocaleString()}>
           Last sent {relTime(lastBroadcast.at)} to {lastBroadcast.sentTo} pane{lastBroadcast.sentTo === 1 ? "" : "s"}
           {lastBroadcast.failed > 0 ? ` (${lastBroadcast.failed} failed)` : ""}
         </div>

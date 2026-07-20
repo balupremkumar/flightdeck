@@ -196,11 +196,13 @@ export function Notifications() {
             </div>
             {feed.length === 0 && <div className="ntf-empty">No notifications yet — they'll show up here.</div>}
             {feed.slice(0, 12).map((e) => (
-              <div className="ntf-item" key={e.id} onClick={() => jump(e.wsId, e.paneId)}>
+              <div className="ntf-item" key={e.id} onClick={() => jump(e.wsId, e.paneId)} title={new Date(e.at).toLocaleString()}>
                 <span className={"ntf-dot " + e.state} />
                 <span className="ntf-ws">{e.wsName}</span>
                 <span className="ntf-ag">{e.vendor}</span>
-                <span className="ntf-state">{STATE_LABEL[e.state]}</span>
+                <span className="ntf-state">
+                  {STATE_LABEL[e.state]} · {forMins(e.at)}
+                </span>
               </div>
             ))}
           </div>

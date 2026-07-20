@@ -355,7 +355,11 @@ export function LeftPanel({ expanded, view, setView }: { expanded: boolean; view
                   {r.waiting > 0 && <span className="lp-stat wait"><i />{r.waiting}</span>}
                   {r.error > 0 && <span className="lp-stat err"><i />{r.error}</span>}
                   {r.total === 0 && <span className="lp-stat empty">empty</span>}
-                  {last && <span className="lp-stat lp-last">{last}</span>}
+                  {last && (
+                    <span className="lp-stat lp-last" title={lastActive[w.id] ? new Date(lastActive[w.id]).toLocaleString() : undefined}>
+                      {last}
+                    </span>
+                  )}
                 </span>
               </span>
               {r.waiting > 0 && <span className="lp-wait" title="Waiting on you" />}
