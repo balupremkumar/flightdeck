@@ -474,6 +474,7 @@ use std::sync::RwLock;
 static MANIFEST_DIR: RwLock<Option<PathBuf>> = RwLock::new(None);
 
 const EXAMPLE_MANIFEST: &str = r##"{
+  "$schema": "./_vendor-manifest.schema.json",
   "_comment": "Rename to <something>.json (files starting with _ are ignored) to add this agent. Restart Flightdeck or reopen New Workspace to detect it.",
   "id": "opencode-local",
   "label": "OpenCode (Local)",
@@ -490,14 +491,21 @@ const EXAMPLE_MANIFEST: &str = r##"{
 }
 "##;
 
+/// UI-238: the JSON Schema ships next to the manifests so any editor gives
+/// completion + validation for the format (the example references it).
+const MANIFEST_SCHEMA: &str = include_str!("../vendor-manifest.schema.json");
+
 /// Called once at app start with `<app-data>/vendors`. Creates the dir and
-/// drops the example manifest on first run so the format is discoverable.
+/// drops the example manifest + schema on first run so the format is
+/// discoverable. The schema is rewritten every launch so it can't go stale
+/// against a newer build.
 pub fn set_manifest_dir(dir: PathBuf) {
     let _ = std::fs::create_dir_all(&dir);
     let example = dir.join("_example-opencode.json");
     if !example.exists() {
         let _ = std::fs::write(&example, EXAMPLE_MANIFEST);
     }
+    let _ = std::fs::write(dir.join("_vendor-manifest.schema.json"), MANIFEST_SCHEMA);
     *MANIFEST_DIR.write().unwrap() = Some(dir);
 }
 

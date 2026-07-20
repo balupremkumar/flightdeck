@@ -418,14 +418,31 @@ export function PaneView({
             {pane.state === "permission" ? "needs you" : "error"}
           </span>
         )}
-        {usage && (
-          <span
-            className="ptok"
-            title={`Session tokens (from the agent's own transcript)\ncontext now: ${num(usage.contextTokens)}\noutput so far: ${num(usage.outputTokens)} across ${num(usage.turns)} turns`}
-          >
-            {compact(usage.contextTokens)} ctx
-          </span>
-        )}
+        {usage && (() => {
+          // UI-231: a raw token count doesn't tell you when you're in trouble.
+          // Colour it against the model's context window so "compact soon" is
+          // visible before the agent starts dropping context.
+          const CONTEXT_WINDOW = 200_000; // Claude's window; manifests can override later
+          const pct = usage.contextTokens / CONTEXT_WINDOW;
+          const level = pct >= 0.9 ? "crit" : pct >= 0.7 ? "warn" : "";
+          return (
+            <span
+              className={"ptok " + level}
+              title={
+                `Session tokens (from the agent's own transcript)
+` +
+                `context now: ${num(usage.contextTokens)} (${Math.round(pct * 100)}% of a ${compact(CONTEXT_WINDOW)} window)
+` +
+                `output so far: ${num(usage.outputTokens)} across ${num(usage.turns)} turns` +
+                (level ? `
+
+Running low — consider /compact in this pane.` : "")
+              }
+            >
+              {compact(usage.contextTokens)} ctx
+            </span>
+          );
+        })()}
         {diffStat && diffStat.files > 0 && (
           <button
             className="pdiff"

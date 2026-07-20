@@ -1,0 +1,62 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://flightdeck.ai/vendor-manifest.schema.json",
+  "title": "Flightdeck vendor manifest",
+  "description": "Drop a file like this into the vendors folder to add a launchable agent without rebuilding Flightdeck. Files whose names start with '_' are ignored.",
+  "type": "object",
+  "required": ["id", "label", "exe"],
+  "additionalProperties": true,
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "Points at this schema so editors offer completion and validation."
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]*$",
+      "description": "Unique id. Must not collide with a built-in (claude, agy, pwsh, cmd, git-bash, wsl)."
+    },
+    "label": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Full display name, e.g. \"OpenCode (Local)\"."
+    },
+    "short": {
+      "type": "string",
+      "description": "Compact name for chips and badges. Defaults to label."
+    },
+    "kind": {
+      "enum": ["agent", "shell"],
+      "default": "agent",
+      "description": "\"agent\" is an AI coding CLI; \"shell\" is a plain terminal (never needs sign-in)."
+    },
+    "accent": {
+      "type": "string",
+      "pattern": "^(--[a-z-]+|#[0-9a-fA-F]{6})$",
+      "description": "A theme token (\"--aqua\") or a literal hex colour (\"#3FD79B\")."
+    },
+    "exe": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Executable to launch. Resolved through PATH unless it contains a path separator."
+    },
+    "args": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Arguments passed to exe on every launch."
+    },
+    "env": {
+      "type": "object",
+      "additionalProperties": { "type": "string" },
+      "description": "Environment overrides. Keys set here are EXEMPT from Flightdeck's ambient API-key stripping — that is how a local endpoint gets its dummy key. Every other provider key is still stripped."
+    },
+    "probe": {
+      "type": "string",
+      "description": "What to check for install detection. A bare name goes through PATH; a value containing a slash is checked as a filesystem path. Defaults to exe."
+    },
+    "authFile": {
+      "type": "string",
+      "description": "Optional credential file whose presence means \"signed in\". \"~\" expands to the user profile. The file is never read or parsed — only its existence is checked. Omit if the agent needs no sign-in."
+    }
+  }
+}
