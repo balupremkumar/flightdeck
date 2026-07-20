@@ -598,7 +598,7 @@ keeps/drops against THIS list. Already fixed (wave 4 + session 6, excluded):
 partially done ("Preparing worktrees…" busy state).
 
 ### K-A. Competitive visual gaps (from the market research — highest leverage)
-- UI-1. **Attention Queue** — ranked "needs you now" surface (vs the bell feed). [Paneflow]
+- UI-1. **Attention Queue** — ~~ranked "needs you now" surface~~ **v1 DONE 2026-07-20** (bell: error-first + longest-waiting-first + durations). Full standalone surface = later.
 - UI-2. **Richer status vocabulary** — blocked-on-permission / stalled badges on panes + cards. [Warp]
 - UI-3. **Per-pane token/cost estimate** chip. [Paneflow]
 - UI-4. **Dashboard / overview** — all workspaces/panes/health at a glance; Settings > Diagnostics exposing the already-built pane_health / recover_orphans / support-bundle (375/376/377 ⭐ — biggest built-vs-shipped gap).
@@ -615,17 +615,17 @@ partially done ("Preparing worktrees…" busy state).
 - UI-13. Explorer toggle dead-click feedback outside terminals view (294).
 
 ### K-C. Micro-interactions (QOL §2)
-- UI-14. Press/:active states on all icon buttons (295/296).
+- ~~UI-14. Press/:active states~~ **DONE 2026-07-20**.
 - UI-15. Designed tooltips for the collapsed rail (297).
 - UI-16. Drag affordances: card grab cursor, Explorer resize hover cue (298/299).
 - UI-17. Keyboard path for pane font-zoom controls (300).
-- UI-18. Toast pause-on-hover (301).
+- ~~UI-18. Toast pause-on-hover~~ **DONE 2026-07-20**.
 - UI-19. Scroll-fade cues on Settings/palette lists (302/303).
 - UI-20. One shared drop-target visual grammar (304).
 
 ### K-D. Information honesty (QOL §3)
 - UI-21. Absolute timestamps on hover everywhere (305/306/307/310).
-- UI-22. Roll-up: separate "starting" from "running" (308).
+- ~~UI-22. Roll-up: separate "starting" from "running"~~ **DONE 2026-07-20**.
 - UI-23. Branch pill changed-file count (309) — partially covered by the new diff-stat badge on isolated panes; plain panes still lack it.
 - UI-24. WIP-limit breach explanation in place (312).
 - UI-25. Unified dirty-dot + empty-state signals (313/314); proc-chip tooltip (311).
