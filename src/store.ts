@@ -30,6 +30,8 @@ interface AppState {
   renameWorkspace: (wsId: number, name: string) => void;
   reorderWorkspaces: (from: number, to: number) => void;
   movePane: (wsId: number, from: number, to: number) => void;
+  // Session restore (session.ts): replace the whole tree with persisted state.
+  hydrate: (workspaces: Workspace[], activeId: number | null) => void;
 }
 
 function reorder<T>(list: T[], from: number, to: number): T[] {
@@ -145,4 +147,18 @@ export const useApp = create<AppState>((set) => ({
     set((s) => ({
       workspaces: s.workspaces.map((w) => (w.id === wsId ? { ...w, panes: reorder(w.panes, from, to) } : w)),
     })),
+
+  hydrate: (workspaces, activeId) =>
+    set(() => {
+      // Bump the id counters past everything restored so new workspaces/panes
+      // can never collide with persisted ids.
+      for (const w of workspaces) {
+        wseq = Math.max(wseq, w.id);
+        for (const p of w.panes) pseq = Math.max(pseq, p.id);
+      }
+      const validActive = workspaces.some((w) => w.id === activeId)
+        ? activeId
+        : workspaces[workspaces.length - 1]?.id ?? null;
+      return { workspaces, activeId: validActive, creating: false };
+    }),
 }));

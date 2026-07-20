@@ -371,6 +371,11 @@ export function PaneView({
         <button className="x" onClick={tryClosePane} title="Close pane"><IconClose size={12} /></button>
       </div>
       <div className="pbody">
+        {pane.state === "starting" && (
+          <div className="plaunching" aria-live="polite">
+            Launching {vendorShort(pane.vendor)}… <span className="plaunching-sub">first output can take a few seconds</span>
+          </div>
+        )}
         {searchOpen && (
           <div className="pfind">
             <IconSearch size={12} />

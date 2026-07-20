@@ -58,6 +58,41 @@ export function Cockpit() {
     return () => window.removeEventListener("keydown", onKey);
   }, [setSettingsOpen]);
 
+  // Quit guard (UI-44 / QOL 373): closing a pane or workspace confirms, but the
+  // OS window X — the most destructive action of all — didn't. Intercept close
+  // while any agent session is live; destroy on confirm (Rust's ExitRequested
+  // handler still reaps every process tree on the way out).
+  const requestConfirm = useUI((s) => s.requestConfirm);
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let cancelled = false;
+    try {
+      getCurrentWindow()
+        .onCloseRequested((e) => {
+          // Read live state at close time (not render time) — the listener is
+          // registered once and must see the current panes.
+          const wss = useApp.getState().workspaces;
+          const anyLive = wss.some((w) =>
+            w.panes.some((p) => p.state === "running" || p.state === "starting" || p.state === "waiting")
+          );
+          if (!anyLive) return; // nothing live — close straight through
+          e.preventDefault();
+          const n = wss.reduce((c, w) => c + w.panes.length, 0);
+          requestConfirm({
+            title: "Quit Flightdeck?",
+            body: `Agent sessions are still live across ${n} pane${n === 1 ? "" : "s"}. Quitting ends them — your workspaces reopen next launch, but running sessions can't be brought back.`,
+            confirmLabel: "Quit & end sessions",
+            danger: true,
+            onConfirm: () => { void getCurrentWindow().destroy(); },
+          });
+        })
+        .then((fn) => { if (!cancelled) unlisten = fn; else fn(); })
+        .catch(() => { /* browser preview */ });
+    } catch { /* browser preview */ }
+    return () => { cancelled = true; unlisten?.(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Window title reflects what needs you (QOL 365) — visible from the taskbar
   // without focusing the app. Guarded: no-op outside a real Tauri window.
   const waitingCount = workspaces.reduce((n, w) => n + w.panes.filter((p) => p.state === "waiting").length, 0);

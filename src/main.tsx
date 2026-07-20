@@ -5,14 +5,18 @@ import { ErrorBoundary } from "./ErrorBoundary";
 import { bootAppearance } from "./themes";
 import { useVendors } from "./vendors";
 import { runWorktreeGc } from "./worktrees";
+import { startAutosave, offerSessionRestore } from "./session";
 
 // Load the vendor registry from the Rust side once at boot. Everything that
 // renders an agent name/colour reads from this (BACKLOG 216).
 void useVendors.getState().load();
 
-// Reap worktrees left behind by crashed/killed sessions (D6). Stray work is
-// committed to its branch by the backend before removal — never destroyed.
-void runWorktreeGc();
+// Session persistence (R4): autosave every store change, then offer to reopen
+// the previous session. GC runs AFTER the restore offer is queued — it reads
+// the same session doc for its keep-list, so order isn't load-bearing, but
+// restore-first keeps the worktree reattach path cheap (dir usually intact).
+startAutosave();
+void offerSessionRestore().then(() => runWorktreeGc());
 
 // Apply saved theme + accent + colour-blind/reduced-motion overrides before
 // first paint (dark/Ice/off are the defaults).

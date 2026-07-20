@@ -108,3 +108,43 @@ describe("app store", () => {
     expect(useApp.getState().creating).toBe(false);
   });
 });
+
+describe("hydrate (session restore)", () => {
+  beforeEach(reset);
+
+  it("replaces state and bumps id counters past restored ids", () => {
+    useApp.getState().hydrate(
+      [
+        {
+          id: 900, name: "restored", root: "D:\\proj",
+          panes: [
+            { id: 9000, vendor: "claude", cwd: "D:\\wt\\a", state: "starting", epoch: 0, worktreePath: "D:\\wt\\a", branch: "flightdeck/a", baseBranch: "main" },
+            { id: 9001, vendor: "pwsh", cwd: "D:\\proj", state: "starting", epoch: 0 },
+          ],
+          focused: 9000,
+        },
+      ],
+      900
+    );
+    const s = useApp.getState();
+    expect(s.workspaces).toHaveLength(1);
+    expect(s.activeId).toBe(900);
+    expect(s.workspaces[0].panes[0].branch).toBe("flightdeck/a");
+    // New panes must not collide with restored ids:
+    useApp.getState().addPane(900, "claude", "D:\\proj");
+    const ids = useApp.getState().workspaces[0].panes.map((p) => p.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(Math.max(...ids)).toBeGreaterThan(9001);
+  });
+
+  it("falls back to the last workspace when the persisted activeId is gone", () => {
+    useApp.getState().hydrate(
+      [
+        { id: 20, name: "a", root: "D:\\a", panes: [], focused: null },
+        { id: 21, name: "b", root: "D:\\b", panes: [], focused: null },
+      ],
+      999
+    );
+    expect(useApp.getState().activeId).toBe(21);
+  });
+});
