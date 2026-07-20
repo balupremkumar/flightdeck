@@ -79,6 +79,11 @@ export interface TerminalHandle {
 interface TerminalProps {
   vendor: string;
   cwd: string;
+  /** Worktree setup command to run before the agent (fresh worktrees only).
+   *  Captured at mount; `onSetupConsumed` fires once the spawn has taken it so
+   *  the store can clear the pane's needsSetup flag (Restart skips setup). */
+  setup?: string;
+  onSetupConsumed?: () => void;
   fontSize?: number;
   ligatures?: boolean;
   /** How long the pane must be quiet before it's marked "waiting" — computed
@@ -96,7 +101,7 @@ const HIDDEN_BUFFER_CAP = 262144; // 256KB
 
 // One live terminal bound to a PTY in the Rust core.
 export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Terminal(
-  { vendor, cwd, fontSize = 12.5, ligatures = false, quietThresholdMs = 3000, onExit, onState, onProc },
+  { vendor, cwd, setup, onSetupConsumed, fontSize = 12.5, ligatures = false, quietThresholdMs = 3000, onExit, onState, onProc },
   ref
 ) {
   const elRef = useRef<HTMLDivElement>(null);
@@ -285,12 +290,13 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
       });
 
       try {
-        paneId = await invoke<number>("pty_spawn", { vendor, cwd, cols: term.cols, rows: term.rows });
+        paneId = await invoke<number>("pty_spawn", { vendor, cwd, cols: term.cols, rows: term.rows, setup: setup ?? null });
       } catch (err) {
         term.write(`\r\n\x1b[31m[failed to start ${vendor}: ${String(err)}]\x1b[0m\r\n`);
         onState?.("error");
         return;
       }
+      if (setup) onSetupConsumed?.();
       if (disposed) { invoke("pty_kill", { paneId }); return; }
 
       // Replay buffered output belonging to this pane, then go live.

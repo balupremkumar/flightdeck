@@ -24,6 +24,8 @@ export interface PersistedWorkspace {
   id: number;
   name: string;
   root: string;
+  // Worktree setup command — re-runs when restore recreates a pane's worktree.
+  setupCmd?: string;
   panes: PersistedPane[];
 }
 

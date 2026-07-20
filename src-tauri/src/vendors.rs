@@ -143,6 +143,54 @@ fn ensure_agy_trust(work_dir: &str) {
     }
 }
 
+/// Single-quote a string for PowerShell (embedded quotes double).
+fn psq(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "''"))
+}
+
+/// Tier 0 follow-up (worktree setup command): wrap a vendor's launch in a pwsh
+/// phase that runs the workspace's setup command first — fresh worktrees have
+/// no node_modules, so agents can't build/test until e.g. `npm ci` has run.
+/// Setup failure exits the pane (nonzero → crashed → error state) WITHOUT
+/// starting the agent. The inner command's explicit env (manifest overrides)
+/// is copied onto the wrapper so it still reaches the agent; the caller applies
+/// env stripping afterwards exactly as in the unwrapped path.
+pub fn wrap_with_setup(inner: &CommandBuilder, setup: &str, cwd: &str) -> CommandBuilder {
+    let launch = inner
+        .get_argv()
+        .iter()
+        .map(|a| psq(&a.to_string_lossy()))
+        .collect::<Vec<_>>()
+        .join(" ");
+    // $? catches failing cmdlets (no $LASTEXITCODE); the $null guard stops a
+    // cmdlet-only setup from tripping the native-exit-code check.
+    let script = format!(
+        concat!(
+            "$E=[char]27\n",
+            "Write-Host (\"${{E}}[36m[flightdeck] worktree setup: \" + {disp} + \"${{E}}[0m\")\n",
+            "{setup}\n",
+            "if ((-not $?) -or ($null -ne $LASTEXITCODE -and $LASTEXITCODE -ne 0)) {{\n",
+            "  Write-Host (\"${{E}}[31m[flightdeck] setup failed - agent not started. ",
+            "Fix the setup command (or clear it in this workspace), then Restart the pane.${{E}}[0m\")\n",
+            "  exit 1\n",
+            "}}\n",
+            "Write-Host (\"${{E}}[36m[flightdeck] setup complete - launching agent${{E}}[0m\")\n",
+            "& {launch}\n",
+            "exit $LASTEXITCODE"
+        ),
+        disp = psq(setup),
+        setup = setup,
+        launch = launch,
+    );
+    let mut c = CommandBuilder::new("pwsh.exe");
+    c.args(["-NoLogo", "-Command", &script]);
+    for (k, v) in inner.iter_extra_env_as_str() {
+        c.env(k, v);
+    }
+    c.cwd(cwd);
+    c
+}
+
 pub trait VendorAdapter: Send + Sync {
     fn id(&self) -> &str;
     fn label(&self) -> &str;
@@ -666,6 +714,42 @@ mod tests {
             cmd.get_cwd().map(|c| c.to_string_lossy().into_owned()),
             Some("D:\\test\\dir".to_string())
         );
+    }
+
+    // --- Setup wrapper (Tier 0 follow-up) ----------------------------------
+
+    #[test]
+    fn setup_wrapper_quotes_argv_and_keeps_cwd_and_env() {
+        let m: VendorManifest = serde_json::from_str(GOOD).unwrap();
+        let v = ManifestVendor::new(m);
+        let inner = v.command("D:\\wt\\pane1");
+        let wrapped = wrap_with_setup(&inner, "npm ci", "D:\\wt\\pane1");
+        assert_eq!(
+            wrapped.get_cwd().map(|c| c.to_string_lossy().into_owned()),
+            Some("D:\\wt\\pane1".to_string())
+        );
+        let argv: Vec<String> = wrapped.get_argv().iter().map(|a| a.to_string_lossy().into_owned()).collect();
+        assert_eq!(argv[0], "pwsh.exe");
+        let script = &argv[argv.len() - 1];
+        assert!(script.contains("npm ci"), "setup command must appear in the script");
+        assert!(script.contains("& 'opencode' '--fast'"), "inner launch must be single-quoted: {script}");
+        assert!(script.contains("exit 1"), "setup failure must exit the pane");
+        // Manifest env overrides must survive the wrap.
+        let env: Vec<(String, String)> = wrapped
+            .iter_extra_env_as_str()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        assert!(env.iter().any(|(k, v)| k == "OPENAI_API_KEY" && v == "lm-studio"));
+    }
+
+    #[test]
+    fn setup_wrapper_escapes_embedded_quotes() {
+        let inner = find("pwsh").command("D:\\x");
+        let wrapped = wrap_with_setup(&inner, "echo 'it''s fine'", "D:\\x");
+        let argv = wrapped.get_argv();
+        let script = argv.last().unwrap().to_string_lossy();
+        // The display line quotes the whole setup string; doubled quotes stay doubled.
+        assert!(script.contains("echo 'it''s fine'"));
     }
 
     /// Explicitly-set env keys are exempt from the ambient strip (or

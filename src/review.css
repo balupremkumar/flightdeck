@@ -130,3 +130,15 @@ em.del { color: var(--st-error); margin-left: 5px; }
 .isolate-row:hover { color: var(--text); }
 .isolate-row.off { opacity: .6; cursor: default; }
 .isolate-note { font-size: 10.5px; color: var(--st-waiting); }
+
+/* NewWorkspace worktree setup command (Tier 0 follow-up) */
+.setup-row { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+.setup-lbl { font-size: 11px; color: var(--muted); white-space: nowrap; }
+.setup-input {
+  flex: 1; min-width: 0;
+  font-family: var(--mono); font-size: 11.5px;
+  padding: 5px 8px; border-radius: 6px; border: 1px solid var(--line);
+  background: var(--surface); color: var(--text);
+}
+.setup-input::placeholder { color: var(--faint); }
+.setup-input:focus { outline: none; border-color: var(--ice); }

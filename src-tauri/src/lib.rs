@@ -96,9 +96,14 @@ fn vendors_dir() -> Option<String> {
     vendors::manifest_dir().map(|p| p.to_string_lossy().into_owned())
 }
 
-fn build_command(vendor: &str, cwd: &str) -> CommandBuilder {
+fn build_command(vendor: &str, cwd: &str, setup: Option<&str>) -> CommandBuilder {
     let adapter = vendors::find(vendor);
-    let mut cmd = adapter.command(cwd);
+    let mut cmd = match setup.map(str::trim).filter(|s| !s.is_empty()) {
+        // Worktree setup phase (Tier 0 follow-up): run e.g. `npm ci` in the
+        // fresh worktree, then launch the vendor; failure never starts the agent.
+        Some(s) => vendors::wrap_with_setup(&adapter.command(cwd), s, cwd),
+        None => adapter.command(cwd),
+    };
     for k in adapter.env_strip() {
         cmd.env_remove(k);
     }
@@ -119,6 +124,7 @@ fn pty_spawn(
     cwd: String,
     cols: u16,
     rows: u16,
+    setup: Option<String>,
 ) -> Result<u32, String> {
     let pty_system = native_pty_system();
     let pair = pty_system
@@ -132,7 +138,7 @@ fn pty_spawn(
 
     let adapter = vendors::find(&vendor);
     adapter.prepare(&cwd);
-    let cmd = build_command(&vendor, &cwd);
+    let cmd = build_command(&vendor, &cwd, setup.as_deref());
     let child = pair
         .slave
         .spawn_command(cmd)
@@ -158,7 +164,12 @@ fn pty_spawn(
     // Live foreground process name (audit item): the root name is known
     // immediately (the vendor's own root_exe), before the sampler's first
     // tick ever runs.
-    let root_proc_name = procname::normalize(adapter.root_exe());
+    // With a setup phase the actual root process is the pwsh wrapper.
+    let root_proc_name = if setup.as_deref().map(str::trim).filter(|s| !s.is_empty()).is_some() {
+        procname::normalize("pwsh.exe")
+    } else {
+        procname::normalize(adapter.root_exe())
+    };
     let _ = app.emit(
         "pty://proc",
         ProcPayload { pane_id: id, name: root_proc_name.clone() },
@@ -468,6 +479,7 @@ pub fn run() {
             worktree::git_diff_summary,
             worktree::git_file_diff,
             worktree::git_merge_back,
+            worktree::detect_setup_command,
             persist::save_session,
             persist::load_session,
             persist::has_previous_session,

@@ -74,11 +74,14 @@ export async function spawnPane(
   isolate: boolean = isolationPref()
 ): Promise<number | null> {
   const prep = await prepareCwd(baseCwd, vendor, isolate);
+  // Fresh worktree + a configured workspace setup command -> run it pre-agent.
+  const ws = useApp.getState().workspaces.find((w) => w.id === wsId);
+  const needsSetup = !!(prep.wt?.created && ws?.setupCmd);
   useApp.getState().addPane(wsId, vendor, prep.cwd, prep.wt && {
     worktreePath: prep.wt.path,
     branch: prep.wt.branch,
     baseBranch: prep.wt.baseBranch,
-  });
+  }, needsSetup);
   return useApp.getState().workspaces.find((w) => w.id === wsId)?.focused ?? null;
 }
 
@@ -97,9 +100,27 @@ export async function preparePanes(
       worktreePath: prep.wt?.path,
       branch: prep.wt?.branch,
       baseBranch: prep.wt?.baseBranch,
+      // createWorkspace ANDs this with its setupCmd — reused worktrees skip setup.
+      needsSetup: prep.wt?.created ?? false,
     });
   }
   return out;
+}
+
+/** Setup command for a repo: the per-repo remembered value (New Workspace
+ *  writes it, including a deliberate blank) wins over the lockfile suggestion.
+ *  Used by the headless creation paths (folder drop). */
+export async function rememberedOrSuggestedSetup(dir: string): Promise<string | undefined> {
+  const top = await repoToplevel(dir);
+  if (!top) return undefined;
+  try {
+    const remembered = localStorage.getItem(`flightdeck-setup:${top.toLowerCase()}`);
+    if (remembered != null) return remembered.trim() || undefined;
+  } catch { /* non-persistent */ }
+  try {
+    const suggested = await invoke<string | null>("detect_setup_command", { cwd: dir });
+    return suggested ?? undefined;
+  } catch { return undefined; }
 }
 
 /** Close a pane and clean up its worktree (D6). The remove runs after a short

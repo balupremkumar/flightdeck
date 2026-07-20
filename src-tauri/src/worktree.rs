@@ -361,6 +361,31 @@ pub fn worktree_gc(wt_root: &Path, keep: &[String]) -> Vec<String> {
 }
 
 // ---------------------------------------------------------------------------
+// Worktree setup command (Tier 0 follow-up)
+// ---------------------------------------------------------------------------
+
+/// Suggest a setup command for a repo from its lockfile — what a fresh
+/// worktree needs before an agent can build/test in it. Conservative: only
+/// suggests when the ecosystem is unambiguous; the user can always type
+/// their own in New Workspace.
+pub fn setup_suggestion(dir: &Path) -> Option<String> {
+    let top = toplevel(dir)?;
+    let top = Path::new(&top);
+    let candidates: &[(&str, &str)] = &[
+        ("package-lock.json", "npm ci"),
+        ("pnpm-lock.yaml", "pnpm install --frozen-lockfile"),
+        ("yarn.lock", "yarn install --frozen-lockfile"),
+        ("bun.lockb", "bun install"),
+        ("bun.lock", "bun install"),
+        ("package.json", "npm install"),
+    ];
+    candidates
+        .iter()
+        .find(|(f, _)| top.join(f).is_file())
+        .map(|(_, cmd)| cmd.to_string())
+}
+
+// ---------------------------------------------------------------------------
 // Diff (review surface)
 // ---------------------------------------------------------------------------
 
@@ -578,6 +603,11 @@ pub fn git_merge_back(app: AppHandle, worktree_path: String) -> Result<MergeOutc
     merge_back(&worktrees_root(&app)?, &worktree_path)
 }
 
+#[tauri::command]
+pub fn detect_setup_command(cwd: String) -> Option<String> {
+    setup_suggestion(Path::new(&cwd))
+}
+
 // ---------------------------------------------------------------------------
 // Tests — real git against throwaway repos in the OS temp dir.
 // ---------------------------------------------------------------------------
@@ -620,6 +650,17 @@ mod tests {
         sh(&repo, &["add", "-A"]);
         sh(&repo, &["commit", "-m", "init"]);
         TempDirs { repo, wt_root }
+    }
+
+    #[test]
+    fn setup_suggestion_prefers_lockfile_and_needs_a_repo() {
+        let t = temp_repo();
+        assert_eq!(setup_suggestion(&t.repo), None, "no manifest — no suggestion");
+        std::fs::write(t.repo.join("package.json"), "{}").unwrap();
+        assert_eq!(setup_suggestion(&t.repo).as_deref(), Some("npm install"));
+        std::fs::write(t.repo.join("package-lock.json"), "{}").unwrap();
+        assert_eq!(setup_suggestion(&t.repo).as_deref(), Some("npm ci"));
+        assert_eq!(setup_suggestion(&std::env::temp_dir()), None, "non-repo — no suggestion");
     }
 
     #[test]

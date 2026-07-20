@@ -73,6 +73,8 @@ export function PaneView({
   const focusPane = useApp((s) => s.focusPane);
   const setPaneState = useApp((s) => s.setPaneState);
   const restartPane = useApp((s) => s.restartPane);
+  const clearNeedsSetup = useApp((s) => s.clearNeedsSetup);
+  const setupCmd = useApp((s) => s.workspaces.find((w) => w.id === wsId)?.setupCmd);
   const renamePane = useApp((s) => s.renamePane);
   const pushToast = useUI((s) => s.pushToast);
   const requestConfirm = useUI((s) => s.requestConfirm);
@@ -418,6 +420,8 @@ export function PaneView({
           ref={terminalRef}
           vendor={pane.vendor}
           cwd={pane.cwd}
+          setup={pane.needsSetup ? setupCmd : undefined}
+          onSetupConsumed={() => clearNeedsSetup(pane.id)}
           fontSize={fontSize}
           ligatures={ligatures}
           quietThresholdMs={quietSec * 1000}

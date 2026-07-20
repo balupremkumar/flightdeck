@@ -26,6 +26,7 @@ function toDraft(workspaces: Workspace[], activeId: number | null): SessionDraft
       id: w.id,
       name: w.name,
       root: w.root,
+      setupCmd: w.setupCmd,
       panes: w.panes.map((p) => ({
         id: p.id,
         vendor: p.vendor,
@@ -78,14 +79,16 @@ export function startAutosave() {
  *  - worktree dir still valid  -> keep as-is
  *  - dir gone, branch survived -> git_worktree_add reattaches it (idempotent)
  *  - repo/branch gone          -> plain pane at the workspace root            */
-async function reconcilePane(p: PaneModel, wsRoot: string): Promise<PaneModel> {
+async function reconcilePane(p: PaneModel, wsRoot: string, wsSetupCmd?: string): Promise<PaneModel> {
   if (!p.worktreePath) return p;
   if ((await repoToplevel(p.cwd)) != null) return p; // worktree intact
   const slug = p.branch?.startsWith("flightdeck/") ? p.branch.slice("flightdeck/".length) : null;
   if (slug) {
     try {
       const wt = await invoke<WorktreeInfo>("git_worktree_add", { repoDir: wsRoot, slug });
-      return { ...p, cwd: wt.path, worktreePath: wt.path, branch: wt.branch, baseBranch: wt.baseBranch };
+      // A recreated worktree dir is fresh (no node_modules) — re-run setup.
+      const needsSetup = (wt.created && !!wsSetupCmd) || undefined;
+      return { ...p, cwd: wt.path, worktreePath: wt.path, branch: wt.branch, baseBranch: wt.baseBranch, needsSetup };
     } catch {
       /* fall through to the plain-pane fallback */
     }
@@ -110,9 +113,9 @@ async function hydrateFrom(persisted: PersistedWorkspace[], activeId: number | n
         branch: p.branch,
         baseBranch: p.baseBranch,
       };
-      panes.push(await reconcilePane(model, w.root));
+      panes.push(await reconcilePane(model, w.root, w.setupCmd));
     }
-    workspaces.push({ id: w.id, name: w.name, root: w.root, panes, focused: panes[0]?.id ?? null });
+    workspaces.push({ id: w.id, name: w.name, root: w.root, setupCmd: w.setupCmd, panes, focused: panes[0]?.id ?? null });
   }
   useApp.getState().hydrate(workspaces, activeId);
 }

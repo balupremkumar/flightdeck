@@ -11,9 +11,12 @@ export interface WorktreeRef { worktreePath: string; branch: string; baseBranch:
 // `epoch` bumps on restart; PaneView keys the Terminal on it so a bump remounts
 // the component and respawns the PTY (same cwd — an isolated pane restarts
 // into its existing worktree, never a new one).
-export interface PaneModel extends Partial<WorktreeRef> { id: number; vendor: string; cwd: string; state: PaneState; epoch: number; title?: string; }
-export interface Workspace { id: number; name: string; root: string; panes: PaneModel[]; focused: number | null; }
-export interface NewPane extends Partial<WorktreeRef> { vendor: string; cwd: string; }
+// `needsSetup`: the pane's worktree was freshly created and the workspace has a
+// setup command — the next PTY spawn runs it before the agent (Tier 0 follow-up).
+// Cleared once a spawn has consumed it so Restart doesn't re-run e.g. `npm ci`.
+export interface PaneModel extends Partial<WorktreeRef> { id: number; vendor: string; cwd: string; state: PaneState; epoch: number; title?: string; needsSetup?: boolean; }
+export interface Workspace { id: number; name: string; root: string; panes: PaneModel[]; focused: number | null; setupCmd?: string; }
+export interface NewPane extends Partial<WorktreeRef> { vendor: string; cwd: string; needsSetup?: boolean; }
 
 interface AppState {
   workspaces: Workspace[];
@@ -21,10 +24,11 @@ interface AppState {
   creating: boolean; // is the New Workspace dialog open (as an overlay)
   startCreate: () => void;
   cancelCreate: () => void;
-  createWorkspace: (root: string, panes: NewPane[]) => void;
+  createWorkspace: (root: string, panes: NewPane[], setupCmd?: string) => void;
   closeWorkspace: (id: number) => void;
   switchWorkspace: (id: number) => void;
-  addPane: (wsId: number, vendor: string, cwd: string, wt?: WorktreeRef) => void;
+  addPane: (wsId: number, vendor: string, cwd: string, wt?: WorktreeRef, needsSetup?: boolean) => void;
+  clearNeedsSetup: (paneId: number) => void;
   closePane: (wsId: number, paneId: number) => void;
   focusPane: (wsId: number, paneId: number) => void;
   setPaneState: (paneId: number, state: PaneState) => void;
@@ -61,12 +65,13 @@ export const useApp = create<AppState>((set) => ({
   startCreate: () => set({ creating: true }),
   cancelCreate: () => set((s) => (s.workspaces.length ? { creating: false } : s)),
 
-  createWorkspace: (root, panes) =>
+  createWorkspace: (root, panes, setupCmd) =>
     set((s) => {
       const ws: Workspace = {
         id: ++wseq,
         name: baseName(root),
         root,
+        setupCmd: setupCmd?.trim() || undefined,
         panes: panes.map((p) => ({
           id: ++pseq,
           vendor: p.vendor,
@@ -76,6 +81,7 @@ export const useApp = create<AppState>((set) => ({
           worktreePath: p.worktreePath,
           branch: p.branch,
           baseBranch: p.baseBranch,
+          needsSetup: (p.needsSetup && !!setupCmd?.trim()) || undefined,
         })),
         focused: null,
       };
@@ -92,13 +98,21 @@ export const useApp = create<AppState>((set) => ({
 
   switchWorkspace: (id) => set({ activeId: id }),
 
-  addPane: (wsId, vendor, cwd, wt) =>
+  addPane: (wsId, vendor, cwd, wt, needsSetup) =>
     set((s) => ({
       workspaces: s.workspaces.map((w) => {
         if (w.id !== wsId) return w;
-        const pane: PaneModel = { id: ++pseq, vendor, cwd, state: "starting", epoch: 0, ...wt };
+        const pane: PaneModel = { id: ++pseq, vendor, cwd, state: "starting", epoch: 0, needsSetup: needsSetup || undefined, ...wt };
         return { ...w, panes: [...w.panes, pane], focused: pane.id };
       }),
+    })),
+
+  clearNeedsSetup: (paneId) =>
+    set((s) => ({
+      workspaces: s.workspaces.map((w) => ({
+        ...w,
+        panes: w.panes.map((p) => (p.id === paneId && p.needsSetup ? { ...p, needsSetup: undefined } : p)),
+      })),
     })),
 
   closePane: (wsId, paneId) =>

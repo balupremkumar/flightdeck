@@ -1,5 +1,6 @@
 import { useEffect, useState, type CSSProperties } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
+import { invoke } from "@tauri-apps/api/core";
 import { useApp } from "./store";
 import { IconClose, IconFolder, IconRefresh } from "./Icons";
 import { useVendors, vendorMeta, vendorShort, defaultCycle } from "./vendors";
@@ -48,15 +49,29 @@ export function NewWorkspace() {
   const [isolate, setIsolate] = useState(isolationPref);
   const [isRepo, setIsRepo] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
+  // Worktree setup command (Tier 0 follow-up): runs in each FRESH worktree
+  // before its agent spawns (fresh copies have no node_modules). Suggested
+  // from the repo's lockfile; last-used value per repo wins over the suggestion.
+  const [setupCmd, setSetupCmd] = useState("");
+  const [setupTouched, setSetupTouched] = useState(false);
   useEffect(() => {
     const dir = root.trim();
     if (!dir) { setIsRepo(null); return; }
     let cancelled = false;
     const t = setTimeout(() => {
-      void repoToplevel(dir).then((top) => { if (!cancelled) setIsRepo(top != null); });
+      void repoToplevel(dir).then(async (top) => {
+        if (cancelled) return;
+        setIsRepo(top != null);
+        if (top == null || setupTouched) return;
+        let remembered: string | null = null;
+        try { remembered = localStorage.getItem(`flightdeck-setup:${top.toLowerCase()}`); } catch { /* non-persistent */ }
+        if (remembered != null) { if (!cancelled) setSetupCmd(remembered); return; }
+        const suggested = await invoke<string | null>("detect_setup_command", { cwd: dir }).catch(() => null);
+        if (!cancelled && suggested) setSetupCmd(suggested);
+      });
     }, 350); // debounce typing
     return () => { cancelled = true; clearTimeout(t); };
-  }, [root]);
+  }, [root, setupTouched]);
 
   const changeCount = (n: number) => {
     setCount(n);
@@ -83,12 +98,18 @@ export function NewWorkspace() {
     if (busy) return;
     setBusy(true);
     setIsolationPref(isolate);
+    const effectiveSetup = isolate && isRepo !== false ? setupCmd.trim() : "";
     try {
       const panes = await preparePanes(
         slots.map((s) => ({ vendor: s.vendor, cwd: (s.dir ?? root).trim() })),
         isolate
       );
-      createWorkspace(root.trim(), panes);
+      // Remember the exact value per repo (including a deliberate blank).
+      try {
+        const top = await repoToplevel(root.trim());
+        if (top) localStorage.setItem(`flightdeck-setup:${top.toLowerCase()}`, effectiveSetup);
+      } catch { /* non-persistent */ }
+      createWorkspace(root.trim(), panes, effectiveSetup || undefined);
     } finally {
       setBusy(false);
     }
@@ -164,6 +185,18 @@ export function NewWorkspace() {
               <span>Isolate each agent in its own git worktree</span>
               {isRepo === false && <span className="isolate-note">not a git repo — runs directly</span>}
             </label>
+            {isolate && isRepo !== false && (
+              <div className="setup-row" title="Runs once inside each freshly created worktree before its agent starts (a fresh worktree has no node_modules). Leave blank to skip.">
+                <span className="setup-lbl">Worktree setup</span>
+                <input
+                  className="setup-input"
+                  value={setupCmd}
+                  onChange={(e) => { setSetupTouched(true); setSetupCmd(e.target.value); }}
+                  spellCheck={false}
+                  placeholder="e.g. npm ci  (runs in each fresh worktree — blank = skip)"
+                />
+              </div>
+            )}
           </div>
 
           <div>

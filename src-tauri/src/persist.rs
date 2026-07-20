@@ -65,6 +65,10 @@ pub struct PersistedWorkspace {
     pub id: u32,
     pub name: String,
     pub root: String,
+    // Worktree setup command (Tier 0 follow-up): re-runs when restore has to
+    // recreate a pane's worktree (fresh dir — node_modules gone).
+    #[serde(default)]
+    pub setup_cmd: Option<String>,
     #[serde(default)]
     pub panes: Vec<PersistedPane>,
 }

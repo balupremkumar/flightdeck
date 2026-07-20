@@ -26,6 +26,27 @@ describe("app store", () => {
     expect(s.creating).toBe(false);
   });
 
+  it("needsSetup: only set when the workspace has a setup command, cleared once consumed", () => {
+    useApp.getState().createWorkspace("/tmp/proj", [
+      { vendor: "claude", cwd: "/tmp/wt/a", worktreePath: "/tmp/wt/a", branch: "flightdeck/a", baseBranch: "main", needsSetup: true },
+      { vendor: "agy", cwd: "/tmp/wt/b", worktreePath: "/tmp/wt/b", branch: "flightdeck/b", baseBranch: "main", needsSetup: false },
+    ], "npm ci");
+    const ws = useApp.getState().workspaces[0];
+    expect(ws.setupCmd).toBe("npm ci");
+    expect(ws.panes[0].needsSetup).toBe(true);
+    expect(ws.panes[1].needsSetup).toBeUndefined(); // reused worktree — no setup
+    useApp.getState().clearNeedsSetup(ws.panes[0].id);
+    expect(useApp.getState().workspaces[0].panes[0].needsSetup).toBeUndefined();
+
+    // No setup command -> fresh worktrees still skip setup.
+    useApp.getState().createWorkspace("/tmp/other", [
+      { vendor: "claude", cwd: "/tmp/wt/c", needsSetup: true },
+    ]);
+    const ws2 = useApp.getState().workspaces[1];
+    expect(ws2.setupCmd).toBeUndefined();
+    expect(ws2.panes[0].needsSetup).toBeUndefined();
+  });
+
   it("addPane: appends to the target workspace and focuses the new pane", () => {
     useApp.getState().createWorkspace("/tmp/proj", [{ vendor: "claude", cwd: "/tmp/proj" }]);
     const wsId = useApp.getState().workspaces[0].id;

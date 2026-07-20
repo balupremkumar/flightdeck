@@ -3,7 +3,7 @@ import type { MouseEvent as ReactMouseEvent, DragEvent as ReactDragEvent } from 
 import { useApp, type PaneModel, type Workspace } from "./store";
 import { useUI } from "./ui";
 import { defaultCycle } from "./vendors";
-import { closeWorkspaceWithCleanup, preparePanes, isolationPref } from "./worktrees";
+import { closeWorkspaceWithCleanup, preparePanes, isolationPref, rememberedOrSuggestedSetup } from "./worktrees";
 import { IconPlus, IconClose, IconBoard, IconDrag } from "./Icons";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
@@ -138,7 +138,7 @@ export function LeftPanel({ expanded, view, setView }: { expanded: boolean; view
             // Same worktree-aware path as New Workspace — a dropped repo gets
             // isolated panes per the remembered preference.
             const panes = await preparePanes(slots, isolationPref());
-            createWorkspace(path, panes);
+            createWorkspace(path, panes, await rememberedOrSuggestedSetup(path));
             setView("terminals");
             pushToast("success", `Created workspace from ${path}`);
           })
@@ -209,7 +209,7 @@ export function LeftPanel({ expanded, view, setView }: { expanded: boolean; view
       w.panes.map((p) => ({ vendor: p.vendor, cwd: p.worktreePath ? w.root : p.cwd })),
       w.panes.some((p) => !!p.worktreePath)
     ).then((panes) => {
-      createWorkspace(w.root, panes);
+      createWorkspace(w.root, panes, w.setupCmd);
       pushToast("success", `Duplicated ${w.name}`);
     });
   };
