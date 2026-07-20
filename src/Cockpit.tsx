@@ -13,6 +13,7 @@ import { Broadcast } from "./Broadcast";
 import { CommandPalette } from "./CommandPalette";
 import { Explorer } from "./Explorer";
 import { Review } from "./Review";
+import { AttentionQueue } from "./AttentionQueue";
 import { useUI } from "./ui";
 import { applyTheme, applyAccent, currentThemeId, currentAccentId, findTheme } from "./themes";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -47,6 +48,13 @@ export function Cockpit() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.ctrlKey && e.key === ",") { e.preventDefault(); setSettingsOpen(true); return; }
+      // Attention queue (UI-1 v2); skip while typing in a terminal so agents keep their keys.
+      if (e.ctrlKey && e.shiftKey && (e.key === "a" || e.key === "A")) {
+        if ((e.target as HTMLElement)?.closest?.(".pbody")) return;
+        e.preventDefault();
+        useUI.getState().setAttentionOpen(!useUI.getState().attentionOpen);
+        return;
+      }
       if (e.ctrlKey && (e.key === "b" || e.key === "B")) {
         // Don't hijack Ctrl+B while the user is typing in a terminal — let the agent have it.
         if ((e.target as HTMLElement)?.closest?.(".pbody")) return;
@@ -177,6 +185,7 @@ export function Cockpit() {
       <CommandPalette />
       <Broadcast />
       <Review />
+      <AttentionQueue />
 
       <div className="cockpit">
         <LeftPanel expanded={expanded} view={view} setView={setView} />

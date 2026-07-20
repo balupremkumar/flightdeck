@@ -80,6 +80,9 @@ interface UIState {
   setExplorerOpen: (open: boolean) => void;
   broadcastOpen: boolean;
   setBroadcastOpen: (open: boolean) => void;
+  // Standalone attention-queue overlay (UI-1 v2).
+  attentionOpen: boolean;
+  setAttentionOpen: (open: boolean) => void;
 
   // Review drawer (worktree diff/merge surface): pane id being reviewed, or
   // null when closed. Store-level so the pane header, command palette, and
@@ -174,6 +177,8 @@ export const useUI = create<UIState>((set) => ({
   },
   broadcastOpen: false,
   setBroadcastOpen: (broadcastOpen) => set({ broadcastOpen }),
+  attentionOpen: false,
+  setAttentionOpen: (attentionOpen) => set({ attentionOpen }),
 
   reviewPaneId: null,
   setReviewPane: (reviewPaneId) => set({ reviewPaneId }),

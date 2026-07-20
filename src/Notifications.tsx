@@ -2,24 +2,12 @@ import { useEffect, useRef, useState } from "react";
 import { useApp, type PaneState } from "./store";
 import { useUI } from "./ui";
 import { IconBell, IconSettings } from "./Icons";
+import { attentionQueue, forMins, stateSince, STATE_LABEL } from "./attention";
 import "./Notifications.css";
-
-const STATE_LABEL: Record<PaneState, string> = {
-  starting: "Starting",
-  running: "Running",
-  idle: "Idle",
-  waiting: "Waiting",
-  permission: "Needs approval",
-  error: "Error",
-};
 
 // All configurable states, approval/waiting/error first since those are the
 // ones most likely to be toggled on.
 const CONFIGURABLE_STATES: PaneState[] = ["permission", "waiting", "error", "idle", "running", "starting"];
-
-// Attention-queue rank: an explicit approval prompt outranks everything —
-// the agent is blocked purely on the user (UI-2).
-const ATTENTION_RANK: Partial<Record<PaneState, number>> = { permission: 0, error: 1, waiting: 2 };
 
 // Short sine chime via WebAudio — no bundled asset, degrades silently if the
 // AudioContext API is unavailable (e.g. autoplay-blocked before user gesture).
@@ -86,9 +74,6 @@ export function Notifications() {
 
   const [panel, setPanel] = useState<Panel>("none");
   const prevStates = useRef(new Map<number, PaneState>());
-  // When each pane entered its current state — powers the queue's "waiting 4m"
-  // durations and its longest-waiting-first ordering (UI-1).
-  const stateSince = useRef(new Map<number, number>());
   const [, setTick] = useState(0);
 
   // Re-render on a slow tick while the feed is open so durations stay honest.
@@ -114,7 +99,7 @@ export function Notifications() {
         const prev = prevStates.current.get(p.id);
         if (prev === p.state) continue;
         prevStates.current.set(p.id, p.state);
-        stateSince.current.set(p.id, Date.now());
+        stateSince.set(p.id, Date.now()); // shared with AttentionQueue (attention.ts)
         // Skip the first observation of a pane (mount) — only real transitions notify.
         if (prev === undefined) continue;
         if (!notify.notifyOn[p.state]) continue;
@@ -133,27 +118,11 @@ export function Notifications() {
     // Prune panes that no longer exist so closed panes don't leak in the map.
     const live = new Set(workspaces.flatMap((w) => w.panes.map((p) => p.id)));
     for (const id of prevStates.current.keys()) if (!live.has(id)) prevStates.current.delete(id);
-    for (const id of stateSince.current.keys()) if (!live.has(id)) stateSince.current.delete(id);
+    for (const id of stateSince.keys()) if (!live.has(id)) stateSince.delete(id);
   }, [workspaces, notify, pushNotifyEvent]);
 
-  // The attention QUEUE (UI-1): errors outrank waiting, and within a rank the
-  // pane that has needed you longest comes first — a scan order, not a pile.
-  const needsAttention = workspaces
-    .flatMap((w) =>
-      w.panes
-        .filter((p) => p.state in ATTENTION_RANK)
-        .map((p) => ({ w, p, since: stateSince.current.get(p.id) ?? Date.now() }))
-    )
-    .sort((a, b) => {
-      const ra = ATTENTION_RANK[a.p.state] ?? 9;
-      const rb = ATTENTION_RANK[b.p.state] ?? 9;
-      return ra === rb ? a.since - b.since : ra - rb;
-    });
-
-  const forMins = (since: number) => {
-    const m = Math.floor((Date.now() - since) / 60000);
-    return m < 1 ? "just now" : m < 60 ? `${m}m` : `${Math.floor(m / 60)}h ${m % 60}m`;
-  };
+  // The attention QUEUE (UI-1) — shared ranking in attention.ts.
+  const needsAttention = attentionQueue(workspaces);
 
   const jump = (wsId: number, paneId: number) => {
     switchWorkspace(wsId);
@@ -184,7 +153,16 @@ export function Notifications() {
 
           {needsAttention.length > 0 && (
             <div className="ntf-section">
-              <div className="ntf-label">Needs you now</div>
+              <div className="ntf-label-row">
+                <span className="ntf-label">Needs you now</span>
+                <button
+                  className="ntf-clear"
+                  title="Open the full attention queue (Ctrl+Shift+A)"
+                  onClick={() => { setPanel("none"); useUI.getState().setAttentionOpen(true); }}
+                >
+                  See all
+                </button>
+              </div>
               {needsAttention.map(({ w, p, since }) => (
                 <div className="ntf-item" key={p.id} onClick={() => jump(w.id, p.id)}>
                   <span className={"ntf-dot " + p.state} />
