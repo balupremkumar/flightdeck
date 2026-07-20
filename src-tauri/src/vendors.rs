@@ -54,6 +54,10 @@ pub struct VendorInfo {
     pub accent: String,
     pub installed: bool,
     pub detail: String,
+    /// #219 auth-state probe: "ok" (signed in / no sign-in needed), "none"
+    /// (installed but no stored credentials), "unknown" (can't tell).
+    pub auth_state: String,
+    pub auth_detail: String,
 }
 
 // Resolve an executable through the shell's PATH (Windows `where`).
@@ -112,14 +116,18 @@ fn git_bash_path() -> Option<String> {
 // forever in the user's agy settings.
 static AGY_TRUST_LOCK: OnceLock<std::sync::Mutex<()>> = OnceLock::new();
 
+fn home_dir() -> Option<std::path::PathBuf> {
+    std::env::var("USERPROFILE").ok().map(std::path::PathBuf::from)
+}
+
 fn agy_settings_path() -> Option<std::path::PathBuf> {
-    let home = std::env::var("USERPROFILE").ok()?;
-    Some(
-        std::path::Path::new(&home)
-            .join(".gemini")
-            .join("antigravity-cli")
-            .join("settings.json"),
-    )
+    Some(home_dir()?.join(".gemini").join("antigravity-cli").join("settings.json"))
+}
+
+/// #219: a credential file that exists and is non-empty. Existence heuristics
+/// only — we never read or parse the user's credentials.
+fn cred_file_present(path: &std::path::Path) -> bool {
+    std::fs::metadata(path).map(|m| m.is_file() && m.len() > 0).unwrap_or(false)
 }
 
 fn read_trust_doc(path: &std::path::Path) -> serde_json::Value {
@@ -275,6 +283,18 @@ pub trait VendorAdapter: Send + Sync {
         v.extend_from_slice(PROXY_ENV_STRIP);
         v
     }
+
+    /// #219 auth-state probe: ("ok" | "none" | "unknown", detail). "none" =
+    /// installed but no stored credentials — the CLI will run its own sign-in
+    /// flow on first launch, so this is a heads-up, never a blocker. Shells
+    /// need no sign-in; agents default to "unknown" unless they can tell.
+    fn auth(&self) -> (&'static str, String) {
+        if self.kind() == "shell" {
+            ("ok", String::new())
+        } else {
+            ("unknown", String::new())
+        }
+    }
 }
 
 struct Claude;
@@ -298,6 +318,14 @@ impl VendorAdapter for Claude {
         c
     }
     fn root_exe(&self) -> &str { "pwsh.exe" }
+    fn auth(&self) -> (&'static str, String) {
+        // Subscription login drops ~/.claude/.credentials.json on Windows.
+        match home_dir() {
+            Some(h) if cred_file_present(&h.join(".claude").join(".credentials.json")) => ("ok", String::new()),
+            Some(_) => ("none", "no stored sign-in — the pane will ask you to log in on first launch".into()),
+            None => ("unknown", String::new()),
+        }
+    }
 }
 
 struct Agy;
@@ -322,6 +350,14 @@ impl VendorAdapter for Agy {
     }
     fn root_exe(&self) -> &str { "agy.exe" }
     fn prepare(&self, cwd: &str) { ensure_agy_trust(cwd); }
+    fn auth(&self) -> (&'static str, String) {
+        // Google sign-in drops ~/.gemini/google_accounts.json.
+        match home_dir() {
+            Some(h) if cred_file_present(&h.join(".gemini").join("google_accounts.json")) => ("ok", String::new()),
+            Some(_) => ("none", "no stored Google sign-in — the pane will ask you to log in on first launch".into()),
+            None => ("unknown", String::new()),
+        }
+    }
 }
 
 // --- Shells (170) ----------------------------------------------------------
@@ -487,6 +523,10 @@ struct VendorManifest {
     env: std::collections::HashMap<String, String>,
     #[serde(default)]
     probe: Option<String>,
+    /// #219: optional credential-file path ("~" expands to the user profile).
+    /// Present + non-empty -> signed in; absent field -> auth state unknown.
+    #[serde(default)]
+    auth_file: Option<String>,
 }
 
 struct ManifestVendor {
@@ -544,6 +584,25 @@ impl VendorAdapter for ManifestVendor {
         }
         c.cwd(cwd);
         c
+    }
+
+    fn auth(&self) -> (&'static str, String) {
+        let Some(af) = self.m.auth_file.as_deref() else {
+            return if self.kind() == "shell" { ("ok", String::new()) } else { ("unknown", String::new()) };
+        };
+        let expanded = if let Some(rest) = af.strip_prefix('~') {
+            match home_dir() {
+                Some(h) => h.join(rest.trim_start_matches(['\\', '/'])),
+                None => return ("unknown", String::new()),
+            }
+        } else {
+            std::path::PathBuf::from(af)
+        };
+        if cred_file_present(&expanded) {
+            ("ok", String::new())
+        } else {
+            ("none", format!("no credential file at {} — sign in via the CLI first", expanded.display()))
+        }
     }
 
     /// Ambient-key stripping still applies — EXCEPT keys the manifest sets
@@ -623,6 +682,7 @@ pub fn detect() -> Vec<VendorInfo> {
         .iter()
         .map(|v| {
             let (installed, detail) = v.probe();
+            let (auth_state, auth_detail) = if installed { v.auth() } else { ("unknown", String::new()) };
             VendorInfo {
                 id: v.id().into(),
                 label: v.label().into(),
@@ -631,6 +691,8 @@ pub fn detect() -> Vec<VendorInfo> {
                 accent: v.accent().into(),
                 installed,
                 detail,
+                auth_state: auth_state.into(),
+                auth_detail,
             }
         })
         .collect()
@@ -763,6 +825,41 @@ mod tests {
             cmd.get_cwd().map(|c| c.to_string_lossy().into_owned()),
             Some("D:\\test\\dir".to_string())
         );
+    }
+
+    // --- Auth probe (#219) -------------------------------------------------
+
+    #[test]
+    fn auth_defaults_shells_ok_agents_unknown() {
+        for v in registry() {
+            let (state, _) = v.auth();
+            assert!(matches!(state, "ok" | "none" | "unknown"), "{} bad auth state {state}", v.id());
+            if v.kind() == "shell" {
+                assert_eq!(state, "ok", "{}: shells never need sign-in", v.id());
+            }
+        }
+    }
+
+    #[test]
+    fn manifest_auth_file_drives_auth_state() {
+        let dir = temp_manifest_dir();
+        let cred = dir.join("cred.json");
+        let mk = |auth_file: &str| -> ManifestVendor {
+            let json = format!(
+                r#"{{"id":"x","label":"X","exe":"x.exe","authFile":{auth_file}}}"#
+            );
+            ManifestVendor::new(serde_json::from_str(&json).unwrap())
+        };
+        // Missing file -> none.
+        let v = mk(&format!("{:?}", cred.to_string_lossy()));
+        assert_eq!(v.auth().0, "none");
+        // Present + non-empty -> ok.
+        std::fs::write(&cred, "{}").unwrap();
+        assert_eq!(v.auth().0, "ok");
+        // No authFile field -> unknown for agents.
+        let v2: VendorManifest = serde_json::from_str(r#"{"id":"y","label":"Y","exe":"y.exe"}"#).unwrap();
+        assert_eq!(ManifestVendor::new(v2).auth().0, "unknown");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     // --- agy trust add/prune (K0a) -----------------------------------------

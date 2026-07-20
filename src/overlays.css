@@ -113,7 +113,17 @@ kbd {
 
 .agent-list { display: flex; flex-direction: column; gap: 8px; }
 .agent-row { display: grid; grid-template-columns: 108px 1fr 1fr; align-items: center; gap: 8px; }
-.agent-row-name { font-size: 12.5px; color: var(--muted); }
+.agent-row-name { font-size: 12.5px; color: var(--muted); display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+/* #219 install/auth state chips in Settings > Agents */
+.agent-chip {
+  font-size: 9.5px; font-weight: 600; letter-spacing: .02em;
+  padding: 2px 7px; border-radius: 999px; border: 1px solid var(--line);
+  color: var(--muted); background: var(--surface); white-space: nowrap;
+}
+.agent-chip.warn { color: var(--st-waiting); border-color: var(--st-waiting); }
+.agent-chip.ok { color: var(--st-running); }
+button.agent-chip { cursor: pointer; font: inherit; font-size: 9.5px; font-weight: 600; }
+button.agent-chip:hover { filter: brightness(1.15); }
 .agent-row .set-input { width: 100%; }
 
 /* ---------- Shortcut rebind ---------- */

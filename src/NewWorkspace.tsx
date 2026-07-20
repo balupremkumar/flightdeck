@@ -214,6 +214,9 @@ export function NewWorkspace() {
                   {vendorsLoaded && !vendorMeta(s.vendor).installed && (
                     <span className="slot-warn" title={vendorMeta(s.vendor).detail}>not installed</span>
                   )}
+                  {vendorsLoaded && vendorMeta(s.vendor).installed && vendorMeta(s.vendor).authState === "none" && (
+                    <span className="slot-warn" title={vendorMeta(s.vendor).authDetail || "No stored sign-in — the pane will ask you to log in on first launch."}>not signed in</span>
+                  )}
                   <button className={"dirbtn" + (s.dir ? " custom" : "")} onClick={() => browseSlot(i)} title={s.dir ?? root + "  (default)"}>
                     <IconFolder size={12} /> {baseName(s.dir ?? root)}
                   </button>

@@ -16,21 +16,27 @@ export interface VendorInfo {
   accent: string;
   installed: boolean;
   detail: string;
+  /** #219 auth probe: "ok" (signed in / not needed), "none" (installed but no
+   *  stored sign-in — the CLI will prompt on first launch), "unknown". */
+  authState: "ok" | "none" | "unknown";
+  authDetail: string;
 }
 
 // Used only until the backend responds, and as a safety net if the invoke fails
 // (e.g. unit tests, or a browser preview with no Tauri host). The backend
 // registry is always the truth once it answers.
 const FALLBACK: VendorInfo[] = [
-  { id: "claude", label: "Claude Code", short: "Claude", kind: "agent", accent: "--agent-claude", installed: false, detail: "" },
-  { id: "agy", label: "Antigravity", short: "Antigravity", kind: "agent", accent: "--accent", installed: false, detail: "" },
-  { id: "pwsh", label: "pwsh (shell)", short: "pwsh", kind: "shell", accent: "--aqua", installed: false, detail: "" },
+  { id: "claude", label: "Claude Code", short: "Claude", kind: "agent", accent: "--agent-claude", installed: false, detail: "", authState: "unknown", authDetail: "" },
+  { id: "agy", label: "Antigravity", short: "Antigravity", kind: "agent", accent: "--accent", installed: false, detail: "", authState: "unknown", authDetail: "" },
+  { id: "pwsh", label: "pwsh (shell)", short: "pwsh", kind: "shell", accent: "--aqua", installed: false, detail: "", authState: "unknown", authDetail: "" },
 ];
 
 interface VendorState {
   vendors: VendorInfo[];
   loaded: boolean;
   load: () => Promise<void>;
+  /** Force a re-probe (install/auth state changes while the app runs). */
+  refresh: () => Promise<void>;
 }
 
 export const useVendors = create<VendorState>((set, get) => ({
@@ -38,6 +44,9 @@ export const useVendors = create<VendorState>((set, get) => ({
   loaded: false,
   load: async () => {
     if (get().loaded) return;
+    await get().refresh();
+  },
+  refresh: async () => {
     try {
       const list = await invoke<VendorInfo[]>("detect_vendors");
       if (Array.isArray(list) && list.length > 0) set({ vendors: list, loaded: true });
@@ -68,6 +77,8 @@ export function vendorMeta(id: string): VendorInfo {
       accent: "--muted",
       installed: false,
       detail: "",
+      authState: "unknown" as const,
+      authDetail: "",
     }
   );
 }

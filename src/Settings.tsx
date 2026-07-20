@@ -3,6 +3,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { useUI, applyUiScale } from "./ui";
+import { useApp } from "./store";
+import { spawnPane } from "./worktrees";
 import { useVendors, vendorColor, vendorAccentOverrides, setVendorAccentOverride } from "./vendors";
 import { IconClose } from "./Icons";
 import {
@@ -286,6 +288,10 @@ export function Settings() {
   const [startup, setStartup] = useState(getStartupBehavior());
   const [importError, setImportError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  // Re-probe install + auth state (#219) each time Settings opens — a login
+  // completed in a pane should show as "signed in" without an app restart.
+  useEffect(() => { void useVendors.getState().refresh(); }, []);
 
   useEffect(() => {
     if (!capturing) return;
@@ -571,7 +577,29 @@ export function Settings() {
             <div className="agent-list">
               {vendors.map((v) => (
                 <div className="agent-row" key={v.id}>
-                  <span className="agent-row-name">{v.label}</span>
+                  <span className="agent-row-name">
+                    {v.label}
+                    {/* #219 install + auth state; sign-in opens a pane so the CLI runs its own login flow. */}
+                    {!v.installed && <span className="agent-chip warn" title={v.detail}>not installed</span>}
+                    {v.installed && v.authState === "none" && (
+                      <button
+                        className="agent-chip warn agent-login"
+                        title={(v.authDetail || "No stored sign-in.") + " Opens a pane in the current workspace — complete the CLI's login there."}
+                        onClick={() => {
+                          const s = useApp.getState();
+                          const ws = s.workspaces.find((w) => w.id === s.activeId);
+                          if (!ws) { useUI.getState().pushToast("info", "Open a workspace first — sign-in runs in a pane."); return; }
+                          void spawnPane(ws.id, v.id, ws.root, false);
+                          useUI.getState().setSettingsOpen(false);
+                        }}
+                      >
+                        run login
+                      </button>
+                    )}
+                    {v.installed && v.authState === "ok" && v.kind === "agent" && (
+                      <span className="agent-chip ok" title="Stored sign-in found">signed in</span>
+                    )}
+                  </span>
                   <input
                     className="set-input" placeholder="extra CLI flags"
                     value={agents.flags[v.id] ?? ""}
