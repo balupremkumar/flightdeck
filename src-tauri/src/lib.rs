@@ -480,6 +480,7 @@ pub fn run() {
             worktree::git_file_diff,
             worktree::git_merge_back,
             worktree::detect_setup_command,
+            worktree::git_pr_handoff,
             persist::save_session,
             persist::load_session,
             persist::has_previous_session,

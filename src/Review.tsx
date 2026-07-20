@@ -5,6 +5,7 @@
 // untracked files for isolated panes (backend D8).
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { useApp } from "./store";
 import { useUI } from "./ui";
 import { vendorShort } from "./vendors";
@@ -38,6 +39,7 @@ export function Review() {
   const [selected, setSelected] = useState<string | null>(null);
   const [patch, setPatch] = useState<string>("");
   const [merging, setMerging] = useState(false);
+  const [handing, setHanding] = useState(false);
   const patchRef = useRef<HTMLPreElement>(null);
   const [hunkIdx, setHunkIdx] = useState(0);
 
@@ -99,6 +101,28 @@ export function Review() {
           .finally(() => setMerging(false));
       },
     });
+  };
+
+  // PR handoff (v2 merge path): commit + push the agent branch, open the
+  // host's new-PR page. Review and conflicts happen on the host — the local
+  // base branch is never touched.
+  const createPr = () => {
+    if (!pane?.worktreePath || handing) return;
+    setHanding(true);
+    invoke<{ status: string; url: string | null; detail: string }>("git_pr_handoff", { worktreePath: pane.worktreePath })
+      .then((r) => {
+        if (r.status === "pushed") {
+          pushToast("success", `Pushed ${pane.branch} to origin.${r.url ? "" : ` ${r.detail}`}`);
+          if (r.url) void openUrl(r.url).catch(() => pushToast("info", r.url!));
+        } else if (r.status === "nothing-to-push") {
+          pushToast("info", "Nothing to push — the branch has no new work.");
+        } else {
+          pushToast("error", r.detail || r.status);
+        }
+        void load();
+      })
+      .catch((e) => pushToast("error", `PR handoff failed: ${String(e)}`))
+      .finally(() => setHanding(false));
   };
 
   // Esc closes (matches Settings behavior).
@@ -181,7 +205,10 @@ export function Review() {
         <div className="rv-foot">
           {pane.worktreePath ? (
             <>
-              <span className="rv-foot-note">Merging commits the agent's work and lands it on {pane.baseBranch}.</span>
+              <span className="rv-foot-note">Merge lands the agent's work on {pane.baseBranch} locally; Create PR pushes the branch and reviews on your git host.</span>
+              <button className="rv-pr" onClick={createPr} disabled={handing || fileCount === 0 && !pane.branch} title="Push this branch to origin and open a pull request">
+                <IconBranch size={13} /> {handing ? "Pushing…" : "Create PR"}
+              </button>
               <button className="rv-merge" onClick={mergeBack} disabled={merging || fileCount === 0 && !pane.branch}>
                 <IconMerge size={14} /> {merging ? "Merging…" : "Merge back"}
               </button>

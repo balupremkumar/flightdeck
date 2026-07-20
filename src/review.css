@@ -109,6 +109,16 @@ em.del { color: var(--st-error); margin-left: 5px; }
 }
 .rv-merge:hover { filter: brightness(1.08); transform: translateY(-1px); }
 .rv-merge:disabled { opacity: .5; cursor: default; transform: none; }
+/* PR handoff — secondary next to the primary Merge back */
+.rv-pr {
+  display: inline-flex; align-items: center; gap: 7px;
+  font: inherit; font-size: 12.5px; font-weight: 600;
+  padding: 7px 14px; border-radius: 9px; cursor: pointer;
+  color: var(--text); background: var(--surface); border: 1px solid var(--line);
+  transition: border-color .14s ease, transform .14s ease;
+}
+.rv-pr:hover { border-color: var(--accent); transform: translateY(-1px); }
+.rv-pr:disabled { opacity: .5; cursor: default; transform: none; }
 
 /* Pane-header diff-stat badge (rendered by PaneView) */
 .pdiff {

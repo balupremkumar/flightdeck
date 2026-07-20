@@ -489,6 +489,28 @@ pub struct MergeOutcome {
     pub detail: String,
 }
 
+/// Commit whatever the agent left uncommitted (shared by merge-back and the
+/// PR handoff — both land "everything the agent did", committed or not).
+fn commit_outstanding(dir: &Path, branch: &str) -> Result<(), String> {
+    let dirty = !git(dir, &["status", "--porcelain"])?.stdout.trim().is_empty();
+    if dirty {
+        let a = git(dir, &["add", "-A"])?;
+        if !a.ok() {
+            return Err(format!("git add failed: {}", a.stderr.trim()));
+        }
+        let c = git(dir, &["commit", "-m", &format!("flightdeck: agent work on {branch}")])?;
+        if !c.ok() && !c.stdout.contains("nothing to commit") {
+            return Err(format!("git commit failed: {}", c.stderr.trim()));
+        }
+    }
+    Ok(())
+}
+
+/// Commits the branch is ahead of base by ("0" = nothing to land).
+fn ahead_count(dir: &Path, base_branch: &str) -> Result<String, String> {
+    Ok(git_line(dir, &["rev-list", "--count", &format!("{base_branch}..HEAD")])?.unwrap_or_default())
+}
+
 /// Auto-commit the worktree, then merge its branch into the base branch in the
 /// main checkout. Conflicts abort cleanly (branch intact, base restored).
 pub fn merge_back(wt_root: &Path, worktree_path: &str) -> Result<MergeOutcome, String> {
@@ -501,22 +523,10 @@ pub fn merge_back(wt_root: &Path, worktree_path: &str) -> Result<MergeOutcome, S
     let _guard = lock.lock().unwrap();
 
     // 1. Commit whatever the agent left uncommitted (the common case).
-    let dirty = !git(dir, &["status", "--porcelain"])?.stdout.trim().is_empty();
-    if dirty {
-        let a = git(dir, &["add", "-A"])?;
-        if !a.ok() {
-            return Err(format!("git add failed: {}", a.stderr.trim()));
-        }
-        let c = git(dir, &["commit", "-m", &format!("flightdeck: agent work on {}", meta.branch)])?;
-        if !c.ok() && !c.stdout.contains("nothing to commit") {
-            return Err(format!("git commit failed: {}", c.stderr.trim()));
-        }
-    }
+    commit_outstanding(dir, &meta.branch)?;
 
     // 2. Anything to merge at all?
-    let ahead = git_line(dir, &["rev-list", "--count", &format!("{}..HEAD", meta.base_branch)])?
-        .unwrap_or_default();
-    if ahead == "0" {
+    if ahead_count(dir, &meta.base_branch)? == "0" {
         return Ok(MergeOutcome { status: "nothing-to-merge".into(), detail: String::new() });
     }
 
@@ -552,6 +562,104 @@ pub fn merge_back(wt_root: &Path, worktree_path: &str) -> Result<MergeOutcome, S
             meta.branch, meta.base_branch
         ),
     })
+}
+
+// ---------------------------------------------------------------------------
+// PR handoff (Tier 0 follow-up — the merge path most rivals ship; sidesteps
+// the local conflict UI entirely by landing review on the git host)
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrOutcome {
+    /// "pushed" | "nothing-to-push" | "no-remote" | "push-failed"
+    pub status: String,
+    /// Host compare/new-PR URL when the remote is a recognised host.
+    pub url: Option<String>,
+    pub detail: String,
+}
+
+/// Build the host's "open a PR for this branch" URL from an origin remote.
+/// Recognises GitHub, GitLab (incl. self-hosted *gitlab* hosts) and Bitbucket;
+/// anything else returns None — the push still succeeded, the user opens the
+/// PR on their host manually.
+fn compare_url(remote: &str, base: &str, branch: &str) -> Option<String> {
+    let r = remote.trim().trim_end_matches(".git");
+    // git@host:owner/repo | ssh://git@host/owner/repo | https://host/owner/repo
+    let (host, path) = if let Some(rest) = r.strip_prefix("git@") {
+        let (h, p) = rest.split_once(':')?;
+        (h.to_string(), p.to_string())
+    } else if let Some(rest) = r.strip_prefix("ssh://") {
+        let rest = rest.strip_prefix("git@").unwrap_or(rest);
+        let (h, p) = rest.split_once('/')?;
+        (h.to_string(), p.to_string())
+    } else if let Some(rest) = r.strip_prefix("https://").or_else(|| r.strip_prefix("http://")) {
+        let (h, p) = rest.split_once('/')?;
+        (h.to_string(), p.to_string())
+    } else {
+        return None; // local path remote, etc.
+    };
+    let path = path.trim_matches('/');
+    if path.is_empty() {
+        return None;
+    }
+    let enc = |s: &str| s.replace('/', "%2F");
+    if host == "github.com" {
+        Some(format!("https://github.com/{path}/compare/{base}...{branch}?expand=1"))
+    } else if host == "gitlab.com" || host.contains("gitlab") {
+        Some(format!(
+            "https://{host}/{path}/-/merge_requests/new?merge_request%5Bsource_branch%5D={}&merge_request%5Btarget_branch%5D={}",
+            enc(branch),
+            enc(base)
+        ))
+    } else if host == "bitbucket.org" {
+        Some(format!("https://bitbucket.org/{path}/pull-requests/new?source={}&dest={}", enc(branch), enc(base)))
+    } else {
+        None
+    }
+}
+
+/// Auto-commit the worktree's outstanding work, push its branch to origin and
+/// hand back the host's new-PR URL. Never touches the base branch — review and
+/// conflict resolution happen on the host.
+pub fn pr_handoff(wt_root: &Path, worktree_path: &str) -> Result<PrOutcome, String> {
+    let dir = Path::new(worktree_path);
+    ensure_under(wt_root, dir)?;
+    let meta = read_meta(dir).ok_or("worktree metadata missing — cannot resolve base branch")?;
+
+    let lock = repo_lock(&meta.repo);
+    let _guard = lock.lock().unwrap();
+
+    commit_outstanding(dir, &meta.branch)?;
+    if ahead_count(dir, &meta.base_branch)? == "0" {
+        return Ok(PrOutcome { status: "nothing-to-push".into(), url: None, detail: String::new() });
+    }
+
+    let remote = git(dir, &["remote", "get-url", "origin"])?;
+    if !remote.ok() {
+        return Ok(PrOutcome {
+            status: "no-remote".into(),
+            url: None,
+            detail: "the repo has no 'origin' remote — add one (or use Merge back)".into(),
+        });
+    }
+    let remote_url = remote.stdout.trim().to_string();
+
+    let push = git(dir, &["push", "-u", "origin", &meta.branch])?;
+    if !push.ok() {
+        return Ok(PrOutcome {
+            status: "push-failed".into(),
+            url: None,
+            detail: push.stderr.trim().to_string(),
+        });
+    }
+
+    let url = compare_url(&remote_url, &meta.base_branch, &meta.branch);
+    let detail = match &url {
+        Some(_) => String::new(),
+        None => format!("branch '{}' pushed to origin — open the PR on your git host", meta.branch),
+    };
+    Ok(PrOutcome { status: "pushed".into(), url, detail })
 }
 
 // ---------------------------------------------------------------------------
@@ -611,6 +719,11 @@ pub fn detect_setup_command(cwd: String) -> Option<String> {
     setup_suggestion(Path::new(&cwd))
 }
 
+#[tauri::command]
+pub fn git_pr_handoff(app: AppHandle, worktree_path: String) -> Result<PrOutcome, String> {
+    pr_handoff(&worktrees_root(&app)?, &worktree_path)
+}
+
 // ---------------------------------------------------------------------------
 // Tests — real git against throwaway repos in the OS temp dir.
 // ---------------------------------------------------------------------------
@@ -664,6 +777,59 @@ mod tests {
         std::fs::write(t.repo.join("package-lock.json"), "{}").unwrap();
         assert_eq!(setup_suggestion(&t.repo).as_deref(), Some("npm ci"));
         assert_eq!(setup_suggestion(&std::env::temp_dir()), None, "non-repo — no suggestion");
+    }
+
+    #[test]
+    fn compare_url_recognises_hosts_and_encodes_branches() {
+        assert_eq!(
+            compare_url("git@github.com:balu/flightdeck.git", "main", "flightdeck/p1").as_deref(),
+            Some("https://github.com/balu/flightdeck/compare/main...flightdeck/p1?expand=1")
+        );
+        assert_eq!(
+            compare_url("https://github.com/balu/flightdeck", "main", "fd/x").as_deref(),
+            Some("https://github.com/balu/flightdeck/compare/main...fd/x?expand=1")
+        );
+        let gl = compare_url("ssh://git@gitlab.example.com/team/app.git", "main", "flightdeck/p1").unwrap();
+        assert!(gl.starts_with("https://gitlab.example.com/team/app/-/merge_requests/new?"));
+        assert!(gl.contains("source_branch%5D=flightdeck%2Fp1"), "{gl}");
+        let bb = compare_url("https://bitbucket.org/team/app.git", "dev", "fd/y").unwrap();
+        assert!(bb.contains("pull-requests/new?source=fd%2Fy&dest=dev"));
+        assert_eq!(compare_url("D:\\some\\local\\bare", "main", "b"), None);
+        assert_eq!(compare_url("https://example.com/owner/repo", "main", "b"), None);
+    }
+
+    #[test]
+    fn pr_handoff_pushes_branch_to_origin() {
+        let t = temp_repo();
+        // Local bare origin — push works, URL is None (unrecognised remote).
+        let bare = t.wt_root.join("origin.git");
+        sh(&t.repo, &["init", "--bare", &bare.to_string_lossy()]);
+        sh(&t.repo, &["remote", "add", "origin", &bare.to_string_lossy()]);
+
+        let wt = worktree_add(&t.wt_root, &t.repo.to_string_lossy(), "pr1").unwrap();
+        std::fs::write(Path::new(&wt.path).join("new.txt"), "agent work\n").unwrap();
+
+        let out = pr_handoff(&t.wt_root, &wt.path).unwrap();
+        assert_eq!(out.status, "pushed", "{}", out.detail);
+        assert!(out.url.is_none());
+        // The branch (with the auto-commit) must exist on the origin.
+        let ls = git(&t.repo, &["ls-remote", "--heads", "origin", &wt.branch]).unwrap();
+        assert!(ls.stdout.contains(&wt.branch), "branch not on origin: {}", ls.stdout);
+
+        // Second run with nothing new: still "pushed" (idempotent) or nothing-to-push
+        // after the first landed? Nothing further committed, branch already ahead —
+        // handoff pushes an up-to-date branch fine.
+        let again = pr_handoff(&t.wt_root, &wt.path).unwrap();
+        assert_eq!(again.status, "pushed");
+    }
+
+    #[test]
+    fn pr_handoff_without_remote_reports_no_remote() {
+        let t = temp_repo();
+        let wt = worktree_add(&t.wt_root, &t.repo.to_string_lossy(), "pr2").unwrap();
+        std::fs::write(Path::new(&wt.path).join("w.txt"), "x\n").unwrap();
+        let out = pr_handoff(&t.wt_root, &wt.path).unwrap();
+        assert_eq!(out.status, "no-remote");
     }
 
     #[test]
