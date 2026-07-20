@@ -6,7 +6,7 @@ import { useUI, applyUiScale } from "./ui";
 import { useApp } from "./store";
 import { bytes, relTime, absTime } from "./format";
 import { listRestorePoints, restoreFromPoint, exportBackup, importBackup, type RestorePointInfo } from "./persist";
-import { adoptSession } from "./session";
+import { adoptSession, lastSessionSaveAt } from "./session";
 import { spawnPane } from "./worktrees";
 import { useVendors, vendorColor, vendorAccentOverrides, setVendorAccentOverride } from "./vendors";
 import { IconClose } from "./Icons";
@@ -489,6 +489,18 @@ export function Settings() {
   const [startup, setStartup] = useState(getStartupBehavior());
   const [importError, setImportError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  // UI-196: a slow tick is enough — this is reassurance, not telemetry.
+  const [savedAgo, setSavedAgo] = useState<string | null>(null);
+  useEffect(() => {
+    const tick = () => {
+      const at = lastSessionSaveAt();
+      setSavedAgo(at ? relTime(at) : null);
+    };
+    tick();
+    const id = setInterval(tick, 5000);
+    return () => clearInterval(id);
+  }, []);
 
   // UI-180: live section filter. Matching is done on rendered text rather than
   // a hand-maintained keyword table, so a new section is searchable for free.
@@ -1017,6 +1029,13 @@ export function Settings() {
 
           <section className="set-section">
             <div className="set-label">About</div>
+            {/* UI-196: persistence is silent by design, but "is my session
+                actually being saved?" deserves a visible answer. */}
+            <div className="set-row-sub">
+              {savedAgo === null
+                ? "Session autosave is on — nothing saved yet this run."
+                : `Session last saved ${savedAgo}.`}
+            </div>
             <div className="set-about">Flightdeck v{APP_VERSION} — a multi-agent terminal cockpit. Deep Cove build.</div>
             {/* UI-42: a real "what's new" — the cheapest active-development signal. */}
             <details className="set-changelog">

@@ -48,6 +48,10 @@ function toDraft(workspaces: Workspace[], activeId: number | null): SessionDraft
 // ---------------------------------------------------------------------------
 
 let lastSavedJson = "";
+/** UI-196: when the session last hit disk, for the Settings readout. Persisting
+ *  silently is right, but "is my work actually being saved?" deserves an answer. */
+let lastSavedAt = 0;
+export function lastSessionSaveAt(): number { return lastSavedAt; }
 
 export function startAutosave() {
   const saver = makeDebouncedSave(800);
@@ -60,6 +64,7 @@ export function startAutosave() {
     if (json === lastSavedJson) return;
     lastSavedJson = json;
     saver.schedule(draft);
+    lastSavedAt = Date.now();
   };
   useApp.subscribe(scheduleIfChanged);
   useBoardStore.subscribe(scheduleIfChanged); // card edits persist too (229)
@@ -93,7 +98,11 @@ async function reconcilePane(p: PaneModel, wsRoot: string, wsSetupCmd?: string):
       /* fall through to the plain-pane fallback */
     }
   }
-  useUI.getState().pushToast("info", `Couldn't reattach ${p.branch ?? "a worktree"} — pane reopened at the workspace root.`);
+  useUI.getState().pushToast(
+    "info",
+    `Couldn't reattach ${p.branch ?? "a worktree"} in ${wsRoot.split(/[\\\/]/).pop() || wsRoot} ` +
+    `(its repo or branch is gone) — the pane reopened at the workspace root instead.`
+  );
   return { ...p, cwd: wsRoot, worktreePath: undefined, branch: undefined, baseBranch: undefined };
 }
 
