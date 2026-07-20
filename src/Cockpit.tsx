@@ -4,7 +4,7 @@ import { LeftPanel } from "./LeftPanel";
 import { PaneGrid } from "./PaneGrid";
 import { Board } from "./Board";
 import { IconBrand, IconPanel, IconSettings, IconTheme, IconFile, IconBroadcast, IconTerminalPlus } from "./Icons";
-import { useVendors, accentCss } from "./vendors";
+import { useVendors, accentCss, vendorShort } from "./vendors";
 import { Settings } from "./Settings";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { ToastHost } from "./ToastHost";
@@ -181,7 +181,15 @@ export function Cockpit() {
       <div className="cockpit">
         <LeftPanel expanded={expanded} view={view} setView={setView} />
         {showExplorer && active && view === "terminals" && (
-          <Explorer root={active.root} wsId={active.id} />
+          <Explorer
+            root={active.root}
+            wsId={active.id}
+            paneRoot={active.panes.find((p) => p.id === active.focused)?.worktreePath}
+            paneLabel={(() => {
+              const p = active.panes.find((x) => x.id === active.focused);
+              return p ? (p.title || vendorShort(p.vendor)) : undefined;
+            })()}
+          />
         )}
         <div className="main">
           <div className="wsstack" style={{ display: view === "board" ? "none" : "flex" }}>

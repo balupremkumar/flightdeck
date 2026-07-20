@@ -487,6 +487,10 @@ pub struct MergeOutcome {
     /// "merged" | "nothing-to-merge" | "conflict" | "dirty-base" | "wrong-branch"
     pub status: String,
     pub detail: String,
+    /// UI-5: on "conflict", the files that conflicted (captured before the
+    /// abort restores the base). Empty for every other status.
+    #[serde(default)]
+    pub conflict_files: Vec<String>,
 }
 
 /// Commit whatever the agent left uncommitted (shared by merge-back and the
@@ -527,7 +531,7 @@ pub fn merge_back(wt_root: &Path, worktree_path: &str) -> Result<MergeOutcome, S
 
     // 2. Anything to merge at all?
     if ahead_count(dir, &meta.base_branch)? == "0" {
-        return Ok(MergeOutcome { status: "nothing-to-merge".into(), detail: String::new() });
+        return Ok(MergeOutcome { status: "nothing-to-merge".into(), detail: String::new(), conflict_files: vec![] });
     }
 
     // 3. The main checkout must be on the base branch and clean — we never
@@ -537,12 +541,14 @@ pub fn merge_back(wt_root: &Path, worktree_path: &str) -> Result<MergeOutcome, S
         return Ok(MergeOutcome {
             status: "wrong-branch".into(),
             detail: format!("repo is on '{head}', worktree was forked from '{}'", meta.base_branch),
+            conflict_files: vec![],
         });
     }
     if !git(top_path, &["status", "--porcelain"])?.stdout.trim().is_empty() {
         return Ok(MergeOutcome {
             status: "dirty-base".into(),
             detail: "the main checkout has uncommitted changes".into(),
+            conflict_files: vec![],
         });
     }
 
@@ -552,15 +558,20 @@ pub fn merge_back(wt_root: &Path, worktree_path: &str) -> Result<MergeOutcome, S
         &["merge", "--no-ff", &meta.branch, "-m", &format!("flightdeck: merge {}", meta.branch)],
     )?;
     if m.ok() {
-        return Ok(MergeOutcome { status: "merged".into(), detail: String::new() });
+        return Ok(MergeOutcome { status: "merged".into(), detail: String::new(), conflict_files: vec![] });
     }
+    // UI-5: capture WHICH files conflicted before the abort wipes the state.
+    let conflict_files: Vec<String> = git(top_path, &["diff", "--name-only", "--diff-filter=U"])
+        .map(|o| o.stdout.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect())
+        .unwrap_or_default();
     let _ = git(top_path, &["merge", "--abort"]);
     Ok(MergeOutcome {
         status: "conflict".into(),
         detail: format!(
-            "branch '{}' conflicts with '{}' — resolve in your editor or merge via PR; the branch is intact",
+            "branch '{}' conflicts with '{}' — the branch is intact",
             meta.branch, meta.base_branch
         ),
+        conflict_files,
     })
 }
 
@@ -921,6 +932,8 @@ mod tests {
         sh(&t.repo, &["commit", "-am", "diverge"]);
         let m = merge_back(&t.wt_root, &a.path).unwrap();
         assert_eq!(m.status, "conflict");
+        // UI-5: the conflicted file is reported by name.
+        assert_eq!(m.conflict_files, vec!["a.txt".to_string()]);
         // Base restored — no merge in progress, no conflict markers:
         let st = git(&t.repo, &["status", "--porcelain"]).unwrap();
         assert!(st.stdout.trim().is_empty(), "base left dirty after abort: {}", st.stdout);

@@ -20,6 +20,11 @@ export interface ExplorerProps {
   wsId?: number;
   /** Vendor for panes spawned via "new terminal here". Defaults to a plain shell. */
   vendor?: string;
+  /** Focused pane's worktree (per-pane rooting): when set, a Workspace/Pane
+   *  scope toggle appears and "Pane" browses the agent's isolated copy. */
+  paneRoot?: string;
+  /** Label for the pane scope button (the focused pane's name). */
+  paneLabel?: string;
 }
 
 // Best-effort, no-gitignore-parser dimming for common generated/vendor dirs —
@@ -182,12 +187,26 @@ function loadWidth(): number {
   return DEFAULT_WIDTH;
 }
 
-export function Explorer({ root, wsId, vendor = "pwsh" }: ExplorerProps) {
+const SCOPE_KEY = "flightdeck-explorer-scope";
+
+export function Explorer({ root, wsId, vendor = "pwsh", paneRoot, paneLabel }: ExplorerProps) {
   const [panelOpen, setPanelOpen] = useState(true);
   const [entries, setEntries] = useState<Entry[]>([]);
   const [status, setStatus] = useState<RootStatus>(root ? "loading" : "empty-root");
   const [git, setGit] = useState<GitInfo | null>(null);
   const seq = useRef(0);
+  // Per-pane rooting: browse the focused pane's worktree instead of the main
+  // checkout. Preference persisted; falls back to workspace when the focused
+  // pane isn't isolated.
+  const [scope, setScope] = useState<"workspace" | "pane">(() => {
+    try { return localStorage.getItem(SCOPE_KEY) === "workspace" ? "workspace" : "pane"; } catch { return "pane"; }
+  });
+  const pickScope = (s: "workspace" | "pane") => {
+    setScope(s);
+    try { localStorage.setItem(SCOPE_KEY, s); } catch { /* non-persistent */ }
+  };
+  const paneScoped = scope === "pane" && !!paneRoot && paneRoot !== root;
+  const effectiveRoot = paneScoped ? paneRoot! : root;
 
   const [width, setWidth] = useState(loadWidth);
   const [resizing, setResizing] = useState(false);
@@ -221,19 +240,19 @@ export function Explorer({ root, wsId, vendor = "pwsh" }: ExplorerProps) {
   }, []);
 
   const load = () => {
-    if (!root) { setStatus("empty-root"); return; }
+    if (!effectiveRoot) { setStatus("empty-root"); return; }
     const mySeq = ++seq.current;
     setStatus("loading");
-    invoke<Entry[]>("fs_list_dir", { path: root })
+    invoke<Entry[]>("fs_list_dir", { path: effectiveRoot })
       .then((e) => { if (seq.current === mySeq) { setEntries(e); setStatus("loaded"); } })
       .catch(() => { if (seq.current === mySeq) setStatus("error"); });
     // Degrade silently for non-repos — the pill just doesn't render.
-    invoke<GitInfo>("git_status", { cwd: root })
+    invoke<GitInfo>("git_status", { cwd: effectiveRoot })
       .then((g) => { if (seq.current === mySeq) setGit(g); })
       .catch(() => { if (seq.current === mySeq) setGit(null); });
   };
 
-  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [root]);
+  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [effectiveRoot]);
 
   return (
     <div className="explorer" style={{ width }}>
@@ -259,6 +278,25 @@ export function Explorer({ root, wsId, vendor = "pwsh" }: ExplorerProps) {
         <button className="ex-refresh" onClick={load} title="Refresh"><IconRefresh size={12} /></button>
       </div>
 
+      {paneRoot && paneRoot !== root && (
+        <div className="ex-scope" role="tablist" aria-label="Explorer scope">
+          <button
+            className={"ex-scope-btn" + (!paneScoped ? " on" : "")}
+            onClick={() => pickScope("workspace")}
+            title={"Browse the main checkout\n" + root}
+          >
+            Workspace
+          </button>
+          <button
+            className={"ex-scope-btn" + (paneScoped ? " on" : "")}
+            onClick={() => pickScope("pane")}
+            title={`Browse ${paneLabel ?? "the focused pane"}'s isolated worktree\n${paneRoot}`}
+          >
+            {paneLabel ?? "Pane"}
+          </button>
+        </div>
+      )}
+
       {panelOpen && (
         <div className="ex-body">
           {status === "empty-root" && <div className="ex-state">No folder open.</div>}
@@ -276,7 +314,7 @@ export function Explorer({ root, wsId, vendor = "pwsh" }: ExplorerProps) {
                 <Node
                   key={e.name}
                   name={e.name}
-                  path={joinPath(root, e.name)}
+                  path={joinPath(effectiveRoot, e.name)}
                   dir={e.dir}
                   depth={0}
                   wsId={wsId}

@@ -40,6 +40,9 @@ export function Review() {
   const [patch, setPatch] = useState<string>("");
   const [merging, setMerging] = useState(false);
   const [handing, setHanding] = useState(false);
+  // UI-5: a failed merge surfaces its conflicted files + a way forward here,
+  // instead of vanishing into a toast.
+  const [conflict, setConflict] = useState<MergeOutcome | null>(null);
   const patchRef = useRef<HTMLPreElement>(null);
   const [hunkIdx, setHunkIdx] = useState(0);
 
@@ -60,6 +63,7 @@ export function Review() {
   }, [pane?.cwd, pane?.baseBranch, pane?.epoch]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { if (paneId != null) void load(); }, [paneId, load]);
+  useEffect(() => { setConflict(null); }, [paneId]);
 
   // Load the selected file's patch.
   useEffect(() => {
@@ -90,10 +94,12 @@ export function Review() {
       confirmLabel: "Merge back",
       onConfirm: () => {
         setMerging(true);
+        setConflict(null);
         invoke<MergeOutcome>("git_merge_back", { worktreePath: pane.worktreePath })
           .then((m) => {
             if (m.status === "merged") pushToast("success", `Merged ${pane.branch} into ${pane.baseBranch}.`);
             else if (m.status === "nothing-to-merge") pushToast("info", "Nothing to merge — the branch has no new work.");
+            else if (m.status === "conflict") setConflict(m); // stays in the drawer, not a toast
             else pushToast("error", m.detail || m.status);
             void load();
           })
@@ -202,6 +208,30 @@ export function Review() {
           </div>
         )}
 
+        {conflict && (
+          <div className="rv-conflict" role="alert">
+            <div className="rv-conflict-t">
+              Merge conflict — {conflict.conflictFiles.length || "some"} file{conflict.conflictFiles.length === 1 ? "" : "s"} clash with {pane.baseBranch}
+            </div>
+            {conflict.conflictFiles.length > 0 && (
+              <ul className="rv-conflict-files">
+                {conflict.conflictFiles.map((f) => <li key={f}>{f}</li>)}
+              </ul>
+            )}
+            <div className="rv-conflict-sub">
+              Nothing was changed — both branches are intact. Create a PR to resolve it on your git host,
+              or pull {pane.baseBranch} into the pane's branch in its terminal and merge again.
+            </div>
+            <div className="rv-conflict-actions">
+              <button className="rv-pr" onClick={createPr} disabled={handing}>
+                <IconBranch size={13} /> {handing ? "Pushing…" : "Create PR instead"}
+              </button>
+              <button className="rv-ic rv-conflict-dismiss" onClick={() => setConflict(null)} title="Dismiss">
+                <IconClose size={12} />
+              </button>
+            </div>
+          </div>
+        )}
         <div className="rv-foot">
           {pane.worktreePath ? (
             <>

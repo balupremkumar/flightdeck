@@ -18,7 +18,7 @@ export interface WorktreeInfo {
 }
 export interface DiffFile { path: string; added: number; deleted: number; binary: boolean; }
 export interface DiffSummary { base: string; files: DiffFile[]; totalAdded: number; totalDeleted: number; }
-export interface MergeOutcome { status: string; detail: string; }
+export interface MergeOutcome { status: string; detail: string; conflictFiles: string[]; }
 export interface RemoveOutcome { status: string; detail: string; }
 
 const ISOLATE_KEY = "flightdeck-isolate";
