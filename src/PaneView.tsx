@@ -120,12 +120,15 @@ function PaneViewInner({
   // claude; a shell is idle at once). The per-pane slider still overrides it.
   const [quietSec, setQuietSec] = useState(() => vendorMeta(pane.vendor).quietSeconds || DEFAULT_QUIET_SEC);
   const [searchOpen, setSearchOpen] = useState(false);
+  // UI-137: reopening find with an empty box loses the search you were mid-way
+  // through; remember it for the life of the pane.
   const [query, setQuery] = useState("");
   const [matchInfo, setMatchInfo] = useState<{ index: number; count: number } | null>(null);
   const [gitStatus, setGitStatus] = useState<GitStatus | null>(null);
   // Diff-stat badge for isolated panes: "what did this agent change" at a
   // glance, polled on the same cadence as the branch pill. Click → review drawer.
   const [diffStat, setDiffStat] = useState<{ files: number; added: number; deleted: number } | null>(null);
+  const [diffPulse, setDiffPulse] = useState(false);
   const setReviewPane = useUI((s) => s.setReviewPane);
   // Live foreground process name (backend pty://proc via Terminal's onProc).
   const [procName, setProcName] = useState("");
@@ -151,8 +154,7 @@ function PaneViewInner({
   const closeSearch = () => {
     terminalRef.current?.clearSearch();
     setSearchOpen(false);
-    setQuery("");
-    setMatchInfo(null);
+    setMatchInfo(null); // query deliberately kept — reopening prefills it (UI-137)
   };
 
   // The menu is portalled to <body> — `.pane` clips overflow (and so does the
@@ -242,7 +244,16 @@ function PaneViewInner({
         { cwd: pane.cwd, base: pane.baseBranch ?? null },
         GIT_POLL_MS / 2
       );
-      setDiffStat({ files: s.files.length, added: s.totalAdded, deleted: s.totalDeleted });
+      const next = { files: s.files.length, added: s.totalAdded, deleted: s.totalDeleted };
+      // UI-118: the badge is easy to miss on a busy grid — pulse it when the
+      // agent actually changes something.
+      setDiffStat((prev) => {
+        if (prev && (prev.added !== next.added || prev.deleted !== next.deleted || prev.files !== next.files)) {
+          setDiffPulse(true);
+          window.setTimeout(() => setDiffPulse(false), 1200);
+        }
+        return next;
+      });
     } catch {
       setDiffStat(null);
     }
@@ -454,7 +465,7 @@ Running low — consider /compact in this pane.` : "")
         })()}
         {diffStat && diffStat.files > 0 && (
           <button
-            className="pdiff"
+            className={"pdiff" + (diffPulse ? " pulsing" : "")}
             onClick={() => setReviewPane(pane.id)}
             title={`${diffStat.files} file${diffStat.files === 1 ? "" : "s"} changed — review & merge`}
           >

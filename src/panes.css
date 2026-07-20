@@ -301,3 +301,12 @@
 /* UI-231: token chip warns as the context window fills */
 .phead .ptok.warn { color: var(--st-waiting); border-color: color-mix(in srgb, var(--st-waiting) 50%, transparent); }
 .phead .ptok.crit { color: var(--st-error); border-color: color-mix(in srgb, var(--st-error) 55%, transparent); }
+
+/* UI-118: diff badge pulses when the agent changes something */
+.pdiff.pulsing { animation: pdiff-pulse var(--t-slow) ease-out 2; }
+@keyframes pdiff-pulse {
+  0%, 100% { border-color: var(--line); }
+  40% { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 22%, transparent); }
+}
+/* UI-242: when one pane is maximised, quiet the others' chrome */
+.pg-maximized .pane:not(.pmax) .phead { opacity: .55; }
