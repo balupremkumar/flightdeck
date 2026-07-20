@@ -2,6 +2,7 @@ import { Fragment, useEffect, useState } from "react";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { PaneView } from "./PaneView";
 import { useApp, type Workspace } from "./store";
+import { useUI } from "./ui";
 import { IconWorkspace } from "./Icons";
 import { defaultCycle } from "./vendors";
 import { spawnPane } from "./worktrees";
@@ -33,6 +34,12 @@ export function PaneGrid({ ws }: { ws: Workspace }) {
   // Native HTML5 drag-reorder: index being dragged + index currently under the cursor.
   const [dragFrom, setDragFrom] = useState<number | null>(null);
   const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
+
+  // Mirror focus mode into the UI store (UI-145) so notifications can stand down.
+  useEffect(() => {
+    useUI.getState().setMaximizedPaneId(maximized);
+    return () => useUI.getState().setMaximizedPaneId(null);
+  }, [maximized]);
 
   // If the maximized pane was closed out from under it, fall back to the grid.
   useEffect(() => {

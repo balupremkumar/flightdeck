@@ -116,3 +116,8 @@
   padding: 8px 14px; border-top: 1px solid var(--line);
   font-size: 10.5px; color: var(--faint);
 }
+
+/* UI-142: split bell badges — errors (red) and approvals (gold) counted apart */
+.ntf-badge.err { background: var(--st-error); color: var(--on-accent); }
+.ntf-badge.warn { background: var(--st-waiting); color: var(--on-warn); }
+.ntf-badge.second { transform: translate(-14px, 0); }

@@ -83,6 +83,10 @@ interface UIState {
   // Standalone attention-queue overlay (UI-1 v2).
   attentionOpen: boolean;
   setAttentionOpen: (open: boolean) => void;
+  // UI-145: which pane (if any) is maximised. Owned by PaneGrid, mirrored here
+  // so Notifications can treat focus mode as do-not-disturb.
+  maximizedPaneId: number | null;
+  setMaximizedPaneId: (id: number | null) => void;
 
   // Review drawer (worktree diff/merge surface): pane id being reviewed, or
   // null when closed. Store-level so the pane header, command palette, and
@@ -179,6 +183,8 @@ export const useUI = create<UIState>((set) => ({
   setBroadcastOpen: (broadcastOpen) => set({ broadcastOpen }),
   attentionOpen: false,
   setAttentionOpen: (attentionOpen) => set({ attentionOpen }),
+  maximizedPaneId: null,
+  setMaximizedPaneId: (maximizedPaneId) => set({ maximizedPaneId }),
 
   reviewPaneId: null,
   setReviewPane: (reviewPaneId) => set({ reviewPaneId }),

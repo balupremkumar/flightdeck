@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useApp } from "./store";
+import { useApp, type PaneState } from "./store";
 import { useUI, setTheme } from "./ui";
-import { closePaneWithCleanup } from "./worktrees";
+import { closePaneGuarded } from "./worktrees";
 import { IconWorkspace, IconAgent, IconSettings, IconClose } from "./Icons";
 import "./leftpanel.css";
 
@@ -16,6 +16,8 @@ interface Item {
   label: string;
   hint?: string;
   keywords?: string;
+  /** UI-205: pane rows render a live status dot. */
+  state?: PaneState;
   run: () => void;
 }
 
@@ -104,7 +106,8 @@ export function CommandPalette() {
           section: "Panes",
           label: p.title || `${p.vendor} — ${w.name}`,
           hint: p.cwd,
-          keywords: `${p.vendor} ${w.name}`,
+          state: p.state, // UI-205: live status dot on the row
+          keywords: `${p.vendor} ${w.name} ${p.state}`,
           run: () => { switchWorkspace(w.id); focusPane(w.id, p.id); },
         });
         if (p.state === "idle" || p.state === "error") {
@@ -133,7 +136,6 @@ export function CommandPalette() {
         // Same guard as the pane header's close button: a dead pane closes
         // directly, a live one confirms first (closing kills the PTY / ends
         // the agent session with no way back).
-        const paneDead = p.state === "idle" || p.state === "error";
         list.push({
           id: `close:${p.id}`,
           section: "Actions",
@@ -141,14 +143,7 @@ export function CommandPalette() {
           run: () => {
             switchWorkspace(w.id);
             focusPane(w.id, p.id);
-            if (paneDead) { closePaneWithCleanup(w.id, p); return; }
-            requestConfirm({
-              title: `Close ${p.title || p.vendor}?`,
-              body: "This pane is still live. Closing it ends the session — the running agent can't be brought back.",
-              confirmLabel: "Close & end session",
-              danger: true,
-              onConfirm: () => closePaneWithCleanup(w.id, p),
-            });
+            closePaneGuarded(w.id, p);
           },
         });
       }
@@ -166,6 +161,31 @@ export function CommandPalette() {
       run: () => setExplorerOpen(!explorerOpen),
     });
     list.push({ id: "act:open-broadcast", section: "Actions", label: "Open broadcast", run: () => setBroadcastOpen(true) });
+    // UI-206: after a crash wave, restarting six panes one at a time is the
+    // wrong amount of work.
+    const errored = workspaces.flatMap((w) => w.panes.filter((p) => p.state === "error").map((p) => ({ w, p })));
+    if (errored.length > 0) {
+      list.push({
+        id: "act:restart-errored",
+        section: "Actions",
+        label: `Restart all errored panes (${errored.length})`,
+        run: () => {
+          for (const { p } of errored) restartPane(p.id);
+          pushToast("info", `Restarting ${errored.length} pane${errored.length === 1 ? "" : "s"}`);
+        },
+      });
+    }
+    // UI-207: act on what's focused without naming it.
+    const activeWs = workspaces.find((w) => w.id === useApp.getState().activeId);
+    const focusedPane = activeWs?.panes.find((p) => p.id === activeWs.focused);
+    if (focusedPane) {
+      list.push({
+        id: "act:review-focused",
+        section: "Actions",
+        label: "Review changes — focused pane",
+        run: () => setReviewPane(focusedPane.id),
+      });
+    }
     return list;
   }, [
     workspaces, switchWorkspace, focusPane, restartPane, startCreate,
@@ -245,6 +265,7 @@ export function CommandPalette() {
                   <span className="cmdp-ic">
                     {it.section === "Workspaces" ? <IconWorkspace size={14} /> : it.section === "Panes" ? <IconAgent size={14} /> : <IconSettings size={14} />}
                   </span>
+                  {it.state && <span className={"pdot " + it.state} title={it.state} />}
                   <span className="cmdp-label">{it.label}</span>
                   {it.hint && <span className="cmdp-hint">{it.hint}</span>}
                 </div>

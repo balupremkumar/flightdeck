@@ -83,8 +83,29 @@ export function Broadcast() {
     }
   };
 
+  // UI-201: newest-first message history for arrow-key recall.
+  const history = useMemo(
+    () => Array.from(new Set(broadcasts.map((r) => r.text).filter(Boolean))),
+    [broadcasts]
+  );
+  const [histIdx, setHistIdx] = useState(-1);
+
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void send(); }
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); setHistIdx(-1); void send(); return; }
+    // UI-201: shell-style history. Only from an empty/unedited field or at the
+    // very start, so it never eats a real cursor-up inside a draft.
+    const el = e.currentTarget;
+    if (e.key === "ArrowUp" && history.length > 0 && (el.selectionStart === 0 || histIdx >= 0)) {
+      const next = Math.min(histIdx + 1, history.length - 1);
+      if (next !== histIdx) { e.preventDefault(); setHistIdx(next); setText(history[next]); }
+      return;
+    }
+    if (e.key === "ArrowDown" && histIdx >= 0) {
+      e.preventDefault();
+      const next = histIdx - 1;
+      setHistIdx(next);
+      setText(next < 0 ? "" : history[next]);
+    }
   };
 
   if (!open) return null;
@@ -136,7 +157,7 @@ export function Broadcast() {
         <textarea
           className="bc-input"
           rows={1}
-          placeholder={targets.length ? `Message ${targets.length} pane${targets.length === 1 ? "" : "s"}…` : "No panes selected"}
+          placeholder={targets.length ? `Message ${targets.length} pane${targets.length === 1 ? "" : "s"}…  (Enter sends, Shift+Enter newline, ↑ recalls)` : "No panes selected"}
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={onKeyDown}

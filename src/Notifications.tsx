@@ -70,6 +70,8 @@ export function Notifications() {
   const setNotifyDnd = useUI((s) => s.setNotifyDnd);
   const toggleMuteWorkspace = useUI((s) => s.toggleMuteWorkspace);
   const feed = useUI((s) => s.feed);
+  // UI-145: a maximised pane means focus mode — alerts stand down, feed keeps recording.
+  const focusMode = useUI((s) => s.maximizedPaneId != null);
   const pushNotifyEvent = useUI((s) => s.pushNotifyEvent);
   const clearFeed = useUI((s) => s.clearFeed);
 
@@ -107,7 +109,7 @@ export function Notifications() {
 
         pushNotifyEvent({ wsId: w.id, wsName: w.name, paneId: p.id, vendor: p.vendor, state: p.state });
 
-        const muted = notify.dnd || notify.mutedWorkspaces.includes(w.id);
+        const muted = notify.dnd || notify.mutedWorkspaces.includes(w.id) || focusMode;
         if (muted) continue;
         if (notify.sound) playChime();
         if (notify.osToast && !document.hasFocus()) {
@@ -124,6 +126,8 @@ export function Notifications() {
 
   // The attention QUEUE (UI-1) — shared ranking in attention.ts.
   const needsAttention = attentionQueue(workspaces);
+  const approvalCount = needsAttention.filter((x) => x.p.state === "permission").length;
+  const errCount = needsAttention.filter((x) => x.p.state === "error").length;
 
   const jump = (wsId: number, paneId: number) => {
     switchWorkspace(wsId);
@@ -140,7 +144,13 @@ export function Notifications() {
         aria-label="Notifications"
       >
         <IconBell size={18} />
-        {needsAttention.length > 0 && <span className="ntf-badge">{needsAttention.length}</span>}
+        {/* UI-142: approvals and errors are different jobs — one number hid
+            which kind was waiting. Errors take the red slot. */}
+        {errCount > 0 && <span className="ntf-badge err">{errCount}</span>}
+        {approvalCount > 0 && <span className={"ntf-badge warn" + (errCount > 0 ? " second" : "")}>{approvalCount}</span>}
+        {errCount === 0 && approvalCount === 0 && needsAttention.length > 0 && (
+          <span className="ntf-badge">{needsAttention.length}</span>
+        )}
       </button>
 
       {panel === "feed" && (
