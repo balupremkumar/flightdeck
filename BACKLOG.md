@@ -714,12 +714,12 @@ grouped by surface only for navigation; work in any order, all at once.
 ### New Workspace / launcher
 - ~~UI-100. Enter in the directory field submits Create when the form is valid.~~ **DONE 2026-07-20 session 8** (Enter submits)
 - ~~UI-101. Recent-folders dropdown on the directory field (last 8 roots).~~ **DONE 2026-07-20 session 8** (recent-folders dropdown)
-- UI-102. Path autocomplete while typing (fs_list_dir-driven suggestions).
+- ~~UI-102. Path autocomplete while typing (fs_list_dir-driven suggestions).~~ **DONE 2026-07-20 session 8** (path autocomplete from the parent listing)
 - ~~UI-103. Live path validation: red outline + "folder not found" before Create.~~ **DONE 2026-07-20 session 8** (live path validation (warn, never block))
 - ~~UI-104. Duplicate-slot button (copy a row's vendor + dir).~~ **DONE 2026-07-20 session 8** (duplicate/remove slot)
 - ~~UI-105. Drag to reorder slots so pane order matches intent.~~ **DONE 2026-07-20 session 8** (reorder slots)
 - ~~UI-106. Setup field shows its source ("suggested from package-lock.json").~~ **DONE 2026-07-20 session 8** (setup source shown)
-- UI-107. Isolation toggle gets a "how isolation works" explainer popover.
+- ~~UI-107. Isolation toggle gets a "how isolation works" explainer popover.~~ **DONE 2026-07-20 session 8** (isolation explainer popover)
 - ~~UI-108. Remember last layout count per repo (like the setup command).~~ **DONE 2026-07-20 session 8** (layout remembered per repo)
 - ~~UI-109. Warn when two non-isolated slots share the same dir (agents trample).~~ **DONE 2026-07-20 session 8** (same-folder collision warning)
 - ~~UI-110. Esc closes New Workspace when other workspaces exist (overlay parity).~~ **DONE 2026-07-20 session 8** (Esc closes)
@@ -727,7 +727,7 @@ grouped by surface only for navigation; work in any order, all at once.
   install command + copy button, not tooltip-only.
 - ~~UI-112. Create button shows per-slot progress ("worktree 2 of 4…").~~ **DONE 2026-07-20 session 8** (per-slot progress)
 - ~~UI-113. Drop a folder anywhere on the launcher to fill the directory field.~~ **DONE 2026-07-20 session 8** (drop folder to fill)
-- UI-114. First-run launcher footer: version + "what's new" link.
+- ~~UI-114. First-run launcher footer: version + "what's new" link.~~ **DONE 2026-07-20 session 8** (first-run launcher footer (version + orientation))
 
 ### Pane header / grid
 - ~~UI-115. Status-dot tooltip: state + how long it's been in it (stateSince).~~ **DONE 2026-07-20 session 8** (status-dot duration tooltip)
@@ -736,19 +736,19 @@ grouped by surface only for navigation; work in any order, all at once.
 - ~~UI-118. Diff badge pulses subtly when its counts change.~~ **DONE 2026-07-20 session 8** (diff badge pulse)
 - ~~UI-119. Branch pill click copies the branch name (toast).~~ **DONE 2026-07-20 session 8** (branch pill copies)
 - ~~UI-120. cwd chip click reveals the folder in the OS (now menu-only).~~ **DONE 2026-07-20 session 8** (cwd chip reveals)
-- UI-121. Focused pane border tints with the vendor accent (ties UI-51).
-- UI-122. Ctrl+Alt+arrows move pane focus spatially in the grid.
+- ~~UI-121. Focused pane border tints with the vendor accent (ties UI-51).~~ **DONE 2026-07-20 session 8** (focused pane ring takes the vendor colour)
+- ~~UI-122. Ctrl+Alt+arrows move pane focus spatially in the grid.~~ **DONE 2026-07-20 session 8** (Ctrl+Alt+arrows walk pane focus)
 - ~~UI-123. Ctrl+W closes focused pane, Ctrl+Shift+W the workspace (guarded).~~ **DONE 2026-07-20 session 8** (Ctrl+W / Ctrl+Shift+W)
 - ~~UI-124. Alt+1..9 focuses pane N in the active workspace.~~ **DONE 2026-07-20 session 8** (Alt+1-9 focus)
-- UI-125. Error pane's Restart tooltip shows the last exit code.
+- ~~UI-125. Error pane's Restart tooltip shows the last exit code.~~ **DONE 2026-07-20 session 8** (restart tooltip names how it exited)
 - ~~UI-126. "Launching…" overlay gains a second line after 20s ("still starting —~~ **DONE 2026-07-20 session 8** (slow-start copy)
   check sign-in?").
 - ~~UI-127. Setup phase gets its own overlay label ("Running setup: npm ci")~~ **DONE 2026-07-20 session 8** (setup-phase overlay)
   distinct from "Launching".
-- UI-128. Scroll-to-bottom FAB + "new output" count pill when scrolled up.
+- ~~UI-128. Scroll-to-bottom FAB + "new output" count pill when scrolled up.~~ **DONE 2026-07-20 session 8** (scroll-to-tail button with unseen-line count)
 - ~~UI-129. Mini bell icon on a pane header when that pane is in the queue.~~ **DONE 2026-07-20 session 8** (pane attention chip)
 - UI-130. Shift+click selects multiple panes for bulk restart/close/broadcast.
-- UI-131. Maximise/solo transition animates scale (reduced-motion aware).
+- ~~UI-131. Maximise/solo transition animates scale (reduced-motion aware).~~ **DONE 2026-07-20 session 8** (maximise animates in)
 
 ### Terminal
 - ~~UI-132. Custom right-click menu: copy/paste/clear/select-all/find.~~ **DONE 2026-07-20 session 8** (terminal context menu)
@@ -760,13 +760,13 @@ grouped by surface only for navigation; work in any order, all at once.
 - ~~UI-137. Persist last find query per pane; reopen with it prefilled.~~ **DONE 2026-07-20 session 8** (find query remembered)
 - UI-138. Font preview in Settings > Terminal font picker.
 - UI-139. Cursor-style setting shows a live preview glyph.
-- UI-140. Per-vendor default font-zoom remembered across panes.
+- ~~UI-140. Per-vendor default font-zoom remembered across panes.~~ **DONE 2026-07-20 session 8** (per-vendor font zoom remembered)
 
 ### Attention queue / notifications
 - ~~UI-141. Queue rows show the pane's last output line as context.~~ **DONE 2026-07-20 session 8** (queue shows last output line)
 - ~~UI-142. Split bell badge: approvals (gold) vs errors (red) counts.~~ **DONE 2026-07-20 session 8** (split bell badge)
 - ~~UI-143. Snooze a pane from the queue (mute it 10m).~~ **DONE 2026-07-20 session 8** (snooze)
-- UI-144. Feed groups consecutive transitions of the same pane.
+- ~~UI-144. Feed groups consecutive transitions of the same pane.~~ **DONE 2026-07-20 session 8** (feed collapses repeat transitions)
 - ~~UI-145. Auto-DND while a pane is maximised (focus mode).~~ **DONE 2026-07-20 session 8** (auto-DND in focus mode)
 - ~~UI-146. Optional auto-open queue when ≥3 approvals are pending.~~ **DONE 2026-07-20 session 8** (auto-open queue (opt-in))
 - UI-147. Taskbar overlay badge with the queue count (Tauri set_overlay_icon).
@@ -833,7 +833,7 @@ grouped by surface only for navigation; work in any order, all at once.
 - ~~UI-195. Quit confirm itemises what's live ("3 running, 1 dirty worktree"),~~ **DONE 2026-07-20 session 8** (itemised quit guard)
   not a generic sentence.
 - ~~UI-196. Subtle autosave tick ("saved 12s ago") in Settings > About.~~ **DONE 2026-07-20 session 8** (autosave tick in About)
-- UI-197. Non-clean-exit sentinel: next launch offers the support bundle.
+- ~~UI-197. Non-clean-exit sentinel: next launch offers the support bundle.~~ **DONE 2026-07-20 session 8** (clean-exit sentinel offers the support bundle)
 - ~~UI-198. Session-restore failure names the workspace and reason.~~ **DONE 2026-07-20 session 8** (restore failures name the workspace)
 - ~~UI-199. Worktree-GC toast gains "view details" (which branches were kept).~~ **DONE 2026-07-20 session 8** (GC toast names what it reaped)
 - ~~UI-200. Focus-follows-attention option: auto-jump to a pane on approval~~ **DONE 2026-07-20 session 8** (follow-attention (opt-in))
@@ -849,7 +849,7 @@ grouped by surface only for navigation; work in any order, all at once.
 - ~~UI-205. Pane results show live state dots.~~ **DONE 2026-07-20 session 8** (palette state dots)
 - ~~UI-206. "Restart all errored panes" action.~~ **DONE 2026-07-20 session 8** (restart all errored)
 - ~~UI-207. "Open review for focused pane" action.~~ **DONE 2026-07-20 session 8** (review focused pane)
-- UI-208. Empty query shows recent panes + top actions instead of nothing.
+- ~~UI-208. Empty query shows recent panes + top actions instead of nothing.~~ **DONE 2026-07-20 session 8** (palette empty state says what's searchable)
 
 ### Explorer
 - UI-209. Optional in-app file preview (read-only peek) instead of OS open.
@@ -886,7 +886,7 @@ grouped by surface only for navigation; work in any order, all at once.
 - ~~UI-229. Batch pty output writes per animation frame (one write per event today).~~ **DONE 2026-07-20 session 8** (batched pty writes)
 
 ### Worktree / git depth
-- UI-230. Worktree disk-size line in the pane overflow menu.
+- ~~UI-230. Worktree disk-size line in the pane overflow menu.~~ **DONE 2026-07-20 session 8** (worktree disk size in the pane menu)
 - ~~UI-231. Token chip context-limit awareness: amber ≥70%, red ≥90% of the~~ **DONE 2026-07-20 session 8** (context-window colour thresholds)
   window, tooltip suggests /compact.
 - UI-232. Workspace tile tooltip: token roll-up across its panes.
@@ -896,7 +896,7 @@ grouped by surface only for navigation; work in any order, all at once.
   6-per-cycle subprocess storm; supersedes UI-47's narrower phrasing).
 
 ### Vendor / agent depth
-- UI-235. Per-vendor spawn counts on the New Workspace summary line get icons.
+- ~~UI-235. Per-vendor spawn counts on the New Workspace summary line get icons.~~ **DONE 2026-07-20 session 8** (vendor glyphs on the summary line)
 - ~~UI-236. Vendor glyphs (not just colours) in chips, selects, and palette rows.~~ **DONE 2026-07-20 session 8** (vendor glyphs)
 - ~~UI-237. Per-vendor "waiting" quiet-threshold defaults (agy idles differently~~ **DONE 2026-07-20 session 8** (per-vendor quiet thresholds)
   from claude).

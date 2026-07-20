@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type DragEvent } from "react";
+import { createPortal } from "react-dom";
 import { IconBoard, IconWipe, IconPlus } from "./Icons";
 import { useApp } from "./store";
 import { useUI } from "./ui";
@@ -6,9 +7,12 @@ import "./Board.css";
 import { useBoardStore, COLUMNS } from "./board/boardStore";
 import { useVendors, agentVendors, vendorShort } from "./vendors";
 import { spawnPane } from "./worktrees";
+import type { DiffSummary } from "./worktrees";
+import { cachedInvoke } from "./poll";
 import { CardItem } from "./board/CardItem";
 import { CardDetail } from "./board/CardDetail";
 import { exportBoardMarkdown } from "./board/markdown";
+import { PRIORITY_COLORS } from "./board/palette";
 import type { Card, ColumnId, Priority, Vendor } from "./board/types";
 
 type SortMode = "manual" | "priority" | "newest";
@@ -24,6 +28,25 @@ function IconExport({ size = 14 }: { size?: number }) {
     </svg>
   );
 }
+
+// UI-164: priority-stripe legend trigger.
+function IconInfo({ size = 13 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="10" cy="10" r="7.2" />
+      <path d="M10 9.2 V14.2" />
+      <circle cx="10" cy="6.3" r="0.4" fill="currentColor" />
+    </svg>
+  );
+}
+
+// UI-164: the meaning behind PRIORITY_COLORS' grey -> blue -> gold -> red ramp.
+const PRIORITY_LEGEND: Record<Priority, string> = {
+  LOW: "No urgency — pick up when nothing higher is queued.",
+  MEDIUM: "Default weight — normal queue order.",
+  HIGH: "Needs attention soon — pulled ahead of Medium/Low.",
+  CRITICAL: "Urgent or blocking — treat as jump-the-queue.",
+};
 
 export function Board() {
   const cards = useBoardStore((s) => s.cards);
@@ -59,6 +82,17 @@ export function Board() {
   const filtering = query.trim() !== "" || priorityFilter !== "ALL" || agentFilter !== "ALL";
   const manualOrder = sortMode === "manual" && !filtering;
 
+  // UI-164: priority-stripe legend popover, portalled like the card menus.
+  const [legendPos, setLegendPos] = useState<{ x: number; y: number } | null>(null);
+  useEffect(() => {
+    if (!legendPos) return;
+    const close = () => setLegendPos(null);
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setLegendPos(null); };
+    window.addEventListener("mousedown", close);
+    window.addEventListener("keydown", onKey, true); // capture: xterm swallows Escape otherwise
+    return () => { window.removeEventListener("mousedown", close); window.removeEventListener("keydown", onKey, true); };
+  }, [legendPos]);
+
   useEffect(() => {
     if (showComposer) composerInputRef.current?.focus();
   }, [showComposer]);
@@ -86,7 +120,10 @@ export function Board() {
   // the card to it, so its live state can drive the card's status dot. Goes
   // through the async worktree-aware spawn path — a dispatched agent gets its
   // own isolated worktree exactly like a hand-added pane.
-  function dispatchToPane(card: Card) {
+  // UI-158: `vendorOverride` lets "Send to agent…" pick a vendor explicitly,
+  // instead of only ever falling back to the card's preset agent or whichever
+  // agent happens to be first installed.
+  function dispatchToPane(card: Card, vendorOverride?: Vendor) {
     if (card.paneId != null && workspaces.some((w) => w.panes.some((p) => p.id === card.paneId))) return; // already live
     if (activeId == null) {
       pushToast("info", "Open a workspace to dispatch this card to an agent pane.");
@@ -94,8 +131,8 @@ export function Board() {
     }
     const ws = workspaces.find((w) => w.id === activeId);
     if (!ws) return;
-    // Prefer the card's agent, else the first installed agent the registry knows.
-    const vendor: Vendor = card.agent ?? agentVendors().find((a) => a.installed)?.id ?? "claude";
+    // Prefer an explicit override, then the card's agent, else the first installed agent the registry knows.
+    const vendor: Vendor = vendorOverride ?? card.agent ?? agentVendors().find((a) => a.installed)?.id ?? "claude";
     // UI-38: worktree prep can take a few seconds; without a pending state the
     // card sits there looking like the drop did nothing.
     setDispatching((d) => new Set(d).add(card.id));
@@ -113,6 +150,15 @@ export function Board() {
       .finally(() => setDispatching((d) => { const n = new Set(d); n.delete(card.id); return n; }));
   }
 
+  // UI-158: card context action — pick the vendor instead of taking whatever
+  // dispatchToPane would default to. Moves the card into In Progress too, same
+  // as the drag path, so a dispatched card's column always matches reality.
+  function sendToAgent(card: Card, vendor: Vendor) {
+    const source = findColumn(card.id);
+    if (source && source !== "inprogress") moveCard(card.id, "inprogress");
+    dispatchToPane(card, vendor);
+  }
+
   function flashComplete(id: string) {
     setCompleting((s) => new Set(s).add(id));
     window.setTimeout(() => {
@@ -124,13 +170,48 @@ export function Board() {
     }, 650);
   }
 
+  function finishMove(id: string, target: ColumnId, source: ColumnId, card: Card | undefined, index?: number) {
+    moveCard(id, target, index);
+    if (target === "inprogress" && source !== "inprogress" && card) dispatchToPane(card);
+    if (target === "complete" && source !== "complete") flashComplete(id);
+  }
+
+  // UI-163: honesty gate, not a hard block — a card's linked pane can still be
+  // sitting on unmerged work when the card itself gets dragged to Done, and
+  // nothing else in the UI says so. Checked live (not from the stale status
+  // dot) so it reflects whatever the pane's worktree actually holds right now.
+  async function unmergedDiffFor(card: Card): Promise<{ files: number; added: number; deleted: number } | null> {
+    if (card.paneId == null) return null;
+    const pane = workspaces.flatMap((w) => w.panes).find((p) => p.id === card.paneId);
+    if (!pane) return null;
+    try {
+      const s = await cachedInvoke<DiffSummary>("git_diff_summary", { cwd: pane.cwd, base: pane.baseBranch ?? null }, 5000);
+      return s.files.length > 0 ? { files: s.files.length, added: s.totalAdded, deleted: s.totalDeleted } : null;
+    } catch {
+      return null; // can't read the diff — don't block on an unknown
+    }
+  }
+
   function performMove(id: string, target: ColumnId, index?: number) {
     const source = findColumn(id);
     if (!source || (source === target && index === undefined)) return;
     const card = cards[source]?.find((c) => c.id === id);
-    moveCard(id, target, index);
-    if (target === "inprogress" && source !== "inprogress" && card) dispatchToPane(card);
-    if (target === "complete" && source !== "complete") flashComplete(id);
+    if (target === "complete" && source !== "complete" && card) {
+      void unmergedDiffFor(card).then((diff) => {
+        if (!diff) { finishMove(id, target, source, card, index); return; }
+        requestConfirm({
+          title: "Move to Done with unmerged work?",
+          body:
+            `"${card.title}"'s pane still has ${diff.files} file${diff.files === 1 ? "" : "s"} of changes ` +
+            `(+${diff.added}/−${diff.deleted}) that haven't been merged back. Moving it to Done doesn't merge or ` +
+            `discard that work — it stays exactly where it is in the pane's worktree until you deal with it.`,
+          confirmLabel: "Move to Done anyway",
+          onConfirm: () => finishMove(id, target, source, card, index),
+        });
+      });
+      return;
+    }
+    finishMove(id, target, source, card, index);
   }
 
   function handleDragStart(e: DragEvent<HTMLDivElement>, card: Card) {
@@ -321,6 +402,18 @@ export function Board() {
             <option value="ALL">All priorities</option>
             {PRIORITIES.map((p) => (<option key={p} value={p}>{p}</option>))}
           </select>
+          {/* UI-164: what the card-face priority stripe's colours mean. */}
+          <button
+            type="button"
+            className="board-icon-btn board-legend-btn"
+            title="What do the priority colours mean?"
+            onClick={(e) => {
+              const r = e.currentTarget.getBoundingClientRect();
+              setLegendPos({ x: r.left, y: r.bottom + 6 });
+            }}
+          >
+            <IconInfo size={13} />
+          </button>
           <select className="board-filter" value={agentFilter} onChange={(e) => setAgentFilter(e.target.value as Vendor | "ALL")}>
             <option value="ALL">All agents</option>
             {vendors.filter((v) => v.kind === "agent").map((v) => (<option key={v.id} value={v.id}>{v.label}</option>))}
@@ -428,6 +521,7 @@ export function Board() {
                     onCardDragOver={handleCardDragOver}
                     onSelect={setSelectedId}
                     onOpenDetail={setDetailId}
+                    onSendToAgent={sendToAgent}
                   />
                 ))}
                 {dragOverCol === col.id && dragSource && dragSource !== col.id && !dragOverCard && (
@@ -440,6 +534,26 @@ export function Board() {
       </div>
 
       {detailId && <CardDetail cardId={detailId} onClose={() => setDetailId(null)} />}
+
+      {legendPos && createPortal(
+        <div
+          className="bd-pop pri-legend"
+          style={{ top: legendPos.y, left: legendPos.x }}
+          onMouseDown={(e) => e.stopPropagation()}
+          role="dialog"
+          aria-label="Priority colour legend"
+        >
+          <div className="bd-pop-head">Priority stripe</div>
+          {PRIORITIES.map((p) => (
+            <div key={p} className="pri-legend-row">
+              <span className="pri-legend-dot" style={{ background: PRIORITY_COLORS[p] }} />
+              <span className="pri-legend-name">{p}</span>
+              <span className="pri-legend-desc">{PRIORITY_LEGEND[p]}</span>
+            </div>
+          ))}
+        </div>,
+        document.body
+      )}
     </div>
   );
 }

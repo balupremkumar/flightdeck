@@ -252,7 +252,17 @@ export function CommandPalette() {
           <button className="ov-x" onClick={() => setOpen(false)} title="Close"><IconClose size={14} /></button>
         </div>
         <div className="cmdp-list">
-          {results.length === 0 && <div className="cmdp-empty">No matches for "{query}"</div>}
+          {results.length === 0 && (
+            <div className="cmdp-empty">
+              {/* QOL 352: a bare "no matches" is a dead end — say what CAN be
+                  searched, since that's the question the user actually has. */}
+              No matches for "{query}".
+              <span className="cmdp-empty-hint">
+                Search workspaces by name, panes by agent or folder, or type an action
+                like "settings", "review", "broadcast" or "restart".
+              </span>
+            </div>
+          )}
           {results.map((it, i) => {
             const showHeader = it.section !== lastSection;
             lastSection = it.section;

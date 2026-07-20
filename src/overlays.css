@@ -78,6 +78,17 @@ kbd {
 .theme-swatch i { width: 15px; height: 15px; border-radius: 4px; border: 1px solid rgba(0,0,0,.15); display: block; }
 .theme-tile-label { font-size: 12px; font-weight: 500; color: var(--text); }
 
+/* ---------- Theme thumbnail (UI-193) ----------
+   A tiny mock of the app's own layout — side panel strip + accent pill —
+   reads faster as "what this theme looks like" than three bare dots did. */
+.theme-thumb {
+  position: relative; display: block; width: 100%; height: 40px;
+  border-radius: var(--r-sm); overflow: hidden; border: 1px solid rgba(0,0,0,.15);
+}
+.theme-thumb.custom { background: var(--surface); }
+.theme-thumb-panel { position: absolute; inset: 0 auto 0 0; width: 32%; display: block; }
+.theme-thumb-accent { position: absolute; top: 6px; right: 6px; width: 14px; height: 6px; border-radius: var(--r-pill); display: block; }
+
 /* ---------- Accent picker ---------- */
 .accent-row { margin-left: auto; display: inline-flex; gap: 8px; flex: none; }
 .accent-swatch {
@@ -94,6 +105,8 @@ kbd {
   position: absolute; inset: 0; opacity: 0; width: 100%; height: 100%;
   cursor: pointer; border: 0; padding: 0;
 }
+/* UI-194: divides Kove presets from session-recent colours within one row */
+.accent-divider { width: 1px; align-self: stretch; background: var(--line-strong); flex: none; }
 
 /* ---------- Toggle switch ---------- */
 .toggle {
@@ -114,6 +127,17 @@ kbd {
 .set-select { margin-left: auto; flex: none; cursor: pointer; }
 .set-select:focus-visible, .set-input:focus-visible { outline: 2px solid var(--ice); outline-offset: 1px; }
 .set-input-num { margin-left: auto; flex: none; width: 84px; text-align: right; font-family: var(--font-mono); }
+
+/* ---------- Terminal font/cursor preview (UI-138 / UI-139) ---------- */
+.term-preview {
+  display: flex; align-items: center; gap: 2px;
+  background: var(--surface); border: 1px solid var(--line-strong); border-radius: var(--r-md);
+  padding: 10px 12px; color: var(--text); white-space: pre; overflow: hidden;
+}
+.term-cursor { display: inline-block; background: var(--accent); flex: none; }
+.term-cursor-block { width: .6em; height: 1.15em; }
+.term-cursor-underline { width: .6em; height: 2px; align-self: flex-end; margin-bottom: 3px; }
+.term-cursor-bar { width: 2px; height: 1.15em; }
 
 .agent-list { display: flex; flex-direction: column; gap: 8px; }
 .agent-row { display: grid; grid-template-columns: 108px 1fr 1fr; align-items: center; gap: 8px; }
@@ -204,6 +228,13 @@ button.agent-chip:hover { filter: brightness(1.15); }
 .diag-th { font-family: var(--font-sans, inherit); font-size: 10px; letter-spacing: .07em; text-transform: uppercase; color: var(--faint); background: var(--surface); }
 .diag-proc { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .diag-empty { padding: 4px 2px 10px; font-size: 11.5px; color: var(--faint); }
+
+/* ---------- Pane health CPU sparkline (UI-185) ----------
+   Own column count — the worktree table reuses .diag-tr at 5 columns, so
+   the extra Trend column gets a modifier rather than changing the shared grid. */
+.diag-tr-health { grid-template-columns: 44px 1fr 56px 48px 60px 64px; }
+.diag-spark { display: block; }
+.diag-spark-line { stroke: var(--accent); }
 
 /* ---------- What's new (UI-42) ---------- */
 .set-changelog summary { font-size: 12.5px; color: var(--muted); cursor: pointer; user-select: none; }

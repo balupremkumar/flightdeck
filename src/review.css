@@ -56,7 +56,7 @@
   font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase;
   color: var(--faint); padding: 2px 8px 8px;
 }
-.rv-stat em, .rv-file-stat em { font-style: normal; font-family: var(--mono); font-size: 10.5px; }
+.rv-stat em, .rv-file-stat em, .rv-dirstat em { font-style: normal; font-family: var(--mono); font-size: 10.5px; }
 em.add { color: var(--st-running); }
 em.del { color: var(--st-error); margin-left: 5px; }
 .rv-file {
@@ -74,6 +74,22 @@ em.del { color: var(--st-error); margin-left: 5px; }
 }
 .rv-file-bin { font-size: 10px; color: var(--faint); }
 .rv-file-stat { flex: none; }
+
+/* UI-167: file list grouped by directory past GROUP_THRESHOLD files */
+.rv-dirhead {
+  display: flex; align-items: center; gap: 6px; width: 100%;
+  font: inherit; font-size: 11px; font-weight: 600; color: var(--muted);
+  padding: 6px 8px; border: 0; border-radius: 7px; background: transparent; cursor: pointer;
+  transition: background .12s ease, color .12s ease;
+}
+.rv-dirhead:hover { background: var(--surface); color: var(--text); }
+.rv-dirname {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: var(--mono); text-align: left;
+}
+.rv-dircount { flex: none; font-size: 10px; color: var(--faint); }
+.rv-dirstat { flex: none; }
+.rv-dirgroup .rv-file { padding-left: 20px; }
 
 /* Patch view */
 .rv-patch-wrap { flex: 1; display: flex; flex-direction: column; min-width: 0; }
@@ -132,7 +148,17 @@ em.del { color: var(--st-error); margin-left: 5px; }
   font-family: var(--mono); font-size: 11px; color: var(--text);
   max-height: 110px; overflow-y: auto;
 }
-.rv-conflict-files li { padding: 1px 0; }
+.rv-conflict-files li { display: flex; align-items: center; gap: 8px; padding: 1px 0; }
+.rv-conflict-file-path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* UI-179: open the conflicted file to resolve it — same reveal-on-hover
+   treatment as the file list's own open action (.rv-file-open). */
+.rv-conflict-open {
+  flex: none; font-size: 9.5px; color: var(--faint); cursor: pointer;
+  opacity: 0; padding: 2px 5px; border-radius: var(--r-sm);
+  transition: opacity var(--t-fast) ease, color var(--t-fast) ease;
+}
+.rv-conflict-files li:hover .rv-conflict-open { opacity: 1; }
+.rv-conflict-open:hover { color: var(--text); background: color-mix(in srgb, var(--text) 10%, transparent); }
 .rv-conflict-sub { margin-top: 7px; font-size: 11px; color: var(--muted); }
 .rv-conflict-actions { display: flex; align-items: center; gap: 8px; margin-top: 9px; }
 .rv-conflict-dismiss { margin-left: auto; }
@@ -233,6 +259,13 @@ em.del { color: var(--st-error); margin-left: 5px; }
   background: color-mix(in srgb, currentColor 26%, transparent);
 }
 
+/* UI-171: syntax colour, context lines only — see Review.tsx for why add/del
+   and word-diffed lines don't get this too. */
+.rv-tok-kw { color: var(--azure); }
+.rv-tok-str { color: var(--aqua); }
+.rv-tok-num { color: var(--ice); }
+.rv-tok-com { color: var(--faint); font-style: italic; }
+
 /* UI-173: per-file open action */
 .rv-file-open {
   flex: none; font-size: 9.5px; color: var(--faint); cursor: pointer;
@@ -279,3 +312,28 @@ em.del { color: var(--st-error); margin-left: 5px; }
 }
 .rv-srow.meta .rv-sfull { color: var(--faint); background: transparent; }
 .rv-ic.on { color: var(--accent); }
+
+/* UI-107: isolation explainer */
+.isolate-help {
+  width: 16px; height: 16px; flex: none; margin-left: 2px;
+  font: inherit; font-size: 10px; font-weight: 700; line-height: 1;
+  border-radius: 50%; border: 1px solid var(--line-strong);
+  background: transparent; color: var(--faint); cursor: pointer;
+}
+.isolate-help:hover { color: var(--text); border-color: var(--accent); }
+.isolate-explain {
+  margin-top: 7px; padding: 9px 11px; border-radius: var(--r-md);
+  border: 1px solid var(--line); background: var(--surface);
+  font-size: 11.5px; line-height: 1.5; color: var(--muted);
+}
+.isolate-explain b { color: var(--text); font-weight: 600; }
+/* UI-235: vendor glyphs on the pane summary */
+.summary-item { display: inline-flex; align-items: center; gap: 4px; margin-left: 10px; }
+/* UI-114: first-run orientation */
+.launcher-foot {
+  padding: 10px 20px 0; font-size: 11px; line-height: 1.5; color: var(--faint);
+}
+.launcher-foot kbd {
+  font-family: var(--font-mono); font-size: 10px;
+  border: 1px solid var(--line-strong); border-radius: 3px; padding: 0 3px; color: var(--muted);
+}

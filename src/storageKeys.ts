@@ -31,6 +31,9 @@ export const PREFERENCE_KEYS = [
   "flightdeck-explorer-open",
   "flightdeck-explorer-expanded",
   "flightdeck-diff-split",
+  "flightdeck-vendor-fonts",
+  "flightdeck-ws-tint",
+  "flightdeck-ws-sort",
   "flightdeck-isolate",
 ] as const;
 
@@ -41,6 +44,7 @@ export const PREFERENCE_KEYS = [
  * nasty surprise.
  */
 export const SESSION_KEYS = [
+  "flightdeck-clean-exit",
   "flightdeck-recent-roots",
   "flightdeck-cmdp-recent",
   "flightdeck-ws-lastactive",

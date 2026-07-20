@@ -186,6 +186,10 @@
 
 .ex-lock { flex: none; color: var(--faint); margin-left: 2px; }
 
+/* UI-210: per-file changed-since-base marker — same dot semantics as the
+   branch's dirty indicator, just scoped to the one row that changed. */
+.ex-changed-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--st-waiting); flex: none; margin-left: 4px; }
+
 .ex-action {
   display: inline-flex;
   align-items: center;

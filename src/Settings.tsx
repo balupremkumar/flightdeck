@@ -8,7 +8,7 @@ import { bytes, relTime, absTime } from "./format";
 import { useFocusTrap } from "./useFocusTrap";
 import { listRestorePoints, restoreFromPoint, exportBackup, importBackup, type RestorePointInfo } from "./persist";
 import { adoptSession, lastSessionSaveAt } from "./session";
-import { clearPreferences } from "./storageKeys";
+import { clearPreferences, PREFERENCE_KEYS } from "./storageKeys";
 import { spawnPane } from "./worktrees";
 import { useVendors, vendorColor, vendorAccentOverrides, setVendorAccentOverride } from "./vendors";
 import { IconClose } from "./Icons";
@@ -169,6 +169,23 @@ const CHANGELOG: Array<{ date: string; text: string }> = [
 // ---------------------------------------------------------------------
 interface PaneHealthRow { paneId: number; pid: number; cpuPercent: number; memoryMb: number; procName: string; }
 interface OrphanRow { pid: number; ppid: number; name: string; }
+
+// UI-185: ~60s of CPU history per pane, sampled at the same 3s cadence as the
+// health poll (20 points). Plain inline SVG — one polyline, no charting lib.
+const CPU_HISTORY_LEN = 20;
+function Sparkline({ data }: { data: number[] }) {
+  const w = 56, h = 18;
+  if (data.length < 2) return <svg width={w} height={h} className="diag-spark" aria-hidden="true" />;
+  const points = data
+    .map((v, i) => `${((i / (data.length - 1)) * w).toFixed(1)},${(h - (Math.min(v, 100) / 100) * h).toFixed(1)}`)
+    .join(" ");
+  const latest = data[data.length - 1];
+  return (
+    <svg width={w} height={h} className="diag-spark" role="img" aria-label={`CPU trend, latest ${latest.toFixed(0)}%`}>
+      <polyline className="diag-spark-line" points={points} fill="none" strokeWidth="1.5" />
+    </svg>
+  );
+}
 
 // UI-191/192: restore points and one-file backup. persist.rs has shipped all
 // of this since wave 2 with zero UI — every autosave already writes a snapshot,
@@ -332,6 +349,7 @@ function DiagnosticsSection() {
 
   const pushToast = useUI((s) => s.pushToast);
   const [health, setHealth] = useState<PaneHealthRow[] | null>(null);
+  const [cpuHistory, setCpuHistory] = useState<Record<number, number[]>>({});
   const [orphans, setOrphans] = useState<OrphanRow[] | null>(null);
   const [scanning, setScanning] = useState(false);
 
@@ -341,7 +359,19 @@ function DiagnosticsSection() {
     let cancelled = false;
     const poll = () => {
       invoke<PaneHealthRow[]>("pane_health")
-        .then((rows) => { if (!cancelled) setHealth(rows); })
+        .then((rows) => {
+          if (cancelled) return;
+          setHealth(rows);
+          // UI-185: append this tick's sample per pane, capped to ~60s of history.
+          // A pane that's gone (closed) simply stops accumulating — its old
+          // history is dropped along with everything else next render since
+          // we rebuild the map from the live rows rather than patching it.
+          setCpuHistory((prev) => {
+            const next: Record<number, number[]> = {};
+            for (const r of rows) next[r.paneId] = [...(prev[r.paneId] ?? []), r.cpuPercent].slice(-CPU_HISTORY_LEN);
+            return next;
+          });
+        })
         .catch(() => { if (!cancelled) setHealth(null); });
     };
     poll();
@@ -382,20 +412,27 @@ function DiagnosticsSection() {
       <div className="set-row">
         <div className="set-row-t">
           <span className="set-row-name">Pane health</span>
-          <span className="set-row-sub">CPU is % of one core since the last sample</span>
+          <span className="set-row-sub">
+            CPU is % of one core since the last sample
+            {/* UI-186: Flightdeck's own total only — there's no backend command
+                for total system RAM, so no percentage-of-system is claimed. */}
+            {health && health.length > 0 && ` · ${bytes(health.reduce((n, h) => n + h.memoryMb, 0) * 1024 * 1024)} total across ${health.length} pane${health.length === 1 ? "" : "s"}`}
+          </span>
         </div>
       </div>
       {health && health.length > 0 ? (
         <div className="diag-table" role="table" aria-label="Per-pane process health">
-          <div className="diag-tr diag-th" role="row">
-            <span>Pane</span><span>Process</span><span>PID</span><span>CPU</span><span>Memory</span>
+          <div className="diag-tr diag-tr-health diag-th" role="row">
+            <span>Pane</span><span>Process</span><span>PID</span><span>CPU</span><span>Trend</span><span>Memory</span>
           </div>
           {health.map((h) => (
-            <div className="diag-tr" role="row" key={h.paneId}>
+            <div className="diag-tr diag-tr-health" role="row" key={h.paneId}>
               <span>#{h.paneId}</span>
               <span className="diag-proc">{h.procName || "—"}</span>
               <span>{h.pid}</span>
               <span>{h.cpuPercent.toFixed(1)}%</span>
+              {/* UI-185: ~60s CPU trend — cpuHistory accumulates alongside health. */}
+              <Sparkline data={cpuHistory[h.paneId] ?? []} />
               <span>{h.memoryMb.toFixed(0)} MB</span>
             </div>
           ))}
@@ -468,6 +505,49 @@ function DiagnosticsSection() {
   );
 }
 
+// UI-194: Kove brand swatches for the custom-accent picker — same hexes as
+// theme.css's --ice/--azure/--aqua/--deepblue, offered as one-click presets
+// alongside the raw <input type=color>.
+const KOVE_PRESETS = ["#9AE9FF", "#43A6F5", "#57E5C6", "#3F6BFF"];
+const MAX_RECENT_ACCENTS = 6;
+
+// ---------------------------------------------------------------------
+// UI-182: export/import every preference in one file, not just the theme.
+// exportThemeJson/importThemeJson (themes.ts) read/write computed CSS tokens;
+// this is the flatter thing underneath — the raw localStorage values for
+// every key in PREFERENCE_KEYS. Import is deliberately allow-listed against
+// that same list rather than writing whatever keys the file happens to
+// contain, so a hand-edited or malicious file can't smuggle in something
+// that isn't a known preference (and definitely never a SESSION_KEYS entry).
+// ---------------------------------------------------------------------
+function exportAllSettingsJson(): string {
+  const values: Record<string, string> = {};
+  for (const k of PREFERENCE_KEYS) {
+    const v = localStorage.getItem(k);
+    if (v !== null) values[k] = v;
+  }
+  // Tag is just app: flightdeck (no dashed suffix) — storageKeys.test.ts
+  // treats any quoted flightdeck-prefixed literal as a storage key to
+  // classify, and this one isn't a localStorage key at all.
+  return JSON.stringify({ app: "flightdeck", kind: "settings", version: 1, values }, null, 2);
+}
+function importAllSettingsJson(json: string): boolean {
+  let parsed: { values?: Record<string, unknown> };
+  try {
+    parsed = JSON.parse(json);
+  } catch {
+    return false;
+  }
+  if (!parsed.values || typeof parsed.values !== "object") return false;
+  const known = new Set<string>(PREFERENCE_KEYS);
+  let applied = 0;
+  for (const [k, v] of Object.entries(parsed.values)) {
+    if (!known.has(k) || typeof v !== "string") continue; // never trust the file blindly
+    try { localStorage.setItem(k, v); applied++; } catch { /* non-persistent */ }
+  }
+  return applied > 0;
+}
+
 export function Settings() {
   const open = useUI((s) => s.settingsOpen);
   const setOpen = useUI((s) => s.setSettingsOpen);
@@ -491,6 +571,15 @@ export function Settings() {
   const [startup, setStartup] = useState(getStartupBehavior());
   const [importError, setImportError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  // UI-182: separate file + error state from the theme import above it — the
+  // two imports are unrelated formats and a bad file in one shouldn't clear
+  // the other's error message.
+  const [allSettingsImportError, setAllSettingsImportError] = useState<string | null>(null);
+  const allSettingsFileRef = useRef<HTMLInputElement>(null);
+  // UI-194: colours picked via the custom swatch this session, newest first.
+  // Session-only (not persisted) — recency is a soft convenience, not a
+  // setting worth its own storage key and reset-on-clear semantics.
+  const [recentAccents, setRecentAccents] = useState<string[]>([]);
 
   // UI-196: a slow tick is enough — this is reassurance, not telemetry.
   const [savedAgo, setSavedAgo] = useState<string | null>(null);
@@ -628,6 +717,43 @@ export function Settings() {
     reader.readAsText(file);
   }
 
+  // UI-194: one place for "a custom colour was picked" — swatch click and the
+  // raw <input type=color> both funnel through here so recents stay in sync.
+  function applyCustomAccent(hex: string) {
+    setCustomHex(hex);
+    setCustomAccent(hex, mode);
+    setAccentId(CUSTOM_ACCENT_ID);
+    setRecentAccents((prev) => [hex, ...prev.filter((c) => c.toLowerCase() !== hex.toLowerCase())].slice(0, MAX_RECENT_ACCENTS));
+  }
+
+  function handleExportAllSettings() {
+    const json = exportAllSettingsJson();
+    const blob = new Blob([json], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `flightdeck-settings-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+  function handleImportAllSettingsFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const ok = importAllSettingsJson(String(reader.result));
+      if (ok) {
+        setAllSettingsImportError(null);
+        useUI.getState().pushToast("success", "Settings imported — reloading.");
+        window.setTimeout(() => window.location.reload(), 600);
+      } else {
+        setAllSettingsImportError("That file doesn't look like a Flightdeck settings export.");
+      }
+    };
+    reader.readAsText(file);
+  }
+
   // UI-183: one honest reset. Deliberately scoped to PREFERENCES — it must
   // never touch session state (workspaces/board/worktrees), which is why the
   // key list is explicit rather than a localStorage.clear().
@@ -688,17 +814,18 @@ export function Settings() {
                   onClick={() => selectTheme(t.id)}
                   title={t.label}
                 >
-                  <span className="theme-swatch">
-                    <i style={{ background: t.swatch[0] }} />
-                    <i style={{ background: t.swatch[1] }} />
-                    <i style={{ background: t.swatch[2] }} />
+                  {/* UI-193: a tiny mock of the app's own layout (side panel +
+                      main + accent) reads faster than three bare dots. */}
+                  <span className="theme-thumb" style={{ background: t.swatch[0] }}>
+                    <i className="theme-thumb-panel" style={{ background: t.swatch[1] }} />
+                    <i className="theme-thumb-accent" style={{ background: t.swatch[2] }} />
                   </span>
                   <span className="theme-tile-label">{t.label}</span>
                 </button>
               ))}
               {themeId === "custom" && (
                 <div className="theme-tile on custom" title="Imported theme">
-                  <span className="theme-swatch"><i /><i /><i /></span>
+                  <span className="theme-thumb custom" />
                   <span className="theme-tile-label">Custom (imported)</span>
                 </div>
               )}
@@ -707,44 +834,71 @@ export function Settings() {
             {/* High Contrast fixes its accent deliberately for accessibility —
                 letting the picker override it silently defeats the whole theme. */}
             {themeId !== "high-contrast" && (
-              <div className="set-row">
-                <div className="set-row-t"><span className="set-row-name">Accent colour</span><span className="set-row-sub">Auto-adjusts for dark or light</span></div>
-                <div className="accent-row">
-                  {ACCENTS.map((a) => (
-                    <button
-                      key={a.id}
-                      className={"accent-swatch" + (accentId === a.id ? " on" : "")}
-                      style={{ background: mode === "light" ? findAccent(a.id).light.accent : findAccent(a.id).dark.accent }}
-                      onClick={() => selectAccent(a.id)}
-                      title={a.label}
-                      aria-label={`Accent: ${a.label}`}
-                    />
-                  ))}
-                  {/* UI-50: any colour — dark/light variants + gradient derived
-                      from the one picked hex. The swatch doubles as the input. */}
-                  <label
-                    className={"accent-swatch accent-custom" + (accentId === CUSTOM_ACCENT_ID ? " on" : "")}
-                    style={{
-                      background:
-                        accentId === CUSTOM_ACCENT_ID
-                          ? (mode === "light" ? findAccent(CUSTOM_ACCENT_ID).light.accent : findAccent(CUSTOM_ACCENT_ID).dark.accent)
-                          : "conic-gradient(#f55 0deg, #fb0 70deg, #4d4 140deg, #2bd 210deg, #74f 280deg, #f55 360deg)",
-                    }}
-                    title="Custom — pick any colour"
-                    aria-label="Accent: custom colour"
-                  >
-                    <input
-                      type="color"
-                      value={customHex}
-                      onChange={(e) => {
-                        setCustomHex(e.target.value);
-                        setCustomAccent(e.target.value, mode);
-                        setAccentId(CUSTOM_ACCENT_ID);
+              <>
+                <div className="set-row">
+                  <div className="set-row-t"><span className="set-row-name">Accent colour</span><span className="set-row-sub">Auto-adjusts for dark or light</span></div>
+                  <div className="accent-row">
+                    {ACCENTS.map((a) => (
+                      <button
+                        key={a.id}
+                        className={"accent-swatch" + (accentId === a.id ? " on" : "")}
+                        style={{ background: mode === "light" ? findAccent(a.id).light.accent : findAccent(a.id).dark.accent }}
+                        onClick={() => selectAccent(a.id)}
+                        title={a.label}
+                        aria-label={`Accent: ${a.label}`}
+                      />
+                    ))}
+                    {/* UI-50: any colour — dark/light variants + gradient derived
+                        from the one picked hex. The swatch doubles as the input. */}
+                    <label
+                      className={"accent-swatch accent-custom" + (accentId === CUSTOM_ACCENT_ID ? " on" : "")}
+                      style={{
+                        background:
+                          accentId === CUSTOM_ACCENT_ID
+                            ? (mode === "light" ? findAccent(CUSTOM_ACCENT_ID).light.accent : findAccent(CUSTOM_ACCENT_ID).dark.accent)
+                            : "conic-gradient(#f55 0deg, #fb0 70deg, #4d4 140deg, #2bd 210deg, #74f 280deg, #f55 360deg)",
                       }}
-                    />
-                  </label>
+                      title="Custom — pick any colour"
+                      aria-label="Accent: custom colour"
+                    >
+                      <input
+                        type="color"
+                        value={customHex}
+                        onChange={(e) => applyCustomAccent(e.target.value)}
+                      />
+                    </label>
+                  </div>
                 </div>
-              </div>
+                {/* UI-194: one-click Kove brand presets, plus whatever custom
+                    colours were picked this session — the raw colour input
+                    above still covers anything else. */}
+                <div className="set-row">
+                  <div className="set-row-t"><span className="set-row-name">Custom accent</span><span className="set-row-sub">Kove brand colours, and colours used recently</span></div>
+                  <div className="accent-row">
+                    {KOVE_PRESETS.map((hex) => (
+                      <button
+                        key={hex}
+                        className={"accent-swatch" + (accentId === CUSTOM_ACCENT_ID && customHex.toLowerCase() === hex.toLowerCase() ? " on" : "")}
+                        style={{ background: hex }}
+                        onClick={() => applyCustomAccent(hex)}
+                        title={hex}
+                        aria-label={`Kove preset ${hex}`}
+                      />
+                    ))}
+                    {recentAccents.length > 0 && <span className="accent-divider" aria-hidden="true" />}
+                    {recentAccents.map((hex) => (
+                      <button
+                        key={hex}
+                        className={"accent-swatch" + (accentId === CUSTOM_ACCENT_ID && customHex.toLowerCase() === hex.toLowerCase() ? " on" : "")}
+                        style={{ background: hex }}
+                        onClick={() => applyCustomAccent(hex)}
+                        title={hex}
+                        aria-label={`Recent accent ${hex}`}
+                      />
+                    ))}
+                  </div>
+                </div>
+              </>
             )}
             {themeId === "high-contrast" && (
               <div className="set-row">
@@ -789,8 +943,10 @@ export function Settings() {
             <div className="set-label">Terminal</div>
             <div className="set-row">
               <div className="set-row-t"><span className="set-row-name">Font</span></div>
+              {/* UI-138: each option renders in its own typeface — a name alone
+                  doesn't tell you what Cascadia Code vs Consolas actually look like. */}
               <select className="set-select" value={term.fontFamily} onChange={(e) => updateTerm({ fontFamily: e.target.value })}>
-                {TERMINAL_FONTS.map((f) => <option key={f} value={f}>{f}</option>)}
+                {TERMINAL_FONTS.map((f) => <option key={f} value={f} style={{ fontFamily: f }}>{f}</option>)}
               </select>
             </div>
             <div className="set-row">
@@ -810,6 +966,13 @@ export function Settings() {
                   </button>
                 ))}
               </div>
+            </div>
+            {/* UI-138/UI-139: font, size and cursor style together as they'll
+                actually look in a pane, rather than three settings you have to
+                imagine combined. */}
+            <div className="term-preview" style={{ fontFamily: term.fontFamily, fontSize: term.fontSize }}>
+              <span>$ npm run dev</span>
+              <i className={"term-cursor term-cursor-" + term.cursorStyle} aria-hidden="true" />
             </div>
             <div className="set-row">
               <div className="set-row-t"><span className="set-row-name">Scrollback</span><span className="set-row-sub">Lines kept per pane</span></div>
@@ -1039,6 +1202,21 @@ export function Settings() {
 
           <section className="set-section">
             <div className="set-label">Reset</div>
+            {/* UI-182: every preference in one file — theme export above only
+                covers the visual tokens; this is flags, shortcuts, agent
+                overrides, startup behaviour, everything else Settings holds. */}
+            <div className="set-row">
+              <div className="set-row-t">
+                <span className="set-row-name">All settings</span>
+                <span className="set-row-sub">Export every preference to one file, or import one back</span>
+              </div>
+              <div className="seg">
+                <button onClick={handleExportAllSettings}>Export</button>
+                <button onClick={() => allSettingsFileRef.current?.click()}>Import</button>
+              </div>
+              <input ref={allSettingsFileRef} type="file" accept="application/json" style={{ display: "none" }} onChange={handleImportAllSettingsFile} />
+            </div>
+            {allSettingsImportError && <div className="set-error">{allSettingsImportError}</div>}
             <div className="set-row">
               <div className="set-row-t">
                 <span className="set-row-name">Reset all settings</span>

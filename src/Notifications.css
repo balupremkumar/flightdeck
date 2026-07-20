@@ -137,3 +137,6 @@
 .ntf-bell .ibell-arc { opacity: .55; }
 .ntf-bell.on .ibell-arc-1 { animation: radar-ping var(--t-pulse) ease-in-out infinite; }
 .ntf-bell.on .ibell-arc-2 { animation: radar-ping var(--t-pulse) ease-in-out infinite .25s; }
+
+/* UI-144: repeat count on a collapsed run of identical events */
+.ntf-repeat { font-style: normal; font-weight: 700; color: var(--faint); margin-left: 3px; }

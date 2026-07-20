@@ -6,6 +6,7 @@ import { useApp } from "./store";
 import { IconClose, IconFolder, IconRefresh } from "./Icons";
 import { useVendors, vendorMeta, vendorShort, defaultCycle } from "./vendors";
 import { VendorGlyph } from "./VendorGlyph";
+import { APP_VERSION } from "./version";
 import { isolationPref, setIsolationPref, preparePanes, repoToplevel } from "./worktrees";
 import "./review.css"; // .isolate-row lives with the review/worktree styles
 
@@ -62,12 +63,46 @@ export function NewWorkspace() {
   // UI-101: recently-used roots, most recent first.
   const [recents] = useState<string[]>(loadRecentRoots);
   const [showRecents, setShowRecents] = useState(false);
+
+  // UI-102: completions for the directory field. Typing a path by hand is the
+  // slow path, and a typo only surfaced at Create time. Suggestions come from
+  // listing the typed path's PARENT, so they're real folders, not guesses.
+  const [completions, setCompletions] = useState<string[]>([]);
+  useEffect(() => {
+    const dir = root.trim();
+    // Only complete once the user is clearly typing a path, and not while the
+    // recents menu is doing the same job.
+    if (dir.length < 3 || showRecents) { setCompletions([]); return; }
+    let cancelled = false;
+    const t = setTimeout(() => {
+      const sep = dir.includes("/") && !dir.includes("\\") ? "/" : "\\";
+      const cut = Math.max(dir.lastIndexOf("\\"), dir.lastIndexOf("/"));
+      if (cut < 2) { setCompletions([]); return; }
+      const parent = dir.slice(0, cut) || sep;
+      const stem = dir.slice(cut + 1).toLowerCase();
+      void invoke<{ name: string; dir: boolean }[]>("fs_list_dir", { path: parent })
+        .then((entries) => {
+          if (cancelled) return;
+          const hits = entries
+            .filter((e) => e.dir && e.name.toLowerCase().startsWith(stem) && e.name.toLowerCase() !== stem)
+            .slice(0, 6)
+            .map((e) => parent.replace(/[\/]+$/, "") + sep + e.name);
+          setCompletions(hits);
+        })
+        .catch(() => { if (!cancelled) setCompletions([]); });
+    }, 220);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [root, showRecents]);
+
   // UI-103: does the typed path exist? null = unchecked/blank.
   const [pathOk, setPathOk] = useState<boolean | null>(null);
   // UI-106: where the setup command came from, so it isn't magic.
   const [setupSource, setSetupSource] = useState<string | null>(null);
   // UI-112: per-slot progress while worktrees are prepared.
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+  // UI-107: isolation is the least obvious control here and the one with the
+  // biggest consequences, so it gets an explainer rather than a tooltip.
+  const [showIsolateHelp, setShowIsolateHelp] = useState(false);
 
   // Vendor list + install detection both come from the Rust registry (216).
   const vendors = useVendors((s) => s.vendors);
@@ -254,7 +289,6 @@ export function NewWorkspace() {
   })();
 
   const counts = slots.reduce<Record<string, number>>((m, s) => ((m[s.vendor] = (m[s.vendor] || 0) + 1), m), {});
-  const summary = Object.entries(counts).map(([v, c]) => `${c}× ${vendorShort(v)}`).join(", ");
   const canCreate = !!root.trim();
 
   return (
@@ -324,6 +358,22 @@ export function NewWorkspace() {
                 </button>
               )}
               <button className="browse" onClick={browseRoot}>Browse</button>
+              {!showRecents && completions.length > 0 && (
+                <div className="recents-menu">
+                  {completions.map((c) => (
+                    <button
+                      key={c}
+                      className="recents-item"
+                      onMouseDown={(e) => { e.preventDefault(); setRoot(c); setCompletions([]); }}
+                      title={c}
+                    >
+                      <IconFolder size={11} />
+                      <span className="recents-name">{baseName(c)}</span>
+                      <span className="recents-path">{c}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
               {showRecents && recents.length > 0 && (
                 <div className="recents-menu">
                   {recents.map((r) => (
@@ -354,8 +404,30 @@ export function NewWorkspace() {
                 onChange={(e) => setIsolate(e.target.checked)}
               />
               <span>Isolate each agent in its own git worktree</span>
+              <button
+                type="button"
+                className="isolate-help"
+                title="What isolation does"
+                aria-label="What worktree isolation does"
+                onClick={(e) => { e.preventDefault(); e.stopPropagation(); setShowIsolateHelp((v) => !v); }}
+              >
+                ?
+              </button>
               {isRepo === false && <span className="isolate-note">not a git repo — runs directly</span>}
             </label>
+            {showIsolateHelp && (
+              <div className="isolate-explain">
+                <b>With isolation on</b>, each agent gets its own copy of the repo on its own
+                branch, under Flightdeck's app data. Two agents editing the same file can't
+                overwrite each other, and you review and merge their work from the pane header.
+                <br />
+                <b>With it off</b>, every pane works directly in this folder — simpler, but
+                parallel agents will trample each other's edits.
+                <br />
+                Worktrees are removed when you close the pane; anything uncommitted is kept on
+                its branch first.
+              </div>
+            )}
             {isolate && isRepo !== false && (
               <div className="setup-row" title="Runs once inside each freshly created worktree before its agent starts (a fresh worktree has no node_modules). Leave blank to skip.">
                 <span className="setup-lbl">Worktree setup</span>
@@ -374,7 +446,14 @@ export function NewWorkspace() {
           <div>
             <div className="agents-head">
               <span className="lbl">Panes &amp; directories</span>
-              <span className="summary">{summary}</span>
+              <span className="summary">
+                {Object.entries(counts).map(([v, c]) => (
+                  <span className="summary-item" key={v}>
+                    <VendorGlyph id={v} size={14} />
+                    {c}× {vendorShort(v)}
+                  </span>
+                ))}
+              </span>
             </div>
             {collision && (
               <div className="slot-collision">
@@ -425,6 +504,12 @@ export function NewWorkspace() {
             </div>
           </div>
         </div>
+        {!hasWorkspaces && (
+          <div className="launcher-foot">
+            Flightdeck v{APP_VERSION} — new here? Isolation keeps parallel agents out of each
+            other's way; everything else is discoverable from <kbd>Ctrl</kbd>+<kbd>K</kbd>.
+          </div>
+        )}
         <div className="df">
           {hasWorkspaces && <button className="cancel" onClick={cancelCreate}>Cancel</button>}
           <button className="btn-primary" onClick={() => void create()} disabled={!canCreate || busy}>

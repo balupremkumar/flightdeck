@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { MouseEvent as ReactMouseEvent, DragEvent as ReactDragEvent } from "react";
+import type { MouseEvent as ReactMouseEvent, DragEvent as ReactDragEvent, SVGProps } from "react";
 import { useApp, type PaneModel, type Workspace } from "./store";
 import { useUI } from "./ui";
 import { defaultCycle } from "./vendors";
@@ -41,6 +41,50 @@ function relTime(ts: number | undefined, now: number): string | null {
   return ts ? fmtRel(ts, now) : null;
 }
 
+// UI-153: a stable per-repo colour so the same workspace reads as the same
+// tile across restarts, no palette to maintain. A cheap string hash into hue,
+// fixed saturation/lightness so every tile stays legible against the ring
+// treatment below.
+function hashHue(s: string): number {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+  return Math.abs(h) % 360;
+}
+// Hex, not an hsl() string — `<input type="color">` (used for the override
+// picker) only accepts #rrggbb, and the same value has to work as both the
+// picker's default and the ring colour.
+function hueToHex(hue: number, sat: number, light: number): string {
+  const a = (sat / 100) * Math.min(light / 100, 1 - light / 100);
+  const f = (n: number) => {
+    const k = (n + hue / 30) % 12;
+    const c = light / 100 - a * Math.max(-1, Math.min(k - 3, 9 - k, 1));
+    return Math.round(c * 255).toString(16).padStart(2, "0");
+  };
+  return `#${f(0)}${f(8)}${f(4)}`;
+}
+function autoTint(root: string): string {
+  return hueToHex(hashHue(root), 60, 46);
+}
+
+const TINT_KEY = "flightdeck-ws-tint";
+function loadTints(): Record<number, string> {
+  try { return JSON.parse(localStorage.getItem(TINT_KEY) || "{}"); } catch { return {}; }
+}
+function saveTints(m: Record<number, string>) {
+  try { localStorage.setItem(TINT_KEY, JSON.stringify(m)); } catch { /* non-persistent */ }
+}
+
+// UI-155: sort-by-last-active is a view preference, not working state itself —
+// remembered so it doesn't reset to manual order every launch.
+const SORT_KEY = "flightdeck-ws-sort";
+
+const SortIcon = (p: SVGProps<SVGSVGElement>) => (
+  <svg width={13} height={13} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" {...p}>
+    <path d="M10 4v12M10 4 6 8M10 4l4 4" />
+    <path d="M4 15h5M4 11h3" />
+  </svg>
+);
+
 // Default pane mix for a workspace spun up by dropping a folder. Comes from the
 // vendor registry (installed agents), not a hardcoded list.
 
@@ -63,9 +107,29 @@ export function LeftPanel({ expanded, view, setView }: { expanded: boolean; view
   const [dragOverId, setDragOverId] = useState<number | null>(null);
   const [folderOver, setFolderOver] = useState(false);
   const [lastActive, setLastActive] = useState<Record<number, number>>(() => loadLastActive());
+  const [tints, setTints] = useState<Record<number, string>>(() => loadTints());
+  const [sortByLast, setSortByLast] = useState<boolean>(() => {
+    try { return localStorage.getItem(SORT_KEY) === "1"; } catch { return false; }
+  });
   const [, forceTick] = useState(0);
   const panelRef = useRef<HTMLDivElement>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
+
+  const toggleSort = () => {
+    setSortByLast((v) => {
+      const next = !v;
+      try { localStorage.setItem(SORT_KEY, next ? "1" : "0"); } catch { /* non-persistent */ }
+      return next;
+    });
+  };
+
+  const tintFor = (w: Workspace) => tints[w.id] ?? autoTint(w.root);
+  const setTint = (id: number, color: string) => {
+    setTints((m) => { const next = { ...m, [id]: color }; saveTints(next); return next; });
+  };
+  const resetTint = (id: number) => {
+    setTints((m) => { const next = { ...m }; delete next[id]; saveTints(next); return next; });
+  };
 
   const touch = (id: number) => {
     setLastActive((m) => {
@@ -251,6 +315,12 @@ export function LeftPanel({ expanded, view, setView }: { expanded: boolean; view
   const filtered = search.trim()
     ? workspaces.filter((w) => w.name.toLowerCase().includes(search.trim().toLowerCase()))
     : workspaces;
+  // UI-155: sorting is a display order, not a reorder of the underlying list —
+  // drag-reorder still writes the manual order underneath, it's just not what
+  // you see until sort is switched back off.
+  const ordered = sortByLast
+    ? [...filtered].sort((a, b) => (lastActive[b.id] ?? 0) - (lastActive[a.id] ?? 0))
+    : filtered;
   const menuWs = menu ? workspaces.find((w) => w.id === menu.wsId) ?? null : null;
   const now = Date.now();
 
@@ -262,6 +332,24 @@ export function LeftPanel({ expanded, view, setView }: { expanded: boolean; view
       <button onClick={() => reveal(menuWs)}>Reveal in Explorer</button>
       {/* UI-154: jump straight to the repo's host page when there's an origin. */}
       <button onClick={() => void openRepoOnHost(menuWs)}>Open repo on GitHub</button>
+      <div className="lp-menu-sep" />
+      {/* UI-153: per-repo auto colour, overridable; native input keeps this to
+          one control instead of a bespoke swatch grid. */}
+      <div className="lp-menu-color" onMouseDown={(e) => e.stopPropagation()}>
+        <span>Tile colour</span>
+        <input
+          type="color"
+          className="lp-menu-swatch"
+          value={tints[menuWs.id] ?? autoTint(menuWs.root)}
+          onChange={(e) => setTint(menuWs.id, e.target.value)}
+          title="Choose a tile colour"
+        />
+        {tints[menuWs.id] && (
+          <button className="lp-menu-color-reset" onClick={() => resetTint(menuWs.id)} title="Use the automatic colour">
+            Reset
+          </button>
+        )}
+      </div>
       <div className="lp-menu-sep" />
       <button className="danger" onClick={() => { setMenu(null); doClose(menuWs); }}>Close</button>
     </div>
@@ -283,6 +371,7 @@ export function LeftPanel({ expanded, view, setView }: { expanded: boolean; view
               onContextMenu={(e) => openMenu(e, w.id)}
               title={w.name}
               data-tip={w.name}
+              style={{ boxShadow: `inset 0 0 0 2px ${tintFor(w)}` }}
             >
               {initial(w.name)}
               <span className="lp-badge sm">{r.total}</span>
@@ -303,6 +392,15 @@ export function LeftPanel({ expanded, view, setView }: { expanded: boolean; view
       <div className="lp-head">
         <span className="lp-title">Workspaces</span>
         <span className="lp-count">{workspaces.length}</span>
+        {/* UI-155: drag-reorder still exists underneath — sort just changes
+            what's displayed, so it's re-enabled the moment this is off again. */}
+        <button
+          className={"lp-sort" + (sortByLast ? " on" : "")}
+          onClick={toggleSort}
+          title={sortByLast ? "Sorted by last active — click for manual order" : "Sort by last active"}
+        >
+          <SortIcon />
+        </button>
         <button className="lp-add" onClick={startCreate} title="New workspace"><IconPlus size={16} /></button>
       </div>
       {workspaces.length > 3 && (
@@ -316,9 +414,9 @@ export function LeftPanel({ expanded, view, setView }: { expanded: boolean; view
           />
         </div>
       )}
-      <div className="lp-list">
+      <div className={"lp-list" + (sortByLast ? " sorted" : "")}>
         {filtered.length === 0 && search.trim() && <div className="lp-empty">No workspaces match "{search.trim()}"</div>}
-        {filtered.map((w) => {
+        {ordered.map((w) => {
           const r = rollup(w.panes);
           const active = w.id === activeId && view === "terminals";
           const isRenaming = renameId === w.id;
@@ -332,7 +430,7 @@ export function LeftPanel({ expanded, view, setView }: { expanded: boolean; view
                 (dragOverId === w.id && dragId !== w.id ? " drag-over" : "")
               }
               key={w.id}
-              draggable={!isRenaming}
+              draggable={!isRenaming && !sortByLast}
               onDragStart={(e) => onRowDragStart(e, w.id)}
               onDragOver={(e) => onRowDragOver(e, w.id)}
               onDrop={(e) => onRowDrop(e, w.id)}
@@ -341,7 +439,7 @@ export function LeftPanel({ expanded, view, setView }: { expanded: boolean; view
               onContextMenu={(e) => openMenu(e, w.id)}
             >
               <span className="lp-drag-handle"><IconDrag size={12} /></span>
-              <span className="lp-i">{initial(w.name)}</span>
+              <span className="lp-i" style={{ boxShadow: `inset 0 0 0 2px ${tintFor(w)}` }}>{initial(w.name)}</span>
               <span className="lp-body">
                 {isRenaming ? (
                   <input

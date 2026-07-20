@@ -10,11 +10,11 @@ import {
 } from "./Icons";
 import type { DiffSummary } from "./worktrees";
 import { cachedInvoke, usePoll, useVisible } from "./poll";
-import { compact, num, duration } from "./format";
+import { compact, num, duration, bytes } from "./format";
 import { stateSince, lastLine, STATE_LABEL as STATE_TITLE } from "./attention";
 import "./panes.css";
 
-import { vendorShort, vendorMeta } from "./vendors";
+import { vendorShort, vendorMeta, vendorColor } from "./vendors";
 import { VendorGlyph } from "./VendorGlyph";
 import { closePaneWithCleanup } from "./worktrees";
 const MIN_FONT = 9;
@@ -29,6 +29,24 @@ interface GitStatus {
   isRepo: boolean;
   branch: string | null;
   dirty: boolean;
+}
+
+// UI-140: per-vendor font zoom, classified as a preference in storageKeys.ts
+// so "reset all settings" clears it with everything else.
+const VENDOR_FONT_KEY = "flightdeck-vendor-fonts";
+function loadVendorFont(vendor: string): number {
+  try {
+    const map = JSON.parse(localStorage.getItem(VENDOR_FONT_KEY) ?? "{}");
+    const v = map[vendor];
+    return typeof v === "number" && v >= MIN_FONT && v <= MAX_FONT ? v : DEFAULT_FONT;
+  } catch { return DEFAULT_FONT; }
+}
+function saveVendorFont(vendor: string, size: number) {
+  try {
+    const map = JSON.parse(localStorage.getItem(VENDOR_FONT_KEY) ?? "{}");
+    map[vendor] = size;
+    localStorage.setItem(VENDOR_FONT_KEY, JSON.stringify(map));
+  } catch { /* non-persistent */ }
 }
 
 function baseName(p: string): string {
@@ -114,7 +132,16 @@ function PaneViewInner({
   const [draft, setDraft] = useState(pane.title ?? "");
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
-  const [fontSize, setFontSize] = useState(DEFAULT_FONT);
+  // UI-140: font zoom is a per-agent habit (agy's TUI runs denser than
+  // claude's), so remember it per vendor rather than resetting every pane.
+  const [fontSize, setFontSizeRaw] = useState(() => loadVendorFont(pane.vendor));
+  const setFontSize = (next: number | ((f: number) => number)) => {
+    setFontSizeRaw((f) => {
+      const v = typeof next === "function" ? next(f) : next;
+      saveVendorFont(pane.vendor, v);
+      return v;
+    });
+  };
   const [ligatures, setLigatures] = useState(false);
   // UI-237: start from THIS vendor's own threshold (agy idles longer than
   // claude; a shell is idle at once). The per-pane slider still overrides it.
@@ -160,6 +187,21 @@ function PaneViewInner({
 
   // The menu is portalled to <body> — `.pane` clips overflow (and so does the
   // resizable-panel wrapper), so an absolutely-positioned child would be cut off.
+  // UI-230: measured only while the menu is open — the size walk is not free.
+  const [wtSize, setWtSize] = useState<number | null>(null);
+  useEffect(() => {
+    if (!menuOpen || !pane.worktreePath) return;
+    let cancelled = false;
+    void cachedInvoke<{ path: string; bytes: number }[]>("git_worktree_list", { claimed: [] }, 30000)
+      .then((list) => {
+        if (cancelled) return;
+        const norm = (x: string) => x.replace(/[\/]+$/, "").toLowerCase();
+        setWtSize(list.find((w) => norm(w.path) === norm(pane.worktreePath!))?.bytes ?? null);
+      })
+      .catch(() => { if (!cancelled) setWtSize(null); });
+    return () => { cancelled = true; };
+  }, [menuOpen, pane.worktreePath]);
+
   const openMenu = () => {
     const r = menuBtnRef.current?.getBoundingClientRect();
     if (r) setMenuPos({ top: r.bottom + 4, left: Math.max(8, r.right - 220) });
@@ -291,6 +333,10 @@ function PaneViewInner({
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; hasSel: boolean } | null>(null);
   // UI-135: brief visual pulse when the child rings BEL.
   const [bell, setBell] = useState(false);
+  // UI-128: how far the user has scrolled off the live tail, in new lines.
+  const [behind, setBehind] = useState(0);
+  // UI-125: how the process ended, so Restart can say what it's recovering from.
+  const [lastExit, setLastExit] = useState<string | null>(null);
   const bellTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const pulseBell = () => {
     setBell(true);
@@ -364,6 +410,9 @@ function PaneViewInner({
         (dragOver ? " drop-target" : "")
       }
       ref={paneRef}
+      // UI-121: with six panes open, a neutral focus ring doesn't say WHICH
+      // agent you're about to type at. The vendor's own colour does.
+      style={focused ? ({ "--pane-accent": vendorColor(pane.vendor) } as React.CSSProperties) : undefined}
       onMouseDown={() => focusPane(wsId, pane.id)}
       onDragOver={(e) => { if (canReorder) { e.preventDefault(); onDragEnter(index); } }}
       onDrop={(e) => { if (canReorder) { e.preventDefault(); onDropHere(index); } }}
@@ -502,7 +551,15 @@ Running low — consider /compact in this pane.` : "")
         )}
         <span className="sp" />
         {dead && (
-          <button className="prestart" onClick={() => restartPane(pane.id)} title="Restart this pane">
+          <button
+            className="prestart"
+            onClick={() => restartPane(pane.id)}
+            title={
+              pane.state === "error"
+                ? `${displayName} exited unexpectedly${lastExit ? ` (${lastExit})` : ""}. Restart it in the same folder.`
+                : "Restart this pane in the same folder"
+            }
+          >
             <IconRefresh size={12} /> Restart
           </button>
         )}
@@ -522,7 +579,14 @@ Running low — consider /compact in this pane.` : "")
           </button>
           {menuOpen && menuPos && createPortal(
             <div className="pmenu" style={{ top: menuPos.top, left: menuPos.left }} onMouseLeave={closeMenu}>
-              <div className="pmenu-path" title="This pane's working directory">{pane.cwd}</div>
+              <div className="pmenu-path" title="This pane's working directory">
+                {pane.cwd}
+                {/* UI-230: an isolated pane's worktree is a real disk cost —
+                    say how much, where the pane itself is described. */}
+                {pane.worktreePath && wtSize != null && (
+                  <span className="pmenu-path-size">isolated worktree · {bytes(wtSize)}</span>
+                )}
+              </div>
               <button className="pmenu-item" onClick={clearScrollback}>Clear scrollback</button>
               <button className="pmenu-item" onClick={() => { restartPane(pane.id); closeMenu(); }}>
                 <IconRefresh size={13} /> Restart
@@ -605,6 +669,17 @@ Running low — consider /compact in this pane.` : "")
                 </span></>}
           </div>
         )}
+        {/* UI-128: scrolled up on a chatty agent, it's easy to lose track of
+            whether output is still arriving — and of how to get back. */}
+        {behind > 0 && (
+          <button
+            className="pscroll-tail"
+            onClick={() => { terminalRef.current?.scrollToBottom(); setBehind(0); }}
+            title="Jump to the newest output"
+          >
+            ↓ {behind > 999 ? "999+" : behind} new
+          </button>
+        )}
         {searchOpen && (
           <div className="pfind">
             <IconSearch size={12} />
@@ -642,11 +717,15 @@ Running low — consider /compact in this pane.` : "")
           fontSize={fontSize}
           ligatures={ligatures}
           quietThresholdMs={quietSec * 1000}
-          onExit={(crashed) => setPaneState(pane.id, crashed ? "error" : "idle")}
+          onExit={(crashed) => {
+            setLastExit(crashed ? "crashed" : "exited cleanly");
+            setPaneState(pane.id, crashed ? "error" : "idle");
+          }}
           onState={(st) => setPaneState(pane.id, st as PaneState)}
           onProc={setProcName}
           onBell={pulseBell}
           onLine={(l) => lastLine.set(pane.id, l)}
+          onScrollAway={setBehind}
         />
       </div>
       {ctxMenu && createPortal(

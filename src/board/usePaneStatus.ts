@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useApp, type PaneState } from "../store";
+import { cachedInvoke, usePoll } from "../poll";
 
 export interface PaneStatus {
   state: PaneState;
@@ -32,4 +33,28 @@ export function usePaneStatus(paneId?: number): PaneStatus | null {
 
   if (!pane) return null;
   return { state: pane.state, rel: relTime(Date.now() - last.current.at) };
+}
+
+export interface PaneUsage { contextTokens: number; outputTokens: number; turns: number; }
+
+// UI-160: same transcript-derived numbers PaneView's token chip reads, so a
+// dispatched card shows usage without opening its pane. Goes through the
+// shared cache (poll.ts) — a card and its pane's own chip never double the
+// invoke count, and the poll stands down once the window is hidden.
+export function usePaneUsage(paneId?: number): PaneUsage | null {
+  const cwd = useApp((s) =>
+    paneId == null ? undefined : s.workspaces.flatMap((w) => w.panes).find((p) => p.id === paneId)?.cwd
+  );
+  const [usage, setUsage] = useState<PaneUsage | null>(null);
+
+  usePoll(async () => {
+    if (!cwd) { setUsage(null); return; }
+    try {
+      setUsage(await cachedInvoke<PaneUsage | null>("pane_usage", { cwd }, 7000));
+    } catch {
+      setUsage(null);
+    }
+  }, 15000, [cwd], !!cwd);
+
+  return usage;
 }

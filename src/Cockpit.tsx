@@ -97,6 +97,20 @@ export function Cockpit() {
         st.switchWorkspace(next);
         return;
       }
+      // UI-122: Ctrl+Alt+arrows walk pane focus. The grid is a wrapped flow
+      // rather than a fixed matrix, so "spatial" here means next/previous in
+      // grid order — which is what the eye follows anyway.
+      if (e.ctrlKey && e.altKey && /^Arrow(Left|Right|Up|Down)$/.test(e.key)) {
+        const st = useApp.getState();
+        const ws = st.workspaces.find((w) => w.id === st.activeId);
+        if (!ws || ws.panes.length < 2) return;
+        e.preventDefault();
+        const at = ws.panes.findIndex((p) => p.id === ws.focused);
+        const step = e.key === "ArrowRight" || e.key === "ArrowDown" ? 1 : -1;
+        const next = ws.panes[(Math.max(0, at) + step + ws.panes.length) % ws.panes.length];
+        if (next) st.focusPane(ws.id, next.id);
+        return;
+      }
       // UI-124: Alt+1..9 focuses pane N in the active workspace.
       if (e.altKey && !e.ctrlKey && /^[1-9]$/.test(e.key)) {
         const st = useApp.getState();

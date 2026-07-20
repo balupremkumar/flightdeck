@@ -10,10 +10,12 @@ import { useApp } from "./store";
 import { useUI } from "./ui";
 import { vendorShort } from "./vendors";
 import { IconBranch, IconClose, IconChevron, IconDiff, IconMerge, IconRefresh, IconCopy } from "./Icons";
-import type { DiffSummary, MergeOutcome, BranchContext } from "./worktrees";
+import type { DiffSummary, DiffFile, MergeOutcome, BranchContext } from "./worktrees";
 import { absTime, relTime } from "./format";
 import { wordDiffMap } from "./worddiff";
 import { toSplitRows } from "./splitdiff";
+import { groupByDir } from "./diffgroups";
+import { highlightLine, langFor } from "./diffhighlight";
 import { invalidateCwd, usePoll } from "./poll";
 import { closePaneGuarded } from "./worktrees";
 import { useBoardStore } from "./board/boardStore";
@@ -26,6 +28,17 @@ function lineClass(l: string): string {
   if (l.startsWith("-") && !l.startsWith("---")) return "rv-del";
   if (l.startsWith("diff ") || l.startsWith("index ") || l.startsWith("+++") || l.startsWith("---")) return "rv-meta";
   return "";
+}
+
+// UI-167: past this many changed files a flat list stops being scannable.
+const GROUP_THRESHOLD = 15;
+
+// UI-179: a conflict lives in the pane's worktree — open the conflicted file
+// there rather than the shared cwd, in case the two ever diverge.
+function openConflictFile(pane: { worktreePath?: string | null; cwd: string }, relPath: string, onErr: () => void) {
+  const root = pane.worktreePath || pane.cwd;
+  const sep = root.includes("/") && !root.includes("\\") ? "/" : "\\";
+  void openPath(root.replace(/[\\\/]+$/, "") + sep + relPath.replace(/\//g, sep)).catch(onErr);
 }
 
 export function Review() {
@@ -68,6 +81,11 @@ export function Review() {
   };
   const patchRef = useRef<HTMLPreElement>(null);
   const [hunkIdx, setHunkIdx] = useState(0);
+  // UI-167: directories currently open in the grouped file list. Starts empty
+  // and picks up the selected file's directory below, so the drawer never
+  // opens onto a collapsed group hiding the very file it's showing.
+  const [expandedDirs, setExpandedDirs] = useState<Set<string>>(() => new Set());
+  const filesRef = useRef<HTMLDivElement>(null);
 
   const pane = hit?.pane ?? null;
 
@@ -122,6 +140,26 @@ export function Review() {
   const wordMarks = useMemo(() => wordDiffMap(lines), [lines]);
   const splitRows = useMemo(() => (split ? toSplitRows(lines) : []), [split, lines]);
   const hunkLines = useMemo(() => lines.reduce<number[]>((acc, l, i) => (l.startsWith("@@") ? [...acc, i] : acc), []), [lines]);
+  // UI-171: highlighting is chosen once per selected file, not per line.
+  const lang = useMemo(() => (selected ? langFor(selected) : null), [selected]);
+  // UI-167: only group once the flat list would actually be unwieldy.
+  const groups = useMemo(() => {
+    const files = summary?.files ?? [];
+    return files.length > GROUP_THRESHOLD ? groupByDir(files) : null;
+  }, [summary]);
+
+  // Whatever j/k, a click, or a fresh load selects, make sure its directory
+  // is open and it's actually in view — a grouped list is no use if walking
+  // it with j/k just selects files you can't see.
+  useEffect(() => {
+    if (!selected) return;
+    const slash = selected.lastIndexOf("/");
+    const dir = slash === -1 ? "" : selected.slice(0, slash);
+    setExpandedDirs((s) => (s.has(dir) ? s : new Set(s).add(dir)));
+  }, [selected]);
+  useEffect(() => {
+    filesRef.current?.querySelector<HTMLElement>(".rv-file.sel")?.scrollIntoView({ block: "nearest" });
+  }, [selected, expandedDirs]);
 
   const jumpHunk = (dir: 1 | -1) => {
     if (hunkLines.length === 0) return;
@@ -252,6 +290,35 @@ export function Review() {
   const title = pane.title || vendorShort(pane.vendor);
   const fileCount = summary?.files.length ?? 0;
 
+  // Shared by the flat and grouped (UI-167) file lists.
+  const renderFile = (f: DiffFile) => (
+    <button
+      key={f.path}
+      className={"rv-file" + (selected === f.path ? " sel" : "")}
+      onClick={() => setSelected(f.path)}
+      title={f.path}
+    >
+      <span className="rv-file-path">{f.path}</span>
+      <span
+        className="rv-file-open"
+        role="button"
+        tabIndex={-1}
+        title="Open this file"
+        onClick={(e) => {
+          e.stopPropagation();
+          const sep = pane.cwd.includes("/") && !pane.cwd.includes("\\") ? "/" : "\\";
+          void openPath(pane.cwd.replace(/[\\\/]+$/, "") + sep + f.path.replace(/\//g, sep))
+            .catch(() => pushToast("error", "Couldn't open that file."));
+        }}
+      >
+        open
+      </span>
+      {f.binary
+        ? <span className="rv-file-bin">binary</span>
+        : <span className="rv-file-stat"><em className="add">+{f.added}</em><em className="del">−{f.deleted}</em></span>}
+    </button>
+  );
+
   return (
     <div className="rv-scrim" onMouseDown={(e) => { if (e.target === e.currentTarget) setReviewPane(null); }}>
       <aside className="rv-drawer" role="dialog" aria-label={`Review changes — ${title}`}>
@@ -290,7 +357,7 @@ export function Review() {
 
         {!error && fileCount > 0 && summary && (
           <div className="rv-body">
-            <div className="rv-files">
+            <div className="rv-files" ref={filesRef}>
               {/* UI-174: the commits a merge would bring, collapsed by default. */}
               {ctx && ctx.commits.length > 0 && (
                 <div className="rv-commits">
@@ -313,33 +380,32 @@ export function Review() {
                 {fileCount} file{fileCount === 1 ? "" : "s"}
                 <span className="rv-stat"><em className="add">+{summary.totalAdded}</em> <em className="del">−{summary.totalDeleted}</em></span>
               </div>
-              {summary.files.map((f) => (
-                <button
-                  key={f.path}
-                  className={"rv-file" + (selected === f.path ? " sel" : "")}
-                  onClick={() => setSelected(f.path)}
-                  title={f.path}
-                >
-                  <span className="rv-file-path">{f.path}</span>
-                  <span
-                    className="rv-file-open"
-                    role="button"
-                    tabIndex={-1}
-                    title="Open this file"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      const sep = pane.cwd.includes("/") && !pane.cwd.includes("\\") ? "/" : "\\";
-                      void openPath(pane.cwd.replace(/[\\\/]+$/, "") + sep + f.path.replace(/\//g, sep))
-                        .catch(() => pushToast("error", "Couldn't open that file."));
-                    }}
-                  >
-                    open
-                  </span>
-                  {f.binary
-                    ? <span className="rv-file-bin">binary</span>
-                    : <span className="rv-file-stat"><em className="add">+{f.added}</em><em className="del">−{f.deleted}</em></span>}
-                </button>
-              ))}
+              {groups ? (
+                // UI-167: past GROUP_THRESHOLD files a flat list is noise —
+                // group by directory so you can collapse the parts you don't
+                // need to look at. j/k still walk every file (see the effects
+                // above); this only changes what's visible, not the order.
+                groups.map((g) => {
+                  const open = expandedDirs.has(g.dir);
+                  return (
+                    <div className="rv-dirgroup" key={g.dir}>
+                      <button className="rv-dirhead" onClick={() => setExpandedDirs((s) => {
+                        const next = new Set(s);
+                        if (next.has(g.dir)) next.delete(g.dir); else next.add(g.dir);
+                        return next;
+                      })} aria-expanded={open}>
+                        <IconChevron size={11} style={{ transform: open ? "rotate(90deg)" : "none" }} />
+                        <span className="rv-dirname">{g.dir || "(root)"}</span>
+                        <span className="rv-dircount">{g.files.length}</span>
+                        <span className="rv-dirstat"><em className="add">+{g.added}</em><em className="del">−{g.deleted}</em></span>
+                      </button>
+                      {open && g.files.map((f) => renderFile(f))}
+                    </div>
+                  );
+                })
+              ) : (
+                summary.files.map((f) => renderFile(f))
+              )}
             </div>
             <div className="rv-patch-wrap">
               <div className="rv-patch-bar">
@@ -383,21 +449,38 @@ export function Review() {
                 </div>
               ) : (
               <pre className="rv-patch" ref={patchRef}>
-                {lines.map((l, i) => (
-                  <span key={i} data-line={i} className={"rv-line " + lineClass(l)}>
-                    {wordMarks.has(i) ? (
-                      <>
-                        {l[0]}
-                        {wordMarks.get(i)!.map((seg, k) =>
-                          seg.changed
-                            ? <em key={k} className="rv-word">{seg.text}</em>
-                            : <span key={k}>{seg.text}</span>
-                        )}
-                      </>
-                    ) : (l || " ")}
-                    {"\n"}
-                  </span>
-                ))}
+                {lines.map((l, i) => {
+                  const cls = lineClass(l);
+                  return (
+                    <span key={i} data-line={i} className={"rv-line " + cls}>
+                      {wordMarks.has(i) ? (
+                        <>
+                          {l[0]}
+                          {wordMarks.get(i)!.map((seg, k) =>
+                            seg.changed
+                              ? <em key={k} className="rv-word">{seg.text}</em>
+                              : <span key={k}>{seg.text}</span>
+                          )}
+                        </>
+                      ) : cls === "" && lang && l ? (
+                        // UI-171: only unmarked context lines get syntax
+                        // colour. Add/del lines already carry meaning through
+                        // colour (green/red) and, when paired, word-diff's
+                        // .rv-word — token colours on top of either would
+                        // fight the thing that's supposed to stand out.
+                        <>
+                          {l[0]}
+                          {highlightLine(l.slice(1), lang).map((tok, k) =>
+                            tok.kind === "plain"
+                              ? <span key={k}>{tok.text}</span>
+                              : <span key={k} className={"rv-tok-" + tok.kind}>{tok.text}</span>
+                          )}
+                        </>
+                      ) : (l || " ")}
+                      {"\n"}
+                    </span>
+                  );
+                })}
               </pre>
               )}
             </div>
@@ -411,7 +494,20 @@ export function Review() {
             </div>
             {conflict.conflictFiles.length > 0 && (
               <ul className="rv-conflict-files">
-                {conflict.conflictFiles.map((f) => <li key={f}>{f}</li>)}
+                {conflict.conflictFiles.map((f) => (
+                  <li key={f}>
+                    <span className="rv-conflict-file-path">{f}</span>
+                    <span
+                      className="rv-conflict-open"
+                      role="button"
+                      tabIndex={-1}
+                      title="Open this file to resolve the conflict"
+                      onClick={() => openConflictFile(pane, f, () => pushToast("error", "Couldn't open that file."))}
+                    >
+                      open
+                    </span>
+                  </li>
+                ))}
               </ul>
             )}
             <div className="rv-conflict-sub">

@@ -1,9 +1,12 @@
-import type { DragEvent } from "react";
+import { useEffect, useState, type DragEvent } from "react";
+import { createPortal } from "react-dom";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import type { Card, ColumnId } from "./types";
+import type { Card, ColumnId, Vendor } from "./types";
 import { PRIORITY_COLORS, STATE_COLORS, STATE_LABELS } from "./palette";
-import { vendorColor, vendorShort } from "../vendors";
-import { usePaneStatus } from "./usePaneStatus";
+import { agentVendors, vendorColor, vendorShort } from "../vendors";
+import { usePaneStatus, usePaneUsage } from "./usePaneStatus";
+import { compact, num } from "../format";
+import { IconAgent } from "../Icons";
 
 interface CardItemProps {
   card: Card;
@@ -19,6 +22,9 @@ interface CardItemProps {
   isDispatching?: boolean;
   onSelect: (id: string) => void;
   onOpenDetail: (id: string) => void;
+  /** UI-158: explicit vendor pick, instead of the card's preset agent or
+   *  whichever agent happens to be first installed. */
+  onSendToAgent: (card: Card, vendor: Vendor) => void;
 }
 
 export function CardItem({
@@ -33,10 +39,24 @@ export function CardItem({
   isDispatching,
   onSelect,
   onOpenDetail,
+  onSendToAgent,
 }: CardItemProps) {
   const status = usePaneStatus(card.paneId);
+  const usage = usePaneUsage(card.paneId);
   const doneCount = card.checklist.filter((i) => i.done).length;
   const hasChecklist = card.checklist.length > 0;
+
+  // UI-158: "Send to agent…" — a small vendor picker, portalled to <body> so
+  // a column's overflow:auto scroller (col-list) can't clip it.
+  const [agentMenu, setAgentMenu] = useState<{ x: number; y: number } | null>(null);
+  useEffect(() => {
+    if (!agentMenu) return;
+    const close = () => setAgentMenu(null);
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setAgentMenu(null); };
+    window.addEventListener("mousedown", close);
+    window.addEventListener("keydown", onKey, true); // capture: xterm swallows Escape otherwise
+    return () => { window.removeEventListener("mousedown", close); window.removeEventListener("keydown", onKey, true); };
+  }, [agentMenu]);
 
   return (
     <div className="card-slot">
@@ -152,11 +172,61 @@ export function CardItem({
                   {doneCount}/{card.checklist.length}
                 </span>
               )}
+              {/* UI-160: same transcript-derived count as the pane's own token chip. */}
+              {usage && (
+                <span
+                  className="chip chip-usage"
+                  title={`Session tokens (from the agent's own transcript) — ${num(usage.contextTokens)} context, ${num(usage.outputTokens)} output across ${num(usage.turns)} turns`}
+                >
+                  {compact(usage.contextTokens)} ctx
+                </span>
+              )}
+              {/* UI-158: only offered while the card has no live pane — once
+                  it's dispatched, the pane header owns further agent choices. */}
+              {!status && (
+                <button
+                  type="button"
+                  className="chip chip-send"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    const r = e.currentTarget.getBoundingClientRect();
+                    setAgentMenu({ x: r.left, y: r.bottom + 4 });
+                  }}
+                  title="Send to a specific agent"
+                >
+                  <IconAgent size={10} /> Send to…
+                </button>
+              )}
             </div>
           </>
         )}
       </div>
       {insertLine === "after" && <div className="card-insert" />}
+      {agentMenu && createPortal(
+        <div
+          className="bd-pop"
+          style={{ top: agentMenu.y, left: agentMenu.x }}
+          onMouseDown={(e) => e.stopPropagation()}
+          role="menu"
+          aria-label="Send to agent"
+        >
+          <div className="bd-pop-head">Send "{card.title}" to…</div>
+          {agentVendors().map((v) => (
+            <button
+              key={v.id}
+              type="button"
+              className="bd-pop-item"
+              onClick={() => { onSendToAgent(card, v.id); setAgentMenu(null); }}
+            >
+              <span className="chip-agent-dot" style={{ background: vendorColor(v.id) }} />
+              {v.label}
+              {!v.installed && <span className="bd-pop-hint">not installed</span>}
+            </button>
+          ))}
+          {agentVendors().length === 0 && <div className="bd-pop-hint bd-pop-empty">No agents detected.</div>}
+        </div>,
+        document.body
+      )}
     </div>
   );
 }

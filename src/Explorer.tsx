@@ -8,6 +8,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { IconFolder, IconFile, IconChevron, IconBranch, IconAgent, IconRefresh } from "./Icons";
 import { spawnPane } from "./worktrees";
+import type { DiffFile, DiffSummary } from "./worktrees";
 import { cachedInvoke, usePoll } from "./poll";
 import "./explorer.css";
 
@@ -38,6 +39,15 @@ const IGNORED_NAMES = new Set([
 function joinPath(parent: string, name: string): string {
   const sep = parent.includes("/") && !parent.includes("\\") ? "/" : "\\";
   return parent.replace(/[\\/]+$/, "") + sep + name;
+}
+
+// UI-210: git_diff_summary returns paths forward-slash-relative to the repo
+// root; the tree's node paths are built by joinPath, which always inherits
+// its separator from the root. Converting once here, the same way joinPath
+// picks its separator, keeps the two path styles comparable.
+function gitPathToNodePath(root: string, gitRelPath: string): string {
+  const sep = root.includes("/") && !root.includes("\\") ? "/" : "\\";
+  return root.replace(/[\\/]+$/, "") + sep + gitRelPath.split("/").join(sep);
 }
 
 // Split a filename so the extension always stays visible; the head truncates
@@ -84,17 +94,19 @@ type NodeStatus = "idle" | "loading" | "loaded" | "denied";
 // navigating, and nobody scrolls 4000 sibling files.
 const MAX_ROWS = 300;
 
-function Node({ name, path, dir, depth, wsId, vendor, onOpenFile, onContext, expandKey }: {
+function Node({ name, path, dir, depth, wsId, vendor, onOpenFile, onContext, expandKey, changed }: {
   name: string; path: string; dir: boolean; depth: number;
   wsId?: number; vendor: string; onOpenFile: (path: string) => void;
   onContext: (x: number, y: number, path: string, dir: boolean) => void;
   expandKey: string;
+  changed: Map<string, DiffFile>;
 }) {
   const [expanded, setExpanded] = useState(() => isExpanded(expandKey, path));
   const [children, setChildren] = useState<Entry[] | null>(null);
   const [status, setStatus] = useState<NodeStatus>("idle");
   const { head, tail } = splitName(name, dir);
   const ignored = IGNORED_NAMES.has(name);
+  const diff = !dir ? changed.get(path) : undefined;
 
   const toggle = async () => {
     if (!dir) { onOpenFile(path); return; }
@@ -156,6 +168,12 @@ function Node({ name, path, dir, depth, wsId, vendor, onOpenFile, onContext, exp
           <span className="ex-head">{head}</span>
           {tail && <span className="ex-tail">{tail}</span>}
         </span>
+        {diff && (
+          <i
+            className="ex-changed-dot"
+            title={diff.binary ? "Binary file changed" : `+${diff.added} -${diff.deleted}`}
+          />
+        )}
         {status === "denied" && <LockIcon className="ex-lock" aria-label="Permission denied" />}
         {dir && wsId != null && (
           <button className="ex-action" title="New terminal here" onClick={newTerminalHere}>
@@ -180,6 +198,7 @@ function Node({ name, path, dir, depth, wsId, vendor, onOpenFile, onContext, exp
               onOpenFile={onOpenFile}
               onContext={onContext}
               expandKey={expandKey}
+              changed={changed}
             />
           ))
         )
@@ -244,6 +263,10 @@ export function Explorer({ root, wsId, vendor = "pwsh", paneRoot, paneLabel }: E
   const [entries, setEntries] = useState<Entry[]>([]);
   const [status, setStatus] = useState<RootStatus>(root ? "loading" : "empty-root");
   const [git, setGit] = useState<GitInfo | null>(null);
+  // UI-210: path -> DiffFile for files changed since base, keyed on the same
+  // node paths the tree renders so a row can look itself up with no per-node
+  // fetch. Empty (not stale) whenever the repo/base can't be diffed.
+  const [changed, setChanged] = useState<Map<string, DiffFile>>(new Map());
   const seq = useRef(0);
   // Per-pane rooting: browse the focused pane's worktree instead of the main
   // checkout. Preference persisted; falls back to workspace when the focused
@@ -314,6 +337,14 @@ export function Explorer({ root, wsId, vendor = "pwsh", paneRoot, paneLabel }: E
     cachedInvoke<GitInfo>("git_status", { cwd: effectiveRoot }, 15000)
       .then((g) => { if (seq.current === mySeq) setGit(g); })
       .catch(() => { if (seq.current === mySeq) setGit(null); });
+    // Same cache entry PaneView's diff-stat badge reads (UI-234) — one git
+    // subprocess serves both surfaces.
+    cachedInvoke<DiffSummary>("git_diff_summary", { cwd: effectiveRoot, base: null }, 15000)
+      .then((d) => {
+        if (seq.current !== mySeq) return;
+        setChanged(new Map(d.files.map((f) => [gitPathToNodePath(effectiveRoot, f.path), f])));
+      })
+      .catch(() => { if (seq.current === mySeq) setChanged(new Map()); });
   };
 
   useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [effectiveRoot]);
@@ -428,6 +459,7 @@ export function Explorer({ root, wsId, vendor = "pwsh", paneRoot, paneLabel }: E
                   expandKey={effectiveRoot}
                   onContext={(x, y, path, isDir) => setCtx({ x, y, path, dir: isDir })}
                   onOpenFile={(p) => { openPath(p).catch(() => { /* no default app / unsupported — ignore */ }); }}
+                  changed={changed}
                 />
               ))}
               {entries.length > MAX_ROWS && (

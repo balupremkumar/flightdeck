@@ -76,6 +76,8 @@ export interface TerminalHandle {
   onSearchResults: (cb: (e: ISearchResultChangeEvent) => void) => () => void;
   /** UI-134: wipe the scrollback without restarting the agent. */
   clearScrollback: () => void;
+  /** UI-128: jump back to the live tail. */
+  scrollToBottom: () => void;
   /** UI-132: selection helpers for the context menu. */
   getSelection: () => string;
   selectAll: () => void;
@@ -104,6 +106,9 @@ interface TerminalProps {
   onBell?: () => void;
   /** UI-141: latest non-empty output line, ANSI-stripped, for the queue. */
   onLine?: (line: string) => void;
+  /** UI-128: user has scrolled off the live tail; carries how many new lines
+   *  have arrived since. 0 means they're back at the bottom. */
+  onScrollAway?: (linesBehind: number) => void;
 }
 
 // Cap on buffered bytes for a pane hidden behind another workspace / focus mode —
@@ -112,7 +117,7 @@ const HIDDEN_BUFFER_CAP = 262144; // 256KB
 
 // One live terminal bound to a PTY in the Rust core.
 export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Terminal(
-  { vendor, cwd, setup, onSetupConsumed, fontSize = 12.5, ligatures = false, quietThresholdMs = 3000, onExit, onState, onProc, onBell, onLine },
+  { vendor, cwd, setup, onSetupConsumed, fontSize = 12.5, ligatures = false, quietThresholdMs = 3000, onExit, onState, onProc, onBell, onLine, onScrollAway },
   ref
 ) {
   const elRef = useRef<HTMLDivElement>(null);
@@ -137,6 +142,7 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
       return () => d?.dispose();
     },
     clearScrollback: () => termRef.current?.clear(),
+    scrollToBottom: () => termRef.current?.scrollToBottom(),
     getSelection: () => termRef.current?.getSelection() ?? "",
     selectAll: () => termRef.current?.selectAll(),
     copySelection: async () => {
@@ -239,6 +245,20 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
       hiddenBytes = 0;
       truncated = false;
     };
+    // UI-128: on a chatty agent it's easy to scroll up to read something and
+    // then lose track of whether output is still arriving. Count what's landed
+    // since the user left the bottom.
+    let linesBehind = 0;
+    const atBottom = () => term.buffer.active.viewportY >= term.buffer.active.baseY - 1;
+    const scrollDisp = term.onScroll(() => {
+      if (atBottom()) { linesBehind = 0; onScrollAway?.(0); }
+    });
+    const writeDisp = term.onWriteParsed(() => {
+      if (atBottom()) { if (linesBehind !== 0) { linesBehind = 0; onScrollAway?.(0); } return; }
+      linesBehind++;
+      onScrollAway?.(linesBehind);
+    });
+
     const io = new IntersectionObserver((entries) => {
       const nowVisible = entries[entries.length - 1]?.isIntersecting ?? true;
       if (nowVisible === visible) return;
@@ -406,6 +426,8 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
       io.disconnect();
       themeObserver.disconnect();
       fileLinks.dispose();
+      scrollDisp.dispose();
+      writeDisp.dispose();
       unOut?.();
       unExit?.();
       unState?.();

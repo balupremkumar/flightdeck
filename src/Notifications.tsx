@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useApp, type PaneState } from "./store";
 import { useUI } from "./ui";
 import { IconBell, IconSettings } from "./Icons";
@@ -156,6 +156,22 @@ export function Notifications() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [needsAttention, followAttention]);
 
+  // UI-144: collapse consecutive events from the same pane in the same state.
+  // A pane that flaps between running and waiting used to bury everything else
+  // under near-identical rows.
+  const groupedFeed = useMemo(() => {
+    const out: (typeof feed[number] & { repeats: number })[] = [];
+    for (const e of feed) {
+      const last = out[out.length - 1];
+      if (last && last.paneId === e.paneId && last.state === e.state) {
+        last.repeats++;
+        continue;
+      }
+      out.push({ ...e, repeats: 1 });
+    }
+    return out;
+  }, [feed]);
+
   const jump = (wsId: number, paneId: number) => {
     switchWorkspace(wsId);
     focusPane(wsId, paneId);
@@ -229,13 +245,14 @@ export function Notifications() {
               {feed.length > 0 && <button className="ntf-clear" onClick={clearFeed}>Clear</button>}
             </div>
             {feed.length === 0 && <div className="ntf-empty">No notifications yet — they'll show up here.</div>}
-            {feed.slice(0, 12).map((e) => (
+            {groupedFeed.slice(0, 12).map((e) => (
               <div className="ntf-item" key={e.id} onClick={() => jump(e.wsId, e.paneId)} title={timeTitle(e.at)}>
                 <span className={"ntf-dot " + e.state} />
                 <span className="ntf-ws">{e.wsName}</span>
                 <span className="ntf-ag">{e.vendor}</span>
                 <span className="ntf-state">
-                  {STATE_LABEL[e.state]} · {forMins(e.at)}
+                  {STATE_LABEL[e.state]}
+                  {e.repeats > 1 && <em className="ntf-repeat">×{e.repeats}</em>} · {forMins(e.at)}
                 </span>
               </div>
             ))}

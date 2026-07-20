@@ -139,6 +139,32 @@ export async function adoptSession(doc: { workspaces: PersistedWorkspace[]; acti
   await hydrateFrom(doc.workspaces, doc.activeWorkspaceId);
 }
 
+// UI-197: a clean-exit sentinel. Flightdeck holds live agent processes, so a
+// disappearance without a clean shutdown is worth noticing — and it's exactly
+// the moment a support bundle is useful, while the evidence is still fresh.
+const CLEAN_EXIT_KEY = "flightdeck-clean-exit";
+
+/** True when the previous run ended without going through the quit path. */
+export function crashedLastRun(): boolean {
+  try {
+    // Absent = first run ever, which is not a crash.
+    const v = localStorage.getItem(CLEAN_EXIT_KEY);
+    return v === "0";
+  } catch { return false; }
+}
+
+/** Call once at boot, AFTER reading crashedLastRun(). */
+export function armCleanExitSentinel() {
+  try {
+    localStorage.setItem(CLEAN_EXIT_KEY, "0");
+  } catch { /* non-persistent */ }
+  // Mark clean on the way out. beforeunload covers window close and quit;
+  // a hard kill or power loss deliberately leaves the "0".
+  window.addEventListener("beforeunload", () => {
+    try { localStorage.setItem(CLEAN_EXIT_KEY, "1"); } catch { /* non-persistent */ }
+  });
+}
+
 /** Boot entry: offer to reopen the previous session. Mounting a restored pane
  *  respawns its PTY, so "reopen" relaunches the agents in place. */
 export async function offerSessionRestore() {
