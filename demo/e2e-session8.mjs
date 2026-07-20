@@ -104,6 +104,29 @@ if (cockpit) {
     check("UI-1 queue closes on Esc", !(await page.locator(".aq-panel").isVisible()));
   }
 
+  // UI-226: memoised PaneView must not break drag-reorder. A comparator that
+  // ignored callback identity would leave stale closures and silently kill
+  // drop targets, so this asserts the panes actually move.
+  const paneNames = async () => page.locator(".phead .pname").allTextContents();
+  const beforeOrder = await paneNames();
+  if (beforeOrder.length >= 2) {
+    const fired = await page.evaluate(() => {
+      const grips = document.querySelectorAll(".pgrip");
+      const panes = document.querySelectorAll(".pane");
+      if (grips.length < 2 || panes.length < 2) return false;
+      const dt = new DataTransfer();
+      grips[0].dispatchEvent(new DragEvent("dragstart", { bubbles: true, dataTransfer: dt }));
+      panes[1].dispatchEvent(new DragEvent("dragover", { bubbles: true, cancelable: true, dataTransfer: dt }));
+      panes[1].dispatchEvent(new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer: dt }));
+      return true;
+    });
+    await page.waitForTimeout(500);
+    const afterOrder = await paneNames();
+    check("UI-226 drag-reorder survives memoisation",
+      fired && JSON.stringify(beforeOrder) !== JSON.stringify(afterOrder),
+      `${beforeOrder.join(",")} -> ${afterOrder.join(",")}`);
+  }
+
   // UI-132: terminal context menu.
   const body = page.locator(".pbody").first();
   if (await body.count()) {

@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { PaneView } from "./PaneView";
 import { useApp, type Workspace } from "./store";
@@ -34,6 +34,31 @@ export function PaneGrid({ ws }: { ws: Workspace }) {
   // Native HTML5 drag-reorder: index being dragged + index currently under the cursor.
   const [dragFrom, setDragFrom] = useState<number | null>(null);
   const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
+
+  // UI-226: PaneView is memoised, so its callbacks must be referentially stable
+  // or the memo is defeated. They take the pane/index as an argument and read
+  // live drag state from a ref — a comparator that merely ignored callback
+  // identity would leave stale closures and silently break drop targets.
+  // The ref is written by the handlers themselves, not during render: a drag
+  // whose start and drop land in the same tick (fast pointer, or a synthetic
+  // event sequence) would otherwise read a value React hadn't committed yet.
+  const dragFromRef = useRef<number | null>(null);
+
+  const toggleMaximize = useCallback((paneId: number) => {
+    setMaximized((m) => (m === paneId ? null : paneId));
+  }, []);
+  const onDragStart = useCallback((idx: number) => { dragFromRef.current = idx; setDragFrom(idx); }, []);
+  const onDragEnter = useCallback((idx: number) => {
+    if (dragFromRef.current !== null) setDragOverIdx(idx);
+  }, []);
+  const onDragEnd = useCallback(() => { dragFromRef.current = null; setDragFrom(null); setDragOverIdx(null); }, []);
+  const onDropHere = useCallback((idx: number) => {
+    const from = dragFromRef.current;
+    if (from !== null && from !== idx) movePane(ws.id, from, idx);
+    dragFromRef.current = null;
+    setDragFrom(null);
+    setDragOverIdx(null);
+  }, [movePane, ws.id]);
 
   // Mirror focus mode into the UI store (UI-145) so notifications can stand down.
   useEffect(() => {
@@ -80,19 +105,16 @@ export function PaneGrid({ ws }: { ws: Workspace }) {
                       <PaneView
                         wsId={ws.id}
                         pane={pane}
+                        index={idx}
                         maximized={maximized === pane.id}
-                        onToggleMaximize={() => setMaximized((m) => (m === pane.id ? null : pane.id))}
+                        onToggleMaximize={toggleMaximize}
                         canReorder={ws.panes.length > 1}
                         dragging={dragFrom === idx}
                         dragOver={dragOverIdx === idx && dragFrom !== null && dragFrom !== idx}
-                        onDragStart={() => setDragFrom(idx)}
-                        onDragEnter={() => { if (dragFrom !== null) setDragOverIdx(idx); }}
-                        onDragEnd={() => { setDragFrom(null); setDragOverIdx(null); }}
-                        onDropHere={() => {
-                          if (dragFrom !== null && dragFrom !== idx) movePane(ws.id, dragFrom, idx);
-                          setDragFrom(null);
-                          setDragOverIdx(null);
-                        }}
+                        onDragStart={onDragStart}
+                        onDragEnter={onDragEnter}
+                        onDragEnd={onDragEnd}
+                        onDropHere={onDropHere}
                       />
                     </Panel>
                   </Fragment>

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { useApp, type PaneModel, type PaneState } from "./store";
@@ -46,9 +46,26 @@ function IconSearch({ size = 13 }: { size?: number }) {
   );
 }
 
-export function PaneView({
+interface PaneViewProps {
+  wsId: number;
+  pane: PaneModel;
+  /** Position in the grid — passed back to the stable drag handlers (UI-226). */
+  index: number;
+  maximized: boolean;
+  onToggleMaximize: (paneId: number) => void;
+  canReorder: boolean;
+  dragging: boolean;
+  dragOver: boolean;
+  onDragStart: (index: number) => void;
+  onDragEnter: (index: number) => void;
+  onDragEnd: () => void;
+  onDropHere: (index: number) => void;
+}
+
+function PaneViewInner({
   wsId,
   pane,
+  index,
   maximized,
   onToggleMaximize,
   canReorder,
@@ -58,19 +75,7 @@ export function PaneView({
   onDragEnter,
   onDragEnd,
   onDropHere,
-}: {
-  wsId: number;
-  pane: PaneModel;
-  maximized: boolean;
-  onToggleMaximize: () => void;
-  canReorder: boolean;
-  dragging: boolean;
-  dragOver: boolean;
-  onDragStart: () => void;
-  onDragEnter: () => void;
-  onDragEnd: () => void;
-  onDropHere: () => void;
-}) {
+}: PaneViewProps) {
   const focused = useApp((s) => s.workspaces.find((w) => w.id === wsId)?.focused === pane.id);
   const focusPane = useApp((s) => s.focusPane);
   const setPaneState = useApp((s) => s.setPaneState);
@@ -322,8 +327,8 @@ export function PaneView({
       }
       ref={paneRef}
       onMouseDown={() => focusPane(wsId, pane.id)}
-      onDragOver={(e) => { if (canReorder) { e.preventDefault(); onDragEnter(); } }}
-      onDrop={(e) => { if (canReorder) { e.preventDefault(); onDropHere(); } }}
+      onDragOver={(e) => { if (canReorder) { e.preventDefault(); onDragEnter(index); } }}
+      onDrop={(e) => { if (canReorder) { e.preventDefault(); onDropHere(index); } }}
     >
       <div className={"pband " + pane.state} />
       <div
@@ -332,7 +337,7 @@ export function PaneView({
           // UI-116: double-click empty header space toggles maximise (ignore
           // clicks that land on a control or the rename field).
           if ((e.target as HTMLElement).closest("button, input, .pdiff, .ptok, .branch")) return;
-          onToggleMaximize();
+          onToggleMaximize(pane.id);
         }}
         onAuxClick={(e) => {
           // UI-117: middle-click closes, through the same guard as the X.
@@ -344,7 +349,7 @@ export function PaneView({
             className="pgrip"
             draggable
             title="Drag to reorder"
-            onDragStart={(e) => { e.dataTransfer.effectAllowed = "move"; onDragStart(); }}
+            onDragStart={(e) => { e.dataTransfer.effectAllowed = "move"; onDragStart(index); }}
             onDragEnd={onDragEnd}
           >
             <IconDrag size={12} />
@@ -467,7 +472,7 @@ Running low — consider /compact in this pane.` : "")
         >
           <IconSearch size={13} />
         </button>
-        <button className="pmaxbtn" onClick={onToggleMaximize} title={maximized ? "Restore" : "Maximise this pane"}>
+        <button className="pmaxbtn" onClick={() => onToggleMaximize(pane.id)} title={maximized ? "Restore" : "Maximise this pane"}>
           {maximized ? <IconMinimize size={13} /> : <IconMaximizePane size={13} />}
         </button>
         <div className="pmenu-wrap">
@@ -480,7 +485,7 @@ Running low — consider /compact in this pane.` : "")
               <button className="pmenu-item" onClick={() => { restartPane(pane.id); closeMenu(); }}>
                 <IconRefresh size={13} /> Restart
               </button>
-              <button className="pmenu-item" onClick={() => { onToggleMaximize(); closeMenu(); }}>
+              <button className="pmenu-item" onClick={() => { onToggleMaximize(pane.id); closeMenu(); }}>
                 {maximized ? <IconMinimize size={13} /> : <IconMaximizePane size={13} />}
                 {maximized ? "Restore" : "Maximise"}
               </button>
@@ -618,3 +623,9 @@ Running low — consider /compact in this pane.` : "")
     </div>
   );
 }
+
+// UI-226: the store ticks constantly (pane state, activity, polls), and without
+// this every tick re-rendered every pane — each of which owns an xterm. Props
+// are all primitives plus the pane object and stable callbacks, so the default
+// shallow compare is correct.
+export const PaneView = memo(PaneViewInner);
