@@ -15,6 +15,8 @@ import {
   type SessionDraft, type PersistedWorkspace,
 } from "./persist";
 import { repoToplevel, type WorktreeInfo } from "./worktrees";
+import { useBoardStore, getBoardState, setBoardState } from "./board/boardStore";
+import type { BoardCards } from "./board/types";
 
 function toDraft(workspaces: Workspace[], activeId: number | null): SessionDraft {
   return {
@@ -33,7 +35,9 @@ function toDraft(workspaces: Workspace[], activeId: number | null): SessionDraft
         baseBranch: p.baseBranch,
       })),
     })),
-    uiPrefs: {},
+    // The board rides in the opaque prefs blob (BACKLOG 229 — cards were
+    // in-memory only; every restart wiped the Kanban).
+    uiPrefs: { board: getBoardState() },
   };
 }
 
@@ -45,7 +49,8 @@ let lastSavedJson = "";
 
 export function startAutosave() {
   const saver = makeDebouncedSave(800);
-  useApp.subscribe((s) => {
+  const scheduleIfChanged = () => {
+    const s = useApp.getState();
     const draft = toDraft(s.workspaces, s.activeId);
     const json = JSON.stringify(draft);
     // Pane-state churn (starting/waiting/running) hits this subscriber
@@ -53,7 +58,9 @@ export function startAutosave() {
     if (json === lastSavedJson) return;
     lastSavedJson = json;
     saver.schedule(draft);
-  });
+  };
+  useApp.subscribe(scheduleIfChanged);
+  useBoardStore.subscribe(scheduleIfChanged); // card edits persist too (229)
   // Best-effort last write on the way out; the 800ms debounce means almost
   // everything is already on disk, this just narrows the window.
   window.addEventListener("beforeunload", () => saver.flush());
@@ -122,7 +129,12 @@ export async function offerSessionRestore() {
       return;
     }
     const doc = await loadSession();
-    if (!doc || doc.workspaces.length === 0) return;
+    if (!doc) return;
+    // The board restores unconditionally (it's workspace-independent state) —
+    // declining the workspace prompt shouldn't wipe the task list.
+    const board = (doc.uiPrefs as { board?: BoardCards } | null)?.board;
+    if (board && typeof board === "object") setBoardState(board);
+    if (doc.workspaces.length === 0) return;
     if (useApp.getState().workspaces.length > 0) return; // user already moving
     const nPanes = doc.workspaces.reduce((n, w) => n + w.panes.length, 0);
     useUI.getState().requestConfirm({
