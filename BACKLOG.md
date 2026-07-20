@@ -823,7 +823,7 @@ grouped by surface only for navigation; work in any order, all at once.
 - UI-188. Vendors folder file-watcher: manifests hot-reload, no reopen.
 - ~~UI-189. Invalid manifest files listed with their parse error in~~ **DONE 2026-07-20 session 8** (manifest parse errors surfaced)
   Settings > Agents (currently skipped silently).
-- UI-190. Shortcut editor warns on conflicting bindings.
+- ~~UI-190. Shortcut editor warns on conflicting bindings.~~ **DONE 2026-07-20 session 8** (shortcut conflict detection)
 - ~~UI-191. Restore-points browser (backend list/restore built, zero UI).~~ **DONE 2026-07-20 session 8** (restore-points browser)
 - ~~UI-192. One-file backup/import buttons (backend built, zero UI).~~ **DONE 2026-07-20 session 8** (backup export/import)
 - UI-193. Theme picker shows mini preview thumbnails per theme.
@@ -856,7 +856,7 @@ grouped by surface only for navigation; work in any order, all at once.
 - UI-210. Changed-file dot markers in the tree (from the diff summary).
 - ~~UI-211. File context menu: copy path / copy relative path / reveal.~~ **DONE 2026-07-20 session 8** (Explorer context menu)
 - ~~UI-212. Remember expanded folders per workspace.~~ **DONE 2026-07-20 session 8** (expanded folders remembered)
-- UI-213. Auto-refresh on filesystem changes (watcher), not manual only.
+- ~~UI-213. Auto-refresh on filesystem changes (watcher), not manual only.~~ **DONE 2026-07-20 session 8** (Explorer auto-refresh (timer + focus))
 
 ### Accessibility
 - ~~UI-214. Honour the OS prefers-reduced-motion query as the default.~~ **DONE 2026-07-20 session 8** (OS reduced-motion default)
@@ -864,7 +864,7 @@ grouped by surface only for navigation; work in any order, all at once.
 - UI-216. Launcher tiles + slot rows keyboard-operable (role, tabindex, Enter).
 - ~~UI-217. forced-colors (Windows High Contrast) media-query support.~~ **DONE 2026-07-20 session 8** (forced-colors support)
 - ~~UI-218. Hit-target audit: nothing interactive under 24×24.~~ **DONE 2026-07-20 session 8** (24px hit targets)
-- UI-219. Second channel for colour-only status signals (shape/icon per state).
+- ~~UI-219. Second channel for colour-only status signals (shape/icon per state).~~ **DONE 2026-07-20 session 8** (glyph as second channel for vendor identity)
 
 ### Microcopy / consistency
 - ~~UI-220. One shared relTime/forMins util (three near-identical copies exist:~~ **DONE 2026-07-20 session 8** (shared formatter)
@@ -897,7 +897,7 @@ grouped by surface only for navigation; work in any order, all at once.
 
 ### Vendor / agent depth
 - UI-235. Per-vendor spawn counts on the New Workspace summary line get icons.
-- UI-236. Vendor glyphs (not just colours) in chips, selects, and palette rows.
+- ~~UI-236. Vendor glyphs (not just colours) in chips, selects, and palette rows.~~ **DONE 2026-07-20 session 8** (vendor glyphs)
 - ~~UI-237. Per-vendor "waiting" quiet-threshold defaults (agy idles differently~~ **DONE 2026-07-20 session 8** (per-vendor quiet thresholds)
   from claude).
 - ~~UI-238. Manifest schema published as JSON Schema in the vendors folder~~ **DONE 2026-07-20 session 8** (manifest JSON Schema shipped)
