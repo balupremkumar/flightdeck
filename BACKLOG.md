@@ -785,7 +785,7 @@ grouped by surface only for navigation; work in any order, all at once.
 ### Board ↔ agents
 - ~~UI-157. Card stores the PR URL after handoff; badge links to it.~~ **DONE 2026-07-20 session 8** (card keeps its PR link)
 - ~~UI-158. "Send to agent…" (choose vendor) from the card context menu.~~ **DONE 2026-07-20 session 8** (send to agent)
-- ~~UI-159. Card auto-moves to Done when its linked pane's branch merges.~~ **DONE 2026-07-20 session 8** (card auto-move on merge)
+- ~~UI-159. Card auto-moves to Done when its linked pane's branch merges.~~ **DONE 2026-07-20 session 8** (driven from merge-back success in Review.tsx — the diff-goes-to-zero heuristic was rejected because it fires identically on `git reset --hard`)
 - ~~UI-160. Card shows linked pane's token usage.~~ **DONE 2026-07-20 session 8** (card token usage)
 - ~~UI-161. Board search box (parity with palette filtering).~~ **DONE 2026-07-20 session 8** (board search (already shipped))
 - ~~UI-162. Dispatched worktree/branch named from the card title~~ **DONE 2026-07-20 session 8** (task-named branches)

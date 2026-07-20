@@ -19,6 +19,7 @@ import { highlightLine, langFor } from "./diffhighlight";
 import { invalidateCwd, usePoll } from "./poll";
 import { closePaneGuarded } from "./worktrees";
 import { useBoardStore } from "./board/boardStore";
+import type { Card, ColumnId } from "./board/types";
 import "./review.css";
 
 // Patch-line classes for the unified diff view.
@@ -182,6 +183,12 @@ export function Review() {
           .then((m) => {
             if (m.status === "merged") {
               pushToast("success", `Merged ${pane.branch} into ${pane.baseBranch}.`);
+              // UI-159: a merge is the ONLY unambiguous "this work landed"
+              // signal. The obvious heuristic — the pane's diff going to zero —
+              // fires identically on `git reset --hard`, on the agent reverting
+              // itself, and after Update-from-base, so it would happily mark
+              // lost work as Done. Driving it from here instead.
+              completeCardForPane(pane.id, pane.branch ?? "this branch");
               // UI-176: a merged pane is usually finished work. Offer the tidy-up
               // in the moment rather than leaving a stale worktree behind for the
               // user to remember about later.
@@ -251,6 +258,19 @@ export function Review() {
       })
       .catch((e) => pushToast("error", `Update failed: ${String(e)}`))
       .finally(() => setUpdating(false));
+  };
+
+  // UI-159: move the board card that dispatched this pane into Done, if any.
+  const completeCardForPane = (paneId: number, branch: string) => {
+    const board = useBoardStore.getState();
+    for (const [colId, list] of Object.entries(board.cards) as [ColumnId, Card[]][]) {
+      const card = list.find((c) => c.paneId === paneId);
+      if (!card) continue;
+      if (colId === "complete") return; // already there
+      board.moveCard(card.id, "complete", 0);
+      pushToast("success", `"${card.title}" moved to Done — ${branch} is merged.`);
+      return;
+    }
   };
 
   // UI-169: hand the whole patch to the clipboard for pasting elsewhere.
