@@ -364,6 +364,24 @@ export function Settings() {
   const [importError, setImportError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
+  // UI-180: live section filter. Matching is done on rendered text rather than
+  // a hand-maintained keyword table, so a new section is searchable for free.
+  const [q, setQ] = useState("");
+  const bodyRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const root = bodyRef.current;
+    if (!root) return;
+    const needle = q.trim().toLowerCase();
+    let shown = 0;
+    for (const sec of Array.from(root.querySelectorAll<HTMLElement>(".set-section"))) {
+      const hit = !needle || (sec.textContent ?? "").toLowerCase().includes(needle);
+      sec.style.display = hit ? "" : "none";
+      if (hit) shown++;
+    }
+    const empty = root.querySelector<HTMLElement>(".set-noresults");
+    if (empty) empty.style.display = shown === 0 ? "" : "none";
+  });
+
   // UI-189: manifests that failed to parse — silently skipping them made a
   // typo'd vendor file indistinguishable from a missing one.
   const [manifestProblems, setManifestProblems] = useState<{ file: string; error: string }[]>([]);
@@ -451,6 +469,34 @@ export function Settings() {
     reader.readAsText(file);
   }
 
+  // UI-183: one honest reset. Deliberately scoped to PREFERENCES — it must
+  // never touch session state (workspaces/board/worktrees), which is why the
+  // key list is explicit rather than a localStorage.clear().
+  function resetEverything() {
+    useUI.getState().requestConfirm({
+      title: "Reset all settings?",
+      body: "Theme, accent, terminal, shortcuts, agent and startup preferences go back to defaults. Your workspaces, board cards and worktrees are not affected.",
+      confirmLabel: "Reset settings",
+      danger: true,
+      onConfirm: () => {
+        // Verified against every localStorage key the app actually writes —
+        // a reset that leaves state behind is worse than no reset.
+        const keys = [
+          "flightdeck-theme", "flightdeck-theme-id",
+          "flightdeck-accent", "flightdeck-accent-custom", "flightdeck-custom-accent",
+          "flightdeck-vendor-accents", "flightdeck-colorblind", "flightdeck-reduced-motion",
+          "flightdeck-terminal-settings", "flightdeck-terminal-settings-changed",
+          "flightdeck-shortcuts", "flightdeck-agent-settings",
+          "flightdeck-startup", "flightdeck-ui-scale", "flightdeck-notify-settings",
+          "flightdeck-explorer-width", "flightdeck-explorer-scope", "flightdeck-explorer-expanded",
+        ];
+        for (const k of keys) { try { localStorage.removeItem(k); } catch { /* non-persistent */ } }
+        useUI.getState().pushToast("success", "Settings reset — reloading.");
+        window.setTimeout(() => window.location.reload(), 600);
+      },
+    });
+  }
+
   function updateTerm(patch: Partial<TerminalSettings>) {
     setTerm(saveTerminalSettings(patch));
   }
@@ -468,9 +514,18 @@ export function Settings() {
       <div className="set-modal" onMouseDown={(e) => e.stopPropagation()} role="dialog" aria-label="Settings">
         <div className="set-head">
           <h2>Settings</h2>
+          {/* UI-180: eleven sections is too many to scan — filter them. */}
+          <input
+            className="set-search"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Search settings…"
+            spellCheck={false}
+            aria-label="Search settings"
+          />
           <button className="ov-x" onClick={() => setOpen(false)} title="Close"><IconClose size={16} /></button>
         </div>
-        <div className="set-body">
+        <div className="set-body" ref={bodyRef}>
 
           <section className="set-section">
             <div className="set-label">Appearance</div>
@@ -753,6 +808,20 @@ export function Settings() {
           <DiagnosticsSection />
 
           <section className="set-section">
+            <div className="set-label">Reset</div>
+            <div className="set-row">
+              <div className="set-row-t">
+                <span className="set-row-name">Reset all settings</span>
+                <span className="set-row-sub">
+                  Theme, accent, terminal, shortcuts, agents and startup — back to defaults.
+                  Your workspaces, board and worktrees are untouched.
+                </span>
+              </div>
+              <button className="set-btn danger" onClick={resetEverything}>Reset</button>
+            </div>
+          </section>
+
+          <section className="set-section">
             <div className="set-label">About</div>
             <div className="set-about">Flightdeck v{APP_VERSION} — a multi-agent terminal cockpit. Deep Cove build.</div>
             {/* UI-42: a real "what's new" — the cheapest active-development signal. */}
@@ -765,6 +834,9 @@ export function Settings() {
               </ul>
             </details>
           </section>
+          <div className="set-noresults" style={{ display: "none" }}>
+            Nothing matches that. Try a shorter word — sections are matched on their full text.
+          </div>
         </div>
       </div>
     </div>

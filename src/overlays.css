@@ -241,3 +241,15 @@ button.agent-chip:hover { filter: brightness(1.15); }
 .manifest-problems-t { font-size: 12px; font-weight: 600; color: var(--st-waiting); margin-bottom: 5px; }
 .manifest-problem { font-size: 11.5px; color: var(--muted); padding: 2px 0; }
 .manifest-problem code { font-family: var(--font-mono); font-size: 10.5px; color: var(--text); }
+
+/* UI-180: settings search */
+.set-search {
+  margin-left: auto; width: 180px;
+  font: inherit; font-size: 12.5px; color: var(--text);
+  background: var(--surface); border: 1px solid var(--line-strong);
+  border-radius: var(--r-md); padding: 6px 10px;
+  transition: border-color var(--t-fast) ease;
+}
+.set-search:focus { outline: none; border-color: var(--ice); }
+.set-search::placeholder { color: var(--faint); }
+.set-noresults { padding: 24px 4px; font-size: 12.5px; color: var(--muted); text-align: center; }
