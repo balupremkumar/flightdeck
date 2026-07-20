@@ -648,6 +648,61 @@ fn load_manifests_from(dir: &Path, taken: &[String]) -> Vec<ManifestVendor> {
     out
 }
 
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManifestProblem {
+    pub file: String,
+    pub error: String,
+}
+
+/// UI-189: the same scan as load_manifests_from, but reporting WHY each bad
+/// file was skipped. A silently-ignored manifest is indistinguishable from a
+/// typo'd filename, which made #218 hard to debug.
+pub fn manifest_problems() -> Vec<ManifestProblem> {
+    let mut out = Vec::new();
+    let Some(dir) = manifest_dir() else { return out };
+    let Ok(entries) = std::fs::read_dir(&dir) else { return out };
+    let builtin: Vec<String> = vec!["claude", "agy", "pwsh", "cmd", "git-bash", "wsl"]
+        .into_iter()
+        .map(String::from)
+        .collect();
+    let mut seen: Vec<String> = Vec::new();
+    let mut files: Vec<PathBuf> = entries
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| {
+            p.extension().map(|x| x == "json").unwrap_or(false)
+                && !p.file_name().map(|f| f.to_string_lossy().starts_with('_')).unwrap_or(true)
+        })
+        .collect();
+    files.sort();
+    for f in files {
+        let name = f.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let mut problem = |e: String| out.push(ManifestProblem { file: name.clone(), error: e });
+        let Ok(text) = std::fs::read_to_string(&f) else {
+            problem("couldn't read the file".into());
+            continue;
+        };
+        match serde_json::from_str::<VendorManifest>(&text) {
+            Err(e) => problem(format!("invalid JSON or missing a required field — {e}")),
+            Ok(m) => {
+                if m.id.trim().is_empty() {
+                    problem("\"id\" is empty".into());
+                } else if m.exe.trim().is_empty() {
+                    problem("\"exe\" is empty".into());
+                } else if builtin.contains(&m.id) {
+                    problem(format!("id \"{}\" collides with a built-in vendor", m.id));
+                } else if seen.contains(&m.id) {
+                    problem(format!("duplicate id \"{}\" — an earlier file already claimed it", m.id));
+                } else {
+                    seen.push(m.id);
+                }
+            }
+        }
+    }
+    out
+}
+
 pub fn registry() -> Vec<Box<dyn VendorAdapter>> {
     let mut reg: Vec<Box<dyn VendorAdapter>> = vec![
         Box::new(Claude),
@@ -809,6 +864,24 @@ mod tests {
         let loaded = load_manifests_from(&dir, &["claude".to_string()]);
         assert_eq!(loaded.len(), 1, "only the one valid, non-colliding manifest loads");
         assert_eq!(loaded[0].id(), "opencode-local");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn manifest_problems_explain_each_skipped_file() {
+        let dir = temp_manifest_dir();
+        std::fs::write(dir.join("good.json"), GOOD).unwrap();
+        std::fs::write(dir.join("broken.json"), "{ not json").unwrap();
+        std::fs::write(dir.join("noexe.json"), r#"{"id":"x","label":"X","exe":""}"#).unwrap();
+        std::fs::write(dir.join("collide.json"), r#"{"id":"claude","label":"Fake","exe":"e.exe"}"#).unwrap();
+        set_manifest_dir(dir.clone());
+
+        let probs = manifest_problems();
+        let named = |n: &str| probs.iter().find(|p| p.file == n).map(|p| p.error.clone());
+        assert!(named("broken.json").unwrap().contains("invalid JSON"));
+        assert!(named("noexe.json").unwrap().contains("exe"));
+        assert!(named("collide.json").unwrap().contains("collides"));
+        assert!(named("good.json").is_none(), "a valid manifest reports no problem");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

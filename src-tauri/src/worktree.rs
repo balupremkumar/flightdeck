@@ -755,6 +755,75 @@ pub fn pr_handoff(wt_root: &Path, worktree_path: &str) -> Result<PrOutcome, Stri
 }
 
 // ---------------------------------------------------------------------------
+// Worktree inventory (UI-187/230) — what's on disk and how big it is
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorktreeEntry {
+    pub path: String,
+    pub repo: String,
+    pub branch: String,
+    pub base_branch: String,
+    pub bytes: u64,
+    /// True when no live/persisted pane claims it (safe to reap).
+    pub orphan: bool,
+}
+
+/// Recursive size, capped so a monorepo worktree can't stall the UI thread.
+fn dir_size(dir: &Path, budget: &mut u32) -> u64 {
+    if *budget == 0 {
+        return 0;
+    }
+    let mut total = 0u64;
+    let Ok(entries) = std::fs::read_dir(dir) else { return 0 };
+    for e in entries.filter_map(|e| e.ok()) {
+        if *budget == 0 {
+            break;
+        }
+        *budget -= 1;
+        match e.file_type() {
+            Ok(ft) if ft.is_dir() => total += dir_size(&e.path(), budget),
+            Ok(ft) if ft.is_file() => total += e.metadata().map(|m| m.len()).unwrap_or(0),
+            _ => {}
+        }
+    }
+    total
+}
+
+pub fn worktree_list(wt_root: &Path, claimed: &[String]) -> Vec<WorktreeEntry> {
+    let norm = |s: &str| s.replace('\\', "/").to_lowercase();
+    let claimed: Vec<String> = claimed.iter().map(|c| norm(c)).collect();
+    let mut out = Vec::new();
+    let Ok(repos) = std::fs::read_dir(wt_root) else { return out };
+    for repo_dir in repos.filter_map(|e| e.ok()) {
+        if !repo_dir.path().is_dir() {
+            continue;
+        }
+        let Ok(entries) = std::fs::read_dir(repo_dir.path()) else { continue };
+        for e in entries.filter_map(|e| e.ok()) {
+            let p = e.path();
+            if !p.is_dir() {
+                continue;
+            }
+            let meta = read_meta(&p);
+            let mut budget = 20_000u32; // plenty for a normal checkout, bounded for a monorepo
+            let path_s = p.to_string_lossy().into_owned();
+            out.push(WorktreeEntry {
+                orphan: !claimed.iter().any(|c| c == &norm(&path_s)),
+                bytes: dir_size(&p, &mut budget),
+                repo: meta.as_ref().map(|m| m.repo.clone()).unwrap_or_default(),
+                branch: meta.as_ref().map(|m| m.branch.clone()).unwrap_or_default(),
+                base_branch: meta.as_ref().map(|m| m.base_branch.clone()).unwrap_or_default(),
+                path: path_s,
+            });
+        }
+    }
+    out.sort_by(|a, b| b.bytes.cmp(&a.bytes));
+    out
+}
+
+// ---------------------------------------------------------------------------
 // Tauri command wrappers
 // ---------------------------------------------------------------------------
 
@@ -809,6 +878,11 @@ pub fn git_merge_back(app: AppHandle, worktree_path: String) -> Result<MergeOutc
 #[tauri::command]
 pub fn detect_setup_command(cwd: String) -> Option<String> {
     setup_suggestion(Path::new(&cwd))
+}
+
+#[tauri::command]
+pub fn git_worktree_list(app: AppHandle, claimed: Vec<String>) -> Result<Vec<WorktreeEntry>, String> {
+    Ok(worktree_list(&worktrees_root(&app)?, &claimed))
 }
 
 #[tauri::command]
@@ -879,6 +953,24 @@ mod tests {
         std::fs::write(t.repo.join("package-lock.json"), "{}").unwrap();
         assert_eq!(setup_suggestion(&t.repo).as_deref(), Some("npm ci"));
         assert_eq!(setup_suggestion(&std::env::temp_dir()), None, "non-repo — no suggestion");
+    }
+
+    #[test]
+    fn worktree_list_reports_size_and_orphan_state() {
+        let t = temp_repo();
+        let a = worktree_add(&t.wt_root, &t.repo.to_string_lossy(), "wl-1").unwrap();
+        let b = worktree_add(&t.wt_root, &t.repo.to_string_lossy(), "wl-2").unwrap();
+        std::fs::write(Path::new(&a.path).join("big.txt"), vec![b'x'; 4096]).unwrap();
+
+        let list = worktree_list(&t.wt_root, &[a.path.clone()]);
+        assert_eq!(list.len(), 2);
+        let claimed = list.iter().find(|e| e.path == a.path).unwrap();
+        let orphan = list.iter().find(|e| e.path == b.path).unwrap();
+        assert!(!claimed.orphan, "a claimed worktree is not an orphan");
+        assert!(orphan.orphan, "an unclaimed worktree is reapable");
+        assert!(claimed.bytes > 4096, "size includes the checkout + the 4KB file");
+        assert_eq!(claimed.branch, "flightdeck/wl-1");
+        assert!(list[0].bytes >= list[1].bytes, "sorted biggest first");
     }
 
     #[test]

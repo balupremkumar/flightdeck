@@ -93,6 +93,11 @@ fn detect_vendors() -> Vec<vendors::VendorInfo> {
 // The user-facing manifest folder (#218): where JSON vendor files live. The
 // Settings > Agents "Open vendors folder" button reveals it.
 #[tauri::command]
+fn manifest_problems() -> Vec<vendors::ManifestProblem> {
+    vendors::manifest_problems()
+}
+
+#[tauri::command]
 fn vendors_dir() -> Option<String> {
     vendors::manifest_dir().map(|p| p.to_string_lossy().into_owned())
 }
@@ -468,6 +473,7 @@ pub fn run() {
             fs_list_dir,
             detect_vendors,
             vendors_dir,
+            manifest_problems,
             pane_health,
             recover_orphans,
             kill_orphans,
@@ -483,6 +489,7 @@ pub fn run() {
             worktree::detect_setup_command,
             worktree::git_pr_handoff,
             worktree::git_branch_context,
+            worktree::git_worktree_list,
             worktree::git_update_from_base,
             usage::pane_usage,
             persist::save_session,

@@ -4,6 +4,7 @@ import { save } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { useUI, applyUiScale } from "./ui";
 import { useApp } from "./store";
+import { bytes } from "./format";
 import { spawnPane } from "./worktrees";
 import { useVendors, vendorColor, vendorAccentOverrides, setVendorAccentOverride } from "./vendors";
 import { IconClose } from "./Icons";
@@ -165,7 +166,47 @@ const CHANGELOG: Array<{ date: string; text: string }> = [
 interface PaneHealthRow { paneId: number; pid: number; cpuPercent: number; memoryMb: number; procName: string; }
 interface OrphanRow { pid: number; ppid: number; name: string; }
 
+interface WorktreeEntry {
+  path: string; repo: string; branch: string; baseBranch: string; bytes: number; orphan: boolean;
+}
+
 function DiagnosticsSection() {
+  const [worktrees, setWorktrees] = useState<WorktreeEntry[] | null>(null);
+  const [wtBusy, setWtBusy] = useState(false);
+
+  const loadWorktrees = async () => {
+    setWtBusy(true);
+    try {
+      // Claimed = every worktree a live pane owns; anything else is reapable.
+      const claimed = useApp.getState().workspaces.flatMap((w) =>
+        w.panes.map((p) => p.worktreePath).filter((x): x is string => !!x)
+      );
+      setWorktrees(await invoke<WorktreeEntry[]>("git_worktree_list", { claimed }));
+    } catch {
+      setWorktrees([]);
+    } finally {
+      setWtBusy(false);
+    }
+  };
+
+  const reapOrphanWorktrees = () => {
+    const orphans = (worktrees ?? []).filter((w) => w.orphan);
+    if (orphans.length === 0) return;
+    useUI.getState().requestConfirm({
+      title: `Clean ${orphans.length} unused worktree${orphans.length === 1 ? "" : "s"}?`,
+      body: "These aren't claimed by any open pane. Any uncommitted work in them is committed to their branch first, so nothing is lost — only the folders go.",
+      confirmLabel: "Clean up",
+      onConfirm: async () => {
+        let freed = 0;
+        for (const w of orphans) {
+          try { await invoke("git_worktree_remove", { worktreePath: w.path, mode: "keep" }); freed += w.bytes; } catch { /* keep going */ }
+        }
+        useUI.getState().pushToast("success", `Freed ${bytes(freed)} (work kept on branches).`);
+        void loadWorktrees();
+      },
+    });
+  };
+
   const pushToast = useUI((s) => s.pushToast);
   const [health, setHealth] = useState<PaneHealthRow[] | null>(null);
   const [orphans, setOrphans] = useState<OrphanRow[] | null>(null);
@@ -259,6 +300,40 @@ function DiagnosticsSection() {
         </div>
       )}
 
+      {/* UI-187: worktrees are the app's biggest disk footprint and were
+          invisible — list them, size them, and allow reaping the orphans. */}
+      <div className="set-row">
+        <div className="set-row-t">
+          <span className="set-row-name">Worktrees on disk</span>
+          <span className="set-row-sub">
+            {worktrees ? `${worktrees.length} total · ${bytes(worktrees.reduce((n, w) => n + w.bytes, 0))}` : "Isolated agent checkouts under app data"}
+          </span>
+        </div>
+        <button className="set-btn" onClick={loadWorktrees} disabled={wtBusy}>{wtBusy ? "Scanning…" : "Scan"}</button>
+        {worktrees && worktrees.some((w) => w.orphan) && (
+          <button className="set-btn danger" onClick={reapOrphanWorktrees}>
+            Clean {worktrees.filter((w) => w.orphan).length} unused
+          </button>
+        )}
+      </div>
+      {worktrees && worktrees.length === 0 && <div className="diag-empty">No worktrees on disk.</div>}
+      {worktrees && worktrees.length > 0 && (
+        <div className="diag-table" role="table" aria-label="Worktrees on disk">
+          <div className="diag-tr diag-th" role="row">
+            <span>Branch</span><span>Repo</span><span>Size</span><span>State</span><span />
+          </div>
+          {worktrees.map((w) => (
+            <div className="diag-tr" role="row" key={w.path} title={w.path}>
+              <span className="diag-proc">{w.branch || "—"}</span>
+              <span className="diag-proc">{w.repo.split(/[\/]/).pop() || "—"}</span>
+              <span>{bytes(w.bytes)}</span>
+              <span className={w.orphan ? "diag-orphan" : ""}>{w.orphan ? "unused" : "in use"}</span>
+              <span />
+            </div>
+          ))}
+        </div>
+      )}
+
       <div className="set-row">
         <div className="set-row-t">
           <span className="set-row-name">Support bundle</span>
@@ -288,6 +363,15 @@ export function Settings() {
   const [startup, setStartup] = useState(getStartupBehavior());
   const [importError, setImportError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  // UI-189: manifests that failed to parse — silently skipping them made a
+  // typo'd vendor file indistinguishable from a missing one.
+  const [manifestProblems, setManifestProblems] = useState<{ file: string; error: string }[]>([]);
+  useEffect(() => {
+    void invoke<{ file: string; error: string }[]>("manifest_problems")
+      .then(setManifestProblems)
+      .catch(() => setManifestProblems([]));
+  }, []);
 
   // Re-probe install + auth state (#219) each time Settings opens — a login
   // completed in a pane should show as "signed in" without an app restart.
@@ -625,6 +709,18 @@ export function Settings() {
                 </div>
               ))}
             </div>
+            {manifestProblems.length > 0 && (
+              <div className="manifest-problems" role="alert">
+                <div className="manifest-problems-t">
+                  {manifestProblems.length} vendor file{manifestProblems.length === 1 ? "" : "s"} couldn't be loaded
+                </div>
+                {manifestProblems.map((m) => (
+                  <div className="manifest-problem" key={m.file}>
+                    <code>{m.file}</code> — {m.error}
+                  </div>
+                ))}
+              </div>
+            )}
             <div className="set-row">
               <div className="set-row-t">
                 <span className="set-row-name">Add your own agent</span>
