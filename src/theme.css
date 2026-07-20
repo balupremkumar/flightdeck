@@ -322,3 +322,11 @@ button.chip:hover { border-color: var(--accent); color: var(--text); }
 body, .cockpit-root, .topbar, .lpanel, .pane, .set-modal, .explorer {
   transition: background-color var(--t-med) ease, border-color var(--t-med) ease, color var(--t-med) ease;
 }
+
+/* UI-25: the "uncommitted changes" dot. Was a 5px CSS dot in the Explorer and a
+   6px inline-styled one in the pane header — same meaning, two sizes. */
+.dirty-dot {
+  display: inline-block; flex: none;
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--st-waiting); margin-left: 2px;
+}

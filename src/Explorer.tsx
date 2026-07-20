@@ -78,6 +78,12 @@ function rowIndent(depth: number): number {
 
 type NodeStatus = "idle" | "loading" | "loaded" | "denied";
 
+// UI-49 / QOL 323: node_modules-scale directories put thousands of rows into
+// the DOM at once. Rather than pull in a virtualisation dependency, render a
+// generous slice and say plainly how many are hidden — the tree is for
+// navigating, and nobody scrolls 4000 sibling files.
+const MAX_ROWS = 300;
+
 function Node({ name, path, dir, depth, wsId, vendor, onOpenFile, onContext, expandKey }: {
   name: string; path: string; dir: boolean; depth: number;
   wsId?: number; vendor: string; onOpenFile: (path: string) => void;
@@ -162,7 +168,7 @@ function Node({ name, path, dir, depth, wsId, vendor, onOpenFile, onContext, exp
         children.length === 0 ? (
           <div className="ex-row ex-empty" style={{ paddingLeft: rowIndent(depth + 1) }}>Empty</div>
         ) : (
-          children.map((c) => (
+          children.slice(0, MAX_ROWS).map((c) => (
             <Node
               key={c.name}
               name={c.name}
@@ -177,6 +183,11 @@ function Node({ name, path, dir, depth, wsId, vendor, onOpenFile, onContext, exp
             />
           ))
         )
+      )}
+      {dir && expanded && children !== null && children.length > MAX_ROWS && (
+        <div className="ex-row ex-more" style={{ paddingLeft: rowIndent(depth + 1) }}>
+          {children.length - MAX_ROWS} more items not shown
+        </div>
       )}
     </div>
   );
@@ -405,7 +416,7 @@ export function Explorer({ root, wsId, vendor = "pwsh", paneRoot, paneLabel }: E
           {status === "loaded" && entries.length === 0 && <div className="ex-state">Empty folder.</div>}
           {status === "loaded" && entries.length > 0 && (
             <div className="ex-tree">
-              {entries.map((e) => (
+              {entries.slice(0, MAX_ROWS).map((e) => (
                 <Node
                   key={e.name}
                   name={e.name}
@@ -419,6 +430,11 @@ export function Explorer({ root, wsId, vendor = "pwsh", paneRoot, paneLabel }: E
                   onOpenFile={(p) => { openPath(p).catch(() => { /* no default app / unsupported — ignore */ }); }}
                 />
               ))}
+              {entries.length > MAX_ROWS && (
+                <div className="ex-row ex-more">
+                  {entries.length - MAX_ROWS} more items not shown
+                </div>
+              )}
             </div>
           )}
         </div>

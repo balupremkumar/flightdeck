@@ -431,10 +431,7 @@ function PaneViewInner({
           >
             <IconBranch size={11} /> {gitStatus.branch}
             {gitStatus.dirty && (
-              <span
-                aria-hidden
-                style={{ display: "inline-block", width: 6, height: 6, borderRadius: "50%", background: "var(--st-waiting)", marginLeft: 2 }}
-              />
+              <span aria-hidden className="dirty-dot" />
             )}
           </span>
         )}
