@@ -258,3 +258,24 @@
   animation: hud-pulse 2s ease-in-out infinite;
 }
 .plaunching-sub { font-size: 10.5px; color: var(--faint); }
+
+/* Pane header affordances (UI-116/117/119/120/129) */
+.phead .branch-copy, .phead .prepo-click { cursor: pointer; }
+.phead .branch-copy:hover, .phead .prepo-click:hover { color: var(--text); }
+.phead .prepo-click:focus-visible, .phead .branch-copy:focus-visible { outline: 2px solid var(--ice); outline-offset: 2px; border-radius: var(--r-sm); }
+/* UI-129: attention chip — the pane says it needs you, not just the bell. */
+.phead .pattn {
+  flex: none; cursor: pointer;
+  font-size: 9.5px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase;
+  padding: 2px 7px; border-radius: var(--r-pill); border: 1px solid currentColor;
+  animation: pattn-pulse var(--t-pulse) ease-in-out infinite;
+}
+.phead .pattn.permission { color: var(--st-waiting); }
+.phead .pattn.error { color: var(--st-error); animation: none; }
+@keyframes pattn-pulse { 0%,100% { opacity: 1; } 50% { opacity: .55; } }
+/* UI-127: setup command shown inline in the launching overlay. */
+.plaunching code {
+  font-family: var(--font-mono); font-size: 11px;
+  padding: 1px 5px; border-radius: var(--r-sm);
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+}

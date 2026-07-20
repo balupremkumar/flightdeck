@@ -146,6 +146,41 @@ export function closeWorkspaceWithCleanup(ws: { id: number; panes: PaneModel[] }
   window.setTimeout(() => { for (const p of paths) void cleanupWorktree(p); }, 700);
 }
 
+/** Close a pane WITH the live-session confirm (UI-123). Shared by the pane's
+ *  X button, the overflow menu, the command palette and Ctrl+W so the guard
+ *  can never be bypassed by adding a new entry point. */
+export function closePaneGuarded(wsId: number, pane: PaneModel) {
+  const dead = pane.state === "idle" || pane.state === "error";
+  if (dead) { closePaneWithCleanup(wsId, pane); return; }
+  const name = pane.title || vendorShort(pane.vendor);
+  useUI.getState().requestConfirm({
+    title: `Close ${name}?`,
+    body:
+      "This pane is still live. Closing it ends the session — the running agent can't be brought back." +
+      (pane.worktreePath ? " Its worktree will be cleaned up (you'll be asked about unmerged work)." : ""),
+    confirmLabel: "Close & end session",
+    danger: true,
+    onConfirm: () => closePaneWithCleanup(wsId, pane),
+  });
+}
+
+/** Close a workspace WITH the live-session confirm (UI-123). */
+export function closeWorkspaceGuarded(ws: { id: number; name: string; panes: PaneModel[] }) {
+  const live = ws.panes.some((p) => p.state === "running" || p.state === "starting" || p.state === "waiting" || p.state === "permission");
+  if (!live) { closeWorkspaceWithCleanup(ws); return; }
+  const n = ws.panes.length;
+  useUI.getState().requestConfirm({
+    title: `Close ${ws.name}?`,
+    body: `${n} pane${n === 1 ? "" : "s"} still live. Closing ends ${n === 1 ? "its session" : "their sessions"} — the running agents can't be brought back.`,
+    confirmLabel: "Close & end sessions",
+    danger: true,
+    onConfirm: () => {
+      closeWorkspaceWithCleanup(ws);
+      useUI.getState().pushToast("info", `Closed ${ws.name}`);
+    },
+  });
+}
+
 async function cleanupWorktree(worktreePath: string) {
   const ui = useUI.getState();
   try {

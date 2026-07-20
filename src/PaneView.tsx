@@ -177,6 +177,16 @@ export function PaneView({
     setEditing(false);
   };
 
+  // Shared clipboard helper (UI-119 and friends) — one toast style for all copies.
+  const copyText = async (text: string, okMsg: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      pushToast("success", okMsg);
+    } catch {
+      pushToast("error", "Couldn't copy — clipboard unavailable.");
+    }
+  };
+
   const copyCwd = async () => {
     try {
       await navigator.clipboard.writeText(pane.cwd);
@@ -233,6 +243,14 @@ export function PaneView({
   // Token chip (UI-3): real numbers from the agent's own session transcript
   // (Claude Code writes ~/.claude/projects/<cwd>/*.jsonl). Agents without a
   // transcript return null and get no chip — never an estimate.
+  // UI-126: escalate the "starting" copy once the wait stops looking normal.
+  const [slowStart, setSlowStart] = useState(false);
+  useEffect(() => {
+    if (pane.state !== "starting") { setSlowStart(false); return; }
+    const t = setTimeout(() => setSlowStart(true), 20000);
+    return () => clearTimeout(t);
+  }, [pane.state, pane.epoch]);
+
   const [usage, setUsage] = useState<{ contextTokens: number; outputTokens: number; turns: number } | null>(null);
   usePoll(async () => {
     try {
@@ -259,7 +277,19 @@ export function PaneView({
       onDrop={(e) => { if (canReorder) { e.preventDefault(); onDropHere(); } }}
     >
       <div className={"pband " + pane.state} />
-      <div className="phead">
+      <div
+        className="phead"
+        onDoubleClick={(e) => {
+          // UI-116: double-click empty header space toggles maximise (ignore
+          // clicks that land on a control or the rename field).
+          if ((e.target as HTMLElement).closest("button, input, .pdiff, .ptok, .branch")) return;
+          onToggleMaximize();
+        }}
+        onAuxClick={(e) => {
+          // UI-117: middle-click closes, through the same guard as the X.
+          if (e.button === 1) { e.preventDefault(); tryClosePane(); }
+        }}
+      >
         {canReorder && (
           <span
             className="pgrip"
@@ -297,10 +327,26 @@ export function PaneView({
             {displayName}
           </span>
         )}
-        <span className="prepo">&middot; {baseName(pane.cwd)}</span>
+        <span
+          className="prepo prepo-click"
+          role="button"
+          tabIndex={0}
+          title={`${pane.cwd} — click to open in Explorer`}
+          onClick={() => { void revealItemInDir(pane.cwd).catch(() => pushToast("error", "Couldn't open that folder.")); }}
+          onKeyDown={(e) => { if (e.key === "Enter") void revealItemInDir(pane.cwd).catch(() => {}); }}
+        >
+          &middot; {baseName(pane.cwd)}
+        </span>
         {procName && <span className="pproc" title="Running process">{procName}</span>}
         {gitStatus?.isRepo && (
-          <span className="branch" title={gitStatus.dirty ? "Uncommitted changes" : undefined}>
+          <span
+            className="branch branch-copy"
+            role="button"
+            tabIndex={0}
+            title={`${gitStatus.branch} — click to copy${gitStatus.dirty ? " (uncommitted changes)" : ""}`}
+            onClick={() => copyText(gitStatus.branch ?? "", "Copied branch name")}
+            onKeyDown={(e) => { if (e.key === "Enter") copyText(gitStatus.branch ?? "", "Copied branch name"); }}
+          >
             <IconBranch size={11} /> {gitStatus.branch}
             {gitStatus.dirty && (
               <span
@@ -308,6 +354,19 @@ export function PaneView({
                 style={{ display: "inline-block", width: 6, height: 6, borderRadius: "50%", background: "var(--st-waiting)", marginLeft: 2 }}
               />
             )}
+          </span>
+        )}
+        {/* UI-129: this pane is in the attention queue — show it where the user is looking. */}
+        {(pane.state === "permission" || pane.state === "error") && (
+          <span
+            className={"pattn " + pane.state}
+            title={pane.state === "permission" ? "Blocked on your approval — open the attention queue (Ctrl+Shift+A)" : "Errored — open the attention queue (Ctrl+Shift+A)"}
+            role="button"
+            tabIndex={0}
+            onClick={() => useUI.getState().setAttentionOpen(true)}
+            onKeyDown={(e) => { if (e.key === "Enter") useUI.getState().setAttentionOpen(true); }}
+          >
+            {pane.state === "permission" ? "needs you" : "error"}
           </span>
         )}
         {usage && (
@@ -412,7 +471,13 @@ export function PaneView({
       <div className="pbody">
         {pane.state === "starting" && (
           <div className="plaunching" aria-live="polite">
-            Launching {vendorShort(pane.vendor)}… <span className="plaunching-sub">first output can take a few seconds</span>
+            {/* UI-127: a setup phase is a different wait from a slow agent — say which. */}
+            {pane.needsSetup && setupCmd
+              ? <>Running setup: <code>{setupCmd}</code><span className="plaunching-sub">the agent starts once this finishes</span></>
+              : <>Launching {vendorShort(pane.vendor)}…<span className="plaunching-sub">
+                  {/* UI-126: after 20s, stop saying "a few seconds" and suggest a cause. */}
+                  {slowStart ? "still starting — the agent may be waiting on sign-in, check its output" : "first output can take a few seconds"}
+                </span></>}
           </div>
         )}
         {searchOpen && (

@@ -17,7 +17,7 @@ import { AttentionQueue } from "./AttentionQueue";
 import { useUI } from "./ui";
 import { applyTheme, applyAccent, currentThemeId, currentAccentId, findTheme } from "./themes";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { spawnPane } from "./worktrees";
+import { spawnPane, closePaneGuarded, closeWorkspaceGuarded } from "./worktrees";
 
 // Quick light/dark flip. Goes through the themes registry (not a raw data-theme
 // write) so it stays in step with the richer theme picker in Settings, and
@@ -53,6 +53,27 @@ export function Cockpit() {
         if ((e.target as HTMLElement)?.closest?.(".pbody")) return;
         e.preventDefault();
         useUI.getState().setAttentionOpen(!useUI.getState().attentionOpen);
+        return;
+      }
+      // UI-124: Alt+1..9 focuses pane N in the active workspace.
+      if (e.altKey && !e.ctrlKey && /^[1-9]$/.test(e.key)) {
+        const st = useApp.getState();
+        const ws = st.workspaces.find((w) => w.id === st.activeId);
+        const target = ws?.panes[parseInt(e.key, 10) - 1];
+        if (ws && target) { e.preventDefault(); st.focusPane(ws.id, target.id); }
+        return;
+      }
+      // UI-123: Ctrl+W closes the focused pane, Ctrl+Shift+W the workspace —
+      // both go through the same live-session confirms as the buttons.
+      if (e.ctrlKey && (e.key === "w" || e.key === "W")) {
+        if ((e.target as HTMLElement)?.closest?.(".pbody")) return;
+        e.preventDefault();
+        const st = useApp.getState();
+        const ws = st.workspaces.find((w) => w.id === st.activeId);
+        if (!ws) return;
+        if (e.shiftKey) { closeWorkspaceGuarded(ws); return; }
+        const pane = ws.panes.find((p) => p.id === ws.focused);
+        if (pane) closePaneGuarded(ws.id, pane);
         return;
       }
       if (e.ctrlKey && (e.key === "b" || e.key === "B")) {
