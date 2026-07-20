@@ -613,7 +613,7 @@ partially done ("Preparing worktrees…" busy state).
 - ~~UI-9. **Onboarding**: first-run tour + demo workspace + "not installed" guidance with install links (287/288/290/291/123/135-136/282).~~ **DONE 2026-07-20 session 8** (install guidance (copy command / get it) for missing agents)
 
 ### K-B. First-five-minutes (QOL §1, open)
-- UI-10. First-launch vs closed-all-workspaces framing copy (286, partially done).
+- ~~UI-10. First-launch vs closed-all-workspaces framing copy (286, partially done).~~ **2026-07-20 session 8** (first-launch framing distinct from closed-everything)
 - ~~UI-11. Human copy on failed spawn instead of raw JS error (289).~~ **DONE 2026-07-20 session 8** (human spawn-failure copy)
 - ~~UI-12. "Launching…" copy for the starting state — slow agent looks stuck (293 ⭐).~~ **ALREADY SHIPPED — stale §K entry, verified against code 2026-07-20 session 8** ('Launching…' overlay incl. slow-start and setup-phase copy)
 - ~~UI-13. Explorer toggle dead-click feedback outside terminals view (294).~~ **DONE 2026-07-20 session 8** (already fixed (verified: toggle is disabled with a reason))
@@ -637,7 +637,7 @@ partially done ("Preparing worktrees…" busy state).
 ### K-E. Error & edge paths (QOL §4)
 - ~~UI-26. Rename length guard (315); 9-pane min-width guard (316); full-cwd reveal (317).~~ **DONE 2026-07-20 session 8** (full selectable cwd in the pane menu)
 - ~~UI-27. Distinguish non-repo / git-missing / git-timeout (318); git_status timeout (321).~~ **DONE 2026-07-20 session 8** (git-missing vs not-a-repo distinguished)
-- UI-28. Theme-flip debounce (320); degenerate pane-size guard (322).
+- ~~UI-28. Theme-flip debounce (320); degenerate pane-size guard (322).~~ **2026-07-20 session 8** (theme-flip coalescing + degenerate pane-size guard)
 - ~~UI-29. Explorer virtualisation for huge dirs (323); close-last-pane prompt (324).~~ **DONE 2026-07-20 session 8** (close-workspace exit from the empty grid)
 
 ### K-F. Keyboard & a11y (QOL §5 + BACKLOG 121/122/207-210)
@@ -723,7 +723,7 @@ grouped by surface only for navigation; work in any order, all at once.
 - ~~UI-108. Remember last layout count per repo (like the setup command).~~ **DONE 2026-07-20 session 8** (layout remembered per repo)
 - ~~UI-109. Warn when two non-isolated slots share the same dir (agents trample).~~ **DONE 2026-07-20 session 8** (same-folder collision warning)
 - ~~UI-110. Esc closes New Workspace when other workspaces exist (overlay parity).~~ **DONE 2026-07-20 session 8** (Esc closes)
-- UI-111. "not installed"/"not signed in" chips open a help popover with the
+- ~~UI-111. "not installed"/"not signed in" chips open a help popover with the~~ **2026-07-20 session 8** (install / sign-in popovers)
   install command + copy button, not tooltip-only.
 - ~~UI-112. Create button shows per-slot progress ("worktree 2 of 4…").~~ **DONE 2026-07-20 session 8** (per-slot progress)
 - ~~UI-113. Drop a folder anywhere on the launcher to fill the directory field.~~ **DONE 2026-07-20 session 8** (drop folder to fill)
@@ -769,13 +769,13 @@ grouped by surface only for navigation; work in any order, all at once.
 - ~~UI-144. Feed groups consecutive transitions of the same pane.~~ **DONE 2026-07-20 session 8** (feed collapses repeat transitions)
 - ~~UI-145. Auto-DND while a pane is maximised (focus mode).~~ **DONE 2026-07-20 session 8** (auto-DND in focus mode)
 - ~~UI-146. Optional auto-open queue when ≥3 approvals are pending.~~ **DONE 2026-07-20 session 8** (auto-open queue (opt-in))
-- UI-147. Taskbar overlay badge with the queue count (Tauri set_overlay_icon).
+- ~~UI-147. Taskbar overlay badge with the queue count (Tauri set_overlay_icon).~~ **2026-07-20 session 8** (taskbar badge count)
 - ~~UI-148. aria-live polite region announces queue additions for screen readers.~~ **DONE 2026-07-20 session 8** (aria-live queue announcements)
 
 ### Left panel / workspaces
 - ~~UI-149. Tile mini-grid preview: tiny squares mirroring pane layout + states.~~ **DONE 2026-07-20 session 8** (tile mini-grid preview)
 - ~~UI-150. Tile badge: worktree count + dirty-worktree count.~~ **DONE 2026-07-20 session 8** (worktree badge)
-- UI-151. Drag a pane onto another workspace tile to move it.
+- ~~UI-151. Drag a pane onto another workspace tile to move it.~~ **2026-07-20 session 8** (drag a pane to another workspace (identity preserved))
 - ~~UI-152. Auto-collapse the panel under a window-width threshold.~~ **DONE 2026-07-20 session 8** (narrow-window auto-collapse)
 - ~~UI-153. Workspace colour derived from repo-path hash, overridable.~~ **DONE 2026-07-20 session 8** (repo-hash tile colour)
 - ~~UI-154. "Open repo on GitHub" context item when origin exists.~~ **DONE 2026-07-20 session 8** (open repo on host)
@@ -798,7 +798,7 @@ grouped by surface only for navigation; work in any order, all at once.
 - ~~UI-165. Side-by-side split-diff toggle (unified-only today).~~ **DONE 2026-07-20 session 8** (side-by-side diff (splitdiff.ts, 8 tests))
 - ~~UI-166. Word-level intra-line diff highlighting.~~ **DONE 2026-07-20 session 8** (word-level diff (worddiff.ts, 8 tests))
 - ~~UI-167. Collapse file list by directory when >15 files.~~ **DONE 2026-07-20 session 8** (file list grouped by directory)
-- UI-168. Include/exclude files from a merge (partial merge-back).
+- ~~UI-168. Include/exclude files from a merge (partial merge-back).~~ **2026-07-20 session 8** (partial merge — selected files only, unselected work survives)
 - ~~UI-169. Copy-patch-to-clipboard button.~~ **DONE 2026-07-20 session 8** (copy patch)
 - ~~UI-170. Auto-refresh diff while the drawer is open ("changed since opened" pill).~~ **DONE 2026-07-20 session 8** (diff staleness pill)
 - ~~UI-171. Lightweight syntax highlighting in the patch by file extension.~~ **DONE 2026-07-20 session 8** (syntax highlighting)
@@ -813,10 +813,10 @@ grouped by surface only for navigation; work in any order, all at once.
 
 ### Settings
 - ~~UI-180. Search/filter box inside Settings.~~ **DONE 2026-07-20 session 8** (settings search)
-- UI-181. Palette deep-links to Settings sections ("Settings: Terminal").
+- ~~UI-181. Palette deep-links to Settings sections ("Settings: Terminal").~~ **2026-07-20 session 8** (palette deep-links to Settings sections)
 - ~~UI-182. Export/import ALL settings (not just the theme).~~ **DONE 2026-07-20 session 8** (export/import all settings)
 - ~~UI-183. Reset-everything-to-defaults with confirm.~~ **DONE 2026-07-20 session 8** (scoped reset-all)
-- UI-184. Launch-on-Windows-login toggle (registry Run key).
+- ~~UI-184. Launch-on-Windows-login toggle (registry Run key).~~ **2026-07-20 session 8** (DROPPED — Balu: the installer's desktop/Start entries are enough)
 - ~~UI-185. Diagnostics: CPU sparkline per pane (last 60s).~~ **DONE 2026-07-20 session 8** (CPU sparkline)
 - ~~UI-186. Diagnostics: total footprint roll-up vs system RAM.~~ **DONE 2026-07-20 session 8** (memory roll-up)
 - ~~UI-187. Diagnostics: worktrees list with disk size + open/clean actions.~~ **DONE 2026-07-20 session 8** (worktree inventory + cleanup)
@@ -841,7 +841,7 @@ grouped by surface only for navigation; work in any order, all at once.
 
 ### Broadcast
 - ~~UI-201. Up-arrow recalls previous broadcast messages.~~ **DONE 2026-07-20 session 8** (broadcast history recall)
-- UI-202. Saved snippets/templates for common prompts.
+- ~~UI-202. Saved snippets/templates for common prompts.~~ **2026-07-20 session 8** (broadcast snippets)
 - ~~UI-203. Target presets ("all Claude", "all in repo X").~~ **DONE 2026-07-20 session 8** (broadcast target presets)
 - ~~UI-204. Enter sends / Shift+Enter newline, stated in the placeholder.~~ **DONE 2026-07-20 session 8** (Enter/Shift+Enter stated)
 
@@ -889,7 +889,7 @@ grouped by surface only for navigation; work in any order, all at once.
 - ~~UI-230. Worktree disk-size line in the pane overflow menu.~~ **DONE 2026-07-20 session 8** (worktree disk size in the pane menu)
 - ~~UI-231. Token chip context-limit awareness: amber ≥70%, red ≥90% of the~~ **DONE 2026-07-20 session 8** (context-window colour thresholds)
   window, tooltip suggests /compact.
-- UI-232. Workspace tile tooltip: token roll-up across its panes.
+- ~~UI-232. Workspace tile tooltip: token roll-up across its panes.~~ **2026-07-20 session 8** (workspace token roll-up)
 - UI-233. Optional costPerMTok field in vendor manifests → real $ on the chip
   for API-key local/proxy vendors.
 - ~~UI-234. Explorer + PaneView share one git_status cache per cwd (dedupes the~~ **DONE 2026-07-20 session 8** (shared git_status cache)
@@ -918,7 +918,7 @@ grouped by surface only for navigation; work in any order, all at once.
   become one .chip base class with variants.
 - ~~UI-247. Motion durations tokenised (--t-fast/--t-med) instead of scattered~~ **DONE 2026-07-20 session 8** (motion tokens)
   .12s/.14s/.16s literals.
-- UI-248. Icon stroke-width audit: all SVGs at 1.6 except three outliers.
+- ~~UI-248. Icon stroke-width audit: all SVGs at 1.6 except three outliers.~~ **2026-07-20 session 8** (CLOSED as not-a-defect — every stroke is already 1.6, no outliers)
 - ~~UI-249. Print/export-friendly board view (media print CSS) for standups.~~ **DONE 2026-07-20 session 8** (print CSS)
 
 ---
