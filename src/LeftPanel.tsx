@@ -21,7 +21,7 @@ function rollup(panes: PaneModel[]) {
     total: panes.length,
     starting: panes.filter((p) => p.state === "starting").length,
     running: panes.filter((p) => p.state === "running").length,
-    waiting: panes.filter((p) => p.state === "waiting").length,
+    waiting: panes.filter((p) => p.state === "waiting" || p.state === "permission").length,
     error: panes.filter((p) => p.state === "error").length,
   };
 }

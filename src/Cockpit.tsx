@@ -96,13 +96,15 @@ export function Cockpit() {
   // Window title reflects what needs you (QOL 365) — visible from the taskbar
   // without focusing the app. Guarded: no-op outside a real Tauri window.
   const waitingCount = workspaces.reduce((n, w) => n + w.panes.filter((p) => p.state === "waiting").length, 0);
+  const permissionCount = workspaces.reduce((n, w) => n + w.panes.filter((p) => p.state === "permission").length, 0);
   const errorCount = workspaces.reduce((n, w) => n + w.panes.filter((p) => p.state === "error").length, 0);
   useEffect(() => {
     const bits = ["Flightdeck"];
+    if (permissionCount > 0) bits.push(`${permissionCount} need${permissionCount === 1 ? "s" : ""} approval`);
     if (waitingCount > 0) bits.push(`${waitingCount} waiting`);
     if (errorCount > 0) bits.push(`${errorCount} error${errorCount === 1 ? "" : "s"}`);
     try { void getCurrentWindow().setTitle(bits.join(" — ")); } catch { /* browser preview */ }
-  }, [waitingCount, errorCount]);
+  }, [waitingCount, permissionCount, errorCount]);
 
   return (
     <div className="cockpit-root">

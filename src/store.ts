@@ -1,6 +1,9 @@
 import { create } from "zustand";
 
-export type PaneState = "starting" | "running" | "idle" | "waiting" | "error";
+// "permission" = the agent printed an interactive approval prompt and is
+// blocked on the user (UI-2/#220) — a louder sub-case of "waiting", detected
+// from output patterns in Terminal.tsx.
+export type PaneState = "starting" | "running" | "idle" | "waiting" | "permission" | "error";
 // Worktree isolation (Tier 0): set when the pane runs in its own git worktree.
 // `cwd` then IS the worktree path; `baseBranch` is what review diffs against
 // and what merge-back targets. All absent for a plain (shared-folder) pane.

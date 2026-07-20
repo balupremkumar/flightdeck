@@ -16,6 +16,7 @@ export const STATE_COLORS: Record<PaneState, string> = {
   starting: "var(--st-starting)",
   running: "var(--st-running)",
   waiting: "var(--st-waiting)",
+  permission: "var(--st-waiting)",
   idle: "var(--st-idle)",
   error: "var(--st-error)",
 };
@@ -24,6 +25,7 @@ export const STATE_LABELS: Record<PaneState, string> = {
   starting: "starting",
   running: "running",
   waiting: "waiting on you",
+  permission: "needs approval",
   idle: "idle",
   error: "error",
 };

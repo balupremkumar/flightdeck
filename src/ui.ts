@@ -99,7 +99,7 @@ const NOTIFY_KEY = "flightdeck-notify-settings";
 
 function defaultNotifySettings(): NotifySettings {
   return {
-    notifyOn: { starting: false, running: false, idle: false, waiting: true, error: true },
+    notifyOn: { starting: false, running: false, idle: false, waiting: true, permission: true, error: true },
     sound: false,
     osToast: true,
     dnd: false,

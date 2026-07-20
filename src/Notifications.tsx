@@ -9,12 +9,17 @@ const STATE_LABEL: Record<PaneState, string> = {
   running: "Running",
   idle: "Idle",
   waiting: "Waiting",
+  permission: "Needs approval",
   error: "Error",
 };
 
-// All configurable states, waiting/error first since those are the ones most
-// likely to be toggled on.
-const CONFIGURABLE_STATES: PaneState[] = ["waiting", "error", "idle", "running", "starting"];
+// All configurable states, approval/waiting/error first since those are the
+// ones most likely to be toggled on.
+const CONFIGURABLE_STATES: PaneState[] = ["permission", "waiting", "error", "idle", "running", "starting"];
+
+// Attention-queue rank: an explicit approval prompt outranks everything —
+// the agent is blocked purely on the user (UI-2).
+const ATTENTION_RANK: Partial<Record<PaneState, number>> = { permission: 0, error: 1, waiting: 2 };
 
 // Short sine chime via WebAudio — no bundled asset, degrades silently if the
 // AudioContext API is unavailable (e.g. autoplay-blocked before user gesture).
@@ -127,12 +132,14 @@ export function Notifications() {
   const needsAttention = workspaces
     .flatMap((w) =>
       w.panes
-        .filter((p) => p.state === "waiting" || p.state === "error")
+        .filter((p) => p.state in ATTENTION_RANK)
         .map((p) => ({ w, p, since: stateSince.current.get(p.id) ?? Date.now() }))
     )
-    .sort((a, b) =>
-      a.p.state === b.p.state ? a.since - b.since : a.p.state === "error" ? -1 : 1
-    );
+    .sort((a, b) => {
+      const ra = ATTENTION_RANK[a.p.state] ?? 9;
+      const rb = ATTENTION_RANK[b.p.state] ?? 9;
+      return ra === rb ? a.since - b.since : ra - rb;
+    });
 
   const forMins = (since: number) => {
     const m = Math.floor((Date.now() - since) / 60000);

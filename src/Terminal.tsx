@@ -203,6 +203,31 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
     // Frontend-computed "waiting" (configurable quiet-threshold): the backend
     // still tells us starting/running/error/idle, but "waiting" is superseded
     // here so it can be tuned per-pane without a Rust round-trip.
+    //
+    // UI-2/#220: when the quiet moment arrives, the recent output tail decides
+    // whether this is plain "waiting" or a blocked-on-approval "permission"
+    // prompt (Warp-style badge). Patterns are vendor-agnostic v1; per-vendor
+    // patterns become manifest fields later (#220 full).
+    const PERMISSION_PATTERNS = [
+      /do you want to/i,
+      /would you like to/i,
+      /\b(allow|approve|grant|trust) (this|these|it|access|edits?|command)/i,
+      /\((y\/n|yes\/no)\)|\[(y\/n|yes\/no)\]/i,
+      /❯?\s*1\.\s*yes/i,
+      /press enter to (continue|confirm|approve)/i,
+      /waiting for (your )?(approval|confirmation|permission)/i,
+    ];
+    // CSI + OSC stripping so patterns match what the user sees, not the codes.
+    const ANSI_RE = /\x1b\[[0-9;?]*[ -/]*[@-~]/g;
+    const OSC_RE = /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?/g;
+    const textDecoder = new TextDecoder("utf-8", { fatal: false });
+    let outTail = "";
+    const appendTail = (bytes: Uint8Array) => {
+      outTail = (outTail + textDecoder.decode(bytes)).slice(-600);
+    };
+    const tailShowsPermissionPrompt = () =>
+      PERMISSION_PATTERNS.some((re) => re.test(outTail.replace(OSC_RE, "").replace(ANSI_RE, "")));
+
     let currentlyAlive = false;
     let localWaiting = false;
     let quietTimer: ReturnType<typeof setTimeout> | undefined;
@@ -212,7 +237,7 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
       quietTimer = setTimeout(() => {
         if (disposed || !currentlyAlive) return;
         localWaiting = true;
-        onState?.("waiting");
+        onState?.(tailShowsPermissionPrompt() ? "permission" : "waiting");
       }, quietThresholdRef.current);
     };
     const bumpActivity = () => {
@@ -226,7 +251,9 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
         if (paneId === 0) { earlyOut.push(e.payload); return; }
         if (e.payload.pane_id !== paneId) return;
         bumpActivity();
-        if (visible) writeB64(e.payload.b64); else pushHidden(decodeB64(e.payload.b64));
+        const bytes = decodeB64(e.payload.b64);
+        appendTail(bytes);
+        if (visible) writeBytes(bytes); else pushHidden(bytes);
       });
       unExit = await listen<{ pane_id: number; crashed: boolean }>("pty://exit", (e) => {
         if (e.payload.pane_id !== paneId) return;

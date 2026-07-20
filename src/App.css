@@ -214,6 +214,9 @@ body {
 .pband.error { background: var(--st-error); }
 .pband.waiting { background: var(--st-waiting); animation: band-breathe 2.2s ease-in-out infinite; }
 .pband.starting { background: var(--st-starting); animation: band-breathe 1.8s ease-in-out infinite; }
+/* UI-2: blocked on an approval prompt — same amber family as waiting but a
+   faster, harder pulse; this pane is the one to deal with first. */
+.pband.permission { background: var(--st-waiting); animation: band-breathe 0.9s ease-in-out infinite; }
 @keyframes band-breathe { 0%, 100% { opacity: 1; } 50% { opacity: .42; } }
 
 .phead { display: flex; align-items: center; gap: 7px; padding: 6px 10px; background: var(--surface-2); border-bottom: 1px solid var(--border-soft); font-size: 12px; }
@@ -222,6 +225,7 @@ body {
 .phead .pdot.starting { background: var(--st-starting); animation: hud-pulse 1.8s ease-in-out infinite; }
 .phead .pdot.waiting { background: var(--st-waiting); animation: hud-pulse 1.8s ease-in-out infinite; }
 .phead .pdot.error { background: var(--st-error); }
+.phead .pdot.permission { background: var(--st-waiting); animation: hud-pulse 0.9s ease-in-out infinite; box-shadow: 0 0 6px var(--st-waiting); }
 .phead .pname { color: var(--text-primary); }
 .phead .prepo { color: var(--tmuted); }
 .phead .branch { display: inline-flex; align-items: center; gap: 4px; margin-left: 6px; padding: 1px 8px 1px 6px; border: 1px solid var(--border); border-radius: 999px; font-size: 10.5px; color: var(--text-secondary); }
