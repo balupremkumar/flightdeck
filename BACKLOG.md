@@ -479,7 +479,7 @@ Residual cosmetics: hardcoded default ids (`Board.tsx` dispatch fallback
 `--agent-claude` (6 themes) with no generic accent scheme for new vendors.
 216. ~~Single source of truth for vendors~~ — **DONE** (`src/vendors.ts`, all UI lists map the registry).
 217. ~~Kill the `Vendor` union type~~ — **DONE** (`board/types.ts:11` is `string`).
-218. **User-definable agents via a manifest file** — a TOML/JSON vendor manifest (id, label, exe, arg template, cwd handling, env allow/deny, probe command, icon, colour) loaded at runtime so adding an agent needs NO recompile. This is the real "easy to add any LLM" unlock.
+218. ~~User-definable agents via a manifest file~~ — **DONE 2026-07-20** (JSON manifests in `<app-data>/vendors/`, ManifestVendor adapter, env-override strip exemption, hex/token accents, shipped example; see STATE session 7).
 219. **Per-vendor auth state** — extend probe beyond "installed" to `not-installed | installed-not-logged-in | ready`, with a per-vendor `login` command surfaced as an inline "Run login" action.
 220. **Per-vendor status patterns** — replace the one-size activity heuristic with per-adapter output patterns (waiting/auth-required/error), falling back to the heuristic.
 221. **Per-vendor capability metadata** — supports MCP? model selection? headless? resume? Drives which UI affordances show for that pane.
