@@ -154,6 +154,24 @@ if (cockpit) {
   if (setOpen) {
     const labels = await page.locator(".set-label").allTextContents();
     check("UI-187 Diagnostics section present", labels.includes("Diagnostics"), labels.join("|"));
+
+    // UI-30: Tab must not escape the modal into the app behind the scrim.
+    let escaped = false;
+    for (let i = 0; i < 40; i++) {
+      await page.keyboard.press("Tab");
+      const inside = await page.evaluate(() =>
+        !!document.querySelector(".set-modal")?.contains(document.activeElement)
+      );
+      if (!inside) { escaped = true; break; }
+    }
+    check("UI-30 focus stays trapped in Settings across 40 tabs", !escaped);
+
+    // And shift-tab backwards from the first element wraps, not escapes.
+    for (let i = 0; i < 10; i++) await page.keyboard.press("Shift+Tab");
+    const stillInside = await page.evaluate(() =>
+      !!document.querySelector(".set-modal")?.contains(document.activeElement)
+    );
+    check("UI-30 focus stays trapped tabbing backwards", stillInside);
     await page.screenshot({ path: `${OUT}/05-settings.png`, fullPage: false });
     await page.keyboard.press("Escape");
     await page.waitForTimeout(300);

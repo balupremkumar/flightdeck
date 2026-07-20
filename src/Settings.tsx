@@ -5,6 +5,7 @@ import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { useUI, applyUiScale } from "./ui";
 import { useApp } from "./store";
 import { bytes, relTime, absTime } from "./format";
+import { useFocusTrap } from "./useFocusTrap";
 import { listRestorePoints, restoreFromPoint, exportBackup, importBackup, type RestorePointInfo } from "./persist";
 import { adoptSession, lastSessionSaveAt } from "./session";
 import { spawnPane } from "./worktrees";
@@ -506,6 +507,9 @@ export function Settings() {
   // a hand-maintained keyword table, so a new section is searchable for free.
   const [q, setQ] = useState("");
   const bodyRef = useRef<HTMLDivElement>(null);
+  // UI-30: Tab could walk out of the modal into the app behind the scrim.
+  const modalRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(modalRef, open);
   useEffect(() => {
     const root = bodyRef.current;
     if (!root) return;
@@ -665,7 +669,7 @@ export function Settings() {
 
   return (
     <div className="ov-scrim" onMouseDown={() => setOpen(false)}>
-      <div className="set-modal" onMouseDown={(e) => e.stopPropagation()} role="dialog" aria-label="Settings">
+      <div className="set-modal" ref={modalRef} onMouseDown={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Settings">
         <div className="set-head">
           <h2>Settings</h2>
           {/* UI-180: eleven sections is too many to scan — filter them. */}

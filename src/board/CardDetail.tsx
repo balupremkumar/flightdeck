@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useApp } from "../store";
 import { useUI } from "../ui";
 import { IconClose } from "../Icons";
+import { useFocusTrap } from "../useFocusTrap";
 import { useBoardStore, makeId, LABEL_SWATCHES } from "./boardStore";
 import { useVendors } from "../vendors";
 import { usePaneStatus } from "./usePaneStatus";
@@ -32,6 +33,9 @@ export function CardDetail({ cardId, onClose }: { cardId: string; onClose: () =>
   const pushToast = useUI((s) => s.pushToast);
   const vendors = useVendors((s) => s.vendors);
 
+  // UI-30: keep Tab inside the dialog and restore focus to the card on close.
+  const detailRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(detailRef, true);
   const [title, setTitle] = useState(card?.title ?? "");
   const [description, setDescription] = useState(card?.description ?? "");
   const [newItem, setNewItem] = useState("");
@@ -98,7 +102,7 @@ export function CardDetail({ cardId, onClose }: { cardId: string; onClose: () =>
 
   return (
     <div className="ov-scrim" onMouseDown={onClose}>
-      <div className="card-detail" onMouseDown={(e) => e.stopPropagation()} role="dialog" aria-label="Card detail">
+      <div className="card-detail" ref={detailRef} onMouseDown={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Card detail">
         <div className="cd-head">
           <input
             className="cd-title-input"
