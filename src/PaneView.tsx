@@ -14,7 +14,7 @@ import { compact, num, duration } from "./format";
 import { stateSince, lastLine, STATE_LABEL as STATE_TITLE } from "./attention";
 import "./panes.css";
 
-import { vendorShort } from "./vendors";
+import { vendorShort, vendorMeta } from "./vendors";
 import { closePaneWithCleanup } from "./worktrees";
 const MIN_FONT = 9;
 const MAX_FONT = 22;
@@ -115,7 +115,9 @@ function PaneViewInner({
   const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
   const [fontSize, setFontSize] = useState(DEFAULT_FONT);
   const [ligatures, setLigatures] = useState(false);
-  const [quietSec, setQuietSec] = useState(DEFAULT_QUIET_SEC);
+  // UI-237: start from THIS vendor's own threshold (agy idles longer than
+  // claude; a shell is idle at once). The per-pane slider still overrides it.
+  const [quietSec, setQuietSec] = useState(() => vendorMeta(pane.vendor).quietSeconds || DEFAULT_QUIET_SEC);
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [matchInfo, setMatchInfo] = useState<{ index: number; count: number } | null>(null);

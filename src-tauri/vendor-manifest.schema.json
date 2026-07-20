@@ -4,7 +4,11 @@
   "title": "Flightdeck vendor manifest",
   "description": "Drop a file like this into the vendors folder to add a launchable agent without rebuilding Flightdeck. Files whose names start with '_' are ignored.",
   "type": "object",
-  "required": ["id", "label", "exe"],
+  "required": [
+    "id",
+    "label",
+    "exe"
+  ],
   "additionalProperties": true,
   "properties": {
     "$schema": {
@@ -26,7 +30,10 @@
       "description": "Compact name for chips and badges. Defaults to label."
     },
     "kind": {
-      "enum": ["agent", "shell"],
+      "enum": [
+        "agent",
+        "shell"
+      ],
       "default": "agent",
       "description": "\"agent\" is an AI coding CLI; \"shell\" is a plain terminal (never needs sign-in)."
     },
@@ -42,13 +49,17 @@
     },
     "args": {
       "type": "array",
-      "items": { "type": "string" },
+      "items": {
+        "type": "string"
+      },
       "description": "Arguments passed to exe on every launch."
     },
     "env": {
       "type": "object",
-      "additionalProperties": { "type": "string" },
-      "description": "Environment overrides. Keys set here are EXEMPT from Flightdeck's ambient API-key stripping — that is how a local endpoint gets its dummy key. Every other provider key is still stripped."
+      "additionalProperties": {
+        "type": "string"
+      },
+      "description": "Environment overrides. Keys set here are EXEMPT from Flightdeck's ambient API-key stripping \u2014 that is how a local endpoint gets its dummy key. Every other provider key is still stripped."
     },
     "probe": {
       "type": "string",
@@ -56,7 +67,14 @@
     },
     "authFile": {
       "type": "string",
-      "description": "Optional credential file whose presence means \"signed in\". \"~\" expands to the user profile. The file is never read or parsed — only its existence is checked. Omit if the agent needs no sign-in."
+      "description": "Optional credential file whose presence means \"signed in\". \"~\" expands to the user profile. The file is never read or parsed \u2014 only its existence is checked. Omit if the agent needs no sign-in."
+    },
+    "quietSeconds": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 60,
+      "default": 3,
+      "description": "Seconds of silence before a pane running this agent is treated as \"waiting\". Raise it for agents that think in long pauses; lower it for shells. Clamped to 1-60."
     }
   }
 }

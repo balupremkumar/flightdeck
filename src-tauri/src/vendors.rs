@@ -58,6 +58,9 @@ pub struct VendorInfo {
     /// (installed but no stored credentials), "unknown" (can't tell).
     pub auth_state: String,
     pub auth_detail: String,
+    /// UI-237: seconds of silence before this vendor is considered "waiting".
+    /// agy streams sparsely and looked idle at claude's 3s; shells are instant.
+    pub quiet_seconds: u32,
 }
 
 // Resolve an executable through the shell's PATH (Windows `where`).
@@ -276,6 +279,11 @@ pub trait VendorAdapter: Send + Sync {
     fn accent(&self) -> &str {
         "--accent"
     }
+    /// UI-237: how long THIS vendor must be quiet before it counts as waiting.
+    fn quiet_seconds(&self) -> u32 {
+        3
+    }
+
     /// Env vars this adapter must not inherit. Always a superset of
     /// BASE_ENV_STRIP — an adapter can add, never remove.
     fn env_strip(&self) -> Vec<&'static str> {
@@ -350,6 +358,9 @@ impl VendorAdapter for Agy {
     }
     fn root_exe(&self) -> &str { "agy.exe" }
     fn prepare(&self, cwd: &str) { ensure_agy_trust(cwd); }
+    // agy thinks in longer silences than claude; 3s flagged it as waiting while
+    // it was still working.
+    fn quiet_seconds(&self) -> u32 { 6 }
     fn auth(&self) -> (&'static str, String) {
         // Google sign-in drops ~/.gemini/google_accounts.json.
         match home_dir() {
@@ -364,6 +375,8 @@ impl VendorAdapter for Agy {
 
 struct Pwsh;
 impl VendorAdapter for Pwsh {
+    // A shell at a prompt is genuinely idle immediately.
+    fn quiet_seconds(&self) -> u32 { 2 }
     fn id(&self) -> &str { "pwsh" }
     fn label(&self) -> &str { "pwsh (shell)" }
     fn short(&self) -> &str { "pwsh" }
@@ -385,6 +398,8 @@ impl VendorAdapter for Pwsh {
 
 struct Cmd;
 impl VendorAdapter for Cmd {
+    // A shell at a prompt is genuinely idle immediately.
+    fn quiet_seconds(&self) -> u32 { 2 }
     fn id(&self) -> &str { "cmd" }
     fn label(&self) -> &str { "cmd (shell)" }
     fn short(&self) -> &str { "cmd" }
@@ -406,6 +421,8 @@ impl VendorAdapter for Cmd {
 
 struct GitBash;
 impl VendorAdapter for GitBash {
+    // A shell at a prompt is genuinely idle immediately.
+    fn quiet_seconds(&self) -> u32 { 2 }
     fn id(&self) -> &str { "git-bash" }
     fn label(&self) -> &str { "Git Bash" }
     fn short(&self) -> &str { "Git Bash" }
@@ -429,6 +446,8 @@ impl VendorAdapter for GitBash {
 
 struct Wsl;
 impl VendorAdapter for Wsl {
+    // A shell at a prompt is genuinely idle immediately.
+    fn quiet_seconds(&self) -> u32 { 2 }
     fn id(&self) -> &str { "wsl" }
     fn label(&self) -> &str { "WSL" }
     fn short(&self) -> &str { "WSL" }
@@ -535,6 +554,9 @@ struct VendorManifest {
     /// Present + non-empty -> signed in; absent field -> auth state unknown.
     #[serde(default)]
     auth_file: Option<String>,
+    /// UI-237: seconds of silence before this vendor counts as "waiting".
+    #[serde(default)]
+    quiet_seconds: Option<u32>,
 }
 
 struct ManifestVendor {
@@ -592,6 +614,10 @@ impl VendorAdapter for ManifestVendor {
         }
         c.cwd(cwd);
         c
+    }
+
+    fn quiet_seconds(&self) -> u32 {
+        self.m.quiet_seconds.unwrap_or(3).clamp(1, 60)
     }
 
     fn auth(&self) -> (&'static str, String) {
@@ -756,6 +782,7 @@ pub fn detect() -> Vec<VendorInfo> {
                 detail,
                 auth_state: auth_state.into(),
                 auth_detail,
+                quiet_seconds: v.quiet_seconds(),
             }
         })
         .collect()
@@ -776,6 +803,30 @@ mod tests {
         ids.sort_unstable();
         ids.dedup();
         assert_eq!(ids.len(), count, "adapter ids must be unique");
+    }
+
+    #[test]
+    fn quiet_seconds_are_sane_per_vendor(){
+        for v in registry() {
+            let q = v.quiet_seconds();
+            assert!((1..=60).contains(&q), "{} has an implausible quiet threshold {q}", v.id());
+            if v.kind() == "shell" {
+                assert!(q <= 3, "{}: a shell at a prompt is idle promptly", v.id());
+            }
+        }
+        // agy needs longer than the default or it reads as waiting mid-thought.
+        assert!(find("agy").quiet_seconds() > find("claude").quiet_seconds());
+        assert_eq!(detect().len(), registry().len());
+    }
+
+    #[test]
+    fn manifest_quiet_seconds_is_clamped() {
+        let mk = |json: &str| ManifestVendor::new(serde_json::from_str(json).unwrap());
+        assert_eq!(mk(r#"{"id":"a","label":"A","exe":"a.exe"}"#).quiet_seconds(), 3, "default");
+        assert_eq!(mk(r#"{"id":"b","label":"B","exe":"b.exe","quietSeconds":9}"#).quiet_seconds(), 9);
+        // Nonsense values can't disable the heuristic entirely.
+        assert_eq!(mk(r#"{"id":"c","label":"C","exe":"c.exe","quietSeconds":0}"#).quiet_seconds(), 1);
+        assert_eq!(mk(r#"{"id":"d","label":"D","exe":"d.exe","quietSeconds":9999}"#).quiet_seconds(), 60);
     }
 
     #[test]

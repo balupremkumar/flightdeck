@@ -20,15 +20,17 @@ export interface VendorInfo {
    *  stored sign-in — the CLI will prompt on first launch), "unknown". */
   authState: "ok" | "none" | "unknown";
   authDetail: string;
+  /** UI-237: seconds of silence before this vendor reads as "waiting". */
+  quietSeconds: number;
 }
 
 // Used only until the backend responds, and as a safety net if the invoke fails
 // (e.g. unit tests, or a browser preview with no Tauri host). The backend
 // registry is always the truth once it answers.
 const FALLBACK: VendorInfo[] = [
-  { id: "claude", label: "Claude Code", short: "Claude", kind: "agent", accent: "--agent-claude", installed: false, detail: "", authState: "unknown", authDetail: "" },
-  { id: "agy", label: "Antigravity", short: "Antigravity", kind: "agent", accent: "--accent", installed: false, detail: "", authState: "unknown", authDetail: "" },
-  { id: "pwsh", label: "pwsh (shell)", short: "pwsh", kind: "shell", accent: "--aqua", installed: false, detail: "", authState: "unknown", authDetail: "" },
+  { id: "claude", label: "Claude Code", short: "Claude", kind: "agent", accent: "--agent-claude", installed: false, detail: "", authState: "unknown", authDetail: "", quietSeconds: 3 },
+  { id: "agy", label: "Antigravity", short: "Antigravity", kind: "agent", accent: "--accent", installed: false, detail: "", authState: "unknown", authDetail: "", quietSeconds: 3 },
+  { id: "pwsh", label: "pwsh (shell)", short: "pwsh", kind: "shell", accent: "--aqua", installed: false, detail: "", authState: "unknown", authDetail: "", quietSeconds: 3 },
 ];
 
 interface VendorState {
@@ -79,6 +81,7 @@ export function vendorMeta(id: string): VendorInfo {
       detail: "",
       authState: "unknown" as const,
       authDetail: "",
+      quietSeconds: 3,
     }
   );
 }
