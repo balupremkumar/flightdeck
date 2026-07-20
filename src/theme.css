@@ -284,3 +284,13 @@ button.chip:hover { border-color: var(--accent); color: var(--text); }
 .icon-btn, .rv-ic, .ex-refresh, .ex-toggle, .ntf-gear {
   min-width: 24px; min-height: 24px;
 }
+
+/* UI-236/219: vendor identity badge — a monogram so agents are distinguishable
+   without relying on hue (colour-blind users, greyscale, High Contrast). */
+.vglyph {
+  display: inline-flex; align-items: center; justify-content: center; flex: none;
+  font-family: var(--font-mono); font-weight: 700; letter-spacing: -0.02em;
+  border: 1px solid currentColor; border-radius: var(--r-sm);
+  background: color-mix(in srgb, currentColor 14%, transparent);
+  line-height: 1; user-select: none;
+}

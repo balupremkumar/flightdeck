@@ -5,6 +5,7 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { useApp } from "./store";
 import { IconClose, IconFolder, IconRefresh } from "./Icons";
 import { useVendors, vendorMeta, vendorShort, defaultCycle } from "./vendors";
+import { VendorGlyph } from "./VendorGlyph";
 import { isolationPref, setIsolationPref, preparePanes, repoToplevel } from "./worktrees";
 import "./review.css"; // .isolate-row lives with the review/worktree styles
 
@@ -385,6 +386,8 @@ export function NewWorkspace() {
               {slots.map((s, i) => (
                 <div className="slot-row" key={i}>
                   <span className="slot-n">Pane {i + 1}</span>
+                  {/* UI-236/219: identity by glyph as well as colour. */}
+                  <VendorGlyph id={s.vendor} size={18} />
                   <select className="vsel" value={s.vendor} onChange={(e) => setVendor(i, e.target.value)}>
                     {vendors.map((o) => (<option key={o.id} value={o.id}>{o.label}</option>))}
                   </select>

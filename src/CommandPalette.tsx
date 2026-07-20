@@ -3,6 +3,7 @@ import { useApp, type PaneState } from "./store";
 import { useUI, setTheme } from "./ui";
 import { closePaneGuarded } from "./worktrees";
 import { IconWorkspace, IconAgent, IconSettings, IconClose } from "./Icons";
+import { VendorGlyph } from "./VendorGlyph";
 import "./leftpanel.css";
 
 // Self-contained fuzzy command palette (Ctrl+K / Ctrl+P): jump to any
@@ -18,6 +19,8 @@ interface Item {
   keywords?: string;
   /** UI-205: pane rows render a live status dot. */
   state?: PaneState;
+  /** UI-236: pane rows render their vendor glyph. */
+  vendor?: string;
   run: () => void;
 }
 
@@ -107,6 +110,7 @@ export function CommandPalette() {
           label: p.title || `${p.vendor} — ${w.name}`,
           hint: p.cwd,
           state: p.state, // UI-205: live status dot on the row
+          vendor: p.vendor, // UI-236: vendor glyph
           keywords: `${p.vendor} ${w.name} ${p.state}`,
           run: () => { switchWorkspace(w.id); focusPane(w.id, p.id); },
         });
@@ -265,6 +269,7 @@ export function CommandPalette() {
                   <span className="cmdp-ic">
                     {it.section === "Workspaces" ? <IconWorkspace size={14} /> : it.section === "Panes" ? <IconAgent size={14} /> : <IconSettings size={14} />}
                   </span>
+                  {it.vendor && <VendorGlyph id={it.vendor} size={15} />}
                   {it.state && <span className={"pdot " + it.state} title={it.state} />}
                   <span className="cmdp-label">{it.label}</span>
                   {it.hint && <span className="cmdp-hint">{it.hint}</span>}

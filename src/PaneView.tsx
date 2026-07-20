@@ -15,6 +15,7 @@ import { stateSince, lastLine, STATE_LABEL as STATE_TITLE } from "./attention";
 import "./panes.css";
 
 import { vendorShort, vendorMeta } from "./vendors";
+import { VendorGlyph } from "./VendorGlyph";
 import { closePaneWithCleanup } from "./worktrees";
 const MIN_FONT = 9;
 const MAX_FONT = 22;
@@ -363,6 +364,7 @@ function PaneViewInner({
           className={"pdot " + pane.state}
           title={`${STATE_TITLE[pane.state]} · ${duration(stateSince.get(pane.id) ?? Date.now())}`}
         />
+        <VendorGlyph id={pane.vendor} size={15} title={vendorMeta(pane.vendor).label} />
         {editing ? (
           <input
             ref={nameRef}
