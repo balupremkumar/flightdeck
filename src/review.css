@@ -226,3 +226,18 @@ em.del { color: var(--st-error); margin-left: 5px; }
 }
 .rv-commit-list li { padding: 2px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rv-commit-list code { font-family: var(--mono); font-size: 10px; color: var(--faint); }
+
+/* UI-166: word-level diff emphasis inside a changed line */
+.rv-word {
+  font-style: normal; border-radius: 2px; padding: 0 1px;
+  background: color-mix(in srgb, currentColor 26%, transparent);
+}
+
+/* UI-173: per-file open action */
+.rv-file-open {
+  flex: none; font-size: 9.5px; color: var(--faint); cursor: pointer;
+  opacity: 0; padding: 2px 5px; border-radius: var(--r-sm);
+  transition: opacity var(--t-fast) ease, color var(--t-fast) ease;
+}
+.rv-file:hover .rv-file-open, .rv-file.sel .rv-file-open { opacity: 1; }
+.rv-file-open:hover { color: var(--text); background: color-mix(in srgb, var(--text) 10%, transparent); }

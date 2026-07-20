@@ -5,13 +5,14 @@
 // untracked files for isolated panes (backend D8).
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { openUrl, openPath } from "@tauri-apps/plugin-opener";
 import { useApp } from "./store";
 import { useUI } from "./ui";
 import { vendorShort } from "./vendors";
 import { IconBranch, IconClose, IconChevron, IconDiff, IconMerge, IconRefresh, IconCopy } from "./Icons";
 import type { DiffSummary, MergeOutcome, BranchContext } from "./worktrees";
 import { absTime } from "./format";
+import { wordDiffMap } from "./worddiff";
 import { invalidateCwd } from "./poll";
 import "./review.css";
 
@@ -87,6 +88,8 @@ export function Review() {
   }, [pane?.cwd, pane?.baseBranch, selected]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const lines = useMemo(() => patch.split("\n"), [patch]);
+  // UI-166: which tokens actually changed within each paired -/+ line.
+  const wordMarks = useMemo(() => wordDiffMap(lines), [lines]);
   const hunkLines = useMemo(() => lines.reduce<number[]>((acc, l, i) => (l.startsWith("@@") ? [...acc, i] : acc), []), [lines]);
 
   const jumpHunk = (dir: 1 | -1) => {
@@ -173,13 +176,25 @@ export function Review() {
     }
   };
 
-  // Esc closes (matches Settings behavior).
+  // Esc closes (matches Settings behavior). UI-172: j/k walk the file list,
+  // n/p walk hunks — vim-ish, and consistent with the existing hunk buttons.
   useEffect(() => {
     if (paneId == null) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setReviewPane(null); };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") { setReviewPane(null); return; }
+      // Never steal keys from a text field inside the drawer.
+      if ((e.target as HTMLElement)?.closest?.("input, textarea")) return;
+      const files = summary?.files.map((f) => f.path) ?? [];
+      const at = selected ? files.indexOf(selected) : -1;
+      if (e.key === "j" && files.length) { e.preventDefault(); setSelected(files[Math.min(files.length - 1, at + 1)]); }
+      else if (e.key === "k" && files.length) { e.preventDefault(); setSelected(files[Math.max(0, at - 1)]); }
+      else if (e.key === "n") { e.preventDefault(); jumpHunk(1); }
+      else if (e.key === "p") { e.preventDefault(); jumpHunk(-1); }
+    };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [paneId, setReviewPane]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paneId, setReviewPane, summary, selected, hunkLines, hunkIdx]);
 
   if (paneId == null) return null;
   if (!pane) { setReviewPane(null); return null; }
@@ -247,6 +262,20 @@ export function Review() {
                   title={f.path}
                 >
                   <span className="rv-file-path">{f.path}</span>
+                  <span
+                    className="rv-file-open"
+                    role="button"
+                    tabIndex={-1}
+                    title="Open this file"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const sep = pane.cwd.includes("/") && !pane.cwd.includes("\\") ? "/" : "\\";
+                      void openPath(pane.cwd.replace(/[\\\/]+$/, "") + sep + f.path.replace(/\//g, sep))
+                        .catch(() => pushToast("error", "Couldn't open that file."));
+                    }}
+                  >
+                    open
+                  </span>
                   {f.binary
                     ? <span className="rv-file-bin">binary</span>
                     : <span className="rv-file-stat"><em className="add">+{f.added}</em><em className="del">−{f.deleted}</em></span>}
@@ -270,7 +299,19 @@ export function Review() {
               </div>
               <pre className="rv-patch" ref={patchRef}>
                 {lines.map((l, i) => (
-                  <span key={i} data-line={i} className={"rv-line " + lineClass(l)}>{l || " "}{"\n"}</span>
+                  <span key={i} data-line={i} className={"rv-line " + lineClass(l)}>
+                    {wordMarks.has(i) ? (
+                      <>
+                        {l[0]}
+                        {wordMarks.get(i)!.map((seg, k) =>
+                          seg.changed
+                            ? <em key={k} className="rv-word">{seg.text}</em>
+                            : <span key={k}>{seg.text}</span>
+                        )}
+                      </>
+                    ) : (l || " ")}
+                    {"\n"}
+                  </span>
                 ))}
               </pre>
             </div>
