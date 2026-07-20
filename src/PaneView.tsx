@@ -125,6 +125,7 @@ function PaneViewInner({
   const [query, setQuery] = useState("");
   const [matchInfo, setMatchInfo] = useState<{ index: number; count: number } | null>(null);
   const [gitStatus, setGitStatus] = useState<GitStatus | null>(null);
+  const [gitError, setGitError] = useState<string | null>(null);
   // Diff-stat badge for isolated panes: "what did this agent change" at a
   // glance, polled on the same cadence as the branch pill. Click → review drawer.
   const [diffStat, setDiffStat] = useState<{ files: number; added: number; deleted: number } | null>(null);
@@ -227,8 +228,15 @@ function PaneViewInner({
   usePoll(async () => {
     try {
       setGitStatus(await cachedInvoke<GitStatus>("git_status", { cwd: pane.cwd }, GIT_POLL_MS / 2));
-    } catch {
+      setGitError(null);
+    } catch (e) {
+      // UI-27: "not a repo", "git isn't installed" and "the call failed" all
+      // collapsed to no-pill, which loses the diagnosis. Keep the reason so the
+      // header can say which it was.
       setGitStatus(null);
+      setGitError(/not available|No such file|not recognized/i.test(String(e))
+        ? "git isn't installed or isn't on PATH"
+        : "couldn't read git status for this folder");
     }
   }, GIT_POLL_MS, [pane.cwd, pane.epoch], paneVisible);
 
@@ -407,6 +415,11 @@ function PaneViewInner({
           &middot; {baseName(pane.cwd)}
         </span>
         {procName && <span className="pproc" title="Running process">{procName}</span>}
+        {/* UI-27: a git problem is worth one quiet word — silence reads as
+            "not a repo", which may be wrong. */}
+        {!gitStatus && gitError && (
+          <span className="pgit-err" title={gitError}>git?</span>
+        )}
         {gitStatus?.isRepo && (
           <span
             className="branch branch-copy"
@@ -504,7 +517,12 @@ Running low — consider /compact in this pane.` : "")
                 {maximized ? <IconMinimize size={13} /> : <IconMaximizePane size={13} />}
                 {maximized ? "Restore" : "Maximise"}
               </button>
-              {gitStatus?.isRepo && (
+              {/* UI-27: a git problem is worth one quiet word — silence reads as
+            "not a repo", which may be wrong. */}
+        {!gitStatus && gitError && (
+          <span className="pgit-err" title={gitError}>git?</span>
+        )}
+        {gitStatus?.isRepo && (
                 <button className="pmenu-item" onClick={() => { setReviewPane(pane.id); closeMenu(); }}>
                   <IconDiff size={13} /> Review changes
                 </button>

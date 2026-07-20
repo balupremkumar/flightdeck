@@ -343,7 +343,18 @@ export function Board() {
               <div className="col-header">
                 <span className="col-icon" style={{ background: col.accent }} />
                 <span className="col-name">{col.name.toUpperCase()}</span>
-                <span className={"col-count" + (overLimit ? " col-count-over" : "")} title={col.wip != null ? `WIP limit ${col.wip}` : undefined}>
+                <span
+                  className={"col-count" + (overLimit ? " col-count-over" : "")}
+                  title={
+                    col.wip == null
+                      ? undefined
+                      : overLimit
+                        // UI-24: turning red without saying why leaves the user
+                        // guessing whether they broke something.
+                        ? `Over the WIP limit of ${col.wip}. Too much in flight at once means slower finishes — this is a nudge, not a block.`
+                        : `WIP limit ${col.wip} — a soft cap on how much sits here at once.`
+                  }
+                >
                   {cards[col.id].length}{col.wip != null ? `/${col.wip}` : ""}
                 </span>
                 {col.id === "todo" && (

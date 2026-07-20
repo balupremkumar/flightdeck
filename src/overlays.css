@@ -268,3 +268,11 @@ button.agent-chip.agent-test:hover { color: var(--accent); border-color: var(--a
 }
 .kbd-conflict b { color: var(--text); font-weight: 600; }
 .kbd-conflict-actions { display: inline-flex; gap: 8px; margin-left: auto; }
+
+/* UI-19: scroll-fade cue — a cut-off list should look cut off */
+.set-body { position: relative; }
+.set-body::after {
+  content: ""; position: sticky; bottom: 0; left: 0; right: 0; display: block;
+  height: 22px; margin-top: -22px; pointer-events: none;
+  background: linear-gradient(to bottom, transparent, var(--elevated));
+}

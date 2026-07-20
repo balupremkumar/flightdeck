@@ -310,3 +310,9 @@
 }
 /* UI-242: when one pane is maximised, quiet the others' chrome */
 .pg-maximized .pane:not(.pmax) .phead { opacity: .55; }
+
+/* UI-27: git couldn't be read — distinct from "not a repo" (which shows nothing) */
+.phead .pgit-err {
+  flex: none; font-family: var(--font-mono); font-size: 10px;
+  color: var(--st-waiting); opacity: .8; cursor: help;
+}
