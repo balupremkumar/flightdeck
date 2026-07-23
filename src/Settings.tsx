@@ -153,7 +153,7 @@ function saveStartupBehavior(v: StartupBehavior) {
 
 // Shown in About + useful for bug reports. Keep in step with package.json /
 // tauri.conf.json version bumps.
-export const APP_VERSION = "0.1.0";
+export const APP_VERSION = "0.2.0";
 
 // Newest first; trim to the last ~10 entries as it grows.
 const CHANGELOG: Array<{ date: string; text: string }> = [
