@@ -14,6 +14,7 @@ import { CommandPalette } from "./CommandPalette";
 import { Explorer } from "./Explorer";
 import { Review } from "./Review";
 import { AttentionQueue } from "./AttentionQueue";
+import { ZoomHud } from "./ZoomHud";
 import { useUI } from "./ui";
 import { applyTheme, applyAccent, currentThemeId, currentAccentId, findTheme } from "./themes";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -75,6 +76,24 @@ export function Cockpit() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // Owner feedback item 3: Ctrl+=/-/0 must scale the WHOLE APP, the
+      // browser-style expectation — previously only per-pane terminal font
+      // zoom existed on these same keys (removed from PaneView.tsx to avoid
+      // both firing at once). Deliberately NOT guarded by `.pbody` like
+      // Ctrl+W/B below: these keys are inert in every shell/agent TUI we
+      // ship (same reasoning Ctrl+Shift+A already documents), and a browser
+      // zoom shortcut that stops working the moment a terminal has focus
+      // would be the exact bug being fixed here.
+      if (e.ctrlKey && !e.altKey && (e.key === "=" || e.key === "+" || e.key === "-" || e.key === "_")) {
+        e.preventDefault();
+        useUI.getState().stepUiZoom(e.key === "-" || e.key === "_" ? -1 : 1);
+        return;
+      }
+      if (e.ctrlKey && !e.altKey && e.key === "0") {
+        e.preventDefault();
+        useUI.getState().resetUiZoom();
+        return;
+      }
       if (e.ctrlKey && e.key === ",") { e.preventDefault(); setSettingsOpen(true); return; }
       // Attention queue (UI-1 v2). Deliberately NOT skipped when a terminal has
       // focus: this is a global "what needs me" shortcut, and no agent TUI binds
@@ -285,6 +304,7 @@ export function Cockpit() {
       <Broadcast />
       <Review />
       <AttentionQueue />
+      <ZoomHud />
 
       <div className="cockpit">
         <LeftPanel expanded={expanded} view={view} setView={setView} />

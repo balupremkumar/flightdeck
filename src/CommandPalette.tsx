@@ -176,6 +176,11 @@ export function CommandPalette() {
       run: () => setExplorerOpen(!explorerOpen),
     });
     list.push({ id: "act:open-broadcast", section: "Actions", label: "Open broadcast", run: () => setBroadcastOpen(true) });
+    // Owner feedback item 3: whole-app zoom, same store actions the
+    // Ctrl+=/-/0 shortcut and Settings > UI size use.
+    list.push({ id: "act:zoom-in", section: "Actions", label: "Zoom in", hint: "Ctrl+=", run: () => useUI.getState().stepUiZoom(1) });
+    list.push({ id: "act:zoom-out", section: "Actions", label: "Zoom out", hint: "Ctrl+-", run: () => useUI.getState().stepUiZoom(-1) });
+    list.push({ id: "act:zoom-reset", section: "Actions", label: "Reset zoom", hint: "Ctrl+0", run: () => useUI.getState().resetUiZoom() });
     // UI-206: after a crash wave, restarting six panes one at a time is the
     // wrong amount of work.
     const errored = workspaces.flatMap((w) => w.panes.filter((p) => p.state === "error").map((p) => ({ w, p })));
@@ -260,7 +265,7 @@ export function CommandPalette() {
             onChange={(e) => setQuery(e.target.value)}
             spellCheck={false}
           />
-          <button className="ov-x" onClick={() => setOpen(false)} title="Close"><IconClose size={14} /></button>
+          <button className="ov-x" onClick={() => setOpen(false)} title="Close"><IconClose size={16} /></button>
         </div>
         <div className="cmdp-list">
           {results.length === 0 && (

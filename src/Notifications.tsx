@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useApp, type PaneState } from "./store";
 import { useUI } from "./ui";
 import { IconBell, IconSettings } from "./Icons";
 import { getCurrentWindow, UserAttentionType } from "@tauri-apps/api/window";
 import { attentionQueue, forMins, stateSince, STATE_LABEL } from "./attention";
 import { timeTitle } from "./format";
+import { vendorShort } from "./vendors";
 import "./Notifications.css";
 
 // All configurable states, approval/waiting/error first since those are the
@@ -67,6 +68,7 @@ export function Notifications() {
   const setNotifyOn = useUI((s) => s.setNotifyOn);
   const setNotifySound = useUI((s) => s.setNotifySound);
   const setNotifyOsToast = useUI((s) => s.setNotifyOsToast);
+  const setOsToastOn = useUI((s) => s.setOsToastOn);
   const setNotifyDnd = useUI((s) => s.setNotifyDnd);
   const toggleMuteWorkspace = useUI((s) => s.toggleMuteWorkspace);
   const feed = useUI((s) => s.feed);
@@ -79,6 +81,12 @@ export function Notifications() {
   const [panel, setPanel] = useState<Panel>("none");
   const prevStates = useRef(new Map<number, PaneState>());
   const [, setTick] = useState(0);
+  // Owner feedback: calm the bell — no persistent pulsing. `pulse` goes true
+  // for a moment when a NEW notifiable event lands, then the bell sits
+  // static (badge counts still carry the at-rest state).
+  const [pulse, setPulse] = useState(false);
+  const pulseTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  useEffect(() => () => clearTimeout(pulseTimer.current), []);
 
   // Re-render on a slow tick while the feed is open so durations stay honest.
   useEffect(() => {
@@ -108,13 +116,20 @@ export function Notifications() {
         if (prev === undefined) continue;
         if (!notify.notifyOn[p.state]) continue;
 
-        pushNotifyEvent({ wsId: w.id, wsName: w.name, paneId: p.id, vendor: p.vendor, state: p.state });
+        pushNotifyEvent({ wsId: w.id, wsName: w.name, paneId: p.id, vendor: p.vendor, title: p.title, state: p.state });
+        // One-shot pulse on arrival — see the `pulse` state comment above.
+        setPulse(true);
+        clearTimeout(pulseTimer.current);
+        pulseTimer.current = setTimeout(() => setPulse(false), 1100);
 
         const muted = notify.dnd || notify.mutedWorkspaces.includes(w.id) || focusMode;
         if (muted) continue;
         if (notify.sound) playChime();
-        if (notify.osToast && !document.hasFocus()) {
-          void osToast(`${w.name} — ${p.vendor}`, `${STATE_LABEL[p.state]}: pane needs you`);
+        // Owner feedback: OS toast defaults follow a per-state gate (waiting
+        // off, approval/error on) layered under the master switch — a
+        // routine "waiting" transition no longer pops a toast by default.
+        if (notify.osToast && notify.osToastOn[p.state] && !document.hasFocus()) {
+          void osToast(`${w.name} — ${p.title || vendorShort(p.vendor)}`, `${STATE_LABEL[p.state]}: pane needs you`);
           void flashTaskbar();
         }
       }
@@ -174,22 +189,6 @@ export function Notifications() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [needsAttention, followAttention]);
 
-  // UI-144: collapse consecutive events from the same pane in the same state.
-  // A pane that flaps between running and waiting used to bury everything else
-  // under near-identical rows.
-  const groupedFeed = useMemo(() => {
-    const out: (typeof feed[number] & { repeats: number })[] = [];
-    for (const e of feed) {
-      const last = out[out.length - 1];
-      if (last && last.paneId === e.paneId && last.state === e.state) {
-        last.repeats++;
-        continue;
-      }
-      out.push({ ...e, repeats: 1 });
-    }
-    return out;
-  }, [feed]);
-
   const jump = (wsId: number, paneId: number) => {
     switchWorkspace(wsId);
     focusPane(wsId, paneId);
@@ -199,12 +198,12 @@ export function Notifications() {
   return (
     <div className="ntf-wrap">
       <button
-        className={"ntf-bell" + (needsAttention.length ? " on" : "") + (notify.dnd ? " dnd" : "")}
+        className={"ntf-bell" + (needsAttention.length ? " on" : "") + (notify.dnd ? " dnd" : "") + (pulse ? " pulse" : "")}
         onClick={() => setPanel((p) => (p === "none" ? "feed" : "none"))}
         title={notify.dnd ? "Notifications (Do Not Disturb)" : "Notifications"}
         aria-label="Notifications"
       >
-        <IconBell size={18} />
+        <IconBell size={19} />
         {/* UI-142: approvals and errors are different jobs — one number hid
             which kind was waiting. Errors take the red slot. */}
         {errCount > 0 && <span className="ntf-badge err">{errCount}</span>}
@@ -228,7 +227,7 @@ export function Notifications() {
           <div className="ntf-head">
             <span>Notifications</span>
             <button className="ntf-gear" title="Notification settings" onClick={() => setPanel("settings")}>
-              <IconSettings size={13} /> Settings
+              <IconSettings size={15} /> Settings
             </button>
           </div>
 
@@ -248,7 +247,7 @@ export function Notifications() {
                 <div className="ntf-item" key={p.id} onClick={() => jump(w.id, p.id)}>
                   <span className={"ntf-dot " + p.state} />
                   <span className="ntf-ws">{w.name}</span>
-                  <span className="ntf-ag">{p.title || p.vendor}</span>
+                  <span className="ntf-ag">{p.title || vendorShort(p.vendor)}</span>
                   <span className="ntf-state">
                     {STATE_LABEL[p.state]} · {forMins(since)}
                   </span>
@@ -263,11 +262,15 @@ export function Notifications() {
               {feed.length > 0 && <button className="ntf-clear" onClick={clearFeed}>Clear</button>}
             </div>
             {feed.length === 0 && <div className="ntf-empty">No notifications yet — they'll show up here.</div>}
-            {groupedFeed.slice(0, 12).map((e) => (
+            {/* UI-144: rows already name both workspace AND pane (title over
+                vendor, same as "Needs you now" below) — repeats within a few
+                minutes collapse in the store (ui.ts pushNotifyEvent) rather
+                than stacking new rows. */}
+            {feed.slice(0, 12).map((e) => (
               <div className="ntf-item" key={e.id} onClick={() => jump(e.wsId, e.paneId)} title={timeTitle(e.at)}>
                 <span className={"ntf-dot " + e.state} />
                 <span className="ntf-ws">{e.wsName}</span>
-                <span className="ntf-ag">{e.vendor}</span>
+                <span className="ntf-ag">{e.title || vendorShort(e.vendor)}</span>
                 <span className="ntf-state">
                   {STATE_LABEL[e.state]}
                   {e.repeats > 1 && <em className="ntf-repeat">×{e.repeats}</em>} · {forMins(e.at)}
@@ -302,6 +305,20 @@ export function Notifications() {
               <input type="checkbox" checked={notify.osToast} onChange={(e) => setNotifyOsToast(e.target.checked)} />
               OS toast + taskbar flash when unfocused
             </label>
+            {/* Owner feedback: per-state toast gate, layered under the master
+                switch above — only shown for states the bell actually rings
+                on. Defaults: waiting off, approval/error on. */}
+            {notify.osToast && (
+              <div className="ntf-subgroup">
+                {CONFIGURABLE_STATES.filter((st) => notify.notifyOn[st]).map((st) => (
+                  <label className="ntf-check ntf-check-sub" key={st}>
+                    <input type="checkbox" checked={!!notify.osToastOn[st]} onChange={(e) => setOsToastOn(st, e.target.checked)} />
+                    <span className={"ntf-dot " + st} />
+                    {STATE_LABEL[st]}
+                  </label>
+                ))}
+              </div>
+            )}
             <label className="ntf-check">
               <input type="checkbox" checked={notify.sound} onChange={(e) => setNotifySound(e.target.checked)} />
               Sound cue

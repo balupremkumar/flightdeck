@@ -4,7 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { save, open as openDialog } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { revealPath } from "./reveal";
-import { useUI, applyUiScale } from "./ui";
+import { useUI, ZOOM_STEPS } from "./ui";
 import { useApp } from "./store";
 import { bytes, relTime, absTime } from "./format";
 import { useFocusTrap } from "./useFocusTrap";
@@ -24,16 +24,6 @@ import {
   exportThemeJson, importThemeJson,
 } from "./themes";
 import "./overlays.css";
-
-const SCALES = [
-  { k: "1", label: "Comfortable" },
-  { k: "1.12", label: "Large" },
-  { k: "1.25", label: "Extra" },
-];
-
-function currentScale(): string {
-  return document.documentElement.style.zoom || "1";
-}
 
 // ---------------------------------------------------------------------
 // Terminal settings (88). Persisted + exported for Terminal.tsx to read.
@@ -87,6 +77,9 @@ const FIXED_SHORTCUTS: ShortcutDef[] = [
   { id: "cmdp-k", label: "Command palette", combo: "Ctrl+K" },
   { id: "cmdp-p", label: "Command palette", combo: "Ctrl+P" },
   { id: "switch-workspace", label: "Switch to workspace 1-9", combo: "Ctrl+1..9" },
+  { id: "zoom-in", label: "Zoom in (whole app)", combo: "Ctrl+=" },
+  { id: "zoom-out", label: "Zoom out (whole app)", combo: "Ctrl+-" },
+  { id: "zoom-reset", label: "Reset zoom", combo: "Ctrl+0" },
 ];
 export function getShortcuts(): ShortcutDef[] {
   let overrides: Record<string, string> = {};
@@ -561,7 +554,9 @@ export function Settings() {
   const [customHex, setCustomHex] = useState(customAccentHex());
   const [cbSafe, setCbSafe] = useState(isColorBlindSafe());
   const [reducedMotion, setReducedMotionOn] = useState(isReducedMotion());
-  const [scale, setScale] = useState(currentScale());
+  const uiZoom = useUI((s) => s.uiZoom);
+  const setUiZoom = useUI((s) => s.setUiZoom);
+  const stepUiZoom = useUI((s) => s.stepUiZoom);
   const [term, setTerm] = useState(getTerminalSettings());
   const [shortcuts, setShortcuts] = useState(getShortcuts());
   const [capturing, setCapturing] = useState<string | null>(null);
@@ -980,11 +975,31 @@ export function Settings() {
             {importError && <div className="set-error">{importError}</div>}
 
             <div className="set-row">
-              <div className="set-row-t"><span className="set-row-name">UI size</span><span className="set-row-sub">Scale the whole interface</span></div>
-              <div className="seg">
-                {SCALES.map((s) => (
-                  <button key={s.k} className={scale === s.k ? "on" : ""} onClick={() => { applyUiScale(s.k); setScale(s.k); }}>{s.label}</button>
-                ))}
+              <div className="set-row-t">
+                <span className="set-row-name">UI size</span>
+                <span className="set-row-sub">Scale the whole interface — same as <kbd>Ctrl</kbd>+<kbd>=</kbd>/<kbd>-</kbd>/<kbd>0</kbd></span>
+              </div>
+              <div className="zoom-stepper">
+                <button
+                  className="zoom-step-btn"
+                  onClick={() => stepUiZoom(-1)}
+                  disabled={uiZoom <= ZOOM_STEPS[0]}
+                  title="Zoom out (Ctrl+-)"
+                >
+                  −
+                </button>
+                <span className="zoom-step-val">{Math.round(uiZoom * 100)}%</span>
+                <button
+                  className="zoom-step-btn"
+                  onClick={() => stepUiZoom(1)}
+                  disabled={uiZoom >= ZOOM_STEPS[ZOOM_STEPS.length - 1]}
+                  title="Zoom in (Ctrl+=)"
+                >
+                  +
+                </button>
+                {uiZoom !== 1 && (
+                  <button className="zoom-step-reset" onClick={() => setUiZoom(1)} title="Reset to 100% (Ctrl+0)">Reset</button>
+                )}
               </div>
             </div>
           </section>

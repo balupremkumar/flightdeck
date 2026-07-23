@@ -63,11 +63,11 @@ export function AttentionQueue() {
     <div className="aq-scrim" onMouseDown={(e) => { if (e.target === e.currentTarget) setOpen(false); }}>
       <div className="aq-panel" role="dialog" aria-label="Attention queue">
         <div className="aq-head">
-          <IconBell size={15} />
+          <IconBell size={16} />
           <span className="aq-title">Attention queue</span>
           <span className="aq-count">{queue.length === 0 ? "clear" : `${queue.length} waiting on you`}</span>
           <span className="sp" />
-          <button className="rv-ic" onClick={() => setOpen(false)} title="Close (Esc)"><IconClose size={13} /></button>
+          <button className="rv-ic" onClick={() => setOpen(false)} title="Close (Esc)"><IconClose size={16} /></button>
         </div>
 
         {queue.length === 0 ? (

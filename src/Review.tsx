@@ -428,8 +428,8 @@ export function Review() {
             </button>
           )}
           <span className="sp" />
-          <button className="rv-ic" onClick={() => void load()} title="Refresh diff"><IconRefresh size={13} /></button>
-          <button className="rv-ic" onClick={() => setReviewPane(null)} title="Close (Esc)"><IconClose size={13} /></button>
+          <button className="rv-ic" onClick={() => void load()} title="Refresh diff"><IconRefresh size={16} /></button>
+          <button className="rv-ic" onClick={() => setReviewPane(null)} title="Close (Esc)"><IconClose size={16} /></button>
         </div>
 
         {error && <div className="rv-empty">Couldn't read the diff: {error}</div>}
@@ -497,7 +497,7 @@ export function Review() {
                 <span className="sp" />
                 <span className="rv-hunk-count">{hunkLines.length > 0 ? `hunk ${hunkIdx + 1}/${hunkLines.length}` : ""}</span>
                 <button className="rv-ic" onClick={() => jumpHunk(-1)} disabled={hunkLines.length === 0} title="Previous hunk">
-                  <IconChevron size={12} style={{ transform: "rotate(-90deg)" }} />
+                  <IconChevron size={15} style={{ transform: "rotate(-90deg)" }} />
                 </button>
                 <button
                   className={"rv-ic" + (split ? " on" : "")}
@@ -508,10 +508,10 @@ export function Review() {
                   {split ? "║" : "≡"}
                 </button>
                 <button className="rv-ic" onClick={() => void copyPatch()} disabled={!patch} title="Copy this file's patch">
-                  <IconCopy size={12} />
+                  <IconCopy size={15} />
                 </button>
                 <button className="rv-ic" onClick={() => jumpHunk(1)} disabled={hunkLines.length === 0} title="Next hunk">
-                  <IconChevron size={12} style={{ transform: "rotate(90deg)" }} />
+                  <IconChevron size={15} style={{ transform: "rotate(90deg)" }} />
                 </button>
               </div>
               {split ? (
@@ -603,7 +603,7 @@ export function Review() {
                 <IconBranch size={13} /> {handing ? "Pushing…" : "Create PR instead"}
               </button>
               <button className="rv-ic rv-conflict-dismiss" onClick={() => setConflict(null)} title="Dismiss">
-                <IconClose size={12} />
+                <IconClose size={15} />
               </button>
             </div>
           </div>

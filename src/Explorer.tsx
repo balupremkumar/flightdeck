@@ -418,7 +418,7 @@ export function Explorer({ root, wsId, vendor = "pwsh", paneRoot, paneLabel }: E
       />
       <div className="ex-head">
         <button className={"ex-toggle" + (panelOpen ? " open" : "")} onClick={() => setPanelOpen((o) => !o)} title={panelOpen ? "Collapse" : "Expand"}>
-          <IconChevron size={12} />
+          <IconChevron size={15} />
         </button>
         <span className="ex-title">Explorer</span>
         {git && (
@@ -428,7 +428,7 @@ export function Explorer({ root, wsId, vendor = "pwsh", paneRoot, paneLabel }: E
           </span>
         )}
         <span className="sp" />
-        <button className="ex-refresh" onClick={() => load()} title="Refresh"><IconRefresh size={12} /></button>
+        <button className="ex-refresh" onClick={() => load()} title="Refresh"><IconRefresh size={15} /></button>
       </div>
 
       {paneRoot && paneRoot !== root && (

@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import type { CSSProperties, MouseEvent as ReactMouseEvent, DragEvent as ReactDragEvent, SVGProps } from "react";
 import { useApp, type PaneModel, type Workspace } from "./store";
 import { useUI } from "./ui";
-import { defaultCycle } from "./vendors";
+import { defaultCycle, vendorShort } from "./vendors";
+import { attentionQueue, STATE_LABEL } from "./attention";
 import { closeWorkspaceWithCleanup, preparePanes, isolationPref, rememberedOrSuggestedSetup } from "./worktrees";
 import { IconPlus, IconClose, IconBoard, IconDrag } from "./Icons";
 import { relTime as fmtRel, timeTitle, num } from "./format";
@@ -30,19 +31,39 @@ function rollup(panes: PaneModel[]) {
     total: panes.length,
     starting: panes.filter((p) => p.state === "starting").length,
     running: panes.filter((p) => p.state === "running").length,
+    // Combined for the existing "wait" meta chip (unchanged). `permission` is
+    // also broken out separately below for the tile's severity treatment.
     waiting: panes.filter((p) => p.state === "waiting" || p.state === "permission").length,
+    permission: panes.filter((p) => p.state === "permission").length,
     error: panes.filter((p) => p.state === "error").length,
   };
 }
 
-// UI-C (bug fix + tile redesign): a tile shows at most one status dot, so
-// when both are present error wins, since it's the more urgent of the two
-// and a workspace with an errored pane is never merely "waiting". Shared by
-// the rail and the expanded tile so the two never disagree.
-function tileState(r: ReturnType<typeof rollup>): "error" | "waiting" | null {
+// Owner feedback item 1: a tile shows at most one severity, ranked
+// error > approval > plain waiting — a workspace with an errored pane is
+// never merely "waiting", and a blocked-on-approval pane is worse than one
+// just idling. Shared by the rail and the expanded tile so the two never
+// disagree.
+function tileState(r: ReturnType<typeof rollup>): "error" | "permission" | "waiting" | null {
   if (r.error > 0) return "error";
-  if (r.waiting > 0) return "waiting";
+  if (r.permission > 0) return "permission";
+  if (r.waiting > r.permission) return "waiting"; // plain-waiting only; r.waiting already includes permission
   return null;
+}
+
+/** How many panes this tile's badge counts — every pane currently in a
+ *  needs-you state (error, approval or plain waiting). */
+function needyCount(r: ReturnType<typeof rollup>): number {
+  return r.error + r.waiting;
+}
+
+/** The needy panes themselves, for the tooltip — named individually so a
+ *  workspace with several agents says WHICH ones need you, not just how many. */
+function needyPanes(w: Workspace): PaneModel[] {
+  return w.panes.filter((p) => p.state === "error" || p.state === "permission" || p.state === "waiting");
+}
+function paneLabel(p: PaneModel): string {
+  return p.title || vendorShort(p.vendor);
 }
 
 type View = "terminals" | "board";
@@ -97,7 +118,7 @@ function saveTints(m: Record<number, string>) {
 const SORT_KEY = "flightdeck-ws-sort";
 
 const SortIcon = (p: SVGProps<SVGSVGElement>) => (
-  <svg width={13} height={13} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" {...p}>
+  <svg width={15} height={15} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" {...p}>
     <path d="M10 4v12M10 4 6 8M10 4l4 4" />
     <path d="M4 15h5M4 11h3" />
   </svg>
@@ -110,6 +131,7 @@ export function LeftPanel({ expanded, view, setView }: { expanded: boolean; view
   const workspaces = useApp((s) => s.workspaces);
   const activeId = useApp((s) => s.activeId);
   const switchWorkspace = useApp((s) => s.switchWorkspace);
+  const focusPane = useApp((s) => s.focusPane);
   const startCreate = useApp((s) => s.startCreate);
   const createWorkspace = useApp((s) => s.createWorkspace);
   const renameWorkspace = useApp((s) => s.renameWorkspace);
@@ -117,6 +139,7 @@ export function LeftPanel({ expanded, view, setView }: { expanded: boolean; view
   const requestConfirm = useUI((s) => s.requestConfirm);
   const pushToast = useUI((s) => s.pushToast);
   const movePaneToWorkspace = useApp((s) => s.movePaneToWorkspace);
+  const snoozed = useUI((s) => s.snoozed);
   // UI-232: token spend is per-pane today, so "how heavy is this workspace"
   // needed adding up by eye. Shares PaneView's cache — no extra backend calls.
   const [tokens, setTokens] = useState<Record<number, number>>({});
@@ -175,7 +198,19 @@ export function LeftPanel({ expanded, view, setView }: { expanded: boolean; view
     });
   };
 
-  const openWs = (id: number) => { switchWorkspace(id); setView("terminals"); touch(id); };
+  // Owner feedback item 1: switching to a workspace from a "needs you" tile
+  // also focuses its neediest pane — same ranking + jump mechanism the bell
+  // dropdown and attention queue already use (attention.ts), reused rather
+  // than reinvented. All panes render in the resizable grid at once (no
+  // scroll container to worry about), so focusing IS the whole of "jump to it".
+  const openWs = (id: number) => {
+    switchWorkspace(id);
+    setView("terminals");
+    touch(id);
+    const w = workspaces.find((x) => x.id === id);
+    const top = w ? attentionQueue([w], snoozed)[0] : undefined;
+    if (top) focusPane(id, top.p.id);
+  };
 
   // Relative "Xm ago" labels stay fresh without a live-ticking clock.
   useEffect(() => {
@@ -428,34 +463,43 @@ export function LeftPanel({ expanded, view, setView }: { expanded: boolean; view
   if (!expanded) {
     return (
       <div className={"lpanel" + (folderOver ? " lp-drop-over" : "")} ref={panelRef}>
-        <button className="lp-ic add" onClick={startCreate} title="New workspace" data-tip="New workspace"><IconPlus size={18} /></button>
+        <button className="lp-ic add" onClick={startCreate} title="New workspace" data-tip="New workspace"><IconPlus size={20} /></button>
         {workspaces.map((w) => {
           const r = rollup(w.panes);
           const active = w.id === activeId && view === "terminals";
           const status = tileState(r);
+          const needy = status ? needyPanes(w) : [];
+          // Rail tooltip is one line (CSS-driven, see data-tip in leftpanel.css)
+          // — name the neediest pane and, if there's more than one, say so.
+          const rowTip = needy.length === 0
+            ? w.name
+            : needy.length === 1
+              ? `${paneLabel(needy[0])} — ${STATE_LABEL[needy[0].state]}`
+              : `${needyCount(r)} panes need you: ${needy.map((p) => `${paneLabel(p)} (${STATE_LABEL[p.state]})`).join(", ")}`;
           return (
             <button
-              className={"lp-ic" + (active ? " active" : "")}
+              className={"lp-ic" + (active ? " active" : "") + (status ? ` needy-${status}` : "")}
               key={w.id}
               onClick={() => openWs(w.id)}
               onContextMenu={(e) => openMenu(e, w.id)}
-              title={w.name}
-              data-tip={w.name}
+              title={rowTip}
+              data-tip={rowTip}
               style={{ "--tint": tintFor(w) } as CSSProperties}
             >
               {initial(w.name)}
-              <span className="lp-badge sm">{r.total}</span>
-              {status && !active && (
-                <span
-                  className={"lp-wait sm" + (status === "error" ? " lp-wait-err" : "")}
-                  title={status === "error" ? "Needs attention" : "Waiting on you"}
-                />
+              {/* Two number badges on a 42px tile is noise, not signal — the
+                  severity badge (bottom-right) supersedes the plain pane-count
+                  badge (top-right) whenever something needs you. A calm tile
+                  keeps the total count; a needy one shows only what matters. */}
+              {!status && <span className="lp-badge sm">{r.total}</span>}
+              {status && (
+                <span className={"lp-needy-badge " + status} aria-hidden>{needyCount(r)}</span>
               )}
             </button>
           );
         })}
         <div className="lp-rail-sep" />
-        <button className={"lp-ic board-ic" + (view === "board" ? " active" : "")} onClick={() => setView("board")} title="Board" data-tip="Board"><IconBoard size={19} /></button>
+        <button className={"lp-ic board-ic" + (view === "board" ? " active" : "")} onClick={() => setView("board")} title="Board" data-tip="Board"><IconBoard size={21} /></button>
         {dropHint}
         {contextMenu}
       </div>
@@ -476,7 +520,7 @@ export function LeftPanel({ expanded, view, setView }: { expanded: boolean; view
         >
           <SortIcon />
         </button>
-        <button className="lp-add" onClick={startCreate} title="New workspace"><IconPlus size={16} /></button>
+        <button className="lp-add" onClick={startCreate} title="New workspace"><IconPlus size={18} /></button>
       </div>
       {workspaces.length > 3 && (
         <div className="lp-search-wrap">
@@ -497,11 +541,26 @@ export function LeftPanel({ expanded, view, setView }: { expanded: boolean; view
           const isRenaming = renameId === w.id;
           const last = relTime(lastActive[w.id], now);
           const status = tileState(r);
+          const needy = status ? needyPanes(w) : [];
+          // Owner feedback item 1: the tile's tooltip leads with WHICH panes
+          // need you and in what state, ahead of the existing root/worktree/
+          // token line — a glance answers "what" before "where".
+          const metaLine = [
+            w.root,
+            w.panes.some((p) => p.worktreePath)
+              ? `${w.panes.filter((p) => p.worktreePath).length} isolated worktree${w.panes.filter((p) => p.worktreePath).length === 1 ? "" : "s"}`
+              : null,
+            tokens[w.id] > 0 ? `${num(tokens[w.id])} tokens of context across its agents` : null,
+          ].filter(Boolean).join(" · ");
+          const rowTip = needy.length
+            ? [`Needs you:`, ...needy.map((p) => `  ${paneLabel(p)} — ${STATE_LABEL[p.state]}`), "", metaLine].join("\n")
+            : metaLine;
           return (
             <div
               className={
                 "lp-ws" +
                 (active ? " active" : "") +
+                (status ? ` needy-${status}` : "") +
                 (dragId === w.id ? " dragging" : "") +
                 (dragOverId === w.id && dragId !== w.id ? " drag-over" : "")
               }
@@ -516,13 +575,7 @@ export function LeftPanel({ expanded, view, setView }: { expanded: boolean; view
               /* The meta row is a glance surface and only fits signals that
                  demand action. Worktree count and token spend are worth knowing
                  but not worth crowding it out — they live here instead. */
-              title={[
-                w.root,
-                w.panes.some((p) => p.worktreePath)
-                  ? `${w.panes.filter((p) => p.worktreePath).length} isolated worktree${w.panes.filter((p) => p.worktreePath).length === 1 ? "" : "s"}`
-                  : null,
-                tokens[w.id] > 0 ? `${num(tokens[w.id])} tokens of context across its agents` : null,
-              ].filter(Boolean).join(" · ")}
+              title={rowTip}
             >
               <span className="lp-drag-handle"><IconDrag size={12} /></span>
               {/* BUG FIX: the status dot used to render as a flex sibling of
@@ -542,10 +595,7 @@ export function LeftPanel({ expanded, view, setView }: { expanded: boolean; view
               <span className="lp-i" style={{ "--tint": tintFor(w) } as CSSProperties}>
                 {initial(w.name)}
                 {status && (
-                  <span
-                    className={"lp-wait" + (status === "error" ? " lp-wait-err" : "")}
-                    title={status === "error" ? "Needs attention" : "Waiting on you"}
-                  />
+                  <span className={"lp-needy-badge " + status} aria-hidden>{needyCount(r)}</span>
                 )}
               </span>
               <span className="lp-body">
@@ -590,7 +640,7 @@ export function LeftPanel({ expanded, view, setView }: { expanded: boolean; view
                   )}
                 </span>
               </span>
-              <button className="lp-x" onClick={(e) => { e.stopPropagation(); doClose(w); }} title="Close workspace"><IconClose size={12} /></button>
+              <button className="lp-x" onClick={(e) => { e.stopPropagation(); doClose(w); }} title="Close workspace"><IconClose size={15} /></button>
             </div>
           );
         })}
@@ -598,7 +648,7 @@ export function LeftPanel({ expanded, view, setView }: { expanded: boolean; view
       <div className="lp-sep" />
       <div className={"lp-app" + (view === "board" ? " active" : "")} onClick={() => setView("board")}>
         {/* NOT class "board" — Board.css declares a global .board for the board screen */}
-        <span className="lp-i lp-board-i"><IconBoard size={16} /></span>
+        <span className="lp-i lp-board-i"><IconBoard size={18} /></span>
         <span className="lp-name">Board</span>
       </div>
       {dropHint}

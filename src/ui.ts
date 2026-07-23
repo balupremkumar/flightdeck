@@ -20,14 +20,21 @@ export interface Toast {
 }
 
 // One entry per pane-state transition that matched the configured bell rules.
+// Repeats of the same pane+state within COLLAPSE_WINDOW_MS bump `repeats` and
+// refresh `at` in place instead of pushing a new row (owner feedback: a pane
+// flapping waiting/running must not spam the feed).
 export interface NotifyEvent {
   id: number;
   wsId: number;
   wsName: string;
   paneId: number;
   vendor: string;
+  /** Pane's own title if renamed — lets a feed row name the SPECIFIC pane,
+   *  not just its vendor (two same-vendor panes in a workspace need this). */
+  title?: string;
   state: PaneState;
   at: number; // epoch ms
+  repeats: number;
 }
 
 // A lightweight record of a completed broadcast send, so the composer (and
@@ -45,6 +52,13 @@ export interface NotifySettings {
   notifyOn: Record<PaneState, boolean>;
   sound: boolean;
   osToast: boolean;
+  /** Per-state OS-toast gate, layered under the master `osToast` switch above.
+   *  Owner feedback: a waiting pane is normal traffic and shouldn't pop a
+   *  toast by default, but an approval prompt or an error should. Existing
+   *  saved settings that predate this field fall back to these defaults via
+   *  loadNotifySettings' merge, so nobody's prefs silently change underneath
+   *  them. */
+  osToastOn: Record<PaneState, boolean>;
   dnd: boolean;
   mutedWorkspaces: number[];
 }
@@ -70,11 +84,12 @@ interface UIState {
   setNotifyOn: (state: PaneState, on: boolean) => void;
   setNotifySound: (on: boolean) => void;
   setNotifyOsToast: (on: boolean) => void;
+  setOsToastOn: (state: PaneState, on: boolean) => void;
   setNotifyDnd: (on: boolean) => void;
   toggleMuteWorkspace: (wsId: number) => void;
 
   feed: NotifyEvent[];
-  pushNotifyEvent: (e: Omit<NotifyEvent, "id" | "at">) => void;
+  pushNotifyEvent: (e: Omit<NotifyEvent, "id" | "at" | "repeats">) => void;
   clearFeed: () => void;
 
   // Which main surface is showing. Lives here (not as Cockpit-local state) so
@@ -114,6 +129,18 @@ interface UIState {
 
   broadcasts: BroadcastRecord[];
   pushBroadcastRecord: (r: Omit<BroadcastRecord, "id" | "at">) => void;
+
+  // Whole-app zoom (owner feedback item 3): one numeric value, persisted and
+  // applied at boot (main.tsx), driven by both Settings > UI size and the
+  // Ctrl+=/-/0 shortcut so the two can never disagree.
+  uiZoom: number;
+  setUiZoom: (z: number) => void;
+  stepUiZoom: (dir: 1 | -1) => void;
+  resetUiZoom: () => void;
+  /** Transient HUD chip ("110%") shown for ~800ms after a zoom change. `id`
+   *  lets the HUD component restart its hide-timer on every change even when
+   *  the value repeats (e.g. hitting the top step twice in a row). */
+  zoomHud: { value: number; id: number } | null;
 }
 
 let tseq = 0;
@@ -121,12 +148,16 @@ let nseq = 0;
 let bseq = 0;
 
 const NOTIFY_KEY = "flightdeck-notify-settings";
+const FEED_COLLAPSE_WINDOW_MS = 5 * 60_000;
 
 function defaultNotifySettings(): NotifySettings {
   return {
     notifyOn: { starting: false, running: false, idle: false, waiting: true, permission: true, error: true },
     sound: false,
     osToast: true,
+    // Owner feedback: waiting is routine, approval/error are not — toast
+    // defaults follow that split even though the bell/feed ring for all three.
+    osToastOn: { starting: false, running: false, idle: false, waiting: false, permission: true, error: true },
     dnd: false,
     mutedWorkspaces: [],
   };
@@ -138,7 +169,12 @@ function loadNotifySettings(): NotifySettings {
     const raw = localStorage.getItem(NOTIFY_KEY);
     if (!raw) return fallback;
     const parsed = JSON.parse(raw) as Partial<NotifySettings>;
-    return { ...fallback, ...parsed, notifyOn: { ...fallback.notifyOn, ...(parsed.notifyOn ?? {}) } };
+    return {
+      ...fallback,
+      ...parsed,
+      notifyOn: { ...fallback.notifyOn, ...(parsed.notifyOn ?? {}) },
+      osToastOn: { ...fallback.osToastOn, ...(parsed.osToastOn ?? {}) },
+    };
   } catch {
     return fallback;
   }
@@ -174,6 +210,12 @@ export const useUI = create<UIState>((set) => ({
     set((s) => { const notify = { ...s.notify, sound: on }; saveNotifySettings(notify); return { notify }; }),
   setNotifyOsToast: (on) =>
     set((s) => { const notify = { ...s.notify, osToast: on }; saveNotifySettings(notify); return { notify }; }),
+  setOsToastOn: (state, on) =>
+    set((s) => {
+      const notify = { ...s.notify, osToastOn: { ...s.notify.osToastOn, [state]: on } };
+      saveNotifySettings(notify);
+      return { notify };
+    }),
   setNotifyDnd: (on) =>
     set((s) => { const notify = { ...s.notify, dnd: on }; saveNotifySettings(notify); return { notify }; }),
   toggleMuteWorkspace: (wsId) =>
@@ -187,7 +229,21 @@ export const useUI = create<UIState>((set) => ({
     }),
 
   feed: [],
-  pushNotifyEvent: (e) => set((s) => ({ feed: [{ ...e, id: ++nseq, at: Date.now() }, ...s.feed].slice(0, 50) })),
+  // UI-144 (owner feedback, moved from render-time grouping to source-of-
+  // truth): a repeat of the same pane+state within COLLAPSE_WINDOW_MS bumps
+  // the existing top-of-feed entry's `repeats` and refreshes `at`, rather
+  // than pushing a new row. Grouping this at push time (not display time)
+  // means a flapping pane can no longer push genuinely different events out
+  // of the 50-entry cap by spamming repeats of itself.
+  pushNotifyEvent: (e) =>
+    set((s) => {
+      const now = Date.now();
+      const top = s.feed[0];
+      if (top && top.paneId === e.paneId && top.state === e.state && now - top.at < FEED_COLLAPSE_WINDOW_MS) {
+        return { feed: [{ ...top, ...e, id: top.id, repeats: top.repeats + 1, at: now }, ...s.feed.slice(1)] };
+      }
+      return { feed: [{ ...e, id: ++nseq, at: now, repeats: 1 }, ...s.feed].slice(0, 50) };
+    }),
   clearFeed: () => set({ feed: [] }),
 
   activeView: "terminals",
@@ -230,12 +286,65 @@ export const useUI = create<UIState>((set) => ({
   broadcasts: [],
   pushBroadcastRecord: (r) =>
     set((s) => ({ broadcasts: [{ ...r, id: ++bseq, at: Date.now() }, ...s.broadcasts].slice(0, 20) })),
+
+  uiZoom: loadUiZoom(),
+  setUiZoom: (z) => set(() => { applyUiScale(z); return { uiZoom: z }; }),
+  stepUiZoom: (dir) =>
+    set((s) => {
+      const next = nextZoomStep(s.uiZoom, dir);
+      applyUiScale(next);
+      return { uiZoom: next, zoomHud: { value: next, id: ++zseq } };
+    }),
+  resetUiZoom: () =>
+    set(() => {
+      applyUiScale(1);
+      return { uiZoom: 1, zoomHud: { value: 1, id: ++zseq } };
+    }),
+  zoomHud: null,
 }));
 
-// Persisted UI scale (whole-app zoom). Applied on boot and from Settings.
-export function applyUiScale(scale: string) {
-  document.documentElement.style.zoom = scale;
-  try { localStorage.setItem("flightdeck-uiscale", scale); } catch { /* non-persistent */ }
+// ---------------------------------------------------------------------
+// Whole-app zoom (owner feedback item 3). One mechanism, two entry points:
+// the Settings > UI size stepper and the Ctrl+=/-/0 shortcut (Cockpit.tsx,
+// capture phase). Both go through setUiZoom/stepUiZoom/resetUiZoom above so
+// they can never drift out of sync with each other.
+// ---------------------------------------------------------------------
+export const ZOOM_STEPS = [0.85, 0.95, 1, 1.1, 1.2, 1.35, 1.5];
+let zseq = 0;
+
+function loadUiZoom(): number {
+  try {
+    const raw = localStorage.getItem("flightdeck-uiscale");
+    const n = raw ? parseFloat(raw) : 1;
+    return Number.isFinite(n) && n > 0 ? n : 1;
+  } catch {
+    return 1;
+  }
+}
+
+/** Steps from `current` to the next/previous entry in ZOOM_STEPS. If `current`
+ *  isn't exactly on a step (an old 1.12/1.25 "Comfortable/Large" value, or a
+ *  hand-edited localStorage value), moves to the nearest step in the
+ *  requested direction rather than jumping to the closest step overall — a
+ *  press of Ctrl+- must always get smaller, never accidentally larger.
+ *  Exported (only) so ui.test.ts can exercise the stepping algorithm without
+ *  going through applyUiScale, which touches `document`/`window` and so
+ *  needs a real DOM — this project's vitest runs in plain Node, no jsdom. */
+export function nextZoomStep(current: number, dir: 1 | -1): number {
+  const exact = ZOOM_STEPS.findIndex((v) => Math.abs(v - current) < 0.001);
+  if (exact !== -1) {
+    return ZOOM_STEPS[Math.min(ZOOM_STEPS.length - 1, Math.max(0, exact + dir))];
+  }
+  const candidates = dir === 1 ? ZOOM_STEPS.filter((v) => v > current) : ZOOM_STEPS.filter((v) => v < current);
+  if (candidates.length) return dir === 1 ? Math.min(...candidates) : Math.max(...candidates);
+  return current; // already past every step in that direction
+}
+
+// Persisted UI scale (whole-app zoom). Applied on boot (main.tsx) and from
+// Settings / the Ctrl+=/-/0 shortcut via the store actions above.
+export function applyUiScale(scale: number) {
+  document.documentElement.style.zoom = String(scale);
+  try { localStorage.setItem("flightdeck-uiscale", String(scale)); } catch { /* non-persistent */ }
   // Nudge xterm's fit addon (ResizeObserver) so terminals re-measure at the new scale.
   window.dispatchEvent(new Event("resize"));
 }

@@ -49,6 +49,24 @@
 .seg button:hover { color: var(--text); }
 .seg button.on { color: var(--on-accent); background: var(--accent-grad); }
 
+/* ---------- UI-size zoom stepper (owner feedback item 3) ---------- */
+.zoom-stepper { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; flex: none; }
+.zoom-step-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; font: inherit; font-size: 16px; font-weight: 700; line-height: 1;
+  color: var(--text); background: var(--surface); border: 1px solid var(--line-strong); border-radius: var(--r-sm);
+  cursor: pointer; transition: border-color var(--t-fast) ease, background-color var(--t-fast) ease;
+}
+.zoom-step-btn:hover:not(:disabled) { border-color: color-mix(in srgb, var(--ice) 45%, var(--line-strong)); }
+.zoom-step-btn:disabled { opacity: .4; cursor: default; }
+.zoom-step-val { min-width: 42px; text-align: center; font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 600; color: var(--text); }
+.zoom-step-reset {
+  font: inherit; font-size: 11px; font-weight: 600; color: var(--faint); background: transparent;
+  border: 1px solid var(--line-strong); border-radius: 6px; padding: 3px 8px; cursor: pointer;
+  transition: color var(--t-fast) ease, border-color var(--t-fast) ease;
+}
+.zoom-step-reset:hover { color: var(--text); border-color: color-mix(in srgb, var(--ice) 45%, var(--line-strong)); }
+
 .kbd-list { display: flex; flex-direction: column; }
 .kbd-row { display: flex; align-items: center; justify-content: space-between; padding: 9px 0; border-bottom: 1px solid var(--line); font-size: 13.5px; color: var(--text); }
 .kbd-row:last-child { border-bottom: 0; }
@@ -204,6 +222,20 @@ button.agent-chip:hover { filter: brightness(1.15); }
 }
 .btn-danger:hover { filter: brightness(1.07); }
 .btn-danger:active { transform: translateY(1px); }
+
+/* ---------- Zoom HUD (owner feedback item 3) ----------
+   Centered, transient, non-interactive — mirrors the volume/brightness HUD
+   pattern from every OS. Sits at the toast tier (topmost) since it must be
+   visible over Settings or any other open overlay. */
+.zoom-hud {
+  position: fixed; left: 50%; top: 18%; transform: translate(-50%, -50%);
+  z-index: var(--z-toast); pointer-events: none;
+  font-variant-numeric: tabular-nums; font-size: 22px; font-weight: 700; color: var(--text);
+  background: var(--elevated); border: 1px solid var(--line-strong); border-radius: var(--r-lg);
+  box-shadow: var(--shadow-lg); padding: 14px 26px;
+  animation: zoom-hud-pop var(--t-med) var(--ease-out);
+}
+@keyframes zoom-hud-pop { from { opacity: 0; transform: translate(-50%, -50%) scale(.92); } to { opacity: 1; transform: translate(-50%, -50%) scale(1); } }
 
 /* ---------- Toasts ---------- */
 .toast-host { position: fixed; right: 16px; bottom: 16px; z-index: var(--z-toast); display: flex; flex-direction: column; gap: 10px; align-items: flex-end; }

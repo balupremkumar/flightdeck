@@ -1,0 +1,100 @@
+/* demo/lib/rig.css — the showcase director's overlay: camera rig, cursor
+   actor, captions, keycap chips, brand cards. Injected after the real app
+   mounts; never shipped, never touches src/**. */
+
+html, body { overflow: hidden !important; margin: 0 !important; }
+
+/* Camera: a transform on <body> itself (not a wrapper div) so it carries
+   every descendant along as one world — including React portals mounted
+   directly on document.body (Settings, Review drawer, menus). Our own HUD
+   lives on a sibling of <body> under <html>, so it never moves with it. */
+body {
+  transition: transform 2200ms cubic-bezier(.22,.61,.36,1),
+              transform-origin 2200ms cubic-bezier(.22,.61,.36,1);
+  will-change: transform;
+}
+
+#fd-overlay-root {
+  position: fixed; inset: 0; z-index: 2147483000; pointer-events: none;
+  font-family: "Schibsted Grotesk", "Segoe UI", system-ui, sans-serif;
+}
+
+/* Spotlight: dark everywhere except a soft-edged cutout over the featured region. */
+#fd-vignette {
+  position: absolute; inset: 0; background: rgba(4,7,12,.55); opacity: 0;
+  transition: opacity 900ms ease, -webkit-mask-image 1400ms cubic-bezier(.22,.61,.36,1);
+  -webkit-mask-image: radial-gradient(ellipse 700px 420px at 50% 50%, transparent 0%, transparent 55%, black 100%);
+          mask-image: radial-gradient(ellipse 700px 420px at 50% 50%, transparent 0%, transparent 55%, black 100%);
+}
+
+/* Cursor actor */
+#fd-cursor {
+  position: absolute; width: 28px; height: 28px; left: 50%; top: 50%;
+  transform: translate(-50%, -50%); opacity: 0;
+  transition: left 640ms cubic-bezier(.34,1.42,.4,1),
+              top 640ms cubic-bezier(.34,1.42,.4,1),
+              opacity 200ms ease;
+}
+#fd-cursor svg { filter: drop-shadow(0 3px 8px rgba(0,0,0,.5)); display: block; }
+#fd-cursor .fd-ring {
+  position: absolute; left: 50%; top: 50%; width: 30px; height: 30px; margin: -15px 0 0 -15px;
+  border-radius: 50%; border: 1.5px solid rgba(67,166,245,.55); background: rgba(154,233,255,.10);
+  transform: scale(1); transition: transform 130ms ease;
+}
+#fd-cursor.down .fd-ring { transform: scale(.68); }
+
+.fd-ripple {
+  position: absolute; width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 50%;
+  border: 2px solid #43A6F5; opacity: .9; animation: fd-ripple-anim 560ms cubic-bezier(.2,.6,.3,1) forwards;
+}
+@keyframes fd-ripple-anim { to { width: 70px; height: 70px; margin: -35px 0 0 -35px; opacity: 0; } }
+
+/* Keycap HUD */
+#fd-keys {
+  position: absolute; left: 50%; bottom: 96px; display: flex; align-items: center; gap: 6px;
+  opacity: 0; transform: translate(-50%, 10px) scale(.94);
+  transition: opacity 260ms ease, transform 260ms cubic-bezier(.3,1.4,.4,1);
+}
+#fd-keys.on { opacity: 1; transform: translate(-50%, 0) scale(1); }
+.fd-key {
+  background: rgba(14,19,28,.94); color: #EAF1F8; border: 1px solid rgba(255,255,255,.14);
+  border-radius: 8px; padding: 8px 13px; font: 600 14px/1 "JetBrains Mono", monospace;
+  box-shadow: 0 10px 28px rgba(0,0,0,.4);
+}
+.fd-key.plus { background: none; border: none; box-shadow: none; padding: 0 1px; color: rgba(234,241,248,.55); font: 600 13px/1 sans-serif; align-self: center; }
+
+/* Lower-third caption card, left-aligned */
+#fd-caption {
+  position: absolute; left: 44px; bottom: 40px; max-width: 460px; opacity: 0;
+  transform: translateY(14px);
+  transition: opacity 380ms ease, transform 380ms cubic-bezier(.22,.61,.36,1), top 380ms ease, bottom 380ms ease;
+  background: rgba(8,12,19,.88); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(255,255,255,.09); border-radius: 14px; padding: 18px 22px 19px 26px;
+  box-shadow: 0 24px 60px rgba(0,0,0,.4);
+}
+#fd-caption.on { opacity: 1; transform: translateY(0); }
+#fd-caption .bar { position: absolute; left: 0; top: 14px; bottom: 14px; width: 3px; border-radius: 3px; background: linear-gradient(180deg,#9AE9FF,#3F6BFF); }
+#fd-caption .t { font: 700 20px/1.28 "Schibsted Grotesk", sans-serif; color: #F4F8FC; letter-spacing: -.01em; }
+#fd-caption .s { margin-top: 6px; font: 400 14.5px/1.5 "Schibsted Grotesk", sans-serif; color: #AAB7C7; }
+
+/* Brand cards — title / end */
+#fd-card {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  flex-direction: column; opacity: 0; overflow: hidden;
+  background: radial-gradient(120% 140% at 20% 12%, #142238 0%, #070B12 55%, #030408 100%);
+  transition: opacity 700ms ease;
+}
+#fd-card.on { opacity: 1; }
+#fd-card .fd-glow {
+  position: absolute; inset: -20%; opacity: .38; filter: blur(70px);
+  background: conic-gradient(from 0deg at 50% 50%, #070B12, #123157, #1C4E8C, #43A6F5, #9AE9FF, #123157, #070B12);
+  animation: fd-spin 16s linear infinite;
+}
+@keyframes fd-spin { to { transform: rotate(360deg); } }
+#fd-card .fd-mark { position: relative; width: 58px; height: 58px; }
+#fd-card .fd-word { position: relative; margin-top: 20px; font: 700 48px/1 "Schibsted Grotesk", sans-serif; color: #F5F9FC; letter-spacing: -.02em; }
+#fd-card .fd-tag { position: relative; margin-top: 13px; font: 400 18px/1.4 "Schibsted Grotesk", sans-serif; color: #9CB2C8; }
+
+/* Scene dip (light theme -> soft white flash) */
+#fd-dip { position: absolute; inset: 0; background: #F6F9FC; opacity: 0; transition: opacity 300ms ease; }
+#fd-dip.on { opacity: 1; }

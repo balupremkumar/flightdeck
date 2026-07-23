@@ -79,10 +79,15 @@
     ],
     pwsh: [
       { t: 400, s: "\x1b[2mPowerShell 7.5.0\x1b[0m\r\n\r\n" },
-      { t: 1200, s: "\x1b[36mPS\x1b[0m {cwd}\x1b[36m>\x1b[0m npm ci\r\n" },
-      { t: 2400, s: "\x1b[2mnpm\x1b[0m \x1b[2minfo\x1b[0m resolving dependencies\r\n" },
-      { t: 4200, s: "added 412 packages in 6s\r\n\r\n" },
-      { t: 5600, s: "\x1b[36mPS\x1b[0m {cwd}\x1b[36m>\x1b[0m " },
+      { t: 1200, s: "\x1b[36mPS\x1b[0m {cwd}\x1b[36m>\x1b[0m npx vitest run\r\n\r\n" },
+      { t: 2600, s: "\x1b[2m RUN \x1b[0m v2.1.4 {cwd}\r\n\r\n" },
+      { t: 3800, s: "\x1b[32m ✓\x1b[0m src/api/upload.test.ts \x1b[2m(7 tests)\x1b[0m \x1b[2m142ms\x1b[0m\r\n" },
+      { t: 4600, s: "\x1b[32m ✓\x1b[0m src/middleware/rateLimit.test.ts \x1b[2m(11 tests)\x1b[0m \x1b[2m88ms\x1b[0m\r\n" },
+      { t: 5400, s: "\x1b[32m ✓\x1b[0m src/session/store.test.ts \x1b[2m(5 tests)\x1b[0m \x1b[2m61ms\x1b[0m\r\n\r\n" },
+      { t: 6300, s: "\x1b[2m Test Files \x1b[0m \x1b[32m3 passed\x1b[0m \x1b[2m(3)\x1b[0m\r\n" },
+      { t: 6700, s: "\x1b[2m      Tests \x1b[0m \x1b[32m23 passed\x1b[0m \x1b[2m(23)\x1b[0m\r\n" },
+      { t: 7100, s: "\x1b[2m   Duration \x1b[0m 1.94s\r\n\r\n" },
+      { t: 7700, s: "\x1b[36mPS\x1b[0m {cwd}\x1b[36m>\x1b[0m " },
     ],
   };
 

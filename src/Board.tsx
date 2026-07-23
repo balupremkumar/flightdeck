@@ -392,15 +392,15 @@ export function Board() {
     <div className="board">
       <div className="board-header">
         <div className="board-title-row">
-          <span className="board-glyph"><IconBoard size={17} /></span>
+          <span className="board-glyph"><IconBoard size={18} /></span>
           <div className="board-title-group">
             <div className="board-title">Board</div>
             <div className="board-subtitle">drag a card to In Progress to dispatch it to an agent pane</div>
           </div>
           <span className="board-spacer" />
-          <button className="board-icon-btn" title="Copy board as Markdown" onClick={doExport}><IconExport size={13} /></button>
-          <button className="board-icon-btn board-icon-btn-danger" title="Reset board: discards every card" onClick={refresh}><IconWipe size={14} /></button>
-          <button className="board-new-btn" onClick={() => setShowComposer(true)}><IconPlus size={13} /> New Task</button>
+          <button className="board-icon-btn" title="Copy board as Markdown" onClick={doExport}><IconExport size={16} /></button>
+          <button className="board-icon-btn board-icon-btn-danger" title="Reset board: discards every card" onClick={refresh}><IconWipe size={17} /></button>
+          <button className="board-new-btn" onClick={() => setShowComposer(true)}><IconPlus size={15} /> New Task</button>
         </div>
         <div className="board-toolbar">
           <input
@@ -424,7 +424,7 @@ export function Board() {
               setLegendPos({ x: r.left, y: r.bottom + 6 });
             }}
           >
-            <IconInfo size={13} />
+            <IconInfo size={16} />
           </button>
           <select className="board-filter" value={agentFilter} onChange={(e) => setAgentFilter(e.target.value as Vendor | "ALL")}>
             <option value="ALL">All agents</option>

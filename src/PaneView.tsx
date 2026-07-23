@@ -316,19 +316,12 @@ function PaneViewInner({
   // Token chip (UI-3): real numbers from the agent's own session transcript
   // (Claude Code writes ~/.claude/projects/<cwd>/*.jsonl). Agents without a
   // transcript return null and get no chip — never an estimate.
-  // UI-17: the font-zoom controls were mouse-only, buried in the overflow menu.
-  // Ctrl+= / Ctrl+- / Ctrl+0 act on the focused pane.
-  useEffect(() => {
-    if (!focused) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (!e.ctrlKey || e.altKey) return;
-      if (e.key === "=" || e.key === "+") { e.preventDefault(); setFontSize((f) => Math.min(MAX_FONT, f + 1)); }
-      else if (e.key === "-" || e.key === "_") { e.preventDefault(); setFontSize((f) => Math.max(MIN_FONT, f - 1)); }
-      else if (e.key === "0") { e.preventDefault(); setFontSize(DEFAULT_FONT); }
-    };
-    window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
-  }, [focused]);
+  // UI-17 superseded (owner feedback item 3): Ctrl+=/-/0 used to zoom this
+  // pane's font; those keys now mean whole-app zoom (Cockpit.tsx, capture
+  // phase) so browser-style zoom expectations work everywhere, including
+  // while a terminal has focus. Two capture-phase listeners on the same keys
+  // would both fire — removed here rather than there, since per-pane font
+  // size stays reachable via the +/− buttons in the overflow menu below.
 
   // UI-132: terminal context menu (copy/paste/clear/find), positioned at the
   // click. Native right-click gives nothing useful inside a canvas terminal.
@@ -581,7 +574,7 @@ Running low — consider /compact in this pane.` : "")
                 : "Restart this pane in the same folder"
             }
           >
-            <IconRefresh size={12} /> Restart
+            <IconRefresh size={14} /> Restart
           </button>
         )}
         <button
@@ -589,14 +582,14 @@ Running low — consider /compact in this pane.` : "")
           onClick={() => (searchOpen ? closeSearch() : setSearchOpen(true))}
           title="Find in scrollback"
         >
-          <IconSearch size={13} />
+          <IconSearch size={17} />
         </button>
         <button className="pmaxbtn" onClick={() => onToggleMaximize(pane.id)} title={maximized ? "Restore" : "Maximise this pane"}>
-          {maximized ? <IconMinimize size={13} /> : <IconMaximizePane size={13} />}
+          {maximized ? <IconMinimize size={17} /> : <IconMaximizePane size={17} />}
         </button>
         <div className="pmenu-wrap">
           <button ref={menuBtnRef} className="pmenubtn" onClick={() => (menuOpen ? closeMenu() : openMenu())} title="More actions">
-            <IconOverflow size={14} />
+            <IconOverflow size={17} />
           </button>
           {menuOpen && menuPos && createPortal(
             <div className="pmenu" style={{ top: menuPos.top, left: menuPos.left }} onMouseLeave={closeMenu}>
@@ -633,7 +626,7 @@ Running low — consider /compact in this pane.` : "")
                 <IconFolder size={13} /> Reveal in Explorer
               </button>
               <div className="pmenu-zoom">
-                <span className="pmenu-zoom-label">Font size <kbd className="pmenu-kbd">Ctrl</kbd>+<kbd className="pmenu-kbd">=</kbd></span>
+                <span className="pmenu-zoom-label">Font size (this pane)</span>
                 <div className="pmenu-zoom-controls">
                   <button onClick={() => setFontSize((f) => Math.max(MIN_FONT, f - 1))} title="Zoom out">&minus;</button>
                   <span>{fontSize}px</span>
@@ -670,7 +663,7 @@ Running low — consider /compact in this pane.` : "")
             document.body
           )}
         </div>
-        <button className="x" onClick={tryClosePane} title="Close pane"><IconClose size={12} /></button>
+        <button className="x" onClick={tryClosePane} title="Close pane"><IconClose size={16} /></button>
       </div>
       <div
         className={"pbody" + (bell ? " bell" : "")}
