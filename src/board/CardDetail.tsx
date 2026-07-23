@@ -52,8 +52,9 @@ export function CardDetail({ cardId, onClose }: { cardId: string; onClose: () =>
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    // capture: xterm swallows Escape otherwise
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
   }, [onClose]);
 
   if (!card) return null;

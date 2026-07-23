@@ -118,16 +118,22 @@ export function deriveAccent(hex: string): AccentPreset | null {
   const c = hexToHsl(hex);
   if (!c) return null;
   const { h, s } = c;
+  // UI-audit 2.9: an achromatic pick (grey/black/white, s≈0) has no hue to
+  // keep — forcing a saturation floor on it used to tint the ramp with h's
+  // arbitrary fallback value (0 = red) even though the user picked no colour
+  // at all. Only a genuinely saturated pick gets the "make sure it reads"
+  // floor; a neutral pick stays neutral at every derived lightness.
+  const neutral = s < 0.04;
   // Dark mode: keep the hue, force enough lightness to read on --abyss.
   const dL = Math.min(Math.max(c.l, 0.52), 0.68);
-  const dAccent = hsl(h, Math.max(s, 0.35), dL);
-  const dIce = hsl(h, Math.max(s * 0.85, 0.3), Math.max(dL + 0.2, 0.78));
-  const dDeep = hsl(h + 12, Math.min(Math.max(s, 0.35) + 0.08, 1), Math.max(dL - 0.16, 0.3));
+  const dAccent = hsl(h, neutral ? 0 : Math.max(s, 0.35), dL);
+  const dIce = hsl(h, neutral ? 0 : Math.max(s * 0.85, 0.3), Math.max(dL + 0.2, 0.78));
+  const dDeep = hsl(neutral ? h : h + 12, neutral ? 0 : Math.min(Math.max(s, 0.35) + 0.08, 1), Math.max(dL - 0.16, 0.3));
   // Light mode: same hue, darkened so it holds contrast on white surfaces.
   const lL = Math.min(c.l, 0.38);
-  const lAccent = hsl(h, Math.max(s, 0.45), lL);
-  const lHi = hsl(h - 8, Math.max(s, 0.45), Math.min(lL + 0.12, 0.5));
-  const lDeep = hsl(h + 12, Math.min(Math.max(s, 0.45) + 0.08, 1), Math.max(lL - 0.1, 0.16));
+  const lAccent = hsl(h, neutral ? 0 : Math.max(s, 0.45), lL);
+  const lHi = hsl(neutral ? h : h - 8, neutral ? 0 : Math.max(s, 0.45), Math.min(lL + 0.12, 0.5));
+  const lDeep = hsl(neutral ? h : h + 12, neutral ? 0 : Math.min(Math.max(s, 0.45) + 0.08, 1), Math.max(lL - 0.1, 0.16));
   return {
     id: CUSTOM_ACCENT_ID,
     label: "Custom",

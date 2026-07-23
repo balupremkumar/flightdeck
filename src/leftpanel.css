@@ -186,3 +186,57 @@
 
 /* UI-232: workspace-level token roll-up */
 .lp-stat.lp-tok { font-family: var(--font-mono); color: var(--faint); }
+
+/* ============================================================
+   UI-C: workspace tile, status-dot fix plus a designed monogram treatment.
+   Base .lp-i / .lp-ic (size, radius, default fill) stay in App.css; this
+   layers a per-workspace identity tint on top via the --tint custom
+   property LeftPanel.tsx sets inline, and moves the status dot from a
+   flex-sibling of the wrapping meta row onto the tile itself (see the fix
+   comment at the .lp-i callsite in LeftPanel.tsx for why that mattered).
+   ============================================================ */
+
+/* Diagonal wash at the same 125deg the app's own --accent-grad uses, so a
+   tile's identity colour reads as "this app's gradient, this workspace's
+   hue" rather than an unrelated decoration. Excluded for .add (no workspace,
+   no tint), .lp-board-i (the Board row's icon, not a workspace) and .active
+   (the accent-dim treatment already IS the "this one" signal, and layering a
+   second colour on top would compete with it, not reinforce it). */
+.lp-ic:not(.add):not(.lp-board-i):not(.active),
+.lp-ws:not(.active) .lp-i:not(.lp-board-i) {
+  position: relative;
+  background:
+    linear-gradient(125deg,
+      color-mix(in srgb, var(--tint, var(--accent)) 34%, var(--bg-elevated)) 0%,
+      var(--bg-elevated) 62%,
+      color-mix(in srgb, var(--tint, var(--accent)) 16%, var(--bg-elevated)) 100%);
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--tint, var(--accent)) 52%, transparent);
+}
+/* .active already gets its own position:relative via App.css's .lp-ic rule;
+   .lp-i doesn't, and the dot below needs an anchor regardless of active
+   state (an active tile can still be the one that just errored). */
+.lp-ws .lp-i { position: relative; }
+
+/* The presence dot: an avatar badge, not a row element, and that's the whole
+   fix. Bottom-right is the universal "status on an avatar" spot (Slack,
+   Teams, GitHub); it can never collide with wrapped text because it isn't
+   part of that flow anymore. The two-layer box-shadow both cuts a ring back
+   to the panel's own background (separating the dot from the tint wash
+   underneath it) and gives it a soft glow, matching the pulse treatment
+   `.lp-wait` already had.  */
+.lp-ws .lp-i .lp-wait,
+.lpanel .lp-ic .lp-wait.sm {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  left: auto;
+  top: auto;
+  margin: 0;
+  box-shadow: 0 0 0 2px var(--bg-surface), 0 0 4px color-mix(in srgb, var(--st-waiting) 65%, transparent);
+}
+/* Error takes the same slot, red instead of gold: see tileState() in
+   LeftPanel.tsx, which never shows both at once. */
+.lp-wait.lp-wait-err {
+  background: var(--st-error);
+  box-shadow: 0 0 0 2px var(--bg-surface), 0 0 4px color-mix(in srgb, var(--st-error) 65%, transparent);
+}

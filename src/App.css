@@ -38,12 +38,13 @@ body {
 /* Inside the first-run chrome, .launcher is a child of the flex-row .cockpit —
    without flex:1 it shrinks to content width and the dialog pins left. */
 .cockpit > .launcher { flex: 1; min-width: 0; }
-.launcher.overlay { position: fixed; inset: 0; height: auto; background: rgba(0,0,0,.55); z-index: 50; }
+/* UI-245: full-screen modal dialog, same tier as the Settings scrim. */
+.launcher.overlay { position: fixed; inset: 0; height: auto; background: rgba(0,0,0,.55); z-index: var(--z-settings); }
 .dialog { width: 470px; max-width: calc(100% - 32px); max-height: 88vh; display: flex; flex-direction: column; background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; box-shadow: 0 30px 70px -20px rgba(0,0,0,.8); }
 .dialog .dh { display: flex; align-items: center; padding: 16px 18px 12px; }
 .dialog .dh h2 { margin: 0; font-size: 16px; font-weight: 700; }
 .dialog .dh .dh-x { margin-left: auto; display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 6px; color: var(--tmuted); cursor: pointer; transition: color .14s ease, background-color .14s ease; }
-.dialog .dh .dh-x:hover { color: var(--text-primary); background: rgba(255,255,255,.06); }
+.dialog .dh .dh-x:hover { color: var(--text-primary); background: color-mix(in srgb, var(--text) 7%, transparent); }
 .dialog .db { padding: 4px 18px 18px; display: flex; flex-direction: column; gap: 16px; overflow-y: auto; }
 .lbl { font-size: 10.5px; font-weight: 600; letter-spacing: .13em; text-transform: uppercase; color: var(--tmuted); }
 .tiles { display: flex; gap: 8px; margin-top: 8px; }
@@ -72,7 +73,7 @@ body {
 .dirbtn:hover { border-color: var(--border-focus); }
 .dirbtn.custom { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); }
 .dirreset { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; color: var(--tmuted); background: transparent; border: 0; border-radius: 5px; cursor: pointer; flex: none; transition: color .14s ease, background-color .14s ease; }
-.dirreset:hover { color: var(--text-primary); background: rgba(255,255,255,.06); }
+.dirreset:hover { color: var(--text-primary); background: color-mix(in srgb, var(--text) 7%, transparent); }
 .dialog .df { display: flex; align-items: center; gap: 10px; padding: 14px 18px; border-top: 1px solid var(--border); }
 .df .cancel { font: inherit; font-size: 12.5px; color: var(--text-secondary); background: transparent; border: 0; cursor: pointer; padding: 8px 12px; }
 .btn-primary { margin-left: auto; font: inherit; font-size: 12.5px; font-weight: 700; color: var(--on-accent); background: var(--accent-grad); border: 0; border-radius: 8px; padding: 9px 16px; cursor: pointer; transition: filter .14s ease, transform .14s ease; }
@@ -84,17 +85,19 @@ body {
 .cockpit-root { height: 100%; display: flex; flex-direction: column; }
 .topbar { height: 40px; flex: none; display: flex; align-items: center; gap: 10px; padding: 0 10px; border-bottom: 1px solid var(--border); background: var(--bg-app); }
 .topbar .tb-toggle { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 26px; border: 0; background: transparent; color: var(--tmuted); border-radius: 6px; cursor: pointer; transition: color .14s ease, background-color .14s ease; }
-.topbar .tb-toggle:hover { color: var(--text-primary); background: rgba(255,255,255,.05); }
+.topbar .tb-toggle:hover { color: var(--text-primary); background: color-mix(in srgb, var(--text) 6%, transparent); }
 .topbar .tb-toggle:focus-visible, .topbar .tb-ic:focus-visible, .ntf-bell:focus-visible { outline: 2px solid var(--ice); outline-offset: 1px; }
 .topbar .brand-mark { display: inline-flex; color: var(--accent); margin-left: 2px; }
 .topbar .brand { font-weight: 700; font-size: 14.5px; letter-spacing: -0.01em; }
-.topbar .ws { color: var(--text-secondary); font-size: 13.5px; }
+/* UI-audit 2.5: a long workspace name must never crowd the icon row. */
+.topbar .ws { color: var(--text-secondary); font-size: 13.5px; min-width: 0; max-width: 260px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .topbar .sp { flex: 1; }
 .topbar .tb-ic { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 26px; border: 0; background: transparent; color: var(--tmuted); border-radius: 6px; cursor: pointer; transition: color .14s ease, background-color .14s ease; }
-.topbar .tb-ic:hover { color: var(--text-primary); background: rgba(255,255,255,.05); }
+.topbar .tb-ic:hover { color: var(--text-primary); background: color-mix(in srgb, var(--text) 6%, transparent); }
 /* Add-pane menu — contextual "+" next to the workspace name in the top bar. */
 .addpane-wrap { position: relative; }
-.addpane-menu { position: absolute; left: 0; top: 34px; width: 230px; background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow-lg); z-index: 60; overflow: hidden; padding-bottom: 4px; }
+/* UI-245: contextual dropdown, same tier as every other non-portalled menu. */
+.addpane-menu { position: absolute; left: 0; top: 34px; width: 230px; background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow-lg); z-index: var(--z-menu); overflow: hidden; padding-bottom: 4px; }
 .apm-h { padding: 10px 12px 8px; font-size: 10.5px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: var(--tmuted); border-bottom: 1px solid var(--border-soft); margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .apm-item { display: flex; align-items: center; gap: 9px; width: 100%; text-align: left; font: inherit; font-size: 13px; color: var(--text-primary); background: transparent; border: 0; padding: 7px 12px; cursor: pointer; transition: background-color .14s ease; }
 .apm-item:hover { background: color-mix(in srgb, var(--accent) 9%, transparent); }
@@ -129,10 +132,10 @@ body {
 .lp-title { font-size: 11.5px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--tmuted); }
 .lp-count { font-size: 11px; color: var(--tmuted); }
 .lp-add { margin-left: auto; display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border: 0; background: transparent; color: var(--tmuted); border-radius: 6px; cursor: pointer; transition: color .14s ease, background-color .14s ease; }
-.lp-add:hover { color: var(--text-primary); background: rgba(255,255,255,.06); }
+.lp-add:hover { color: var(--text-primary); background: color-mix(in srgb, var(--text) 7%, transparent); }
 .lp-list { display: flex; flex-direction: column; gap: 2px; padding: 0 10px; }
 .lp-ws { position: relative; display: flex; align-items: center; gap: 11px; padding: 9px 9px; border-radius: 10px; cursor: pointer; transition: background-color .14s ease, box-shadow .14s ease; }
-.lp-ws:hover { background: rgba(255,255,255,.045); }
+.lp-ws:hover { background: color-mix(in srgb, var(--text) 5%, transparent); }
 .lp-ws.active { background: var(--accent-dim); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 38%, transparent); }
 .lp-ws.active::before { content: ""; position: absolute; left: -10px; top: 4px; bottom: 4px; width: 3px; border-radius: 2px; background: var(--accent); box-shadow: 0 0 10px var(--accent); }
 .lp-i { width: 30px; height: 30px; border-radius: 9px; background: var(--bg-elevated); color: var(--text-secondary); font-size: 12.5px; font-weight: 700; display: grid; place-items: center; flex: none; transition: background-color .14s ease, color .14s ease; }
@@ -158,10 +161,10 @@ body {
 .lp-badge { min-width: 18px; height: 18px; border-radius: 999px; background: var(--bg-elevated); color: var(--text-secondary); font-size: 10px; font-weight: 700; display: grid; place-items: center; padding: 0 5px; flex: none; }
 .lp-x { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border: 0; background: transparent; color: var(--tmuted); border-radius: 5px; cursor: pointer; opacity: 0; flex: none; transition: opacity .14s ease, color .14s ease, background-color .14s ease; }
 .lp-ws:hover .lp-x { opacity: 1; }
-.lp-x:hover { color: var(--st-error); background: rgba(255,255,255,.06); }
+.lp-x:hover { color: var(--st-error); background: color-mix(in srgb, var(--st-error) 12%, transparent); }
 .lp-sep { height: 1px; background: var(--border); margin: 10px 14px; }
 .lp-app { position: relative; display: flex; align-items: center; gap: 9px; padding: 7px 8px; margin: 0 10px; border-radius: 8px; cursor: pointer; transition: background-color .14s ease, box-shadow .14s ease; }
-.lp-app:hover { background: rgba(255,255,255,.045); }
+.lp-app:hover { background: color-mix(in srgb, var(--text) 5%, transparent); }
 .lp-app.active { background: var(--accent-dim); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 38%, transparent); }
 .lp-app.active::before { content: ""; position: absolute; left: -10px; top: 4px; bottom: 4px; width: 3px; border-radius: 2px; background: var(--accent); box-shadow: 0 0 10px var(--accent); }
 
@@ -224,7 +227,8 @@ body {
 .phead .branch svg { flex: none; }
 .phead .sp { flex: 1; }
 .phead .x { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border: 0; background: transparent; color: var(--tmuted); cursor: pointer; border-radius: 5px; transition: color .14s ease, background-color .14s ease; }
-.phead .x:hover { color: var(--text-primary); background: rgba(255,255,255,.08); }
+.phead .x:hover { color: var(--text-primary); background: color-mix(in srgb, var(--text) 9%, transparent); }
+.phead .x { flex: none; }
 .phead .x:focus-visible { outline: 2px solid var(--ice); outline-offset: 1px; }
 .phead .prestart { display: inline-flex; align-items: center; gap: 5px; font: inherit; font-size: 11px; font-weight: 600; color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent); border-radius: 6px; padding: 2px 8px; cursor: pointer; flex: none; transition: background-color .14s ease; }
 .phead .prestart:hover { background: color-mix(in srgb, var(--accent) 24%, transparent); }

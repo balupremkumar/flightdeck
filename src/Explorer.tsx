@@ -5,11 +5,13 @@
 // a missing/erroring command degrades silently, never crashes the tree).
 import { useCallback, useEffect, useRef, useState, type SVGProps } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
+import { openPath } from "@tauri-apps/plugin-opener";
 import { IconFolder, IconFile, IconChevron, IconBranch, IconAgent, IconRefresh } from "./Icons";
 import { spawnPane } from "./worktrees";
 import type { DiffFile, DiffSummary } from "./worktrees";
 import { cachedInvoke, usePoll } from "./poll";
+import { revealPath } from "./reveal";
+import { useUI } from "./ui";
 import "./explorer.css";
 
 interface Entry { name: string; dir: boolean; }
@@ -86,6 +88,17 @@ function rowIndent(depth: number): number {
   return 8 + Math.min(depth, 12) * 14;
 }
 
+// Order and content equality for a directory listing — used to skip a
+// setChildren (and the re-render it causes) when a background refresh
+// reads back the same entries (audit 2.3).
+function sameEntries(a: Entry[], b: Entry[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i].name !== b[i].name || a[i].dir !== b[i].dir) return false;
+  }
+  return true;
+}
+
 type NodeStatus = "idle" | "loading" | "loaded" | "denied";
 
 // UI-49 / QOL 323: node_modules-scale directories put thousands of rows into
@@ -94,12 +107,16 @@ type NodeStatus = "idle" | "loading" | "loaded" | "denied";
 // navigating, and nobody scrolls 4000 sibling files.
 const MAX_ROWS = 300;
 
-function Node({ name, path, dir, depth, wsId, vendor, onOpenFile, onContext, expandKey, changed }: {
+function Node({ name, path, dir, depth, wsId, vendor, onOpenFile, onContext, expandKey, changed, refreshTick }: {
   name: string; path: string; dir: boolean; depth: number;
   wsId?: number; vendor: string; onOpenFile: (path: string) => void;
   onContext: (x: number, y: number, path: string, dir: boolean) => void;
   expandKey: string;
   changed: Map<string, DiffFile>;
+  /** Bumped by the parent on every poll/focus/manual reload (audit 2.3): lets
+   *  an already-expanded node silently re-fetch its own children, so files an
+   *  agent adds inside an open folder show up without collapse/re-expand. */
+  refreshTick: number;
 }) {
   const [expanded, setExpanded] = useState(() => isExpanded(expandKey, path));
   const [children, setChildren] = useState<Entry[] | null>(null);
@@ -140,6 +157,24 @@ function Node({ name, path, dir, depth, wsId, vendor, onOpenFile, onContext, exp
       .catch(() => { setStatus("denied"); setExpanded(false); });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dir, expanded]);
+
+  // Nested refresh (audit 2.3): the root's 10s poll / focus reload bumps
+  // refreshTick; an already-expanded folder with children already loaded
+  // re-fetches quietly here. Compares before setState so an unchanged
+  // directory never re-renders (no flicker). Collapsed/not-yet-loaded nodes
+  // skip entirely — cheap, and only visible nodes ever mount at all.
+  const prevRefreshTick = useRef(refreshTick);
+  useEffect(() => {
+    if (prevRefreshTick.current === refreshTick) return;
+    prevRefreshTick.current = refreshTick;
+    if (!dir || !expanded || children === null) return;
+    invoke<Entry[]>("fs_list_dir", { path })
+      .then((entries) => {
+        setChildren((prev) => (prev && sameEntries(prev, entries) ? prev : entries));
+      })
+      .catch(() => { /* transient read failure — leave the stale listing in place */ });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshTick]);
 
   const newTerminalHere = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -188,7 +223,7 @@ function Node({ name, path, dir, depth, wsId, vendor, onOpenFile, onContext, exp
         ) : (
           children.slice(0, MAX_ROWS).map((c) => (
             <Node
-              key={c.name}
+              key={joinPath(path, c.name)}
               name={c.name}
               path={joinPath(path, c.name)}
               dir={c.dir}
@@ -199,6 +234,7 @@ function Node({ name, path, dir, depth, wsId, vendor, onOpenFile, onContext, exp
               onContext={onContext}
               expandKey={expandKey}
               changed={changed}
+              refreshTick={refreshTick}
             />
           ))
         )
@@ -259,6 +295,7 @@ function rememberExpanded(key: string, path: string, open: boolean) {
 }
 
 export function Explorer({ root, wsId, vendor = "pwsh", paneRoot, paneLabel }: ExplorerProps) {
+  const pushToast = useUI((s) => s.pushToast);
   const [panelOpen, setPanelOpen] = useState(true);
   const [entries, setEntries] = useState<Entry[]>([]);
   const [status, setStatus] = useState<RootStatus>(root ? "loading" : "empty-root");
@@ -267,6 +304,10 @@ export function Explorer({ root, wsId, vendor = "pwsh", paneRoot, paneLabel }: E
   // node paths the tree renders so a row can look itself up with no per-node
   // fetch. Empty (not stale) whenever the repo/base can't be diffed.
   const [changed, setChanged] = useState<Map<string, DiffFile>>(new Map());
+  // Bumped on every load() (manual refresh, 10s poll, focus reload) so
+  // already-expanded Node instances know to quietly re-fetch their own
+  // children too (audit 2.3) — see Node's refreshTick effect.
+  const [refreshTick, setRefreshTick] = useState(0);
   const seq = useRef(0);
   // Per-pane rooting: browse the focused pane's worktree instead of the main
   // checkout. Preference persisted; falls back to workspace when the focused
@@ -329,6 +370,7 @@ export function Explorer({ root, wsId, vendor = "pwsh", paneRoot, paneLabel }: E
     if (!effectiveRoot) { setStatus("empty-root"); return; }
     const mySeq = ++seq.current;
     if (!quiet) setStatus("loading");
+    setRefreshTick((t) => t + 1);
     invoke<Entry[]>("fs_list_dir", { path: effectiveRoot })
       .then((e) => { if (seq.current === mySeq) { setEntries(e); setStatus("loaded"); } })
       .catch(() => { if (seq.current === mySeq && !quiet) setStatus("error"); });
@@ -423,7 +465,7 @@ export function Explorer({ root, wsId, vendor = "pwsh", paneRoot, paneLabel }: E
           >
             Copy relative path
           </button>
-          <button className="ex-ctx-item" onClick={() => { void revealItemInDir(ctx.path).catch(() => {}); setCtx(null); }}>
+          <button className="ex-ctx-item" onClick={() => { void revealPath(ctx.path); setCtx(null); }}>
             Reveal in Explorer
           </button>
           {ctx.dir && wsId != null && (
@@ -449,7 +491,7 @@ export function Explorer({ root, wsId, vendor = "pwsh", paneRoot, paneLabel }: E
             <div className="ex-tree">
               {entries.slice(0, MAX_ROWS).map((e) => (
                 <Node
-                  key={e.name}
+                  key={joinPath(effectiveRoot, e.name)}
                   name={e.name}
                   path={joinPath(effectiveRoot, e.name)}
                   dir={e.dir}
@@ -458,8 +500,9 @@ export function Explorer({ root, wsId, vendor = "pwsh", paneRoot, paneLabel }: E
                   vendor={vendor}
                   expandKey={effectiveRoot}
                   onContext={(x, y, path, isDir) => setCtx({ x, y, path, dir: isDir })}
-                  onOpenFile={(p) => { openPath(p).catch(() => { /* no default app / unsupported — ignore */ }); }}
+                  onOpenFile={(p) => { openPath(p).catch((e) => pushToast("error", `Couldn't open ${p}: ${String(e)}`)); }}
                   changed={changed}
+                  refreshTick={refreshTick}
                 />
               ))}
               {entries.length > MAX_ROWS && (

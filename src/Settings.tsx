@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { save, open as openDialog } from "@tauri-apps/plugin-dialog";
-import { revealItemInDir, openUrl } from "@tauri-apps/plugin-opener";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import { revealPath } from "./reveal";
 import { useUI, applyUiScale } from "./ui";
 import { useApp } from "./store";
 import { bytes, relTime, absTime } from "./format";
@@ -1231,7 +1232,7 @@ export function Settings() {
                 className="set-btn"
                 onClick={() => {
                   invoke<string | null>("vendors_dir")
-                    .then((dir) => { if (dir) return revealItemInDir(dir); })
+                    .then((dir) => { if (dir) return revealPath(dir); })
                     .catch(() => useUI.getState().pushToast("error", "Couldn't open the vendors folder."));
                 }}
               >

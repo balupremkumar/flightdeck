@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { MouseEvent as ReactMouseEvent, DragEvent as ReactDragEvent, SVGProps } from "react";
+import type { CSSProperties, MouseEvent as ReactMouseEvent, DragEvent as ReactDragEvent, SVGProps } from "react";
 import { useApp, type PaneModel, type Workspace } from "./store";
 import { useUI } from "./ui";
 import { defaultCycle } from "./vendors";
@@ -14,7 +14,13 @@ import { revealItemInDir, openUrl } from "@tauri-apps/plugin-opener";
 import "./leftpanel.css";
 
 function initial(name: string): string {
-  return (name.trim()[0] || "?").toUpperCase();
+  // Two-character monogram: first letters of the first two words when the name
+  // has separators, else the first two characters. Single-letter monograms made
+  // every "acme-*" workspace tile read identically.
+  const words = name.trim().split(/[\s\-_./]+/).filter(Boolean);
+  if (words.length === 0) return "?";
+  const mono = words.length >= 2 ? words[0][0] + words[1][0] : words[0].slice(0, 2);
+  return mono.toUpperCase();
 }
 
 // UI-22: "starting" counts separately — a workspace reading "3 running" when
@@ -27,6 +33,16 @@ function rollup(panes: PaneModel[]) {
     waiting: panes.filter((p) => p.state === "waiting" || p.state === "permission").length,
     error: panes.filter((p) => p.state === "error").length,
   };
+}
+
+// UI-C (bug fix + tile redesign): a tile shows at most one status dot, so
+// when both are present error wins, since it's the more urgent of the two
+// and a workspace with an errored pane is never merely "waiting". Shared by
+// the rail and the expanded tile so the two never disagree.
+function tileState(r: ReturnType<typeof rollup>): "error" | "waiting" | null {
+  if (r.error > 0) return "error";
+  if (r.waiting > 0) return "waiting";
+  return null;
 }
 
 type View = "terminals" | "board";
@@ -369,7 +385,16 @@ export function LeftPanel({ expanded, view, setView }: { expanded: boolean; view
   const now = Date.now();
 
   const contextMenu = menu && menuWs && (
-    <div className="lp-menu" style={{ left: menu.x, top: menu.y }}>
+    // BUG (user-reported): every item in here was dead. The dismiss-on-outside-
+    // interaction effect below closes `menu` on ANY window mousedown with no
+    // target check, and this container was the one popover in the app missing
+    // the `onMouseDown` stopPropagation guard its siblings already carry
+    // (compare Board.tsx's `.bd-pop`/`.pri-legend` and CardItem.tsx's agent
+    // picker). A mousedown on "Rename" (or any other item) bubbled straight to
+    // `window` and unmounted the menu before the browser ever dispatched the
+    // matching `click`, silently swallowing the click. Guarding the whole
+    // menu, not just the colour-swatch row, closes it for every item at once.
+    <div className="lp-menu" style={{ left: menu.x, top: menu.y }} onMouseDown={(e) => e.stopPropagation()}>
       <button onClick={() => { openWs(menuWs.id); setMenu(null); }}>Open</button>
       <button onClick={() => startRename(menuWs)}>Rename</button>
       <button onClick={() => duplicate(menuWs)}>Duplicate</button>
@@ -407,6 +432,7 @@ export function LeftPanel({ expanded, view, setView }: { expanded: boolean; view
         {workspaces.map((w) => {
           const r = rollup(w.panes);
           const active = w.id === activeId && view === "terminals";
+          const status = tileState(r);
           return (
             <button
               className={"lp-ic" + (active ? " active" : "")}
@@ -415,11 +441,16 @@ export function LeftPanel({ expanded, view, setView }: { expanded: boolean; view
               onContextMenu={(e) => openMenu(e, w.id)}
               title={w.name}
               data-tip={w.name}
-              style={{ boxShadow: `inset 0 0 0 2px ${tintFor(w)}` }}
+              style={{ "--tint": tintFor(w) } as CSSProperties}
             >
               {initial(w.name)}
               <span className="lp-badge sm">{r.total}</span>
-              {r.waiting > 0 && !active && <span className="lp-wait sm" />}
+              {status && !active && (
+                <span
+                  className={"lp-wait sm" + (status === "error" ? " lp-wait-err" : "")}
+                  title={status === "error" ? "Needs attention" : "Waiting on you"}
+                />
+              )}
             </button>
           );
         })}
@@ -465,6 +496,7 @@ export function LeftPanel({ expanded, view, setView }: { expanded: boolean; view
           const active = w.id === activeId && view === "terminals";
           const isRenaming = renameId === w.id;
           const last = relTime(lastActive[w.id], now);
+          const status = tileState(r);
           return (
             <div
               className={
@@ -493,7 +525,29 @@ export function LeftPanel({ expanded, view, setView }: { expanded: boolean; view
               ].filter(Boolean).join(" · ")}
             >
               <span className="lp-drag-handle"><IconDrag size={12} /></span>
-              <span className="lp-i" style={{ boxShadow: `inset 0 0 0 2px ${tintFor(w)}` }}>{initial(w.name)}</span>
+              {/* BUG FIX: the status dot used to render as a flex sibling of
+                  .lp-body, after it, so .lp-ws's `align-items: center`
+                  vertically centred the dot against the ROW's full height,
+                  not against the name line. .lp-body wraps onto a second line
+                  whenever the meta row (mini grid + state chips + token count
+                  + timestamp) doesn't fit one line, which stretches the row
+                  and drags that centred position down onto whatever wrapped,
+                  the "18s ago" timestamp in the reported case. Reproducible
+                  at any zoom because it's a subpixel-width wrap threshold,
+                  not the root cause; the root cause is centring a dot against
+                  a box that can silently change height. Anchoring the dot to
+                  the fixed-size monogram tile instead (like the collapsed
+                  rail already correctly does for its own dot) makes the
+                  collision structurally impossible: the tile never wraps. */}
+              <span className="lp-i" style={{ "--tint": tintFor(w) } as CSSProperties}>
+                {initial(w.name)}
+                {status && (
+                  <span
+                    className={"lp-wait" + (status === "error" ? " lp-wait-err" : "")}
+                    title={status === "error" ? "Needs attention" : "Waiting on you"}
+                  />
+                )}
+              </span>
               <span className="lp-body">
                 {isRenaming ? (
                   <input
@@ -509,7 +563,7 @@ export function LeftPanel({ expanded, view, setView }: { expanded: boolean; view
                     }}
                   />
                 ) : (
-                  <span className="lp-name" onDoubleClick={(e) => { e.stopPropagation(); startRename(w); }}>{w.name}</span>
+                  <span className="lp-name" onDoubleClick={(e) => { e.stopPropagation(); startRename(w); }} title="Double-click to rename">{w.name}</span>
                 )}
                 <span className="lp-meta">
                   {/* UI-149: the tile shows this workspace's actual pane layout
@@ -536,7 +590,6 @@ export function LeftPanel({ expanded, view, setView }: { expanded: boolean; view
                   )}
                 </span>
               </span>
-              {r.waiting > 0 && <span className="lp-wait" title="Waiting on you" />}
               <button className="lp-x" onClick={(e) => { e.stopPropagation(); doClose(w); }} title="Close workspace"><IconClose size={12} /></button>
             </div>
           );

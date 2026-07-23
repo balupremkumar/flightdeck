@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type DragEvent } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type DragEvent } from "react";
 import { createPortal } from "react-dom";
 import { IconBoard, IconWipe, IconPlus } from "./Icons";
 import { useApp } from "./store";
@@ -46,6 +46,18 @@ const PRIORITY_LEGEND: Record<Priority, string> = {
   MEDIUM: "Default weight — normal queue order.",
   HIGH: "Needs attention soon — pulled ahead of Medium/Low.",
   CRITICAL: "Urgent or blocking — treat as jump-the-queue.",
+};
+
+// ui-states: an empty column is onboarding, not a dead end, so each one says
+// what belongs there in terms of what the USER does next (drag, not "wait"),
+// rather than repeating one generic "No tasks yet" everywhere. To Do is the
+// one column cards can be typed straight into, so its copy points at the
+// composer instead of a drag gesture.
+const EMPTY_COPY: Record<ColumnId, string> = {
+  todo: "No tasks yet. Add one below.",
+  inprogress: "Drag a card here to dispatch it to an agent pane.",
+  review: "Drag a card here once it's ready for review.",
+  complete: "Drag a card here when it's done.",
 };
 
 export function Board() {
@@ -387,7 +399,7 @@ export function Board() {
           </div>
           <span className="board-spacer" />
           <button className="board-icon-btn" title="Copy board as Markdown" onClick={doExport}><IconExport size={13} /></button>
-          <button className="board-icon-btn" title="Reset board" onClick={refresh}><IconWipe size={14} /></button>
+          <button className="board-icon-btn board-icon-btn-danger" title="Reset board: discards every card" onClick={refresh}><IconWipe size={14} /></button>
           <button className="board-new-btn" onClick={() => setShowComposer(true)}><IconPlus size={13} /> New Task</button>
         </div>
         <div className="board-toolbar">
@@ -438,6 +450,7 @@ export function Board() {
             <div
               key={col.id}
               className={`col${dragOverCol === col.id ? " col-drop-active" : ""}`}
+              style={{ "--col-accent": col.accent } as CSSProperties}
               onDragOver={handleColDragOver}
               onDragEnter={() => handleColDragEnter(col.id)}
               onDragLeave={handleColDragLeave}
@@ -503,7 +516,7 @@ export function Board() {
                 {list.length === 0 && !(col.id === "todo" && showComposer) && (
                   <div className="col-empty">
                     <span className="col-empty-icon"><IconBoard size={16} /></span>
-                    <span>{filtering ? "No cards match" : "No tasks yet"}</span>
+                    <span>{filtering ? "No cards match" : EMPTY_COPY[col.id]}</span>
                   </div>
                 )}
                 {list.map((card) => (

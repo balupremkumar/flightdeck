@@ -1,6 +1,6 @@
 import { memo, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { revealItemInDir } from "@tauri-apps/plugin-opener";
+import { revealPath } from "./reveal";
 import { useApp, type PaneModel, type PaneState } from "./store";
 import { useUI } from "./ui";
 import { Terminal, type TerminalHandle } from "./Terminal";
@@ -254,7 +254,7 @@ function PaneViewInner({
 
   const reveal = async () => {
     try {
-      await revealItemInDir(pane.cwd);
+      await revealPath(pane.cwd);
     } catch {
       pushToast("error", "Couldn't open Explorer for this folder.");
     }
@@ -486,7 +486,7 @@ function PaneViewInner({
             onMouseDown={(e) => e.stopPropagation()}
           />
         ) : (
-          <span className="pname" title="Double-click to rename" onDoubleClick={() => setEditing(true)}>
+          <span className="pname" title={`${displayName} — double-click to rename`} onDoubleClick={() => setEditing(true)}>
             {displayName}
           </span>
         )}
@@ -495,8 +495,8 @@ function PaneViewInner({
           role="button"
           tabIndex={0}
           title={`${pane.cwd} — click to open in Explorer`}
-          onClick={() => { void revealItemInDir(pane.cwd).catch(() => pushToast("error", "Couldn't open that folder.")); }}
-          onKeyDown={(e) => { if (e.key === "Enter") void revealItemInDir(pane.cwd).catch(() => {}); }}
+          onClick={() => { void revealPath(pane.cwd).catch(() => pushToast("error", "Couldn't open that folder.")); }}
+          onKeyDown={(e) => { if (e.key === "Enter") void revealPath(pane.cwd).catch(() => {}); }}
         >
           &middot; {baseName(pane.cwd)}
         </span>
@@ -515,7 +515,7 @@ function PaneViewInner({
             onClick={() => copyText(gitStatus.branch ?? "", "Copied branch name")}
             onKeyDown={(e) => { if (e.key === "Enter") copyText(gitStatus.branch ?? "", "Copied branch name"); }}
           >
-            <IconBranch size={11} /> {gitStatus.branch}
+            <IconBranch size={11} /><span className="branch-name">{gitStatus.branch}</span>
             {gitStatus.dirty && (
               <span aria-hidden className="dirty-dot" />
             )}

@@ -221,7 +221,7 @@ export function Cockpit() {
         </button>
         <IconBrand size={18} className="brand-mark" />
         <span className="brand">Flightdeck</span>
-        <span className="ws">{view === "board" ? "Board" : active?.name}</span>
+        <span className="ws" title={view === "board" ? "Board" : active?.name}>{view === "board" ? "Board" : active?.name}</span>
         {view === "terminals" && active && (
           <div className="addpane-wrap">
             <button

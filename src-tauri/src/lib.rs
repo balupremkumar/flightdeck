@@ -10,6 +10,7 @@ mod job;
 mod orphans;
 mod persist;
 mod procname;
+mod reveal;
 mod support;
 mod usage;
 mod vendors;
@@ -478,6 +479,7 @@ pub fn run() {
             recover_orphans,
             kill_orphans,
             export_support_bundle,
+            reveal::reveal_in_explorer,
             gitstatus::git_status,
             worktree::git_repo_toplevel,
             worktree::git_worktree_add,

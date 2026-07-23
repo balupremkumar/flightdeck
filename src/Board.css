@@ -81,6 +81,16 @@
   background: var(--elevated);
 }
 
+/* UI-C: the reset button discards every card on the board (a confirm dialog
+   still guards the actual click). Von Restorff-isolating it with a danger
+   tint on hover, same as the icon-btn.danger pattern in theme.css, says
+   "careful" before the click, not just after. */
+.board-icon-btn-danger:hover {
+  border-color: var(--st-error);
+  color: var(--st-error);
+  background: color-mix(in srgb, var(--st-error) 10%, transparent);
+}
+
 .board-new-btn {
   display: inline-flex;
   align-items: center;
@@ -152,7 +162,13 @@
   max-width: 340px;
   display: flex;
   flex-direction: column;
-  background: var(--surface);
+  /* A hairline wash of the column's own accent (--col-accent, set inline from
+     boardStore's COLUMNS) on top of the shared surface colour: enough that
+     a column reads as "the blue one" out of the corner of your eye while
+     scanning, without competing with card content. Every value here is a
+     theme token or a mix of one, so it re-tints correctly across all 6
+     themes and both modes. */
+  background: color-mix(in srgb, var(--col-accent, transparent) 4%, var(--surface));
   border: 1px solid var(--soft-border);
   border-radius: 10px;
   overflow: hidden;
@@ -923,15 +939,25 @@
 }
 
 /* UI-158: "Send to agent…" — styled as a chip so it sits in the same row as
-   the priority/agent/checklist chips instead of inventing a new row. */
+   the priority/agent/checklist chips instead of inventing a new row.
+   UI-C: was a dashed border, which everywhere else on the board (the label
+   swatch menu trigger, the checklist's new-item field) means "empty slot,
+   type here". On an action chip that reads as disabled/placeholder rather
+   than clickable. Matching the solid-border chip-agent/chip-usage treatment
+   makes it read as one more fact about the card that happens to be a button,
+   with the accent-tinted hover carrying the "click me" signal instead. */
 .chip-send {
-  border: 1px dashed var(--border);
-  background: transparent;
-  color: var(--muted);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text2);
   cursor: pointer;
-  transition: border-color var(--t-fast) ease, color var(--t-fast) ease;
+  transition: border-color var(--t-fast) ease, color var(--t-fast) ease, background-color var(--t-fast) ease;
 }
-.chip-send:hover { border-color: var(--accent); color: var(--accent); }
+.chip-send:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+}
 
 /* ---------- Shared popover chrome (UI-158 agent picker, UI-164 legend) ----------
    Portalled to <body> like PaneView's .pmenu, for the same reason: col-list

@@ -8,7 +8,8 @@ import { LigaturesAddon } from "@xterm/addon-ligatures";
 import "@xterm/xterm/css/xterm.css";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import { revealPath } from "./reveal";
 import { terminalThemeFor } from "./terminal-theme";
 import { getTerminalSettings } from "./Settings";
 
@@ -60,7 +61,7 @@ function registerFilePathLinks(term: XTerm): { dispose(): void } {
         links.push({
           range: { start: { x: start + 1, y: bufferLineNumber }, end: { x: end, y: bufferLineNumber } },
           text: m[0],
-          activate: () => { revealItemInDir(target).catch(() => { /* not a real path — ignore */ }); },
+          activate: () => { void revealPath(target).catch(() => { /* not a real path — ignore */ }); },
         });
       }
       callback(links.length ? links : undefined);

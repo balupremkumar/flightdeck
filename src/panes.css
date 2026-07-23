@@ -5,6 +5,40 @@
    per-pane font zoom. Tokens only from theme.css.
    ============================================================ */
 
+/* ============================================================
+   UI-audit 2.1 — pane header space allocation.
+   A busy header (branch pill + dirty dot + proc chip + token chip + diff
+   badge + attention chip) used to push Restart/Find/Maximise/menu/Close
+   out of view with zero cue, because `.pane` clips overflow and every chip
+   was `flex:none` (full content width, never shrinks). Action buttons stay
+   flex:none (see App.css / panes.css button rules) — they are never in the
+   list below. Instead: `.phead` is a container-query context, and as it
+   narrows, chips fold away in priority order (lowest first), well before
+   the buttons would ever run out of room. This is a space fix only — every
+   chip looks exactly as before until its threshold is crossed.
+   Priority order, lowest first: live process name (transient) -> token
+   count (informational) -> folder name (redundant with the branch pill) ->
+   diff badge (duplicated as "Review changes" in the overflow menu) ->
+   branch pill (state dot + vendor glyph still show the pane's identity).
+   ============================================================ */
+.phead { container-type: inline-size; container-name: phead; }
+.phead .prepo {
+  flex: 0 1 auto; min-width: 0; max-width: 160px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.phead .branch { flex: 0 1 auto; min-width: 0; max-width: 180px; }
+.phead .branch-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+/* `.pane .phead X` (not just `.phead X`) deliberately: `.prepo` also carries
+   `.prepo-click` and `.branch` has its own unconditional `display: inline-flex`
+   elsewhere, both equal-specificity two-class selectors — without the extra
+   `.pane` ancestor these hides could lose the cascade tiebreak to whichever
+   rule happens to come later in the built stylesheet. */
+@container phead (max-width: 560px) { .pane .phead .pproc { display: none; } }
+@container phead (max-width: 480px) { .pane .phead .ptok { display: none; } }
+@container phead (max-width: 420px) { .pane .phead .prepo { display: none; } }
+@container phead (max-width: 340px) { .pane .phead .pdiff { display: none; } }
+@container phead (max-width: 280px) { .pane .phead .branch { display: none; } }
+
 /* Drag-to-reorder grip — lives at the start of .phead, drag source only. */
 .pgrip {
   display: inline-flex;
@@ -32,6 +66,9 @@
   padding: 1px 6px;
   flex: none;
   white-space: nowrap;
+  max-width: 90px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* UI-3: live token chip (from the agent's own session transcript) */
@@ -45,6 +82,9 @@
   flex: none;
   white-space: nowrap;
   cursor: default;
+  max-width: 100px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* Drag state on the pane being moved / the pane currently under the cursor. */
@@ -72,7 +112,7 @@
   max-width: 200px;
   outline: none;
 }
-.pname { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: text; }
+.pname { flex-shrink: 1; min-width: 32px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: text; }
 
 /* Maximise / focus mode toggle */
 .pmaxbtn {

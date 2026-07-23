@@ -493,7 +493,7 @@ export function Review() {
             </div>
             <div className="rv-patch-wrap">
               <div className="rv-patch-bar">
-                <span className="rv-patch-file">{selected}</span>
+                <span className="rv-patch-file" title={selected ?? undefined}>{selected}</span>
                 <span className="sp" />
                 <span className="rv-hunk-count">{hunkLines.length > 0 ? `hunk ${hunkIdx + 1}/${hunkLines.length}` : ""}</span>
                 <button className="rv-ic" onClick={() => jumpHunk(-1)} disabled={hunkLines.length === 0} title="Previous hunk">
@@ -580,7 +580,7 @@ export function Review() {
               <ul className="rv-conflict-files">
                 {conflict.conflictFiles.map((f) => (
                   <li key={f}>
-                    <span className="rv-conflict-file-path">{f}</span>
+                    <span className="rv-conflict-file-path" title={f}>{f}</span>
                     <span
                       className="rv-conflict-open"
                       role="button"

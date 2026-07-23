@@ -87,12 +87,12 @@
   /* Overlay z-index scale (UI-245). Single documented stack — every overlay
      must use one of these, never a fresh literal:
        explorer/panel chrome  1-10
-       pane menus (portalled)  90
+       menus (portalled or not: pane/board/left-panel/add-pane/explorer)  90
        bell/notification menu 110
        review drawer          120
        attention queue        130
        command palette        140
-       settings               150
+       settings / modal dialogs (incl. New Workspace overlay) 150
        confirm dialog         160
        toasts (always on top) 170 */
   --z-menu:90;

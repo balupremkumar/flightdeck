@@ -52,8 +52,27 @@ export const IconFolder = (p: IconProps) => (
 export const IconFile = (p: IconProps) => (
   <Svg {...p}><path d="M6 3.5 h5 l4 4 v9 a1 1 0 0 1 -1 1 h-8 a1 1 0 0 1 -1 -1 v-12 a1 1 0 0 1 1 -1 Z" /><path d="M11 3.5 V7.5 H15" /></Svg>
 );
+// Kanban icon (redesign): three lanes read as columns, not bars, because each
+// carries card ticks instead of being a solid block, the same "frame holds
+// contents" grammar Trello/Height/Linear all converge on for this glyph. The
+// lane rx (1.3) is intentionally a notch tighter than the 2px used on the
+// wider container icons (Panel/Workspace/Agent): same corner language,
+// scaled to a narrower shape so it doesn't read as a pill. The filled dot in
+// the middle (In Progress) lane reuses the small-filled-circle mark already
+// established by IconWorkspace/IconSettings, rather than inventing a new
+// motif, since this app's status language IS dots, so the board's own icon
+// says so too.
 export const IconBoard = (p: IconProps) => (
-  <Svg {...p}><rect x="3.5" y="4.5" width="3.6" height="11" rx="1" /><rect x="8.2" y="4.5" width="3.6" height="7.5" rx="1" /><rect x="12.9" y="4.5" width="3.6" height="9" rx="1" /></Svg>
+  <Svg {...p}>
+    <rect x="3.2" y="4.7" width="3.8" height="10.6" rx="1.3" />
+    <rect x="8.1" y="4.7" width="3.8" height="7.3" rx="1.3" />
+    <rect x="13" y="4.7" width="3.8" height="9" rx="1.3" />
+    <path d="M4.3 7 H6" />
+    <path d="M4.3 9.1 H6" />
+    <path d="M9.2 7 H10.9" />
+    <path d="M14.1 7 H15.8" />
+    <circle cx="10" cy="10.6" r="0.55" fill="currentColor" stroke="none" />
+  </Svg>
 );
 export const IconWorkspace = (p: IconProps) => (
   <Svg {...p}><rect x="3.5" y="4.5" width="13" height="11" rx="2" /><path d="M3.5 8 H16.5" /><circle cx="6" cy="6.2" r="0.5" fill="currentColor" /></Svg>
