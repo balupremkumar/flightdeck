@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useApp, type PaneState } from "./store";
 import { useUI, setTheme } from "./ui";
 import { closePaneGuarded } from "./worktrees";
+import { checkForUpdate } from "./updater";
 import { IconWorkspace, IconAgent, IconSettings, IconClose } from "./Icons";
 import { VendorGlyph } from "./VendorGlyph";
 import "./leftpanel.css";
@@ -165,6 +166,19 @@ export function CommandPalette() {
         run: () => useUI.getState().openSettingsAt(sec),
       });
     }
+    list.push({
+      id: "act:check-updates",
+      section: "Actions",
+      label: "Check for updates",
+      run: () => {
+        useUI.getState().openSettingsAt("About");
+        void checkForUpdate().then((res) => {
+          if (res.available && res.info) pushToast("info", `Flightdeck ${res.info.version} is available — install it from Settings > About.`);
+          else if (res.error) pushToast("error", `Update check failed: ${res.error}`);
+          else pushToast("success", "Flightdeck is up to date.");
+        });
+      },
+    });
     list.push({ id: "act:theme-dark", section: "Actions", label: "Switch to dark theme", run: () => setTheme("dark") });
     list.push({ id: "act:theme-light", section: "Actions", label: "Switch to light theme", run: () => setTheme("light") });
     list.push({ id: "act:toggle-panel", section: "Actions", label: "Toggle side panel", hint: "Ctrl+B", run: toggleSidePanel });

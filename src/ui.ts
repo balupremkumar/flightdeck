@@ -19,6 +19,16 @@ export interface Toast {
   text: string;
 }
 
+// Local-file self-update (updater.ts / Rust updates.rs): mirrors the last
+// successful check_update() result so the topbar gear dot and Settings >
+// About agree with whatever triggered the check (startup, the palette, or
+// the Settings button itself), rather than each tracking its own copy.
+export interface UpdateInfo {
+  version: string;
+  notes: string;
+  installerPath: string;
+}
+
 // One entry per pane-state transition that matched the configured bell rules.
 // Repeats of the same pane+state within COLLAPSE_WINDOW_MS bump `repeats` and
 // refresh `at` in place instead of pushing a new row (owner feedback: a pane
@@ -71,6 +81,9 @@ interface UIState {
   toasts: Toast[];
   pushToast: (kind: Toast["kind"], text: string) => void;
   dismissToast: (id: number) => void;
+
+  updateAvailable: UpdateInfo | null;
+  setUpdateAvailable: (info: UpdateInfo | null) => void;
 
   settingsOpen: boolean;
   setSettingsOpen: (open: boolean) => void;
@@ -192,6 +205,9 @@ export const useUI = create<UIState>((set) => ({
   toasts: [],
   pushToast: (kind, text) => set((s) => ({ toasts: [...s.toasts, { id: ++tseq, kind, text }] })),
   dismissToast: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
+
+  updateAvailable: null,
+  setUpdateAvailable: (updateAvailable) => set({ updateAvailable }),
 
   settingsOpen: false,
   setSettingsOpen: (settingsOpen) => set({ settingsOpen }),

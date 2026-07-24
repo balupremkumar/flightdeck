@@ -22,6 +22,7 @@ function toggleTheme() {
 // visually identical to Cockpit's.
 function LauncherChrome() {
   const setSettingsOpen = useUI((s) => s.setSettingsOpen);
+  const updateAvailable = useUI((s) => s.updateAvailable);
   return (
     <div className="cockpit-root">
       <div className="topbar">
@@ -31,8 +32,9 @@ function LauncherChrome() {
         <button className="tb-ic" title="Toggle light / dark" onClick={toggleTheme}>
           <IconTheme size={17} />
         </button>
-        <button className="tb-ic" title="Settings (Ctrl+,)" onClick={() => setSettingsOpen(true)}>
+        <button className="tb-ic" title={updateAvailable ? `Settings (Ctrl+,) — Flightdeck ${updateAvailable.version} available` : "Settings (Ctrl+,)"} onClick={() => setSettingsOpen(true)}>
           <IconSettings size={17} />
+          {updateAvailable && <span className="tb-update-dot" />}
         </button>
       </div>
       <Settings />

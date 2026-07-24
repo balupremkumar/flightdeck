@@ -35,6 +35,8 @@ export const PREFERENCE_KEYS = [
   "flightdeck-ws-tint",
   "flightdeck-ws-sort",
   "flightdeck-isolate",
+  "flightdeck-auto-update-check",
+  "flightdeck-releases-dir",
 ] as const;
 
 /**

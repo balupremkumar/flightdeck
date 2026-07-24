@@ -12,6 +12,7 @@ mod persist;
 mod procname;
 mod reveal;
 mod support;
+mod updates;
 mod usage;
 mod vendors;
 mod worktree;
@@ -27,7 +28,7 @@ use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize}
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, RunEvent, State};
 
-struct Pane {
+pub(crate) struct Pane {
     master: Box<dyn MasterPty + Send>,
     writer: Box<dyn Write + Send>,
     child: Box<dyn Child + Send + Sync>,
@@ -44,7 +45,7 @@ struct Pane {
 }
 
 #[derive(Default)]
-struct Registry {
+pub(crate) struct Registry {
     panes: Mutex<HashMap<u32, Pane>>,
     next_id: Mutex<u32>,
 }
@@ -283,10 +284,17 @@ fn pty_resize(reg: State<Registry>, pane_id: u32, cols: u16, rows: u16) -> Resul
     Ok(())
 }
 
+// Every pane id currently in the registry. Used by install_update (updates.rs)
+// to reap the same set ExitRequested would, without exposing the `panes` field
+// itself outside this module.
+pub(crate) fn live_pane_ids(reg: &Registry) -> Vec<u32> {
+    reg.panes.lock().unwrap().keys().copied().collect()
+}
+
 // Kill a pane's whole process tree and drop its handles. Node-based CLIs
 // (claude/agy/kimi) spawn children that child.kill() alone would orphan, so we
 // taskkill /T the tree. Idempotent: a pane already pruned (natural exit) is a no-op.
-fn reap_pane(reg: &Registry, pane_id: u32) {
+pub(crate) fn reap_pane(reg: &Registry, pane_id: u32) {
     if let Some(mut p) = reg.panes.lock().unwrap().remove(&pane_id) {
         let pid = p.child.process_id();
         #[cfg(windows)]
@@ -503,6 +511,8 @@ pub fn run() {
             persist::restore_from_point,
             persist::export_backup,
             persist::import_backup,
+            updates::check_update,
+            updates::install_update,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

@@ -7,6 +7,7 @@ import { useUI } from "./ui";
 import { useVendors } from "./vendors";
 import { runWorktreeGc } from "./worktrees";
 import { startAutosave, offerSessionRestore, crashedLastRun, armCleanExitSentinel } from "./session";
+import { scheduleStartupCheck } from "./updater";
 
 // Load the vendor registry from the Rust side once at boot. Everything that
 // renders an agent name/colour reads from this (BACKLOG 216).
@@ -28,6 +29,10 @@ if (didCrash) {
     "Flightdeck didn't shut down cleanly last time. If that keeps happening, export a support bundle from Settings > Diagnostics."
   );
 }
+
+// Self-update (R? — local-file check, no network): ~10s after boot so it
+// never competes with the session-restore prompt above.
+scheduleStartupCheck();
 
 // Apply saved theme + accent + colour-blind/reduced-motion overrides before
 // first paint (dark/Ice/off are the defaults).

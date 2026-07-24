@@ -11,6 +11,10 @@ import { useFocusTrap } from "./useFocusTrap";
 import { listRestorePoints, restoreFromPoint, exportBackup, importBackup, type RestorePointInfo } from "./persist";
 import { adoptSession, lastSessionSaveAt } from "./session";
 import { clearPreferences, PREFERENCE_KEYS } from "./storageKeys";
+import {
+  checkForUpdate, installUpdate, getReleasesDir, setReleasesDir,
+  getAutoUpdateCheck, setAutoUpdateCheck, DEFAULT_RELEASES_DIR,
+} from "./updater";
 import { trustedRepos, untrustRepo } from "./trust";
 import { spawnPane } from "./worktrees";
 import { useVendors, vendorColor, vendorAccentOverrides, setVendorAccentOverride } from "./vendors";
@@ -146,7 +150,7 @@ function saveStartupBehavior(v: StartupBehavior) {
 
 // Shown in About + useful for bug reports. Keep in step with package.json /
 // tauri.conf.json version bumps.
-export const APP_VERSION = "0.2.0";
+export const APP_VERSION = "0.3.0";
 
 // Newest first; trim to the last ~10 entries as it grows.
 const CHANGELOG: Array<{ date: string; text: string }> = [
@@ -299,6 +303,124 @@ function SessionSection() {
         <button className="set-btn" onClick={() => void doImport()}>Import…</button>
       </div>
     </section>
+  );
+}
+
+// In-app self-update (local-file only — no network, see src-tauri/src/updates.rs).
+// Lives in the About section. `updateAvailable` comes from the shared store so
+// this agrees with whatever last triggered a check (startup toast, the command
+// palette, or the button below).
+function UpdatesBlock() {
+  const updateAvailable = useUI((s) => s.updateAvailable);
+  const [checking, setChecking] = useState(false);
+  const [checkError, setCheckError] = useState<string | null>(null);
+  const [lastCheckedAt, setLastCheckedAt] = useState<number | null>(null);
+  const [installing, setInstalling] = useState(false);
+  const [installError, setInstallError] = useState<string | null>(null);
+  const [autoCheck, setAutoCheckState] = useState(getAutoUpdateCheck());
+  const [releasesDir, setReleasesDirState] = useState(getReleasesDir());
+
+  const runCheck = async () => {
+    setChecking(true);
+    setCheckError(null);
+    const res = await checkForUpdate();
+    setChecking(false);
+    setLastCheckedAt(Date.now());
+    if (res.error) setCheckError(res.error);
+  };
+
+  const doInstall = async () => {
+    if (!updateAvailable) return;
+    setInstalling(true);
+    setInstallError(null);
+    try {
+      await installUpdate(updateAvailable.installerPath);
+      // On success the app exits itself (updates.rs) — nothing else to do.
+    } catch (e) {
+      setInstalling(false);
+      setInstallError(String(e));
+    }
+  };
+
+  const confirmInstall = () => {
+    if (!updateAvailable) return;
+    // Same live-session itemisation closePaneGuarded/closeWorkspaceGuarded use
+    // (worktrees.ts) — an update install ends every running agent same as a quit.
+    const live = useApp.getState().workspaces
+      .flatMap((w) => w.panes)
+      .filter((p) => p.state === "running" || p.state === "starting" || p.state === "waiting" || p.state === "permission");
+    const liveNote = live.length > 0
+      ? ` ${live.length} pane${live.length === 1 ? "" : "s"} still live — closing ends ${live.length === 1 ? "its session" : "their sessions"}, the running agents can't be brought back.`
+      : "";
+    useUI.getState().requestConfirm({
+      title: "Restart Flightdeck to finish updating?",
+      body: `Installs Flightdeck ${updateAvailable.version} and relaunches.${liveNote}`,
+      confirmLabel: "Install & restart",
+      danger: live.length > 0,
+      onConfirm: () => void doInstall(),
+    });
+  };
+
+  const toggleAutoCheck = () => {
+    const next = !autoCheck;
+    setAutoCheckState(next);
+    setAutoUpdateCheck(next);
+  };
+
+  const commitReleasesDir = (v: string) => {
+    setReleasesDirState(v);
+    setReleasesDir(v);
+  };
+
+  return (
+    <>
+      <div className="set-row">
+        <div className="set-row-t">
+          <span className="set-row-name">Updates</span>
+          <span className="set-row-sub">
+            {checking
+              ? "Checking…"
+              : updateAvailable
+              ? `Flightdeck ${updateAvailable.version} is available`
+              : lastCheckedAt
+              ? `Up to date — checked ${relTime(lastCheckedAt)}`
+              : "Not checked yet this session"}
+          </span>
+        </div>
+        <button className="set-btn" onClick={() => void runCheck()} disabled={checking || installing}>
+          {checking ? "Checking…" : "Check for updates"}
+        </button>
+      </div>
+      {checkError && <div className="set-error">Couldn't check for updates: {checkError}</div>}
+      {updateAvailable && (
+        <div className="set-row set-row-block">
+          {updateAvailable.notes && <div className="set-row-sub" style={{ whiteSpace: "pre-wrap" }}>{updateAvailable.notes}</div>}
+          <button className="set-btn" onClick={confirmInstall} disabled={installing}>
+            {installing ? "Installing…" : `Install ${updateAvailable.version} and restart`}
+          </button>
+          {installError && <div className="set-error">Couldn't install: {installError}</div>}
+        </div>
+      )}
+      <div className="set-row">
+        <div className="set-row-t">
+          <span className="set-row-name">Check for updates automatically</span>
+          <span className="set-row-sub">Silent check on launch, once per session</span>
+        </div>
+        <button className={"toggle" + (autoCheck ? " on" : "")} role="switch" aria-checked={autoCheck} onClick={toggleAutoCheck}><span /></button>
+      </div>
+      <div className="set-row">
+        <div className="set-row-t">
+          <span className="set-row-name">Releases folder</span>
+          <span className="set-row-sub">Where latest.json and the installer live</span>
+        </div>
+        <input
+          className="set-search set-releases-dir"
+          value={releasesDir}
+          placeholder={DEFAULT_RELEASES_DIR}
+          onChange={(e) => commitReleasesDir(e.target.value)}
+        />
+      </div>
+    </>
   );
 }
 
@@ -1310,6 +1432,7 @@ export function Settings() {
                 : `Session last saved ${savedAgo}.`}
             </div>
             <div className="set-about">Flightdeck v{APP_VERSION} — a multi-agent terminal cockpit. Deep Cove build.</div>
+            <UpdatesBlock />
             {/* UI-42: a real "what's new" — the cheapest active-development signal. */}
             <details className="set-changelog">
               <summary>What's new</summary>

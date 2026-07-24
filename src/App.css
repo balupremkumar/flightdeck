@@ -95,8 +95,15 @@ body {
 /* UI-audit 2.5: a long workspace name must never crowd the icon row. */
 .topbar .ws { color: var(--text-secondary); font-size: 13.5px; min-width: 0; max-width: 260px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .topbar .sp { flex: 1; }
-.topbar .tb-ic { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 30px; border: 0; background: transparent; color: var(--tmuted); border-radius: 7px; cursor: pointer; transition: color .14s ease, background-color .14s ease; }
+.topbar .tb-ic { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 30px; border: 0; background: transparent; color: var(--tmuted); border-radius: 7px; cursor: pointer; transition: color .14s ease, background-color .14s ease; }
 .topbar .tb-ic:hover { color: var(--text-primary); background: color-mix(in srgb, var(--text) 6%, transparent); }
+/* Self-update available (updater.ts) — a calm presence dot, not a loud badge;
+   the toast already announced it once, this is just "still true". */
+.tb-update-dot {
+  position: absolute; top: 5px; right: 5px;
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--accent); box-shadow: 0 0 0 2px var(--bg-app);
+}
 /* Add-pane menu — contextual "+" next to the workspace name in the top bar. */
 .addpane-wrap { position: relative; }
 /* UI-245: contextual dropdown, same tier as every other non-portalled menu. */
