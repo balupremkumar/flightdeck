@@ -1,6 +1,15 @@
 # STATE — Flightdeck
 
-Updated: 2026-07-20 (build session 8, local).
+Updated: 2026-07-24 (session 9, local — bug audit + owner-feedback batch + showcase video).
+
+**DONE 2026-07-24 (session 9; commits df97964, 98a4633, 0b542ab; gates green at each: tsc, vitest 93/93, cargo 54/54, build, E2E 26/26):**
+- **AUDIT-2026-07-24.md written** (4-agent audit: bugs, UI, backlog) — the phased plan of record for what remains.
+- **Balu's reported bugs fixed:** reveal-in-Explorer repeat no-op (shell window cache; new `reveal_in_explorer` command spawns explorer.exe fresh, all 6 call sites swapped); file-open did nothing anywhere (missing `opener:allow-open-path` capability); workspace rename dead (`.lp-menu` missing mousedown stopPropagation so the menu unmounted before click); tile dot overlapping the timestamp (dot now an avatar badge on the monogram).
+- **Explorer correctness:** nodes keyed by path (scope flip showed the other worktree's children); expanded folders refetch on poll/focus.
+- **Owner-feedback batch:** attention routed to workspace tiles (severity ring + count badge + needy tooltip + focus-on-switch), calmer bell (one-shot pulse, 5-min repeat collapse, waiting toasts default off), controls grown app-wide (28px buttons/17px glyphs, 44px topbar, retuned container-query fold points), Ctrl+=/−/0 whole-app zoom with HUD (shared store with Settings UI-size).
+- **Board/icon design pass:** per-column empty copy, solid send chip, column accent wash, custom kanban icon, tile tint treatment, two-char monograms.
+- **v0.2.0** installers in `releases\` (gitignored). Balu still on the session-8 0.1.0 install — upgrade pending.
+- **SHOWCASE VIDEO (supersedes walkthrough.webm):** `demo/showcase.mjs` + `demo/lib/{capture,rig}` — CDP virtual-time frame-stepped 60fps capture at 2x, camera rig/cursor actor/keycaps/lower-thirds/title+end cards, Deep Cove LIGHT. Output `demo/out/flightdeck-showcase.{mp4,webm}` (79.75s) + 4 feature loops + poster. LIVE on kove.nz/work (mp4 fallback for Safari). Gotchas for re-renders in `demo/_video-blockers.md` (trust-modal race, forced clicks under paused clock, CDP screenshot needs explicit scale:2).
 
 ## What this is
 
