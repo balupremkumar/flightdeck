@@ -147,7 +147,7 @@ async function moveCursorTo(selector, opts = {}) {
 }
 
 async function typeInto(selector, text, opts = {}) {
-  await page.locator(selector).click({ timeout: 4000 }).catch(() => {});
+  await page.locator(selector).click({ force: true, timeout: 4000 }).catch(() => {});
   await capture.hold(120);
   for (const ch of text) {
     await page.keyboard.insertText(ch);
@@ -158,7 +158,7 @@ async function typeInto(selector, text, opts = {}) {
 
 async function selectVendor(slotIndex, vendorId) {
   const sel = `.slot-list .slot-row:nth-child(${slotIndex + 1}) .vsel`;
-  await page.locator(sel).selectOption(vendorId).catch((e) => console.warn("[showcase] selectVendor failed:", e.message));
+  await page.locator(sel).selectOption(vendorId, { force: true }).catch((e) => console.warn("[showcase] selectVendor failed:", e.message));
   await capture.hold(240);
 }
 
@@ -289,7 +289,13 @@ async function dismissTrustIfPresent(budgetMs) {
   const steps = Math.round(budgetMs / 150);
   for (let i = 0; i < steps; i++) {
     if ((await page.locator(".confirm-modal .btn-primary").count()) > 0) {
-      await page.locator(".confirm-modal .btn-primary").click({ timeout: 2000 }).catch(() => {});
+      // force:true — Playwright's actionability "stable" check polls via
+      // rAF, which never fires while the CDP virtual clock is paused (root
+      // cause of an intermittent hang, found with a throwaway probe: the
+      // modal was found every time, but a non-forced click on it hung for
+      // the full 30s default timeout). Every other click in this file
+      // already forces for the same reason; this one was the one miss.
+      await page.locator(".confirm-modal .btn-primary").click({ force: true, timeout: 2000 }).catch(() => {});
       await capture.hold(200);
       return true;
     }
@@ -300,7 +306,7 @@ async function dismissTrustIfPresent(budgetMs) {
 let trustSeen = await dismissTrustIfPresent(4000);
 if (!trustSeen && (await page.locator(".pane").count()) === 0) {
   console.warn("[showcase] trust modal missed first pass — retrying Create click");
-  await page.locator(".btn-primary").first().click({ timeout: 3000 }).catch(() => {});
+  await page.locator(".btn-primary").first().click({ force: true, timeout: 3000 }).catch(() => {});
   await capture.hold(300);
   trustSeen = await dismissTrustIfPresent(4000);
 }
@@ -349,6 +355,18 @@ for (let i = 0; i < 20 && blocked === 0; i++) {
   if (blocked === 0) await capture.hold(200);
 }
 if (blocked > 0) {
+  // The workspace tile's severity ring + count badge (left panel) is the
+  // more user-visible attention surface now — show it before the pane-level
+  // detail.
+  const needyTileSel = '.lp-ws[class*="needy-"]';
+  if (await page.locator(needyTileSel).count()) {
+    await R.caption("Flagged where you're already looking", "The workspace tile shows exactly what needs you, before you even open it.");
+    await R.camera(needyTileSel, { scale: 1.8, ms: 1400 });
+    await capture.hold(2000);
+    await R.hideCaption();
+    await R.resetCamera(1000);
+    await capture.hold(400);
+  }
   await R.caption("One agent needs you", "Approval prompts are detected and ranked first, so nothing blocked sits unnoticed.");
   await moveCursorTo(".pattn.permission", { travelMs: 800 });
   await R.spotlight(".pattn.permission", { strength: 0.55, ms: 1200 });
@@ -474,7 +492,7 @@ await R.caption("Make it yours", "Six built-in themes, or import your own.");
 await capture.hold(500);
 for (const label of ["Dracula", "Gruvbox Dark", "Nord", "Deep Cove — Light"]) {
   const tile = page.locator(`.theme-tile[title="${label}"]`);
-  if (await tile.count()) await tile.click({ timeout: 3000 }).catch(() => {});
+  if (await tile.count()) await tile.click({ force: true, timeout: 3000 }).catch(() => {});
   await capture.hold(680);
 }
 await R.hideCaption();
@@ -482,6 +500,18 @@ await R.resetCamera(1200);
 await capture.hold(400);
 await page.keyboard.press("Escape");
 await capture.hold(400);
+
+// Zoom HUD flourish — whole-app zoom is another "make it yours" control,
+// cheap to show right where the theme picker already has the caption up.
+await R.caption("Zoom to taste", "Ctrl and +/− scales the whole cockpit.");
+await page.keyboard.press("Control+=");
+await capture.hold(120);
+await page.keyboard.press("Control+=");
+await capture.hold(700);
+await page.keyboard.press("Control+0");
+await capture.hold(600);
+await R.hideCaption();
+await capture.hold(300);
 markEnd("themes");
 
 await dip(300);

@@ -26,11 +26,17 @@ export class FrameCapture {
    * @param {import('playwright').CDPSession} client
    * @param {string} dir  output directory for numbered PNG frames
    */
-  constructor(page, client, dir) {
+  constructor(page, client, dir, opts = {}) {
     this.page = page;
     this.client = client;
     this.dir = dir;
     this.frameIndex = 0;
+    // A bare CDP Page.captureScreenshot ignores the context's deviceScaleFactor
+    // and returns CSS-pixel (1x) dimensions — confirmed with a throwaway probe
+    // (1440x900 out of a 2x-scale context, vs. 2880x1800 from an explicit clip
+    // or from page.screenshot()). An explicit clip with `scale` is what actually
+    // produces the 2x frames this pipeline is built around.
+    this.clip = { x: 0, y: 0, width: opts.width ?? 1440, height: opts.height ?? 900, scale: opts.scale ?? 2 };
     fs.mkdirSync(dir, { recursive: true });
   }
 
@@ -42,7 +48,7 @@ export class FrameCapture {
 
   /** Capture exactly one PNG frame at the current state, without advancing time. */
   async captureFrame() {
-    const { data } = await this.client.send("Page.captureScreenshot", { format: "png" });
+    const { data } = await this.client.send("Page.captureScreenshot", { format: "png", clip: this.clip });
     const name = `frame-${String(this.frameIndex).padStart(6, "0")}.png`;
     fs.writeFileSync(path.join(this.dir, name), Buffer.from(data, "base64"));
     this.frameIndex += 1;
