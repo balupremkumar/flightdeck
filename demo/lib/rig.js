@@ -43,30 +43,75 @@
     return null;
   }
 
+  // Tracks the transform CURRENTLY applied to <body> so a camera() call can
+  // undo it before computing the next one — see the big comment in camera()
+  // for why this matters.
+  let camState = { tx: 0, ty: 0, s: 1 };
+
   window.__fd = {
     // --- Camera --------------------------------------------------------
     camera(target, opts = {}) {
       const { scale = 1, ms = 2000 } = opts;
-      let cx = window.innerWidth / 2;
-      let cy = window.innerHeight / 2;
+      const vw = window.innerWidth, vh = window.innerHeight;
+      // getBoundingClientRect() (and the caller's own {x,y}, always sourced
+      // from a boundingBox() call on the Node side) both report the
+      // target's CURRENT on-screen position — i.e. already passed through
+      // whatever transform is active on <body> right now.
+      let screenX = vw / 2, screenY = vh / 2;
       const el = resolveEl(target);
       if (el) {
         const r = el.getBoundingClientRect();
-        cx = r.left + r.width / 2;
-        cy = r.top + r.height / 2;
+        screenX = r.left + r.width / 2;
+        screenY = r.top + r.height / 2;
       } else if (target && typeof target.x === "number") {
-        cx = target.x; cy = target.y;
+        screenX = target.x; screenY = target.y;
       } else if (target) {
         console.warn("[fd-rig] camera target not found:", target);
       }
+      // Recentre the target at the viewport centre while zooming — anchoring
+      // the scale at the target's own on-screen point (the old approach)
+      // leaves an off-centre target off-centre after the push-in, and can
+      // clip a panel that sits near an edge (QA on the previous cut: the
+      // .pdiff push-in sat off-centre, the attention-queue push-in clipped
+      // its left edge).
+      //
+      // Two wrong attempts at the fix before this one, both confirmed wrong
+      // with QA frames:
+      //  1. `transform-origin: 50% 50%` + an offsetting translate —
+      //     percentage transform-origin is relative to the element's OWN
+      //     border-box, not the viewport, and <body>'s box can be taller
+      //     than the viewport even with `overflow: hidden` (that only clips
+      //     paint, not layout size) — landed well below true centre.
+      //  2. Fixed `transform-origin: 0 0` (viewport-absolute, unambiguous)
+      //     with tx = vw/2 - s*cx — correct in isolation, but cx/cy came
+      //     straight from getBoundingClientRect(), which is POST the
+      //     transform from the PREVIOUS camera() call. Each call SETS a
+      //     fresh `transform` rather than composing onto the existing one,
+      //     so feeding it an already-transformed point double-applies the
+      //     prior zoom — fine for the first push-in in a sequence (nothing
+      //     to undo yet), compounding worse on each subsequent one, blowing
+      //     up into a fully off-screen (solid black) frame by the 2nd/3rd
+      //     shot in the grid scene's pane-to-pane tracking loop.
+      //
+      // Fix: undo the CURRENTLY active transform (tracked in camState) to
+      // recover the target's true layout-space position first, then solve
+      // for the fresh transform from that, with transform-origin pinned at
+      // the unambiguous literal "0 0" (body's own top-left corner, which
+      // coincides with the viewport's top-left since body never scrolls).
+      const cx = (screenX - camState.tx) / camState.s;
+      const cy = (screenY - camState.ty) / camState.s;
+      const tx = vw / 2 - scale * cx;
+      const ty = vh / 2 - scale * cy;
       document.body.style.transitionDuration = `${ms}ms`;
-      document.body.style.transformOrigin = `${cx}px ${cy}px`;
-      document.body.style.transform = `scale(${scale})`;
+      document.body.style.transformOrigin = "0 0";
+      document.body.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`;
+      camState = { tx, ty, s: scale };
     },
     resetCamera(ms = 1800) {
       document.body.style.transitionDuration = `${ms}ms`;
-      document.body.style.transformOrigin = "50% 50%";
-      document.body.style.transform = "scale(1)";
+      document.body.style.transformOrigin = "0 0";
+      document.body.style.transform = "translate(0px, 0px) scale(1)";
+      camState = { tx: 0, ty: 0, s: 1 };
     },
 
     // --- Spotlight -------------------------------------------------------

@@ -19,6 +19,7 @@ import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import ffmpegPath from "ffmpeg-static";
 import { FrameCapture } from "./lib/capture.mjs";
+import { composeScore, writeWav } from "./lib/music.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OUT = path.join(__dirname, "out");
@@ -49,8 +50,11 @@ page.on("console", (m) => {
 await page.addInitScript(mock);
 await page.addInitScript(() => {
   try {
-    localStorage.setItem("flightdeck-theme-id", "light");
-    localStorage.setItem("flightdeck-theme", "light"); // legacy fallback key, belt & braces
+    // Deep Cove dark — also the app's own default (themes.ts DEFAULT_THEME_ID),
+    // set explicitly rather than relying on the default so a stray localStorage
+    // value from a previous run can't silently flip the recording to light.
+    localStorage.setItem("flightdeck-theme-id", "dark");
+    localStorage.setItem("flightdeck-theme", "dark"); // legacy fallback key, belt & braces
   } catch { /* non-persistent */ }
 });
 
@@ -223,6 +227,23 @@ async function dragCardToColumn(cardSelector, colIndex, opts = {}) {
   await capture.hold(opts.settleMs ?? 260);
 }
 
+// Zoom-tracking helper: push in on the Nth open pane (0-based, DOM order),
+// centred properly regardless of where it sits in the grid — relies on the
+// rig's camera() recentring fix (demo/lib/rig.js). Playwright's Locator.nth
+// indexes only matching elements, so this is robust to non-.pane siblings
+// under .wsgrid (unlike a raw :nth-of-type CSS selector).
+//
+// Targets a point ~30% down the pane, not its geometric centre: a pane is
+// tall but its live text (header + the first several lines of output) sits
+// near the top — centring on the full pane's midpoint punches in on mostly
+// empty terminal body (confirmed with a QA frame: a full-pane centre punch
+// at 1.9x showed nothing but blank terminal background).
+async function cameraToPane(index, opts = {}) {
+  const box = await page.locator(".pane").nth(index).boundingBox().catch(() => null);
+  if (!box) { console.warn("[showcase] cameraToPane: pane not found:", index); return; }
+  await R.camera({ x: box.x + box.width / 2, y: box.y + box.height * 0.3 }, opts);
+}
+
 async function dip(holdMs = 300) {
   await R.dip(true);
   await capture.hold(holdMs);
@@ -235,7 +256,7 @@ async function dip(holdMs = 300) {
 // =============================================================================
 markStart("title");
 await ensureRig();
-await R.card("Flightdeck", "Six agents. One screen.");
+await R.card("Flightdeck", "Four agents. One screen.");
 await capture.hold(350);
 await capture.hold(1750);
 await R.hideCard();
@@ -257,23 +278,33 @@ await capture.hold(500);
 await R.hideCaption();
 await capture.hold(200);
 
-// Slot 4 defaults to a second Antigravity pane — swap it for a shell so the
-// grid beat shows a real pwsh test run alongside the two agents (D9/story
-// beat: "no repeated identical text across panes").
-await selectVendor(3, "pwsh");
+// NewWorkspace's initial slot cycle (defaultCycle()) is a ONE-TIME snapshot
+// taken in a useState initializer at mount — before detect_vendors resolves
+// (confirmed with a throwaway probe: a QA frame late in this exact scene
+// still showed Pane 3/4 as "Claude Code"/"Antigravity", not Codex/Kimi).
+// vendorList() is still on the FALLBACK array (claude/agy only) at that
+// instant, so the 4-slot cycle repeats claude/agy regardless of what's in
+// mock-tauri.js's VENDORS. This is the same race the original file's
+// `selectVendor(3, "pwsh")` was already working around — reinstated here for
+// the two new vendors so the grid shows all four distinct agents. By the
+// time these calls run, the <select> options themselves ARE populated
+// (that list re-renders reactively off the store, unlike the one-shot
+// initial value), so selecting by id works even though the defaults didn't.
+await selectVendor(2, "codex");
+await selectVendor(3, "kimi");
 
 await R.caption("Isolation is the default", "Every agent gets its own git worktree and branch — parallel agents can't overwrite each other.");
 await moveCursorTo(".isolate-row", { travelMs: 900 });
-await R.camera(".isolate-row", { scale: 1.5, ms: 1600 });
-await capture.hold(2600);
+await R.camera(".isolate-row", { scale: 1.6, ms: 1500 });
+await capture.hold(2200);
 await R.hideCaption();
 await capture.hold(200);
 
 await R.caption("Setup runs first", "A fresh worktree has no node_modules — Flightdeck runs your setup command before the agent starts.");
 await moveCursorTo(".setup-input", { travelMs: 700 });
-await R.camera(".setup-input", { scale: 1.55, ms: 1500 });
-await capture.hold(1800);
-await capture.hold(600);
+await R.camera(".setup-input", { scale: 1.65, ms: 1400 });
+await capture.hold(1600);
+await capture.hold(400);
 await R.hideCaption();
 await R.resetCamera(1200);
 await capture.hold(600);
@@ -322,21 +353,32 @@ await dip(260);
 markStart("grid");
 await ensureRig();
 await R.resetCamera(0);
-await R.caption("Four agents, working", "Every pane is a real terminal — status, branch, diff and token use live in each header.");
-await capture.hold(600);
-await R.camera(".wsgrid", { scale: 1.14, ms: 5200 });
-await capture.hold(5200);
-await capture.hold(2600);
+await R.caption("Claude, Antigravity, Codex and Kimi — one screen", "Every pane is a real terminal — status, branch, diff and token use live in each header.");
+await capture.hold(500);
+await R.camera(".wsgrid", { scale: 1.12, ms: 1300 });
+await capture.hold(1300);
+await capture.hold(500);
 await R.hideCaption();
-await capture.hold(600);
+await capture.hold(200);
+
+// Zoom-tracking: the camera actively follows the action, punching into each
+// agent's own terminal in turn rather than sitting on one static wide shot.
+for (let i = 0; i < 4; i++) {
+  await cameraToPane(i, { scale: 1.9, ms: 800 });
+  await capture.hold(800);
+  await capture.hold(450);
+}
+await R.camera(".wsgrid", { scale: 1.1, ms: 850 });
+await capture.hold(850);
+await capture.hold(250);
 
 await R.caption("You can see what changed", "The +/− badge is that agent's diff against its base branch, live as it works.");
-await moveCursorTo(".pdiff", { travelMs: 800 });
-await R.camera(".pdiff", { scale: 1.6, ms: 1600 });
-await capture.hold(2600);
+await moveCursorTo(".pdiff", { travelMs: 700 });
+await R.camera(".pdiff", { scale: 1.85, ms: 1400 });
+await capture.hold(2200);
 await R.hideCaption();
-await R.resetCamera(1400);
-await capture.hold(1400);
+await R.resetCamera(1200);
+await capture.hold(1000);
 markEnd("grid");
 
 await dip(260);
@@ -361,8 +403,8 @@ if (blocked > 0) {
   const needyTileSel = '.lp-ws[class*="needy-"]';
   if (await page.locator(needyTileSel).count()) {
     await R.caption("Flagged where you're already looking", "The workspace tile shows exactly what needs you, before you even open it.");
-    await R.camera(needyTileSel, { scale: 1.8, ms: 1400 });
-    await capture.hold(2000);
+    await R.camera(needyTileSel, { scale: 1.9, ms: 1300 });
+    await capture.hold(1900);
     await R.hideCaption();
     await R.resetCamera(1000);
     await capture.hold(400);
@@ -370,8 +412,8 @@ if (blocked > 0) {
   await R.caption("One agent needs you", "Approval prompts are detected and ranked first, so nothing blocked sits unnoticed.");
   await moveCursorTo(".pattn.permission", { travelMs: 800 });
   await R.spotlight(".pattn.permission", { strength: 0.55, ms: 1200 });
-  await R.camera(".pattn.permission", { scale: 1.7, ms: 1600 });
-  await capture.hold(3400);
+  await R.camera(".pattn.permission", { scale: 1.85, ms: 1500 });
+  await capture.hold(3000);
 } else {
   console.warn("[showcase] no approval state reached — scene continues without it");
 }
@@ -392,8 +434,8 @@ await capture.hold(200);
 if (await page.locator(".aq-panel").isVisible().catch(() => false)) {
   await R.resetCamera(1400);
   await R.caption("The attention queue", "Everything waiting on you, across every workspace — approvals first, longest-waiting first.", { side: "top" });
-  await R.camera(".aq-panel", { scale: 1.2, ms: 1800 });
-  await capture.hold(3400);
+  await R.camera(".aq-panel", { scale: 1.3, ms: 1600 });
+  await capture.hold(3000);
   await R.hideCaption();
   await page.keyboard.press("Escape");
 } else {
@@ -415,8 +457,8 @@ await R.caption("Review before you merge", "Open any agent's work as a diff — 
 await capture.hold(300);
 await clickAt(".pdiff", { travelMs: 700 });
 await capture.hold(1200);
-await R.camera(".rv-patch-bar", { scale: 1.18, ms: 1800 });
-await capture.hold(1600);
+await R.camera(".rv-patch-bar", { scale: 1.3, ms: 1600 });
+await capture.hold(1400);
 await R.hideCaption();
 await capture.hold(200);
 
@@ -425,21 +467,21 @@ const splitBtn = page.locator(".rv-patch-bar .rv-ic[aria-pressed]").first();
 if (await splitBtn.count()) {
   await clickAt(".rv-patch-bar .rv-ic[aria-pressed]", { travelMs: 600 });
 }
-await capture.hold(3000);
+await capture.hold(2500);
 await R.hideCaption();
 await capture.hold(200);
 
 await R.caption("Land it, or hand it off", "Merge back locally, or push the branch and open a pull request.", { side: "top" });
-await moveCursorTo(".rv-foot", { travelMs: 800 });
-await R.camera(".rv-foot", { scale: 1.35, ms: 1600 });
-await capture.hold(1800);
+await moveCursorTo(".rv-foot", { travelMs: 700 });
+await R.camera(".rv-foot", { scale: 1.5, ms: 1400 });
+await capture.hold(1600);
 if (await page.locator(".rv-merge").count()) {
   await clickAt(".rv-merge", { travelMs: 500 });
 }
-await capture.hold(1800);
+await capture.hold(1500);
 await R.hideCaption();
-await R.resetCamera(1200);
-await capture.hold(600);
+await R.resetCamera(1100);
+await capture.hold(500);
 await page.keyboard.press("Escape");
 await capture.hold(400);
 markEnd("review");
@@ -464,11 +506,11 @@ await dragCardToColumn(".card", 1, { settleMs: 400 }); // 1 = "In Progress"
 await capture.hold(600);
 
 await R.caption("Live, on the card", "The agent's status shows right where you dropped it.");
-await R.camera(".col:nth-of-type(2)", { scale: 1.3, ms: 1600 });
-await capture.hold(2600);
+await R.camera(".col:nth-of-type(2)", { scale: 1.4, ms: 1400 });
+await capture.hold(2200);
 await R.hideCaption();
-await R.resetCamera(1200);
-await capture.hold(600);
+await R.resetCamera(1100);
+await capture.hold(500);
 markEnd("board");
 
 await dip(260);
@@ -490,7 +532,9 @@ await R.camera(".theme-grid", { scale: 1.25, ms: 1600 });
 await capture.hold(1600);
 await R.caption("Make it yours", "Six built-in themes, or import your own.");
 await capture.hold(500);
-for (const label of ["Dracula", "Gruvbox Dark", "Nord", "Deep Cove — Light"]) {
+// Deep Cove Dark closes the loop (not "— Light" — this cut stays dark
+// throughout; the owner rejected the earlier light-theme cut).
+for (const label of ["Dracula", "Gruvbox Dark", "Nord", "Deep Cove — Dark"]) {
   const tile = page.locator(`.theme-tile[title="${label}"]`);
   if (await tile.count()) await tile.click({ force: true, timeout: 3000 }).catch(() => {});
   await capture.hold(680);
@@ -514,7 +558,21 @@ await R.hideCaption();
 await capture.hold(300);
 markEnd("themes");
 
-await dip(300);
+await dip(260);
+
+// =============================================================================
+// (g.5) Live demo callout — short beat before the end card
+// =============================================================================
+markStart("livedemo");
+await ensureRig();
+await R.resetCamera(0);
+await R.caption("Try it yourself", "Live demo — kove.nz/flightdeck-demo");
+await capture.hold(2200);
+await R.hideCaption();
+await capture.hold(200);
+markEnd("livedemo");
+
+await dip(280);
 
 // =============================================================================
 // (h) End card
@@ -522,9 +580,9 @@ await dip(300);
 markStart("endcard");
 await ensureRig();
 await R.hideCursor();
-await R.card("Flightdeck", "Local-first. No account. Windows.");
+await R.card("Flightdeck", "Local-first. No account. Windows. — kove.nz/flightdeck-demo");
 await capture.hold(400);
-await capture.hold(2200);
+await capture.hold(2000);
 markEnd("endcard");
 
 const totalFrames = capture.frameIndex;
@@ -549,24 +607,64 @@ function ffmpeg(args, label) {
 
 const framesGlob = path.join(FRAMES_DIR, "frame-%06d.png");
 
+const videoOnlyWebm = path.join(OUT, "_video-only.webm");
+const videoOnlyMp4 = path.join(OUT, "_video-only.mp4");
+
 ffmpeg(
   ["-y", "-framerate", "60", "-i", framesGlob,
    "-vf", "scale=1440:900:flags=lanczos", "-pix_fmt", "yuv420p",
    "-c:v", "libvpx-vp9", "-b:v", "0", "-crf", "20", "-quality", "good", "-cpu-used", "2", "-row-mt", "1",
-   path.join(OUT, "flightdeck-showcase.webm")],
-  "master .webm",
+   videoOnlyWebm],
+  "master .webm (video only)",
 );
 
 ffmpeg(
   ["-y", "-framerate", "60", "-i", framesGlob,
    "-vf", "scale=1440:900:flags=lanczos", "-pix_fmt", "yuv420p",
    "-c:v", "libx264", "-preset", "medium", "-crf", "16", "-movflags", "+faststart",
-   path.join(OUT, "flightdeck-showcase.mp4")],
-  "master .mp4",
+   videoOnlyMp4],
+  "master .mp4 (video only)",
 );
 
-// Poster: a rich, representative full-res frame (review split view).
-const posterFrame = bookmarks.review ? bookmarks.review.start + 90 : Math.floor(totalFrames / 2);
+// =============================================================================
+// Score: generative, scene-synced, rights-clean (demo/lib/music.mjs). Built
+// straight from the bookmarks this exact render produced, so a chord change
+// / pulse entrance / riser lands on the render's own scene timestamps, not a
+// hand-tuned cue sheet that can drift out of sync on a re-render.
+// =============================================================================
+const manifest = { fps: 60, width: 2880, height: 1800, totalFrames, bookmarks };
+const score = composeScore(manifest);
+const wavPath = path.join(OUT, "score.wav");
+writeWav(wavPath, score.pcm, score.sampleRate);
+log("score.wav <-", score.seconds.toFixed(1) + "s",
+  `bed ${score.stats.padBedRmsDbfs.toFixed(1)}dBFS RMS, peak ${score.stats.mixPeakDbfs.toFixed(1)}dBFS`);
+for (const e of score.events) log("  cue:", e.name, "@", e.atSec.toFixed(2) + "s");
+
+// Mux: video stream copied as-is (no re-encode-of-a-re-encode loss), audio
+// encoded per container (aac for mp4, opus for webm). The four loop-*.mp4
+// below are cut directly from the silent frame sequence and stay silent —
+// they're autoplay background loops, not the scored piece.
+ffmpeg(
+  ["-y", "-i", videoOnlyMp4, "-i", wavPath,
+   "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-shortest", "-movflags", "+faststart",
+   path.join(OUT, "flightdeck-showcase.mp4")],
+  "mux .mp4 + aac score",
+);
+ffmpeg(
+  ["-y", "-i", videoOnlyWebm, "-i", wavPath,
+   "-c:v", "copy", "-c:a", "libopus", "-b:a", "128k", "-shortest",
+   path.join(OUT, "flightdeck-showcase.webm")],
+  "mux .webm + opus score",
+);
+fs.rmSync(videoOnlyMp4, { force: true });
+fs.rmSync(videoOnlyWebm, { force: true });
+
+// Poster: a settled, caption-free wide shot of the grid scene — all four
+// vendor labels (Claude / Antigravity / Codex / Kimi) legible in their pane
+// headers, dark theme. Offset +508 lands in the second wide "re-establish"
+// hold, right after the pane-to-pane tracking loop and well clear of both
+// the caption and the camera transition (see the grid scene above).
+const posterFrame = bookmarks.grid ? bookmarks.grid.start + 508 : Math.floor(totalFrames / 2);
 const posterSrc = path.join(FRAMES_DIR, `frame-${String(posterFrame).padStart(6, "0")}.png`);
 fs.copyFileSync(posterSrc, path.join(OUT, "poster.png"));
 log("poster.png <-", path.basename(posterSrc));

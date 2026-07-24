@@ -89,26 +89,53 @@
       { t: 7100, s: "\x1b[2m   Duration \x1b[0m 1.94s\r\n\r\n" },
       { t: 7700, s: "\x1b[36mPS\x1b[0m {cwd}\x1b[36m>\x1b[0m " },
     ],
+    // Codex and Kimi — ported voice from mock-tauri-interactive.js (terse
+    // test-first for Codex, numbered steps for Kimi) so the grid scene shows
+    // four genuinely differentiated agents rather than four vendors running
+    // the same script. Literal 24-bit ANSI since these accents have no theme
+    // token (see demo/_demo-blockers.md).
+    codex: [
+      { t: 300, s: "\x1b[38;2;255;157;92m▸\x1b[0m \x1b[1mCodex CLI\x1b[0m \x1b[2mgpt-5.1-codex\x1b[0m\r\n\r\n" },
+      { t: 1100, s: "\x1b[38;2;255;157;92m▸ \x1b[0mFix the retry loop in the upload client\r\n\r\n" },
+      { t: 2200, s: "\x1b[2mwriting test\x1b[0m \x1b[1msrc/api/uploadClient.test.ts\x1b[0m\r\n" },
+      { t: 2900, s: "\x1b[2m$ npx vitest run uploadClient\x1b[0m\r\n" },
+      { t: 3900, s: "\x1b[31m ✗ 1 failing\x1b[0m\r\n\r\n" },
+      { t: 4400, s: "\x1b[38;2;255;157;92m▸\x1b[0m patch src/api/uploadClient.ts \x1b[2m(+9 −3)\x1b[0m\r\n" },
+      { t: 5100, s: "\x1b[38;2;255;157;92m▸\x1b[0m patch src/api/uploadClient.test.ts \x1b[2m(+21 −0)\x1b[0m\r\n\r\n" },
+      { t: 5900, s: "\x1b[2m$ npx vitest run uploadClient\x1b[0m\r\n" },
+      { t: 7000, s: "\x1b[32m ✓ 4 passing\x1b[0m\r\n\r\n" },
+      { t: 7500, s: "  Backoff was linear, not exponential — retries now cap at 3 with jitter.\r\n\r\n" },
+      { t: 7900, s: "\x1b[38;2;255;157;92m▸ \x1b[0m" },
+    ],
+    kimi: [
+      { t: 300, s: "\x1b[38;2;199;146;234m☾\x1b[0m \x1b[1mKimi\x1b[0m \x1b[2mk2-coder\x1b[0m — hi, what are we building?\r\n\r\n" },
+      { t: 1300, s: "\x1b[38;2;199;146;234m☾ \x1b[0mAdd pagination to the activity feed\r\n\r\n" },
+      { t: 2600, s: "\x1b[38;2;199;146;234m[1/3]\x1b[0m updating \x1b[1msrc/activity/feed.ts\x1b[0m \x1b[2m(+34 −6)\x1b[0m\r\n" },
+      { t: 3800, s: "\x1b[38;2;199;146;234m[2/3]\x1b[0m updating \x1b[1msrc/activity/api.ts\x1b[0m \x1b[2m(+18 −2)\x1b[0m\r\n" },
+      { t: 5000, s: "\x1b[38;2;199;146;234m[3/3]\x1b[0m running feed.test.ts…\r\n" },
+      { t: 6600, s: "\x1b[32m  passed — 6/6\x1b[0m\r\n\r\n" },
+      { t: 7100, s: "  Cursor-based, 50 per page — old offset paging is gone.\r\n" },
+      { t: 7500, s: "\x1b[2m~740 tokens\x1b[0m\r\n\r\n" },
+      { t: 7900, s: "\x1b[38;2;199;146;234m☾ \x1b[0m" },
+    ],
   };
 
-  // Which script a pane gets. The second claude pane is the approval one, so a
-  // recording always has something in the attention queue.
-  // Assignment must be DETERMINISTIC — the walkthrough narrates "one agent needs
-  // you", so exactly one Claude pane has to hit the approval prompt every time.
-  // A hash gave both panes the same script on a coin flip; a bare counter
-  // drifted under StrictMode's double mount. Keyed by cwd, assigned in order of
-  // first sighting, so a remount of the same pane always gets the same scene.
+  // Which script a pane gets. Keyed by cwd, assigned on first sighting, so a
+  // remount of the same pane (StrictMode double mount, an HMR-triggered rig
+  // reinstall) always gets the same scene.
+  //
+  // With four real agent vendors now in VENDORS below, defaultCycle() gives a
+  // fresh 4-pane workspace exactly one pane per vendor (claude, agy, codex,
+  // kimi) — so there's only ever one Claude pane, and it's the one that has
+  // to hit the approval prompt (the attention queue and the "needs you"
+  // badge exist for it). Previously this picked the approval script on the
+  // SECOND Claude pane, back when the default 4-slot cycle repeated
+  // claude/agy twice; that "second pane" now never exists.
   const assigned = new Map(); // cwd -> script
-  const seenPerVendor = new Map(); // vendor -> count of distinct cwds
 
   function scriptFor(vendor, cwd) {
     if (assigned.has(cwd)) return assigned.get(cwd);
-    const n = (seenPerVendor.get(vendor) ?? 0);
-    seenPerVendor.set(vendor, n + 1);
-    let script;
-    if (vendor === "claude") script = n === 1 ? SCRIPTS["claude-approval"] : SCRIPTS.claude;
-    else if (vendor === "agy") script = n === 1 ? SCRIPTS["agy-refactor"] : SCRIPTS.agy;
-    else script = SCRIPTS[vendor] ?? SCRIPTS.pwsh;
+    const script = vendor === "claude" ? SCRIPTS["claude-approval"] : (SCRIPTS[vendor] ?? SCRIPTS.pwsh);
     assigned.set(cwd, script);
     return script;
   }
@@ -173,6 +200,16 @@ index 8a1f2c4..b93d7e1 100644
     { id: "agy", label: "Antigravity", short: "Antigravity", kind: "agent", accent: "--accent",
       installed: true, detail: "C:\\\\Users\\\\dev\\\\AppData\\\\Local\\\\agy\\\\bin\\\\agy.exe",
       authState: "ok", authDetail: "", quietSeconds: 6, installHint: "", installUrl: "", needsTrust: true },
+    // Codex/Kimi accents: literal hex, no theme token — same pattern the
+    // "opencode-local" entry below already exercises. Colours match the
+    // interactive demo (mock-tauri-interactive.js) for one consistent brand
+    // across both surfaces.
+    { id: "codex", label: "Codex CLI", short: "Codex", kind: "agent", accent: "#FF9D5C",
+      installed: true, detail: "C:\\\\Users\\\\dev\\\\AppData\\\\Roaming\\\\npm\\\\codex.cmd",
+      authState: "ok", authDetail: "", quietSeconds: 2, installHint: "", installUrl: "", needsTrust: false },
+    { id: "kimi", label: "Kimi", short: "Kimi", kind: "agent", accent: "#C792EA",
+      installed: true, detail: "C:\\\\Users\\\\dev\\\\AppData\\\\Local\\\\kimi\\\\bin\\\\kimi.exe",
+      authState: "ok", authDetail: "", quietSeconds: 4, installHint: "", installUrl: "", needsTrust: false },
     { id: "pwsh", label: "pwsh (shell)", short: "pwsh", kind: "shell", accent: "--aqua",
       installed: true, detail: "C:\\\\Program Files\\\\PowerShell\\\\7\\\\pwsh.exe",
       authState: "ok", authDetail: "", quietSeconds: 2, installHint: "", installUrl: "", needsTrust: false },
@@ -301,6 +338,18 @@ index 8a1f2c4..b93d7e1 100644
       return new Promise((resolve) => setTimeout(() => resolve(fn(args ?? {})), 40));
     },
   };
+
+  // @tauri-apps/api/event's listen() return value calls this directly (not
+  // through invoke) on unlisten. The board scene's nav-away-from-workspace
+  // unmounts all open panes, and each Terminal.tsx teardown hit this as an
+  // uncaught "Cannot read properties of undefined (reading
+  // 'unregisterListener')" — confirmed non-fatal (the scene still captured
+  // its full expected duration) but worth stubbing out properly rather than
+  // leaving noisy pageerrors in the log. Same fix already applied in
+  // mock-tauri-interactive.js for the same reason; real cleanup already
+  // happens via the plugin:event|unlisten invoke call that runs alongside
+  // this, so a no-op is correct here too.
+  window.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: () => {} };
 
   window.__FD_MOCK__ = true;
   console.log("[mock] Tauri bridge installed");

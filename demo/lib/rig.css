@@ -95,6 +95,6 @@ body {
 #fd-card .fd-word { position: relative; margin-top: 20px; font: 700 48px/1 "Schibsted Grotesk", sans-serif; color: #F5F9FC; letter-spacing: -.02em; }
 #fd-card .fd-tag { position: relative; margin-top: 13px; font: 400 18px/1.4 "Schibsted Grotesk", sans-serif; color: #9CB2C8; }
 
-/* Scene dip (light theme -> soft white flash) */
-#fd-dip { position: absolute; inset: 0; background: #F6F9FC; opacity: 0; transition: opacity 300ms ease; }
+/* Scene dip (dark theme -> soft dark-navy flash, matching the Deep Cove dark bg) */
+#fd-dip { position: absolute; inset: 0; background: #05080D; opacity: 0; transition: opacity 300ms ease; }
 #fd-dip.on { opacity: 1; }
