@@ -359,10 +359,147 @@ index 8a1f2c4..b93d7e1 100644
     [600, `  Session store now backed by Redis; docker compose is running the local instance.\r\n\r\n`],
     [250, `\x1b[38;5;245m> ${RESET}`],
   ];
+  // Hand-written patches for the migrate pane's two files — this diff sits at
+  // full attention in the Review drawer, so it has to read as real work, not
+  // the syntheticPatch() filler.
+  const MIGRATE_PATCH_REDIS = `diff --git a/src/session/redisStore.ts b/src/session/redisStore.ts
+new file mode 100644
+index 0000000..a3f81c2
+--- /dev/null
++++ b/src/session/redisStore.ts
+@@ -0,0 +1,71 @@
++import { Redis } from "ioredis";
++import type { Session } from "./types";
++
++const TTL_SECONDS = 60 * 30;
++const PREFIX = "sess:";
++
++/**
++ * Redis-backed session store. One key per session, TTL refreshed on
++ * every read, so "active users stay signed in" works exactly as the
++ * in-memory store did, minus the part where a deploy wipes it.
++ */
++export class RedisStore {
++  private redis: Redis;
++  private ready: Promise<void>;
++
++  constructor(url = "redis://127.0.0.1:6379") {
++    this.redis = new Redis(url, {
++      lazyConnect: true,
++      maxRetriesPerRequest: 2,
++      retryStrategy: (times) => Math.min(times * 200, 2_000),
++    });
++    this.ready = this.redis.connect();
++  }
++
++  private key(sid: string) {
++    return PREFIX + sid;
++  }
++
++  async get(sid: string): Promise<Session | null> {
++    await this.ready;
++    const raw = await this.redis.getex(this.key(sid), "EX", TTL_SECONDS);
++    if (!raw) return null;
++    try {
++      return JSON.parse(raw) as Session;
++    } catch {
++      // A malformed entry is dropped rather than thrown: one bad row
++      // must never turn into a 500 for the request that read it.
++      await this.redis.del(this.key(sid));
++      return null;
++    }
++  }
++
++  async put(sid: string, session: Session): Promise<void> {
++    await this.ready;
++    await this.redis.set(this.key(sid), JSON.stringify(session), "EX", TTL_SECONDS);
++  }
++
++  async drop(sid: string): Promise<void> {
++    await this.ready;
++    await this.redis.del(this.key(sid));
++  }
++
++  async touch(sid: string): Promise<void> {
++    await this.ready;
++    await this.redis.expire(this.key(sid), TTL_SECONDS);
++  }
++
++  /** Health probe for /readyz: a PING that never throws. */
++  async ok(): Promise<boolean> {
++    try {
++      await this.ready;
++      return (await this.redis.ping()) === "PONG";
++    } catch {
++      return false;
++    }
++  }
++
++  async close(): Promise<void> {
++    await this.redis.quit();
++  }
++}
+`;
+
+  const MIGRATE_PATCH_STORE = `diff --git a/src/session/store.ts b/src/session/store.ts
+index 3c92f1a..7d40b2e 100644
+--- a/src/session/store.ts
++++ b/src/session/store.ts
+@@ -1,17 +1,7 @@
+ import type { Session } from "./types";
+-const TTL_MS = 1000 * 60 * 30;
+-
+-type Entry = { session: Session; expiresAt: number };
+-
+-// In-memory store: fine for one process, lost on every deploy and
+-// invisible to the other instances behind the load balancer.
+-const entries = new Map<string, Entry>();
+-
+-let sweepTimer: NodeJS.Timeout | null = null;
+-function sweep() {
+-  const now = Date.now();
+-  for (const [sid, e] of entries) {
+-    if (e.expiresAt <= now) entries.delete(sid);
+-  }
+-}
++import { RedisStore } from "./redisStore";
++
++// All session state now lives in Redis, so a deploy or a second
++// instance behind the load balancer no longer logs everyone out.
++const store = new RedisStore(process.env.REDIS_URL);
+
+@@ -19,22 +9,11 @@
+ export async function getSession(sid: string) {
+-  const e = entries.get(sid);
+-  if (!e) return null;
+-  if (e.expiresAt <= Date.now()) {
+-    entries.delete(sid);
+-    return null;
+-  }
+-  e.expiresAt = Date.now() + TTL_MS;
+-  return e.session;
++  return store.get(sid);
+ }
+
+ export async function putSession(sid: string, session: Session) {
+-  entries.set(sid, { session, expiresAt: Date.now() + TTL_MS });
+-  if (!sweepTimer) {
+-    sweepTimer = setInterval(sweep, 60_000);
+-    sweepTimer.unref();
+-  }
++  await store.put(sid, session);
+ }
+
+ export async function dropSession(sid: string) {
+-  entries.delete(sid);
++  await store.drop(sid);
+ }
+`;
+
   const MIGRATE_SCENARIO = {
     files: [
-      { path: "src/session/redisStore.ts", action: "write", added: 71, deleted: 0 },
-      { path: "src/session/store.ts", action: "edit", added: 8, deleted: 32 },
+      { path: "src/session/redisStore.ts", action: "write", added: 71, deleted: 0, patch: MIGRATE_PATCH_REDIS },
+      { path: "src/session/store.ts", action: "edit", added: 8, deleted: 29, patch: MIGRATE_PATCH_STORE },
     ],
   };
 
@@ -474,9 +611,11 @@ index 8a1f2c4..b93d7e1 100644
       const files = [...repo.files.entries()].map(([path, f]) => ({ path, added: f.added, deleted: f.deleted, binary: false }));
       return { base: "a1b2c3d", files, totalAdded: files.reduce((n, f) => n + f.added, 0), totalDeleted: files.reduce((n, f) => n + f.deleted, 0) };
     },
-    git_file_diff: ({ cwd, path }) => {
-      const f = repoState.get(cwd)?.files.get(path);
-      return f?.patch ?? syntheticPatch(path, f);
+    // Review.tsx passes the selected path as `file` (with `base` alongside) —
+    // destructuring `path` here left every patch header reading a/undefined.
+    git_file_diff: ({ cwd, file }) => {
+      const f = repoState.get(cwd)?.files.get(file);
+      return f?.patch ?? syntheticPatch(file, f);
     },
     git_branch_context: () => ({
       commits: [
