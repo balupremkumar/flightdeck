@@ -85,6 +85,17 @@ describe("update failure reporting (UPD-1)", () => {
     });
   });
 
+  it("the install error still stringifies to the message (Settings renders String(e))", async () => {
+    invokeMock.mockRejectedValueOnce({
+      kind: "installer-truncated",
+      message: "The installer is only 12 bytes. You can still update by hand: run D:\\rel\\setup.exe directly.",
+    });
+    const err = await installUpdate("D:\\rel\\setup.exe").catch((e) => e);
+    expect(String(err)).toContain("run D:\\rel\\setup.exe directly");
+    expect(String(err)).not.toContain("[object Object]");
+    expect(`${err}`).toBe(err.message);
+  });
+
   it("takeUpdateStatus is null with no bridge", async () => {
     invokeMock.mockRejectedValueOnce(new Error("no ipc"));
     expect(await takeUpdateStatus()).toBeNull();

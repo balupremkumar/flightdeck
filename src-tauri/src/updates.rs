@@ -1000,23 +1000,6 @@ mod tests {
     // --- watcher script -----------------------------------------------------
 
     #[test]
-    #[ignore]
-    fn dump_watcher_script_for_manual_e2e() {
-        let out = std::env::var("FD_WATCHER_DUMP").unwrap_or_default();
-        if out.is_empty() {
-            return;
-        }
-        let s = build_watcher_script(
-            Path::new(&std::env::var("FD_STATUS").unwrap()),
-            Path::new(&std::env::var("FD_INSTALLER").unwrap()),
-            Path::new(&std::env::var("FD_EXE").unwrap()),
-            std::env::var("FD_PID").unwrap().parse().unwrap(),
-            "9.9.9",
-        );
-        std::fs::write(out, s).unwrap();
-    }
-
-    #[test]
     fn watcher_script_substitutes_every_placeholder() {
         let s = build_watcher_script(
             Path::new(r"C:\data\update-status.json"),

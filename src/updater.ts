@@ -66,6 +66,27 @@ export interface UpdateError {
   exitCode?: number;
 }
 
+/** What installUpdate throws. An Error subclass (rather than the bare object
+ *  Rust sends) purely so that an existing `String(e)` / `${e}` caller keeps
+ *  rendering the sentence a human needs — including the manual fallback path,
+ *  which is baked into `message` on the Rust side — instead of the
+ *  "[object Object]" a plain serialised struct would give them. */
+export class UpdateInstallError extends Error implements UpdateError {
+  kind: string;
+  detail?: string;
+  manualPath?: string;
+  exitCode?: number;
+  constructor(e: UpdateError) {
+    super(e.message);
+    this.name = "UpdateInstallError";
+    this.kind = e.kind;
+    this.detail = e.detail;
+    this.manualPath = e.manualPath;
+    this.exitCode = e.exitCode;
+  }
+  override toString() { return this.message; }
+}
+
 /** Normalises anything invoke() can reject with into a renderable UpdateError:
  *  the typed object from Rust, a bare string from the bridge itself (e.g. the
  *  command not existing in a browser build), or a thrown JS Error. */
@@ -141,15 +162,17 @@ export async function checkForUpdate(): Promise<UpdateCheckResult> {
  *  success the app exits itself (see updates.rs) — a caller that's still
  *  running after this resolves should treat it the same as a thrown error.
  *
- *  Rejects with an UpdateError object (NOT a string). Every rejection here
- *  means nothing was installed and the app is still up; anything that goes
- *  wrong AFTER the exit is reported on the next boot by reportLastUpdate(). */
+ *  Rejects with an UpdateInstallError carrying the typed Rust error (kind,
+ *  detail, exit code, manual installer path) and stringifying to the message.
+ *  Every rejection here means nothing was installed and the app is still up;
+ *  anything that goes wrong AFTER the exit is reported on the next boot by
+ *  reportLastUpdate(). */
 export async function installUpdate(installerPath: string): Promise<void> {
   const releasesDir = getReleasesDir();
   try {
     await invoke("install_update", { installerPath, ...(releasesDir ? { releasesDir } : {}) });
   } catch (e) {
-    throw asUpdateError(e);
+    throw new UpdateInstallError(asUpdateError(e));
   }
 }
 
