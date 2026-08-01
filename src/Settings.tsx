@@ -15,7 +15,9 @@ import {
   checkForUpdate, installUpdate, getReleasesDir, setReleasesDir,
   getAutoUpdateCheck, setAutoUpdateCheck, DEFAULT_RELEASES_DIR,
   getPendingReleaseNotes, clearPendingReleaseNotes, type UpdateCheckResult,
+  getUpdateFailure, clearUpdateFailure,
 } from "./updater";
+import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { trustedRepos, untrustRepo } from "./trust";
 import { spawnPane } from "./worktrees";
 import { useVendors, vendorColor, vendorAccentOverrides, setVendorAccentOverride } from "./vendors";
@@ -447,6 +449,11 @@ function UpdatesBlock() {
   const [installError, setInstallError] = useState<string | null>(null);
   const [autoCheck, setAutoCheckState] = useState(getAutoUpdateCheck());
   const [releasesDir, setReleasesDirState] = useState(getReleasesDir());
+  // UPD-1: an update that failed did so while the app was CLOSED, so the only
+  // in-app trace was a toast the user may never have seen. Keep it here until
+  // it's dismissed — "the update silently did nothing" is the failure this
+  // whole path exists to prevent.
+  const [failure, setFailure] = useState(() => getUpdateFailure());
 
   const runCheck = async () => {
     setChecking(true);
@@ -541,6 +548,26 @@ function UpdatesBlock() {
         </button>
       </div>
       {checkError && <div className="set-error">Couldn’t check for updates: {checkError}</div>}
+      {failure && (
+        <div className="set-error set-update-failure">
+          <div>Version {failure.version} didn’t install. {failure.message}</div>
+          {failure.exitCode != null && <div className="set-error-detail">Installer exit code: {failure.exitCode}</div>}
+          {failure.detail && <div className="set-error-detail">{failure.detail}</div>}
+          <div className="set-update-failure-actions">
+            {failure.manualPath && (
+              <button
+                className="set-btn"
+                onClick={() => { void revealItemInDir(failure.manualPath!).catch(() => { /* best effort */ }); }}
+              >
+                Show me the installer
+              </button>
+            )}
+            <button className="set-btn" onClick={() => { clearUpdateFailure(); setFailure(null); }}>
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
       {updateAvailable && (
         <div className="set-row set-row-block">
           {/* UX-585: the manifest's own notes, shown before the install button

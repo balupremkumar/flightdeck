@@ -121,6 +121,16 @@ kbd {
 }
 .set-about { font-size: 13px; color: var(--muted); line-height: 1.5; }
 .set-error { font-size: 12.5px; color: var(--red); }
+/* UPD-1: a failed update is reported here rather than only in a toast the user
+   may never have seen — it happened while the app was closed. Bordered so it
+   reads as a standing state, not a line of prose that scrolls past. */
+.set-update-failure {
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 10px 12px; border: 1px solid var(--red); border-radius: var(--r-md);
+  background: color-mix(in srgb, var(--red) 8%, transparent);
+}
+.set-error-detail { color: var(--muted); font-size: 11.5px; font-family: var(--font-mono); word-break: break-all; }
+.set-update-failure-actions { display: flex; gap: 8px; margin-top: 2px; }
 .set-reset { align-self: flex-start; }
 
 /* ---------- Theme picker ---------- */
