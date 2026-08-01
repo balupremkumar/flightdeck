@@ -378,7 +378,16 @@ export function Review() {
   const createPr = () => {
     if (!pane?.worktreePath || handing) return;
     setHanding(true);
-    invoke<{ status: string; url: string | null; detail: string }>("git_pr_handoff", { worktreePath: pane.worktreePath })
+    // UX-592: belt and braces against a push that never answers. The Rust side
+    // now disables git's interactive prompts so it should always come back,
+    // but the button must clear even if it doesn't — a control stuck on
+    // "Pushing…" with no way out is worse than an honest timeout.
+    const bounded = <T,>(p: Promise<T>, ms: number): Promise<T> =>
+      Promise.race([p, new Promise<T>((_, rej) => setTimeout(() => rej(new Error("timed-out")), ms))]);
+    bounded(
+      invoke<{ status: string; url: string | null; detail: string }>("git_pr_handoff", { worktreePath: pane.worktreePath }),
+      35000
+    )
       .then((r) => {
         if (r.status === "pushed") {
           pushToast("success", `Pushed ${pane.branch} to origin.${r.url ? "" : ` ${r.detail}`}`);
@@ -395,7 +404,11 @@ export function Review() {
         }
         void load();
       })
-      .catch((e) => pushToast("error", "PR handoff failed.", { detail: String(e) }))
+      .catch((e) =>
+        String(e).includes("timed-out")
+          ? pushToast("error", "Origin didn't respond within 35 seconds. Check your connection, then try again.")
+          : pushToast("error", "PR handoff failed.", { detail: String(e) })
+      )
       .finally(() => setHanding(false));
   };
 

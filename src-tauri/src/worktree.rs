@@ -57,6 +57,14 @@ impl GitOut {
 pub fn git(cwd: &Path, args: &[&str]) -> Result<GitOut, String> {
     let mut command = std::process::Command::new("git");
     command.args(args).current_dir(cwd);
+    // UX-592: never let a network git block on an interactive prompt. Offline,
+    // or with expired credentials, a push otherwise waits forever on a
+    // credential helper that has no terminal to prompt on — which hangs this
+    // command thread and leaves the caller's button spinning with no way out.
+    // Failing fast turns a hang into an ordinary nonzero exit the caller can
+    // explain.
+    command.env("GIT_TERMINAL_PROMPT", "0");
+    command.env("GCM_INTERACTIVE", "never");
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;

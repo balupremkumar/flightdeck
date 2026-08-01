@@ -69,6 +69,10 @@ export const SESSION_KEYS = [
   // make the banner reappear for a version you've already seen.
   "flightdeck-whatsnew-seen-version",
   "flightdeck-pending-release-notes",
+  // UPD-1: the last failed update attempt, kept so Settings > About can still
+  // show it after the boot toast has gone. Not a preference — a colour reset
+  // must not erase the only record of "your update silently did nothing".
+  "flightdeck-update-failure",
   // UX-551: per-vendor sent-prompt history (prompthistory.ts) — recall state,
   // not a preference, same reasoning as flightdeck-broadcast-snippets above.
   "flightdeck-prompt-history",

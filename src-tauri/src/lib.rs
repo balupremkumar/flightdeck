@@ -581,6 +581,7 @@ pub fn run() {
             persist::import_backup,
             updates::check_update,
             updates::install_update,
+            updates::take_update_status,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

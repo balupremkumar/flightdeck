@@ -38,6 +38,10 @@ export interface UpdateCheckResult {
   available: boolean;
   info?: UpdateInfo;
   error?: string;
+  /** Machine-readable twin of `error` — see UpdateError::kind in updates.rs. */
+  errorKind?: string;
+  /** Set when the failure still leaves a runnable installer on disk. */
+  manualPath?: string;
 }
 
 // Rust's UpdateCheckResult (updates.rs), camelCased by Tauri's arg/return mapping.
@@ -47,6 +51,42 @@ interface RawCheckResult {
   notes?: string;
   installerPath?: string;
   error?: string;
+  errorKind?: string;
+  manualPath?: string;
+}
+
+// Rust's UpdateError (updates.rs). install_update rejects with this OBJECT,
+// not a string — String(e) on it would render "[object Object]", so every
+// caller should go through asUpdateError() below.
+export interface UpdateError {
+  kind: string;
+  message: string;
+  detail?: string;
+  manualPath?: string;
+  exitCode?: number;
+}
+
+/** Normalises anything invoke() can reject with into a renderable UpdateError:
+ *  the typed object from Rust, a bare string from the bridge itself (e.g. the
+ *  command not existing in a browser build), or a thrown JS Error. */
+export function asUpdateError(e: unknown): UpdateError {
+  if (e && typeof e === "object" && typeof (e as UpdateError).message === "string" && typeof (e as UpdateError).kind === "string") {
+    return e as UpdateError;
+  }
+  return { kind: "unknown", message: String(e) };
+}
+
+// Rust's UpdateOutcome (updates.rs): what the detached watcher recorded about
+// the last install attempt, evaluated against the version actually running.
+export interface UpdateOutcome {
+  ok: boolean;
+  stage: string;
+  attemptedVersion: string;
+  currentVersion: string;
+  exitCode?: number;
+  message: string;
+  detail?: string;
+  manualPath?: string;
 }
 
 // UX-600: "what's new since your last version" reads the release manifest's
@@ -86,7 +126,7 @@ export async function checkForUpdate(): Promise<UpdateCheckResult> {
   } catch (e) {
     return { available: false, error: String(e) };
   }
-  if (raw.error) return { available: false, error: raw.error };
+  if (raw.error) return { available: false, error: raw.error, errorKind: raw.errorKind, manualPath: raw.manualPath };
   if (raw.available && raw.version && raw.installerPath) {
     const info: UpdateInfo = { version: raw.version, notes: raw.notes ?? "", installerPath: raw.installerPath };
     useUI.getState().setUpdateAvailable(info);
@@ -99,10 +139,97 @@ export async function checkForUpdate(): Promise<UpdateCheckResult> {
 
 /** Validates + installs on the Rust side, reaps live panes, relaunches. On
  *  success the app exits itself (see updates.rs) — a caller that's still
- *  running after this resolves should treat it the same as a thrown error. */
+ *  running after this resolves should treat it the same as a thrown error.
+ *
+ *  Rejects with an UpdateError object (NOT a string). Every rejection here
+ *  means nothing was installed and the app is still up; anything that goes
+ *  wrong AFTER the exit is reported on the next boot by reportLastUpdate(). */
 export async function installUpdate(installerPath: string): Promise<void> {
   const releasesDir = getReleasesDir();
-  await invoke("install_update", { installerPath, ...(releasesDir ? { releasesDir } : {}) });
+  try {
+    await invoke("install_update", { installerPath, ...(releasesDir ? { releasesDir } : {}) });
+  } catch (e) {
+    throw asUpdateError(e);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// UPD-1: what happened to the LAST update attempt
+// ---------------------------------------------------------------------------
+// The app kills itself to let the silent installer overwrite its exe, so for
+// the whole window in which an update can fail there is no UI alive to report
+// anything. The detached watcher (updates.rs) writes a status file instead;
+// this reads it exactly once on the next boot and turns it into a toast, and
+// keeps a copy for Settings > About so a 3.5s toast isn't the only trace of
+// "your update silently did nothing".
+
+const LAST_FAILURE_KEY = "flightdeck-update-failure";
+
+export interface StoredUpdateFailure {
+  version: string;
+  message: string;
+  detail?: string;
+  manualPath?: string;
+  exitCode?: number;
+  at: number;
+}
+
+/** The most recent failed update attempt, or null. Settings > About renders
+ *  this as a persistent banner (a toast alone is too easy to miss), and
+ *  clears it once the user has seen it. */
+export function getUpdateFailure(): StoredUpdateFailure | null {
+  try {
+    const raw = localStorage.getItem(LAST_FAILURE_KEY);
+    if (!raw) return null;
+    const p = JSON.parse(raw);
+    if (p && typeof p.version === "string" && typeof p.message === "string") return p;
+    return null;
+  } catch { return null; }
+}
+export function clearUpdateFailure() {
+  try { localStorage.removeItem(LAST_FAILURE_KEY); } catch { /* non-persistent */ }
+}
+function saveUpdateFailure(f: StoredUpdateFailure) {
+  try { localStorage.setItem(LAST_FAILURE_KEY, JSON.stringify(f)); } catch { /* non-persistent */ }
+}
+
+/** Reads (and clears, on the Rust side) the watcher's record of the last
+ *  install attempt. Returns null when no update was attempted since the last
+ *  boot, or when there's no Tauri bridge (browser/demo build). */
+export async function takeUpdateStatus(): Promise<UpdateOutcome | null> {
+  try {
+    return (await invoke<UpdateOutcome | null>("take_update_status")) ?? null;
+  } catch { return null; }
+}
+
+/** Boot-time hand-back. A failed update is loud twice over: an error toast
+ *  now, and a stored record Settings can keep showing. A successful one gets
+ *  a quiet confirmation so "install & restart" always ends in an answer. */
+export async function reportLastUpdate(): Promise<UpdateOutcome | null> {
+  const outcome = await takeUpdateStatus();
+  if (!outcome) return null;
+  if (outcome.ok) {
+    clearUpdateFailure();
+    useUI.getState().pushToast("success", outcome.message);
+    return outcome;
+  }
+  saveUpdateFailure({
+    version: outcome.attemptedVersion,
+    message: outcome.message,
+    detail: outcome.detail,
+    manualPath: outcome.manualPath,
+    exitCode: outcome.exitCode,
+    at: Date.now(),
+  });
+  useUI.getState().pushToast("error", outcome.message, {
+    detail: [
+      outcome.detail,
+      outcome.exitCode != null ? `Installer exit code: ${outcome.exitCode}` : undefined,
+      outcome.manualPath ? `Installer: ${outcome.manualPath}` : undefined,
+      `Stage: ${outcome.stage}`,
+    ].filter(Boolean).join("\n"),
+  });
+  return outcome;
 }
 
 // Startup silent check (~10s after boot, so it never competes with session
@@ -110,12 +237,24 @@ export async function installUpdate(installerPath: string): Promise<void> {
 // same version even if something re-triggers a check later in the session.
 let toastedForVersion: string | null = null;
 export function scheduleStartupCheck() {
+  // Runs BEFORE the auto-check guard and on its own short delay: "your last
+  // update failed" is not a preference, it's the answer to a button the user
+  // already pressed. 2s is just enough to be after the session-restore
+  // prompt's own toasts rather than under them.
+  window.setTimeout(() => { void reportLastUpdate(); }, 2_000);
+
   if (!getAutoUpdateCheck()) return;
   window.setTimeout(() => {
     void checkForUpdate().then((res) => {
       if (res.available && res.info && toastedForVersion !== res.info.version) {
         toastedForVersion = res.info.version;
         useUI.getState().pushToast("info", `Flightdeck ${res.info.version} is available — Settings > About to install.`);
+      }
+      // A pre-flight failure (corrupt/half-copied installer, manifest pointing
+      // at the wrong version) used to be visible only to whoever happened to
+      // open Settings. It's a broken release; say so.
+      if (res.error && res.errorKind && res.errorKind.startsWith("installer-")) {
+        useUI.getState().pushToast("error", `Flightdeck update problem: ${res.error}`);
       }
     });
   }, 10_000);

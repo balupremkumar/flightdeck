@@ -286,7 +286,7 @@ export function Broadcast() {
       {/* UX-552: placeholder fill-in step for a {{token}}-carrying snippet. */}
       {fillingSnippet && (
         <div className="bc-fill" role="form" aria-label={`Fill in ${fillingSnippet.snippet.text}`}>
-          <div className="bc-fill-head">Fill in "{fillingSnippet.snippet.text}"</div>
+          <div className="bc-fill-head">Fill in “{fillingSnippet.snippet.text}”</div>
           <div className="bc-fill-fields">
             {fillingSnippet.tokens.map((t) => (
               <label className="bc-fill-field" key={t}>
