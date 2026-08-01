@@ -18,6 +18,9 @@ export interface PersistedPane {
   worktreePath?: string;
   branch?: string;
   baseBranch?: string;
+  // UX-581: the pane's typed-but-unsent input line, so a restart doesn't
+  // silently discard what you were part-way through writing.
+  draft?: string;
 }
 
 export interface PersistedWorkspace {
