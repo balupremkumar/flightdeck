@@ -412,10 +412,12 @@ export function Review() {
           {pane.branch && (
             <span className="rv-branch"><IconBranch size={11} /> {pane.branch} → {pane.baseBranch}</span>
           )}
-          {/* UI-177: base moved since the fork — the number that predicts a conflict. */}
+          {/* UI-177: base moved since the fork — the number that predicts a conflict.
+              Non-isolated panes have no pane.baseBranch; fall back to the branch
+              context's base so the pill never renders "undefined". */}
           {ctx && ctx.baseAhead > 0 && (
-            <span className="rv-drift" title={`${pane.baseBranch} has ${ctx.baseAhead} commit${ctx.baseAhead === 1 ? "" : "s"} this branch doesn't have. Update from base to catch up before merging.`}>
-              {pane.baseBranch} +{ctx.baseAhead}
+            <span className="rv-drift" title={`${pane.baseBranch ?? ctx.baseBranch ?? "base"} has ${ctx.baseAhead} commit${ctx.baseAhead === 1 ? "" : "s"} this branch doesn't have. Update from base to catch up before merging.`}>
+              {pane.baseBranch ?? ctx.baseBranch ?? "base"} +{ctx.baseAhead}
             </span>
           )}
           {staleSince && (
