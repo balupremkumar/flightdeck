@@ -18,6 +18,13 @@ export interface Toast {
   id: number;
   kind: "info" | "success" | "error";
   text: string;
+  /** UX-578: an optional link the toast can offer (e.g. the merge commit on
+   *  a host). Opened via plugin-opener's openUrl, never auto-navigated. */
+  url?: string;
+  /** UX-591: an optional longer detail string, hidden by default and
+   *  revealed by an expand affordance — the full pane-error text instead of
+   *  a truncated one-liner. */
+  detail?: string;
 }
 
 // Local-file self-update (updater.ts / Rust updates.rs): mirrors the last
@@ -92,7 +99,7 @@ interface UIState {
   dismissConfirm: () => void;
 
   toasts: Toast[];
-  pushToast: (kind: Toast["kind"], text: string) => void;
+  pushToast: (kind: Toast["kind"], text: string, opts?: { url?: string; detail?: string }) => void;
   dismissToast: (id: number) => void;
 
   updateAvailable: UpdateInfo | null;
@@ -253,7 +260,8 @@ export const useUI = create<UIState>((set, get) => ({
   dismissConfirm: () => set({ confirm: null }),
 
   toasts: [],
-  pushToast: (kind, text) => set((s) => ({ toasts: [...s.toasts, { id: ++tseq, kind, text }] })),
+  pushToast: (kind, text, opts) =>
+    set((s) => ({ toasts: [...s.toasts, { id: ++tseq, kind, text, url: opts?.url, detail: opts?.detail }] })),
   dismissToast: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
 
   updateAvailable: null,

@@ -388,3 +388,29 @@ em.del { color: var(--st-error); margin-left: 5px; }
 
 /* UI-165: split needs the room. */
 .rv-drawer:has(.rv-split) { width: min(1180px, 96vw); }
+
+/* ---------- Toasts: UX-578 commit link + UX-591 expandable detail ----------
+   ToastHost.tsx owns the markup; these rules live here (not overlays.css,
+   which this session doesn't own) alongside the base .toast/.toast-text
+   rules defined there. */
+.toast { flex-direction: column; align-items: stretch; }
+.toast-row { display: flex; align-items: center; gap: 10px; }
+.toast-row .toast-text { flex: 1; }
+.toast-expand, .toast-close {
+  flex: none; font: inherit; font-size: 11px; font-weight: 600; line-height: 1;
+  color: var(--muted); background: transparent; border: none; cursor: pointer;
+  padding: 2px 4px; border-radius: 6px;
+}
+.toast-close { font-size: 15px; padding: 0 4px; }
+.toast-expand:hover, .toast-close:hover { color: var(--text); background: color-mix(in srgb, var(--text) 10%, transparent); }
+.toast-link {
+  align-self: flex-start; margin-top: 2px; font: inherit; font-size: 12px; font-weight: 600;
+  color: var(--accent); background: transparent; border: none; cursor: pointer; padding: 0;
+}
+.toast-link:hover { text-decoration: underline; }
+.toast-detail {
+  margin: 6px 0 0; padding: 8px 10px; max-height: 220px; overflow: auto;
+  font-family: var(--font-mono); font-size: 11px; line-height: 1.5; color: var(--muted);
+  background: var(--surface); border: 1px solid var(--line-strong); border-radius: 8px;
+  white-space: pre-wrap; word-break: break-word;
+}

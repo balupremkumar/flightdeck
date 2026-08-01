@@ -22,6 +22,7 @@ import { useBoardStore } from "./board/boardStore";
 import type { Card, ColumnId } from "./board/types";
 import { mapPatchLines } from "./difflines";
 import { nextUnreviewed } from "./reviewstate";
+import { buildExplainPrompt, buildLineCommentPrompt } from "./reviewprompt";
 import "./review.css";
 
 // Patch-line classes for the unified diff view.
@@ -58,6 +59,35 @@ function IconCheck({ size = 13 }: { size?: number }) {
       <path d="M4 10.5 L8.2 14.8 L16 6" />
     </svg>
   );
+}
+
+// Local — UX-568/UX-569's toolbar actions. Same grid/weight as IconCheck
+// above; a design pass over the exact glyphs is worth a follow-up (flagged
+// in the session report) but these are legible placeholders in the meantime.
+function IconSend({ size = 13 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M17.5 2.5 L2.5 9 L9 11 L11 17.5 Z" />
+    </svg>
+  );
+}
+function IconAsk({ size = 13 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="10" cy="10" r="7.5" />
+      <path d="M7.6 8 a2.4 2.2 0 1 1 3.6 2c-.8.6-1.1 1.1-1.1 2" />
+      <circle cx="10" cy="14.2" r="0.9" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+// UX-568: walks up from wherever the browser selection actually landed (a
+// text node inside .rv-lc) to the line span carrying the patch-line index.
+function lineIndexFromNode(node: Node | null): number | null {
+  let el: Element | null = node instanceof Element ? node : node?.parentElement ?? null;
+  while (el && !el.hasAttribute("data-line")) el = el.parentElement;
+  const v = el?.getAttribute("data-line");
+  return v != null ? Number(v) : null;
 }
 
 export function Review() {
@@ -297,8 +327,15 @@ export function Review() {
           .then((m) => {
             if (m.status === "merged") {
               // UX-578: name what actually landed — the same file/line
-              // delta the preflight showed — rather than just "merged".
-              pushToast("success", `Merged ${pane.branch} into ${pane.baseBranch} — ${stat}.`);
+              // delta the preflight showed — rather than just "merged" —
+              // and link straight to the merge commit when the remote is a
+              // recognised host, so "what changed" is one click away.
+              const commitNote = m.mergeCommit ? ` (${m.mergeCommit})` : "";
+              pushToast(
+                "success",
+                `Merged ${pane.branch} into ${pane.baseBranch} — ${stat}${commitNote}.`,
+                { url: m.commitUrl }
+              );
               // UI-159: a merge is the ONLY unambiguous "this work landed"
               // signal. The obvious heuristic — the pane's diff going to zero —
               // fires identically on `git reset --hard`, on the agent reverting
@@ -329,7 +366,7 @@ export function Review() {
             invalidateCwd(pane.cwd); // merge/PR changed git state — force fresh polls
             void load();
           })
-          .catch((e) => pushToast("error", `Merge failed: ${String(e)}`))
+          .catch((e) => pushToast("error", "Merge failed.", { detail: String(e) }))
           .finally(() => setMerging(false));
       },
     });
@@ -358,7 +395,7 @@ export function Review() {
         }
         void load();
       })
-      .catch((e) => pushToast("error", `PR handoff failed: ${String(e)}`))
+      .catch((e) => pushToast("error", "PR handoff failed.", { detail: String(e) }))
       .finally(() => setHanding(false));
   };
 
@@ -377,7 +414,7 @@ export function Review() {
         invalidateCwd(pane.cwd);
         void load();
       })
-      .catch((e) => pushToast("error", `Update failed: ${String(e)}`))
+      .catch((e) => pushToast("error", "Update failed.", { detail: String(e) }))
       .finally(() => setUpdating(false));
   };
 
@@ -403,6 +440,56 @@ export function Review() {
     } catch {
       pushToast("error", "Couldn't copy — clipboard unavailable.");
     }
+  };
+
+  // UX-568/UX-569: both write straight into the pane's PTY, same mechanism
+  // Broadcast uses (pty_write) — a live agent reads it exactly like typed
+  // input. UX-591's expandable toast carries the raw error on failure
+  // instead of a one-line "failed" with the reason cut off.
+  const sendToPane = async (data: string, note: string) => {
+    if (!pane) return;
+    // Computed locally rather than closing over the render's `title` const
+    // (declared further down, after the early pane-null return) — same
+    // derivation, just self-contained.
+    const label = pane.title || vendorShort(pane.vendor);
+    try {
+      await invoke("pty_write", { paneId: pane.id, data: data + "\r" });
+      pushToast("success", note);
+    } catch (e) {
+      pushToast("error", `Couldn't send to ${label} — it may not be running.`, { detail: String(e) });
+    }
+  };
+
+  // UX-568: comment-to-agent — select one or more diff lines (plain browser
+  // text selection inside the unified patch view) and send them back to the
+  // pane, prefixed with the file and real line range. Unified-only: split
+  // view's row index doesn't map onto a single patch-line index the same
+  // way, and re-deriving that mapping isn't worth it for this action.
+  const sendSelectionToAgent = () => {
+    if (!pane || !selected || split) return;
+    const sel = window.getSelection();
+    const container = patchRef.current;
+    if (!sel || sel.isCollapsed || !container || !sel.anchorNode || !container.contains(sel.anchorNode)) {
+      pushToast("info", "Select one or more diff lines above, then try again.");
+      return;
+    }
+    const a = lineIndexFromNode(sel.anchorNode);
+    const b = lineIndexFromNode(sel.focusNode);
+    if (a == null || b == null) return;
+    const prompt = buildLineCommentPrompt(selected, lines, patchLineNos, a, b);
+    const n = Math.abs(b - a) + 1;
+    const label = pane.title || vendorShort(pane.vendor);
+    sel.removeAllRanges();
+    void sendToPane(prompt, `Sent ${n} line${n === 1 ? "" : "s"} from ${selected} to ${label}.`);
+  };
+
+  // UX-569: one action prompts the pane with its OWN patch for the selected
+  // file — reviewprompt.ts caps the size so a huge patch is never pasted in
+  // wholesale.
+  const explainDiff = () => {
+    if (!pane || !selected || !patch) return;
+    const label = pane.title || vendorShort(pane.vendor);
+    void sendToPane(buildExplainPrompt(selected, patch), `Asked ${label} to explain ${selected}.`);
   };
 
   // UX-542/543: Esc registered on the shared overlay stack (ui.ts) instead of
@@ -609,6 +696,19 @@ export function Review() {
                 </button>
                 <button className="rv-ic" onClick={() => void copyPatch()} disabled={!patch} title="Copy this file's patch">
                   <IconCopy size={15} />
+                </button>
+                {/* UX-568: select lines above (unified view), then send them to the pane as a prompt. */}
+                <button
+                  className="rv-ic"
+                  onClick={sendSelectionToAgent}
+                  disabled={split || !patch}
+                  title={split ? "Switch to unified diff to select lines" : "Select diff lines above, then send them to the agent"}
+                >
+                  <IconSend size={14} />
+                </button>
+                {/* UX-569: prompt the pane with its own (capped) patch for this file. */}
+                <button className="rv-ic" onClick={explainDiff} disabled={!patch} title="Ask the agent to explain this file's diff">
+                  <IconAsk size={15} />
                 </button>
                 <button className="rv-ic" onClick={() => jumpHunk(1)} disabled={hunkLines.length === 0} title="Next hunk">
                   <IconChevron size={15} style={{ transform: "rotate(90deg)" }} />

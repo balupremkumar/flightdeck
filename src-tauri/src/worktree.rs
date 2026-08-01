@@ -568,6 +568,7 @@ pub fn update_from_base(wt_root: &Path, worktree_path: &str) -> Result<MergeOutc
             status: if already { "nothing-to-merge".into() } else { "merged".into() },
             detail: String::new(),
             conflict_files: vec![],
+            ..Default::default()
         });
     }
     let conflict_files: Vec<String> = git(dir, &["diff", "--name-only", "--diff-filter=U"])
@@ -578,6 +579,7 @@ pub fn update_from_base(wt_root: &Path, worktree_path: &str) -> Result<MergeOutc
         status: "conflict".into(),
         detail: format!("'{}' conflicts with '{}' — the worktree is unchanged", meta.base_branch, meta.branch),
         conflict_files,
+        ..Default::default()
     })
 }
 
@@ -585,7 +587,7 @@ pub fn update_from_base(wt_root: &Path, worktree_path: &str) -> Result<MergeOutc
 // Merge-back (D7)
 // ---------------------------------------------------------------------------
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct MergeOutcome {
     /// "merged" | "nothing-to-merge" | "conflict" | "dirty-base" | "wrong-branch"
@@ -595,6 +597,15 @@ pub struct MergeOutcome {
     /// abort restores the base). Empty for every other status.
     #[serde(default)]
     pub conflict_files: Vec<String>,
+    /// UX-578: short hash of the merge commit landed in the base checkout.
+    /// Set only on a "merged" status.
+    #[serde(default)]
+    pub merge_commit: Option<String>,
+    /// UX-578: clickable host URL for `merge_commit`, when the origin remote
+    /// is a recognised host (mirrors compare_url's host parsing). None when
+    /// there's no merge_commit, no origin, or an unrecognised host.
+    #[serde(default)]
+    pub commit_url: Option<String>,
 }
 
 /// Commit whatever the agent left uncommitted (shared by merge-back and the
@@ -707,7 +718,7 @@ pub fn merge_back(wt_root: &Path, worktree_path: &str, selected: Option<&[String
     // An explicit empty selection ("deselected everything") is a no-op, not
     // an error — same outcome as there being nothing to merge.
     if selected.is_some_and(|p| p.is_empty()) {
-        return Ok(MergeOutcome { status: "nothing-to-merge".into(), detail: String::new(), conflict_files: vec![] });
+        return Ok(MergeOutcome { status: "nothing-to-merge".into(), detail: String::new(), ..Default::default() });
     }
 
     // 1. Commit whatever the agent left uncommitted (the common case) — or
@@ -719,7 +730,7 @@ pub fn merge_back(wt_root: &Path, worktree_path: &str, selected: Option<&[String
 
     // 2. Anything to merge at all?
     if ahead_count(dir, &meta.base_branch)? == "0" {
-        return Ok(MergeOutcome { status: "nothing-to-merge".into(), detail: String::new(), conflict_files: vec![] });
+        return Ok(MergeOutcome { status: "nothing-to-merge".into(), detail: String::new(), ..Default::default() });
     }
 
     // 3. The main checkout must be on the base branch and clean — we never
@@ -730,6 +741,7 @@ pub fn merge_back(wt_root: &Path, worktree_path: &str, selected: Option<&[String
             status: "wrong-branch".into(),
             detail: format!("repo is on '{head}', worktree was forked from '{}'", meta.base_branch),
             conflict_files: vec![],
+            ..Default::default()
         });
     }
     if !git(top_path, &["status", "--porcelain"])?.stdout.trim().is_empty() {
@@ -737,6 +749,7 @@ pub fn merge_back(wt_root: &Path, worktree_path: &str, selected: Option<&[String
             status: "dirty-base".into(),
             detail: "the main checkout has uncommitted changes".into(),
             conflict_files: vec![],
+            ..Default::default()
         });
     }
 
@@ -746,7 +759,22 @@ pub fn merge_back(wt_root: &Path, worktree_path: &str, selected: Option<&[String
         &["merge", "--no-ff", &meta.branch, "-m", &format!("flightdeck: merge {}", meta.branch)],
     )?;
     if m.ok() {
-        return Ok(MergeOutcome { status: "merged".into(), detail: String::new(), conflict_files: vec![] });
+        // UX-578: name the merge commit that just landed, and a clickable
+        // host URL for it when origin is a recognised host — the toast and
+        // Review drawer can then link straight to it instead of just saying
+        // "merged".
+        let hash = git_line(top_path, &["rev-parse", "--short", "HEAD"])?;
+        let commit_url = hash.as_deref().and_then(|h| match git(top_path, &["remote", "get-url", "origin"]) {
+            Ok(o) if o.ok() => commit_url_for(o.stdout.trim(), h),
+            _ => None,
+        });
+        return Ok(MergeOutcome {
+            status: "merged".into(),
+            detail: String::new(),
+            conflict_files: vec![],
+            merge_commit: hash,
+            commit_url,
+        });
     }
     // UI-5: capture WHICH files conflicted before the abort wipes the state.
     let conflict_files: Vec<String> = git(top_path, &["diff", "--name-only", "--diff-filter=U"])
@@ -760,6 +788,7 @@ pub fn merge_back(wt_root: &Path, worktree_path: &str, selected: Option<&[String
             meta.branch, meta.base_branch
         ),
         conflict_files,
+        ..Default::default()
     })
 }
 
@@ -813,6 +842,39 @@ fn compare_url(remote: &str, base: &str, branch: &str) -> Option<String> {
         ))
     } else if host == "bitbucket.org" {
         Some(format!("https://bitbucket.org/{path}/pull-requests/new?source={}&dest={}", enc(branch), enc(base)))
+    } else {
+        None
+    }
+}
+
+/// UX-578: build a host's "view this commit" URL, mirroring compare_url's
+/// host parsing above (github `/commit/<hash>`, gitlab `/-/commit/<hash>`,
+/// bitbucket `/commits/<hash>`). None for unrecognised hosts or local remotes.
+fn commit_url_for(remote: &str, hash: &str) -> Option<String> {
+    let r = remote.trim().trim_end_matches(".git");
+    let (host, path) = if let Some(rest) = r.strip_prefix("git@") {
+        let (h, p) = rest.split_once(':')?;
+        (h.to_string(), p.to_string())
+    } else if let Some(rest) = r.strip_prefix("ssh://") {
+        let rest = rest.strip_prefix("git@").unwrap_or(rest);
+        let (h, p) = rest.split_once('/')?;
+        (h.to_string(), p.to_string())
+    } else if let Some(rest) = r.strip_prefix("https://").or_else(|| r.strip_prefix("http://")) {
+        let (h, p) = rest.split_once('/')?;
+        (h.to_string(), p.to_string())
+    } else {
+        return None; // local path remote, etc.
+    };
+    let path = path.trim_matches('/');
+    if path.is_empty() {
+        return None;
+    }
+    if host == "github.com" {
+        Some(format!("https://github.com/{path}/commit/{hash}"))
+    } else if host == "gitlab.com" || host.contains("gitlab") {
+        Some(format!("https://{host}/{path}/-/commit/{hash}"))
+    } else if host == "bitbucket.org" {
+        Some(format!("https://bitbucket.org/{path}/commits/{hash}"))
     } else {
         None
     }
@@ -1205,6 +1267,24 @@ mod tests {
     }
 
     #[test]
+    fn commit_url_for_recognises_hosts() {
+        assert_eq!(
+            commit_url_for("git@github.com:balu/flightdeck.git", "abc1234").as_deref(),
+            Some("https://github.com/balu/flightdeck/commit/abc1234")
+        );
+        assert_eq!(
+            commit_url_for("https://gitlab.example.com/team/app.git", "deadbee").as_deref(),
+            Some("https://gitlab.example.com/team/app/-/commit/deadbee")
+        );
+        assert_eq!(
+            commit_url_for("https://bitbucket.org/team/app.git", "f00ba12").as_deref(),
+            Some("https://bitbucket.org/team/app/commits/f00ba12")
+        );
+        assert_eq!(commit_url_for("D:/local/bare", "abc1234"), None);
+        assert_eq!(commit_url_for("https://example.com/owner/repo", "abc1234"), None);
+    }
+
+    #[test]
     fn pr_handoff_pushes_branch_to_origin() {
         let t = temp_repo();
         // Local bare origin — push works, URL is None (unrecognised remote).
@@ -1393,6 +1473,14 @@ mod tests {
         let m = merge_back(&t.wt_root, &a.path, None).unwrap();
         assert_eq!(m.status, "merged", "{}", m.detail);
         assert!(t.repo.join("feature.txt").exists(), "merge must land in the main checkout");
+        // UX-578: the merge commit's hash is reported (no origin remote here,
+        // so commit_url stays None — covered separately by commit_url_for's
+        // own host-parsing tests below).
+        let hash = m.merge_commit.expect("merged outcome must carry the merge commit hash");
+        assert!(!hash.is_empty());
+        let head = git_line(&t.repo, &["rev-parse", "--short", "HEAD"]).unwrap().unwrap();
+        assert_eq!(hash, head);
+        assert!(m.commit_url.is_none(), "no origin remote — no commit_url to derive");
     }
 
     #[test]

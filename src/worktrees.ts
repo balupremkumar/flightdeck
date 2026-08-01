@@ -19,7 +19,15 @@ export interface WorktreeInfo {
 }
 export interface DiffFile { path: string; added: number; deleted: number; binary: boolean; }
 export interface DiffSummary { base: string; files: DiffFile[]; totalAdded: number; totalDeleted: number; }
-export interface MergeOutcome { status: string; detail: string; conflictFiles: string[]; }
+export interface MergeOutcome {
+  status: string;
+  detail: string;
+  conflictFiles: string[];
+  /** UX-578: short hash of the merge commit, set only when status === "merged". */
+  mergeCommit?: string;
+  /** UX-578: clickable host URL for mergeCommit, when origin is a recognised host. */
+  commitUrl?: string;
+}
 /** UI-174/177: what a merge would bring, and how far the base has drifted. */
 export interface BranchCommit { hash: string; subject: string; at: number; }
 export interface BranchContext {
@@ -81,7 +89,13 @@ async function prepareCwd(
     const wt = await invoke<WorktreeInfo>("git_worktree_add", { repoDir: baseCwd, slug: newSlug(label) });
     return { cwd: wt.path, wt };
   } catch (e) {
-    useUI.getState().pushToast("error", `Worktree isolation failed — ${vendorShort(vendor)} runs in the shared folder. (${String(e)})`);
+    // UX-591: short headline in the toast, full error reachable via its
+    // expand affordance instead of getting crammed (and cut off) inline.
+    useUI.getState().pushToast(
+      "error",
+      `Worktree isolation failed — ${vendorShort(vendor)} runs in the shared folder instead.`,
+      { detail: String(e) }
+    );
     return { cwd: baseCwd };
   }
 }
@@ -224,11 +238,11 @@ async function cleanupWorktree(worktreePath: string) {
       onConfirm: () => {
         invoke("git_worktree_remove", { worktreePath, mode: "keep" })
           .then(() => ui.pushToast("success", "Work committed to the pane's branch."))
-          .catch((e) => ui.pushToast("error", `Couldn't clean up the worktree: ${String(e)}`));
+          .catch((e) => ui.pushToast("error", "Couldn't clean up the worktree.", { detail: String(e) }));
       },
     });
   } catch (e) {
-    ui.pushToast("error", `Couldn't clean up the worktree: ${String(e)}`);
+    ui.pushToast("error", "Couldn't clean up the worktree.", { detail: String(e) });
   }
 }
 
