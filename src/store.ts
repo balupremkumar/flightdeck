@@ -22,10 +22,31 @@ export interface PaneModel extends Partial<WorktreeRef> { id: number; vendor: st
 export interface Workspace { id: number; name: string; root: string; panes: PaneModel[]; focused: number | null; setupCmd?: string; }
 export interface NewPane extends Partial<WorktreeRef> { vendor: string; cwd: string; needsSetup?: boolean; }
 
+/** UX-554: a named set of panes (by id, across workspaces) so a bulk action
+ *  (restart/close/broadcast) can be re-run on the same group later without
+ *  re-selecting every pane by hand. Membership is pruned whenever a member
+ *  pane closes (see closePane/closeWorkspace below) so a group never quietly
+ *  points at a pane that no longer exists. */
+export interface PaneGroup { id: number; name: string; paneIds: number[]; }
+
 interface AppState {
   workspaces: Workspace[];
   activeId: number | null;
   creating: boolean; // is the New Workspace dialog open (as an overlay)
+  /** UX-553: pane ids currently shift+click selected, for bulk actions.
+   *  Cross-workspace by design (a shift+click doesn't know or care which
+   *  workspace it's in) but cleared on workspace switch — see switchWorkspace —
+   *  so a stale selection from a workspace you've left can't silently apply. */
+  selectedPaneIds: number[];
+  togglePaneSelection: (paneId: number) => void;
+  setSelection: (ids: number[]) => void;
+  clearSelection: () => void;
+  /** UX-554: named pane groups, persisted via session.ts's uiPrefs blob. */
+  groups: PaneGroup[];
+  createGroup: (name: string, paneIds: number[]) => number;
+  renameGroup: (id: number, name: string) => void;
+  deleteGroup: (id: number) => void;
+  hydrateGroups: (groups: PaneGroup[]) => void;
   startCreate: () => void;
   cancelCreate: () => void;
   createWorkspace: (root: string, panes: NewPane[], setupCmd?: string) => void;
@@ -48,6 +69,11 @@ interface AppState {
   /** UI-151: move a pane to another workspace, keeping its identity (and so its
    *  worktree, title and epoch) intact — the PTY keeps running. */
   movePaneToWorkspace: (fromWsId: number, paneId: number, toWsId: number) => void;
+  /** UX-564: a new plain pane in the same workspace, same cwd + vendor (and
+   *  worktree identity, if the source pane had one — "same cwd" includes
+   *  already being isolated in a worktree). A fresh process, not a clone of
+   *  the running session. No-op if the source pane is gone. */
+  duplicatePane: (wsId: number, paneId: number) => void;
   // Session restore (session.ts): replace the whole tree with persisted state.
   hydrate: (workspaces: Workspace[], activeId: number | null) => void;
 }
@@ -70,6 +96,35 @@ function reorder<T>(list: T[], from: number, to: number): T[] {
 
 let wseq = 0;
 let pseq = 0;
+let gseq = 0;
+
+// ---------------------------------------------------------------------------
+// UX-553/554: cross-pane imperative send registry.
+//
+// Bulk "broadcast to selected/group" needs to write into OTHER panes' live
+// PTYs, but the actual write goes through each pane's own Terminal instance
+// (TerminalHandle.paste resolves the PTY id it privately holds — the numeric
+// id the Rust registry assigns at spawn is NOT the same space as PaneModel.id
+// here, so nothing outside a pane's own Terminal can address its PTY
+// directly). Every PaneView instance registers its own paste function here
+// under its store pane id, and unregisters on unmount — the same
+// self-registration shape as attention.ts's lastLine map, just for a callback
+// instead of a value.
+const paneSendRegistry = new Map<number, (text: string) => void>();
+export function registerPaneSend(paneId: number, fn: (text: string) => void): void {
+  paneSendRegistry.set(paneId, fn);
+}
+export function unregisterPaneSend(paneId: number): void {
+  paneSendRegistry.delete(paneId);
+}
+/** Returns true if the pane was reachable (mounted with a live Terminal). */
+export function sendToPane(paneId: number, text: string): boolean {
+  const fn = paneSendRegistry.get(paneId);
+  if (!fn) return false;
+  fn(text);
+  return true;
+}
+
 function baseName(p: string): string {
   const s = p.replace(/[\\/]+$/, "");
   const i = Math.max(s.lastIndexOf("\\"), s.lastIndexOf("/"));
@@ -80,6 +135,33 @@ export const useApp = create<AppState>((set) => ({
   workspaces: [],
   activeId: null,
   creating: false,
+  selectedPaneIds: [],
+  groups: [],
+
+  togglePaneSelection: (paneId) =>
+    set((s) => ({
+      selectedPaneIds: s.selectedPaneIds.includes(paneId)
+        ? s.selectedPaneIds.filter((id) => id !== paneId)
+        : [...s.selectedPaneIds, paneId],
+    })),
+  setSelection: (ids) => set({ selectedPaneIds: ids }),
+  clearSelection: () => set((s) => (s.selectedPaneIds.length ? { selectedPaneIds: [] } : s)),
+
+  createGroup: (name, paneIds) => {
+    const id = ++gseq;
+    set((s) => ({ groups: [...s.groups, { id, name: name.trim().slice(0, 60) || `Group ${id}`, paneIds: [...paneIds] }] }));
+    return id;
+  },
+  renameGroup: (id, name) =>
+    set((s) => ({
+      groups: s.groups.map((g) => (g.id === id ? { ...g, name: name.trim().slice(0, 60) || g.name } : g)),
+    })),
+  deleteGroup: (id) => set((s) => ({ groups: s.groups.filter((g) => g.id !== id) })),
+  hydrateGroups: (groups) =>
+    set(() => {
+      for (const g of groups) gseq = Math.max(gseq, g.id);
+      return { groups };
+    }),
 
   startCreate: () => set({ creating: true }),
   cancelCreate: () => set((s) => (s.workspaces.length ? { creating: false } : s)),
@@ -110,12 +192,21 @@ export const useApp = create<AppState>((set) => ({
 
   closeWorkspace: (id) =>
     set((s) => {
+      const closed = new Set(s.workspaces.find((w) => w.id === id)?.panes.map((p) => p.id) ?? []);
       const workspaces = s.workspaces.filter((w) => w.id !== id);
       const activeId = s.activeId === id ? (workspaces[workspaces.length - 1]?.id ?? null) : s.activeId;
-      return { workspaces, activeId };
+      return {
+        workspaces,
+        activeId,
+        selectedPaneIds: s.selectedPaneIds.filter((pid) => !closed.has(pid)),
+        groups: s.groups.map((g) => ({ ...g, paneIds: g.paneIds.filter((pid) => !closed.has(pid)) })),
+      };
     }),
 
-  switchWorkspace: (id) => set({ activeId: id }),
+  // UX-553: a stale cross-workspace selection is confusing (a bulk toolbar
+  // portalled to <body> would keep showing for panes you've switched away
+  // from) — start clean on every switch.
+  switchWorkspace: (id) => set({ activeId: id, selectedPaneIds: [] }),
 
   addPane: (wsId, vendor, cwd, wt, needsSetup) =>
     set((s) => ({
@@ -141,6 +232,8 @@ export const useApp = create<AppState>((set) => ({
           ? { ...w, panes: w.panes.filter((p) => p.id !== paneId), focused: w.focused === paneId ? null : w.focused }
           : w
       ),
+      selectedPaneIds: s.selectedPaneIds.filter((id) => id !== paneId),
+      groups: s.groups.map((g) => ({ ...g, paneIds: g.paneIds.filter((id) => id !== paneId) })),
     })),
 
   focusPane: (wsId, paneId) =>
@@ -212,6 +305,26 @@ export const useApp = create<AppState>((set) => ({
       };
     }),
 
+  duplicatePane: (wsId, paneId) =>
+    set((s) => ({
+      workspaces: s.workspaces.map((w) => {
+        if (w.id !== wsId) return w;
+        const src = w.panes.find((p) => p.id === paneId);
+        if (!src) return w;
+        const pane: PaneModel = {
+          id: ++pseq,
+          vendor: src.vendor,
+          cwd: src.cwd,
+          state: "starting",
+          epoch: 0,
+          worktreePath: src.worktreePath,
+          branch: src.branch,
+          baseBranch: src.baseBranch,
+        };
+        return { ...w, panes: [...w.panes, pane], focused: pane.id };
+      }),
+    })),
+
   hydrate: (workspaces, activeId) =>
     set(() => {
       // Bump the id counters past everything restored so new workspaces/panes
@@ -223,6 +336,6 @@ export const useApp = create<AppState>((set) => ({
       const validActive = workspaces.some((w) => w.id === activeId)
         ? activeId
         : workspaces[workspaces.length - 1]?.id ?? null;
-      return { workspaces, activeId: validActive, creating: false };
+      return { workspaces, activeId: validActive, creating: false, selectedPaneIds: [] };
     }),
 }));

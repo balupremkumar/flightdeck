@@ -8,7 +8,7 @@
 //     back to the workspace root if the repo itself is gone
 //   - safe-mode banner (--safe-mode / FLIGHTDECK_SAFE_MODE suppresses restore)
 import { invoke } from "@tauri-apps/api/core";
-import { useApp, type PaneModel, type Workspace } from "./store";
+import { useApp, type PaneModel, type PaneGroup, type Workspace } from "./store";
 import { useUI } from "./ui";
 import {
   loadSession, isSafeMode, hasPreviousSession, makeDebouncedSave,
@@ -18,6 +18,7 @@ import { repoToplevel, closeWorkspaceWithCleanup, type WorktreeInfo } from "./wo
 import { useBoardStore, getBoardState, setBoardState } from "./board/boardStore";
 import type { BoardCards } from "./board/types";
 import { getStartupBehavior } from "./Settings";
+import { lastLine } from "./attention";
 
 // UX-581: `draft` (the pane's unsent input line) isn't on persist.ts's
 // PersistedPane type yet — that file belongs to the persist.rs wiring, not
@@ -27,6 +28,34 @@ import { getStartupBehavior } from "./Settings";
 // about the TS type, so this is fully functional today, not just a stub.
 type DraftPane = PersistedWorkspace["panes"][number] & { draft?: string };
 type DraftWorkspace = Omit<PersistedWorkspace, "panes"> & { panes: DraftPane[] };
+
+// UX-561: what each pane was doing at save time — vendor, title, cwd, its
+// live state and its last output line (attention.ts's lastLine, the same
+// source the attention queue and Broadcast's output preview already read).
+// Recomputed on every save (not just at quit) so the doc's summary is never
+// more than one autosave cycle stale, and a hard-crash still leaves a recent
+// one behind rather than nothing.
+export interface PaneSummaryEntry {
+  workspaceName: string;
+  vendor: string;
+  title?: string;
+  cwd: string;
+  state: string;
+  lastLine?: string;
+}
+
+function summarize(workspaces: Workspace[]): PaneSummaryEntry[] {
+  return workspaces.flatMap((w) =>
+    w.panes.map((p): PaneSummaryEntry => ({
+      workspaceName: w.name,
+      vendor: p.vendor,
+      title: p.title,
+      cwd: p.cwd,
+      state: p.state,
+      lastLine: lastLine.get(p.id),
+    }))
+  );
+}
 
 function toDraft(workspaces: Workspace[], activeId: number | null): SessionDraft {
   return {
@@ -48,8 +77,46 @@ function toDraft(workspaces: Workspace[], activeId: number | null): SessionDraft
       })),
     })),
     // The board rides in the opaque prefs blob (BACKLOG 229 — cards were
-    // in-memory only; every restart wiped the Kanban).
-    uiPrefs: { board: getBoardState() },
+    // in-memory only; every restart wiped the Kanban). UX-554/561: pane
+    // groups and the "what was each pane doing" summary ride alongside it —
+    // all three are caller-shaped and round-tripped as-is by persist.rs
+    // (SessionDoc.uiPrefs is `unknown` on that side), so adding fields here
+    // needs no Rust/persist.ts change and is automatically backward
+    // compatible: an old doc simply has these keys absent, and every reader
+    // below treats absence as "none" rather than throwing.
+    uiPrefs: { board: getBoardState(), groups: useApp.getState().groups, summary: summarize(workspaces) },
+  };
+}
+
+/** UX-561: the session summary from the doc currently on disk, or an empty
+ *  list if there isn't one yet (first run, or a pre-UX-561 doc). Read this
+ *  for a "what was I doing last time" surface — it does not itself restore
+ *  anything. */
+export async function lastSessionSummary(): Promise<PaneSummaryEntry[]> {
+  try {
+    const doc = await loadSession();
+    return parseUiPrefs(doc?.uiPrefs).summary;
+  } catch {
+    return [];
+  }
+}
+
+/** Backward-compatible parse of the opaque `uiPrefs` blob (see toDraft's
+ *  comment on why it's safe to grow this without a persist.rs/persist.ts
+ *  change). `uiPrefs` is `unknown` end to end — a doc saved before UX-554/561
+ *  shipped simply has `groups`/`summary` absent, and every field here
+ *  defaults rather than throws, so an old doc loads exactly as before, just
+ *  with an empty groups list and summary. Exported standalone (not inlined
+ *  into offerSessionRestore) so this exact compatibility contract is unit
+ *  testable without needing to drive the whole restore-prompt flow. */
+export function parseUiPrefs(uiPrefs: unknown): { board?: BoardCards; groups: PaneGroup[]; summary: PaneSummaryEntry[] } {
+  const p = (uiPrefs && typeof uiPrefs === "object" ? uiPrefs : {}) as {
+    board?: BoardCards; groups?: unknown; summary?: unknown;
+  };
+  return {
+    board: p.board && typeof p.board === "object" ? p.board : undefined,
+    groups: Array.isArray(p.groups) ? (p.groups as PaneGroup[]) : [],
+    summary: Array.isArray(p.summary) ? (p.summary as PaneSummaryEntry[]) : [],
   };
 }
 
@@ -239,10 +306,14 @@ export async function offerSessionRestore() {
     }
     const doc = await loadSession();
     if (!doc) return;
-    // The board restores unconditionally (it's workspace-independent state) —
-    // declining the workspace prompt shouldn't wipe the task list.
-    const board = (doc.uiPrefs as { board?: BoardCards } | null)?.board;
-    if (board && typeof board === "object") setBoardState(board);
+    // The board (and, UX-554, pane groups) restore unconditionally — both are
+    // workspace-independent state, so declining the workspace prompt below
+    // shouldn't wipe them. parseUiPrefs is the backward-compat boundary: a
+    // doc saved before this shipped just has both absent (see its own doc
+    // comment + session.test.ts).
+    const prefs = parseUiPrefs(doc.uiPrefs);
+    if (prefs.board) setBoardState(prefs.board);
+    if (prefs.groups.length) useApp.getState().hydrateGroups(prefs.groups);
     if (doc.workspaces.length === 0) return;
     if (useApp.getState().workspaces.length > 0) return; // user already moving
     // Settings > Startup (91) — persisted-but-inert until now. "Reopen last

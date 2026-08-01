@@ -1,23 +1,27 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { revealPath } from "./reveal";
-import { useApp, type PaneModel, type PaneState } from "./store";
+import { useApp, registerPaneSend, unregisterPaneSend, type PaneModel, type PaneState } from "./store";
 import { useUI, useOverlayEsc } from "./ui";
 import { Terminal, type TerminalHandle } from "./Terminal";
 import {
   IconBranch, IconClose, IconRefresh, IconDrag, IconOverflow,
-  IconMaximizePane, IconMinimize, IconFolder, IconChevron, IconDiff, IconBoard,
+  IconMaximizePane, IconMinimize, IconFolder, IconChevron, IconDiff, IconBoard, IconFile,
 } from "./Icons";
 import type { DiffSummary } from "./worktrees";
 import { cachedInvoke, usePoll, useVisible } from "./poll";
 import { compact, num, duration, bytes, relTime, tailEllipsis } from "./format";
-import { stateSince, lastLine, STATE_LABEL as STATE_TITLE } from "./attention";
+import { stateSince, lastLine, isOpenQuestion, STATE_LABEL as STATE_TITLE } from "./attention";
 import "./panes.css";
 
 import { vendorShort, vendorMeta, vendorColor } from "./vendors";
 import { VendorGlyph } from "./VendorGlyph";
 import { closePaneWithCleanup } from "./worktrees";
 import { useBoardStore, useCardForPane } from "./board/boardStore";
+import { Transcript } from "./TranscriptView";
+import { extractLastCommand, redactText, scrollbackFilename, toLines } from "./transcript";
+import { SelectionToolbar, GroupsPanel, SessionSnapshots } from "./PaneOps";
+import { parseWorkspaceDef, serializeWorkspaceExport } from "./snapshots";
 const MIN_FONT = 9;
 const MAX_FONT = 22;
 const DEFAULT_FONT = 13;
@@ -27,6 +31,39 @@ const DEFAULT_QUIET_SEC = 3;
 const GIT_POLL_MS = 30000;
 /** UI-151: drag payload identifying a pane being moved between workspaces. */
 export const PANE_DRAG_TYPE = "application/x-flightdeck-pane";
+
+// UX-560: per-vendor quiet-threshold DEFAULT, editable from any pane's menu
+// (previously only the per-pane slider existed — this is the "save what I
+// just set as this vendor's default" companion, same shape as the existing
+// VENDOR_FONT_KEY below). vendorMeta(vendor).quietSeconds is still the
+// baseline for a vendor with no saved override.
+const VENDOR_QUIET_KEY = "flightdeck-vendor-quiet";
+function loadVendorQuietOverride(vendor: string): number | null {
+  try {
+    const map = JSON.parse(localStorage.getItem(VENDOR_QUIET_KEY) ?? "{}");
+    const v = map[vendor];
+    return typeof v === "number" && v >= MIN_QUIET_SEC && v <= MAX_QUIET_SEC ? v : null;
+  } catch { return null; }
+}
+function saveVendorQuietOverride(vendor: string, seconds: number) {
+  try {
+    const map = JSON.parse(localStorage.getItem(VENDOR_QUIET_KEY) ?? "{}");
+    map[vendor] = seconds;
+    localStorage.setItem(VENDOR_QUIET_KEY, JSON.stringify(map));
+  } catch { /* non-persistent */ }
+}
+
+function downloadText(filename: string, text: string) {
+  const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
 
 interface GitStatus {
   isRepo: boolean;
@@ -147,8 +184,17 @@ function PaneViewInner({
   };
   const [ligatures, setLigatures] = useState(false);
   // UI-237: start from THIS vendor's own threshold (agy idles longer than
-  // claude; a shell is idle at once). The per-pane slider still overrides it.
-  const [quietSec, setQuietSec] = useState(() => vendorMeta(pane.vendor).quietSeconds || DEFAULT_QUIET_SEC);
+  // claude; a shell is idle at once) — UX-560: or the user's saved override
+  // for that vendor, if they've set one from any pane's menu. The per-pane
+  // slider still overrides it for just this pane's session.
+  const [quietSec, setQuietSec] = useState(
+    () => loadVendorQuietOverride(pane.vendor) ?? vendorMeta(pane.vendor).quietSeconds ?? DEFAULT_QUIET_SEC
+  );
+  // UX-546/553/554/562/563: overlay open flags for the new per-pane surfaces.
+  const [transcriptOpen, setTranscriptOpen] = useState(false);
+  const [groupsOpen, setGroupsOpen] = useState(false);
+  const [snapshotsOpen, setSnapshotsOpen] = useState(false);
+  const importInputRef = useRef<HTMLInputElement>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   // UI-137: reopening find with an empty box loses the search you were mid-way
   // through; remember it for the life of the pane.
@@ -272,6 +318,67 @@ function PaneViewInner({
       pushToast("error", "Couldn't open Explorer for this folder.");
     }
     setMenuOpen(false);
+  };
+
+  // UX-546/547/549: the terminal's own scrollback, via a TerminalHandle
+  // method that doesn't exist on Terminal.tsx yet (that file isn't ours —
+  // see HANDOFF EDITS for the exact addition). Degrades to null rather than
+  // throwing so the transcript browser and these menu actions show an honest
+  // "not available yet" instead of a crash.
+  const getScrollback = (): string | null => {
+    const handle = terminalRef.current as (TerminalHandle & { getScrollbackText?: () => string }) | null;
+    return typeof handle?.getScrollbackText === "function" ? handle.getScrollbackText() : null;
+  };
+
+  const saveScrollback = (redacted: boolean) => {
+    setMenuOpen(false);
+    const raw = getScrollback();
+    if (raw == null) { pushToast("error", "Transcript export isn't wired up for this pane yet."); return; }
+    downloadText(scrollbackFilename(pane.vendor, redacted), redacted ? redactText(raw) : raw);
+    pushToast("success", redacted ? "Saved redacted scrollback." : "Saved scrollback.");
+  };
+
+  const copyLastCommand = () => {
+    setMenuOpen(false);
+    const raw = getScrollback();
+    const cmd = raw != null ? extractLastCommand(toLines(raw)) : null;
+    if (!cmd) { pushToast("info", "Couldn't find a command in this pane's recent output."); return; }
+    void copyText(cmd, "Copied last command.");
+  };
+
+  const duplicatePane = useApp((s) => s.duplicatePane);
+  const doDuplicate = () => {
+    setMenuOpen(false);
+    duplicatePane(wsId, pane.id);
+    pushToast("success", `Duplicated ${displayName ? displayName : "pane"} — same folder, fresh process.`);
+  };
+
+  // UX-563: export this pane's WORKSPACE as a file (client-side Blob
+  // download — the app has no generic file-write IPC command available to
+  // the frontend today; see HANDOFF EDITS if a native save-dialog path is
+  // wanted later). Import is the same mechanism in reverse via a hidden
+  // file input, reachable from any pane's menu since there's no dedicated
+  // workspace-level menu owned by this file.
+  const ws = useApp((s) => s.workspaces.find((w) => w.id === wsId));
+  const createWorkspace = useApp((s) => s.createWorkspace);
+  const exportWorkspace = () => {
+    setMenuOpen(false);
+    if (!ws) return;
+    downloadText(`${ws.name.replace(/[^a-z0-9-]/gi, "-") || "workspace"}.flightdeck-workspace.json`, serializeWorkspaceExport(ws));
+    pushToast("success", "Exported workspace definition.");
+  };
+  const importWorkspace = () => {
+    setMenuOpen(false);
+    importInputRef.current?.click();
+  };
+  const onImportFile = async (file: File) => {
+    try {
+      const def = parseWorkspaceDef(await file.text());
+      createWorkspace(def.root, def.panes.map((p) => ({ vendor: p.vendor, cwd: p.cwd })), def.setupCmd);
+      pushToast("success", `Imported "${def.name}" as a new workspace.`);
+    } catch (e) {
+      pushToast("error", e instanceof Error ? e.message : "Couldn't import that file.");
+    }
   };
 
   const displayName = pane.title || vendorShort(pane.vendor);
@@ -457,6 +564,31 @@ function PaneViewInner({
     useUI.getState().setActiveView("board");
   };
 
+  // UX-553/554: register this pane's send function so bulk broadcast (from
+  // ANY pane's selection toolbar/group action) can reach it — see PaneOps.tsx
+  // and store.ts's paneSendRegistry doc comment for why this can't just be a
+  // raw pty_write by store pane id.
+  useEffect(() => {
+    registerPaneSend(pane.id, (text) => terminalRef.current?.paste(text));
+    return () => unregisterPaneSend(pane.id);
+  }, [pane.id]);
+
+  // UX-553: shift+click toggles this pane in/out of the cross-workspace
+  // selection instead of the usual focus-on-mousedown. The lead pane (lowest
+  // selected id, arbitrary but stable) is the one instance that portals the
+  // bulk toolbar — otherwise every selected pane would render its own copy.
+  const selectedIds = useApp((s) => s.selectedPaneIds);
+  const togglePaneSelection = useApp((s) => s.togglePaneSelection);
+  const clearSelection = useApp((s) => s.clearSelection);
+  const selected = selectedIds.includes(pane.id);
+  const isLeadSelected = selectedIds.length > 0 && selectedIds[0] === pane.id;
+
+  // UX-559: a "waiting" pane whose last line reads as a genuine open
+  // question (not a standard approval prompt) gets its own badge — the
+  // generic "waiting" label undersells it (it's not idle, it's asking you
+  // something specific). See attention.ts's isOpenQuestion + attentionQueue.
+  const openQuestion = pane.state === "waiting" && isOpenQuestion(lastLine.get(pane.id));
+
   return (
     <div
       className={
@@ -464,16 +596,25 @@ function PaneViewInner({
         (focused ? " focused" : "") +
         (maximized ? " pmax" : "") +
         (dragging ? " dragging" : "") +
-        (dragOver ? " drop-target" : "")
+        (dragOver ? " drop-target" : "") +
+        (selected ? " selected" : "")
       }
       ref={paneRef}
       // UI-121: with six panes open, a neutral focus ring doesn't say WHICH
       // agent you're about to type at. The vendor's own colour does.
       style={focused ? ({ "--pane-accent": vendorColor(pane.vendor) } as React.CSSProperties) : undefined}
-      onMouseDown={() => focusPane(wsId, pane.id)}
+      onMouseDown={(e) => {
+        // UX-553: shift+click toggles selection and does NOT steal focus —
+        // a plain click elsewhere still clears a stale selection first, so
+        // the bulk toolbar never lingers over an unrelated click.
+        if (e.shiftKey) { e.preventDefault(); togglePaneSelection(pane.id); return; }
+        if (selectedIds.length) clearSelection();
+        focusPane(wsId, pane.id);
+      }}
       onDragOver={(e) => { if (canReorder) { e.preventDefault(); onDragEnter(index); } }}
       onDrop={(e) => { if (canReorder) { e.preventDefault(); onDropHere(index); } }}
     >
+      {isLeadSelected && <SelectionToolbar />}
       <div className={"pband " + pane.state}>
         {/* UI-136: the status band already means "what is this pane doing" —
             a real progress figure belongs there, not in a separate widget. */}
@@ -601,17 +742,25 @@ function PaneViewInner({
             <IconBoard size={11} /> {tailEllipsis(card.title, 16)}
           </span>
         )}
-        {/* UI-129: this pane is in the attention queue — show it where the user is looking. */}
-        {(pane.state === "permission" || pane.state === "error") && (
+        {/* UI-129: this pane is in the attention queue — show it where the user is looking.
+            UX-559: an open question ranks above plain waiting (attention.ts) and gets its
+            own label — "waiting" undersells a pane that's actively asking you something. */}
+        {(pane.state === "permission" || pane.state === "error" || openQuestion) && (
           <span
-            className={"pattn " + pane.state}
-            title={pane.state === "permission" ? "Blocked on your approval — open the attention queue (Ctrl+Shift+A)" : "Errored — open the attention queue (Ctrl+Shift+A)"}
+            className={"pattn " + (openQuestion ? "permission" : pane.state)}
+            title={
+              pane.state === "permission"
+                ? "Blocked on your approval — open the attention queue (Ctrl+Shift+A)"
+                : openQuestion
+                  ? `Asking a question: "${tailEllipsis(lastLine.get(pane.id) ?? "", 80)}" — open the attention queue (Ctrl+Shift+A)`
+                  : "Errored — open the attention queue (Ctrl+Shift+A)"
+            }
             role="button"
             tabIndex={0}
             onClick={() => useUI.getState().setAttentionOpen(true)}
             onKeyDown={(e) => { if (e.key === "Enter") useUI.getState().setAttentionOpen(true); }}
           >
-            {pane.state === "permission" ? "needs you" : "error"}
+            {pane.state === "permission" ? "needs you" : openQuestion ? "has a question" : "error"}
           </span>
         )}
         {usage && (() => {
@@ -723,6 +872,27 @@ Running low — consider /compact in this pane.` : "")
               >
                 <IconFolder size={13} /> Worktree inventory
               </button>
+              <div className="pmenu-sep" />
+              {/* UX-546/547/549: transcript browser + scrollback export + last-command copy. */}
+              <button className="pmenu-item" onClick={() => { setMenuOpen(false); setTranscriptOpen(true); }}>
+                <IconFile size={13} /> View transcript…
+              </button>
+              <button className="pmenu-item" onClick={() => saveScrollback(false)}>Save scrollback to file</button>
+              <button className="pmenu-item" onClick={() => saveScrollback(true)}>Save scrollback (redacted)</button>
+              <button className="pmenu-item" onClick={copyLastCommand}>Copy last command</button>
+              <div className="pmenu-sep" />
+              {/* UX-564: same cwd + vendor, a fresh process. */}
+              <button className="pmenu-item" onClick={doDuplicate}>Duplicate pane</button>
+              {/* UX-553/554: multi-select is shift+click on any pane; groups are managed here. */}
+              <button className="pmenu-item" onClick={() => { setMenuOpen(false); setGroupsOpen(true); }}>
+                Pane groups…
+              </button>
+              {/* UX-562/563: named snapshots of the whole session; export/import one workspace. */}
+              <button className="pmenu-item" onClick={() => { setMenuOpen(false); setSnapshotsOpen(true); }}>
+                Session snapshots…
+              </button>
+              <button className="pmenu-item" onClick={exportWorkspace}>Export this workspace…</button>
+              <button className="pmenu-item" onClick={importWorkspace}>Import workspace…</button>
               <div className="pmenu-zoom">
                 <span className="pmenu-zoom-label">Font size (this pane)</span>
                 <div className="pmenu-zoom-controls">
@@ -752,6 +922,19 @@ Running low — consider /compact in this pane.` : "")
                   <button onClick={() => setQuietSec((s) => Math.min(MAX_QUIET_SEC, s + 1))} title="Longer">+</button>
                   <button className="pmenu-zoom-reset" onClick={() => setQuietSec(DEFAULT_QUIET_SEC)} title="Reset to default">Reset</button>
                 </div>
+                {/* UX-560: save the current value as this VENDOR's default, so
+                    every new/restarted pane of this vendor starts here instead
+                    of the built-in baseline — not just this one pane's session. */}
+                <button
+                  className="pmenu-zoom-vendor-default"
+                  onClick={() => {
+                    saveVendorQuietOverride(pane.vendor, quietSec);
+                    pushToast("success", `${quietSec}s is now the default quiet threshold for ${vendorShort(pane.vendor)}.`);
+                  }}
+                  title={`Make ${quietSec}s the default for every ${vendorShort(pane.vendor)} pane`}
+                >
+                  Save as {vendorShort(pane.vendor)} default
+                </button>
               </div>
               <div className="pmenu-sep" />
               <button className="pmenu-item pmenu-danger" onClick={tryClosePane}>
@@ -860,6 +1043,28 @@ Running low — consider /compact in this pane.` : "")
         </div>,
         document.body
       )}
+      <Transcript
+        open={transcriptOpen}
+        onClose={() => setTranscriptOpen(false)}
+        paneName={displayName}
+        getScrollback={getScrollback}
+      />
+      <GroupsPanel open={groupsOpen} onClose={() => setGroupsOpen(false)} />
+      <SessionSnapshots open={snapshotsOpen} onClose={() => setSnapshotsOpen(false)} />
+      {/* UX-563: hidden file input backing "Import workspace…" above — no
+          Tauri file-open IPC used here (see the export/import comment near
+          exportWorkspace), so this is a plain <input type=file>. */}
+      <input
+        ref={importInputRef}
+        type="file"
+        accept=".json,application/json"
+        style={{ display: "none" }}
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          e.target.value = ""; // allow re-importing the same filename later
+          if (file) void onImportFile(file);
+        }}
+      />
     </div>
   );
 }

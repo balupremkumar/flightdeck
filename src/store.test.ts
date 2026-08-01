@@ -1,10 +1,11 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { paneHasUnsentInput, useApp } from "./store";
+import { paneHasUnsentInput, registerPaneSend, sendToPane, unregisterPaneSend, useApp } from "./store";
 
 // The store is a singleton; reset the observable slice before each test.
-// (wseq/pseq id counters are module-level and keep incrementing — tests only
-// assert on relative behaviour, never on specific id values.)
-const reset = () => useApp.setState({ workspaces: [], activeId: null, creating: false });
+// (wseq/pseq/gseq id counters are module-level and keep incrementing — tests
+// only assert on relative behaviour, never on specific id values.)
+const reset = () =>
+  useApp.setState({ workspaces: [], activeId: null, creating: false, selectedPaneIds: [], groups: [] });
 
 describe("app store", () => {
   beforeEach(reset);
@@ -234,5 +235,105 @@ describe("hydrate (session restore)", () => {
       999
     );
     expect(useApp.getState().activeId).toBe(21);
+  });
+});
+
+describe("UX-553 pane selection", () => {
+  beforeEach(reset);
+
+  it("togglePaneSelection: adds then removes on repeat toggles", () => {
+    useApp.getState().togglePaneSelection(1);
+    useApp.getState().togglePaneSelection(2);
+    expect(useApp.getState().selectedPaneIds).toEqual([1, 2]);
+    useApp.getState().togglePaneSelection(1);
+    expect(useApp.getState().selectedPaneIds).toEqual([2]);
+  });
+
+  it("clearSelection empties it; setSelection replaces it wholesale", () => {
+    useApp.getState().setSelection([3, 4, 5]);
+    expect(useApp.getState().selectedPaneIds).toEqual([3, 4, 5]);
+    useApp.getState().clearSelection();
+    expect(useApp.getState().selectedPaneIds).toEqual([]);
+  });
+
+  it("switchWorkspace clears a stale cross-workspace selection", () => {
+    useApp.getState().createWorkspace("/a", [{ vendor: "claude", cwd: "/a" }]);
+    useApp.getState().setSelection([1, 2]);
+    useApp.getState().switchWorkspace(useApp.getState().workspaces[0].id);
+    expect(useApp.getState().selectedPaneIds).toEqual([]);
+  });
+
+  it("closePane and closeWorkspace prune the closed pane out of selection and groups", () => {
+    useApp.getState().createWorkspace("/a", [{ vendor: "claude", cwd: "/a" }, { vendor: "pwsh", cwd: "/a" }]);
+    const ws = useApp.getState().workspaces[0];
+    const [p1, p2] = ws.panes;
+    useApp.getState().setSelection([p1.id, p2.id]);
+    useApp.getState().createGroup("g", [p1.id, p2.id]);
+    useApp.getState().closePane(ws.id, p1.id);
+    expect(useApp.getState().selectedPaneIds).toEqual([p2.id]);
+    expect(useApp.getState().groups[0].paneIds).toEqual([p2.id]);
+    useApp.getState().closeWorkspace(ws.id);
+    expect(useApp.getState().selectedPaneIds).toEqual([]);
+    expect(useApp.getState().groups[0].paneIds).toEqual([]);
+  });
+});
+
+describe("UX-554 pane groups", () => {
+  beforeEach(reset);
+
+  it("createGroup/renameGroup/deleteGroup", () => {
+    const id = useApp.getState().createGroup("  Reviewers  ", [1, 2]);
+    expect(useApp.getState().groups).toEqual([{ id, name: "Reviewers", paneIds: [1, 2] }]);
+    useApp.getState().renameGroup(id, "Backend");
+    expect(useApp.getState().groups[0].name).toBe("Backend");
+    useApp.getState().deleteGroup(id);
+    expect(useApp.getState().groups).toEqual([]);
+  });
+
+  it("hydrateGroups bumps the id counter past restored groups", () => {
+    useApp.getState().hydrateGroups([{ id: 500, name: "old", paneIds: [1] }]);
+    const id = useApp.getState().createGroup("new", []);
+    expect(id).toBeGreaterThan(500);
+  });
+});
+
+describe("UX-564 duplicatePane", () => {
+  beforeEach(reset);
+
+  it("adds a new pane with the same cwd/vendor/worktree identity, focuses it", () => {
+    useApp.getState().createWorkspace("/repo", [
+      { vendor: "claude", cwd: "/repo/wt/a", worktreePath: "/repo/wt/a", branch: "flightdeck/a", baseBranch: "main" },
+    ]);
+    const ws = useApp.getState().workspaces[0];
+    const src = ws.panes[0];
+    useApp.getState().duplicatePane(ws.id, src.id);
+    const panes = useApp.getState().workspaces[0].panes;
+    expect(panes).toHaveLength(2);
+    const dup = panes[1];
+    expect(dup.id).not.toBe(src.id);
+    expect(dup.vendor).toBe(src.vendor);
+    expect(dup.cwd).toBe(src.cwd);
+    expect(dup.worktreePath).toBe(src.worktreePath);
+    expect(dup.branch).toBe(src.branch);
+    expect(dup.state).toBe("starting");
+    expect(useApp.getState().workspaces[0].focused).toBe(dup.id);
+  });
+
+  it("is a no-op if the source pane is gone", () => {
+    useApp.getState().createWorkspace("/repo", [{ vendor: "claude", cwd: "/repo" }]);
+    const ws = useApp.getState().workspaces[0];
+    useApp.getState().duplicatePane(ws.id, 999999);
+    expect(useApp.getState().workspaces[0].panes).toHaveLength(1);
+  });
+});
+
+describe("UX-553/554 pane send registry", () => {
+  it("sendToPane calls the registered callback and reports reachability", () => {
+    const calls: string[] = [];
+    registerPaneSend(1, (t) => calls.push(t));
+    expect(sendToPane(1, "hello")).toBe(true);
+    expect(calls).toEqual(["hello"]);
+    unregisterPaneSend(1);
+    expect(sendToPane(1, "again")).toBe(false);
   });
 });

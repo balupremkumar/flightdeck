@@ -147,6 +147,19 @@
   text-overflow: ellipsis;
 }
 
+/* UX-553: shift+click multi-select — a distinct treatment from `.focused`
+   (accent ring) so "this pane is where my cursor goes" and "this pane is
+   part of a bulk action" never read as the same signal. */
+.pane.selected { box-shadow: inset 0 0 0 2px var(--ice); }
+.pane.selected::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: color-mix(in srgb, var(--ice) 5%, transparent);
+  z-index: 1;
+}
+
 /* Drag state on the pane being moved / the pane currently under the cursor. */
 .pane.dragging { opacity: .45; }
 .pane.drop-target { box-shadow: inset 0 0 0 2px var(--drop), var(--drop-glow); }
@@ -495,3 +508,162 @@
   0% { transform: translateX(-100%); }
   100% { transform: translateX(340%); }
 }
+
+/* UX-560: "save as vendor default" companion to the quiet-threshold slider. */
+.pmenu-zoom-vendor-default {
+  font: inherit; font-size: 11px; color: var(--muted);
+  background: transparent; border: 1px dashed var(--line); border-radius: var(--r-sm);
+  padding: 4px 7px; cursor: pointer; text-align: center;
+  transition: color var(--t-fast) ease, border-color var(--t-fast) ease;
+}
+.pmenu-zoom-vendor-default:hover { color: var(--text); border-color: var(--line-strong); }
+
+/* ============================================================
+   UX-553: bulk selection toolbar — a floating bar (portalled to <body>,
+   rendered by the "lead" selected pane) rather than another dropdown, since
+   its whole point is staying visible while the user keeps shift+clicking.
+   ============================================================ */
+.selbar {
+  position: fixed;
+  left: 50%;
+  bottom: 22px;
+  transform: translateX(-50%);
+  z-index: var(--z-drawer);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--elevated);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-pill);
+  box-shadow: 0 20px 50px -16px rgba(0, 0, 0, .7);
+  padding: 6px 8px 6px 14px;
+  max-width: min(92vw, 720px);
+}
+.selbar-count { font-size: 12px; font-weight: 700; color: var(--text); white-space: nowrap; }
+.selbar-btn {
+  display: inline-flex; align-items: center; gap: 5px;
+  font: inherit; font-size: 12px; color: var(--text);
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r-md);
+  padding: 5px 10px; cursor: pointer; white-space: nowrap;
+  transition: border-color var(--t-fast) ease, background-color var(--t-fast) ease;
+}
+.selbar-btn:hover { border-color: var(--line-strong); background: color-mix(in srgb, var(--accent) 10%, var(--surface-2)); }
+.selbar-btn:disabled { opacity: .4; cursor: default; }
+.selbar-danger { color: var(--st-error); }
+.selbar-broadcast {
+  display: flex; align-items: center; gap: 6px;
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r-pill);
+  padding: 3px 3px 3px 10px; color: var(--faint); min-width: 0;
+}
+.selbar-broadcast input {
+  font: inherit; font-size: 12px; color: var(--text); background: transparent; border: 0; outline: none;
+  width: 160px; min-width: 0;
+}
+.selbar-x {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px; flex: none; border-radius: 50%;
+  border: 0; background: transparent; color: var(--faint); cursor: pointer;
+  transition: color var(--t-fast) ease, background-color var(--t-fast) ease;
+}
+.selbar-x:hover { color: var(--text); background: color-mix(in srgb, var(--text) 10%, transparent); }
+
+/* ============================================================
+   UX-554/562: pane groups + session snapshots — shared "ops" panel chrome,
+   same visual family as .pmenu but a full centred modal (list-based content
+   needs real width/height, not a dropdown).
+   ============================================================ */
+.ops-backdrop {
+  position: fixed; inset: 0; z-index: var(--z-settings);
+  background: color-mix(in srgb, var(--abyss) 60%, transparent);
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px;
+}
+.ops-panel {
+  width: min(560px, 100%);
+  max-height: min(70vh, 560px);
+  display: flex; flex-direction: column;
+  background: var(--elevated);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-lg);
+  box-shadow: 0 30px 70px -20px rgba(0, 0, 0, .75);
+  overflow: hidden;
+}
+.ops-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 14px; border-bottom: 1px solid var(--line);
+}
+.ops-title { font-size: 13.5px; font-weight: 700; color: var(--text); }
+.ops-x {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; border-radius: 50%; border: 0;
+  background: transparent; color: var(--faint); cursor: pointer;
+}
+.ops-x:hover { color: var(--text); background: color-mix(in srgb, var(--text) 10%, transparent); }
+.ops-toolbar { padding: 10px 14px 0; }
+.ops-empty { padding: 24px 16px; color: var(--faint); font-size: 12.5px; text-align: center; }
+.ops-list { overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 4px; }
+.ops-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 9px 10px; border-radius: var(--r-md);
+  background: var(--surface-2);
+}
+.ops-row-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.ops-row-name { font-size: 12.5px; font-weight: 600; color: var(--text); }
+.ops-row-sub { font-size: 11px; color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ops-row-actions { display: flex; align-items: center; gap: 4px; flex: none; }
+.ops-row-actions button {
+  font: inherit; font-size: 11px; color: var(--text);
+  background: transparent; border: 1px solid var(--line); border-radius: var(--r-sm);
+  padding: 4px 7px; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: border-color var(--t-fast) ease;
+}
+.ops-row-actions button:hover { border-color: var(--line-strong); }
+.ops-row-actions button:disabled { opacity: .35; cursor: default; }
+
+/* ============================================================
+   UX-546: transcript browser — same modal chrome as .ops-panel, sized wider
+   for line-by-line scrollback and with a monospace body.
+   ============================================================ */
+.transcript-backdrop {
+  position: fixed; inset: 0; z-index: var(--z-settings);
+  background: color-mix(in srgb, var(--abyss) 60%, transparent);
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px;
+}
+.transcript {
+  width: min(820px, 100%);
+  height: min(72vh, 640px);
+  display: flex; flex-direction: column;
+  background: var(--elevated);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-lg);
+  box-shadow: 0 30px 70px -20px rgba(0, 0, 0, .75);
+  overflow: hidden;
+}
+.transcript-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 12px; border-bottom: 1px solid var(--line);
+}
+.transcript-title { font-size: 13px; font-weight: 700; color: var(--text); flex: none; }
+.transcript-search {
+  flex: 1; min-width: 0; font: inherit; font-size: 12px; color: var(--text);
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r-md);
+  padding: 6px 9px; outline: none;
+}
+.transcript-search:focus-visible { border-color: var(--ice); }
+.transcript-count { font-size: 11px; color: var(--faint); flex: none; white-space: nowrap; }
+.transcript-x {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; flex: none; border-radius: 50%; border: 0;
+  background: transparent; color: var(--faint); cursor: pointer;
+}
+.transcript-x:hover { color: var(--text); background: color-mix(in srgb, var(--text) 10%, transparent); }
+.transcript-empty { padding: 40px 20px; color: var(--faint); font-size: 12.5px; text-align: center; margin: auto; }
+.transcript-body {
+  flex: 1; overflow-y: auto; padding: 8px 4px;
+  font-family: var(--font-mono); font-size: 11.5px; line-height: 1.55;
+}
+.transcript-line { padding: 0 10px; white-space: pre-wrap; word-break: break-word; color: var(--muted); }
+.transcript-line.hit { background: color-mix(in srgb, var(--st-waiting) 18%, transparent); color: var(--text); }
+.transcript-line.current { background: color-mix(in srgb, var(--ice) 26%, transparent); color: var(--text); }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { attentionQueue, forMins, stateSince, lastOutputAt, recordOutput, mostRecentOutputPane } from "./attention";
+import { attentionQueue, forMins, isOpenQuestion, stateSince, lastLine, lastOutputAt, recordOutput, mostRecentOutputPane } from "./attention";
 import type { PaneState, Workspace } from "./store";
 
 function ws(id: number, panes: { id: number; state: PaneState }[]): Workspace {
@@ -63,5 +63,45 @@ describe("mostRecentOutputPane (UX-537)", () => {
     recordOutput(5, 50);
     const result = mostRecentOutputPane([ws(1, [{ id: 5, state: "running" }, { id: 6, state: "running" }])]);
     expect(result?.p.id).toBe(5);
+  });
+});
+
+describe("isOpenQuestion (UX-559)", () => {
+  it("recognises a genuine open question", () => {
+    expect(isOpenQuestion("Which package manager should I use?")).toBe(true);
+    expect(isOpenQuestion("What should I name this branch?")).toBe(true);
+  });
+
+  it("rejects standard approval/permission prompts even though they end in a question", () => {
+    expect(isOpenQuestion("Do you want to proceed?")).toBe(false);
+    expect(isOpenQuestion("Would you like to continue?")).toBe(false);
+    expect(isOpenQuestion("Allow this command? (y/n)")).toBe(false);
+  });
+
+  it("rejects text with no trailing question mark, and empty/undefined input", () => {
+    expect(isOpenQuestion("Running tests now")).toBe(false);
+    expect(isOpenQuestion("")).toBe(false);
+    expect(isOpenQuestion(undefined)).toBe(false);
+  });
+});
+
+describe("attentionQueue promotes an open question above plain waiting (UX-559)", () => {
+  it("ranks: permission > open question > error > plain waiting", () => {
+    lastLine.clear();
+    const now = Date.now();
+    stateSince.set(21, now - 1000); // waiting, plain
+    stateSince.set(22, now - 1000); // waiting, open question
+    stateSince.set(23, now - 1000); // error
+    stateSince.set(24, now - 1000); // permission
+    lastLine.set(22, "Which environment should this deploy to?");
+    const q = attentionQueue([
+      ws(9, [
+        { id: 21, state: "waiting" },
+        { id: 22, state: "waiting" },
+        { id: 23, state: "error" },
+        { id: 24, state: "permission" },
+      ]),
+    ]);
+    expect(q.map((x) => x.p.id)).toEqual([24, 22, 23, 21]);
   });
 });

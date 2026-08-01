@@ -18,10 +18,52 @@ export interface AttentionItem {
   since: number;
 }
 
-/** Ranked "needs you now" list: approval > error > waiting, and within a rank
- *  the pane that has needed you longest comes first — a scan order, not a pile. */
+/** UX-559: a "waiting" pane's tail matches a plain yes/no or single-key
+ *  approval prompt — Terminal.tsx already classifies these as "permission",
+ *  so anything that reaches here as "waiting" has already cleared that bar.
+ *  Kept in sync by eye with Terminal.tsx's PERMISSION_PATTERNS (that file
+ *  isn't ours — see HANDOFF EDITS for wiring this in at the source instead of
+ *  re-deriving it here from lastLine). */
+const STANDARD_PROMPT_RE = [
+  /do you want to/i,
+  /would you like to/i,
+  /\b(allow|approve|grant|trust) (this|these|it|access|edits?|command)/i,
+  /\((y\/n|yes\/no)\)|\[(y\/n|yes\/no)\]/i,
+  /❯?\s*1\.\s*yes/i,
+  /press enter to (continue|confirm|approve)/i,
+  /waiting for (your )?(approval|confirmation|permission)/i,
+];
+
+/** UX-559: true when a pane's last output line reads as the agent asking a
+ *  genuine open-ended question ("which package manager should I use?",
+ *  "what should I name this branch?") rather than a standard yes/no/approval
+ *  prompt. Deliberately conservative — requires a literal "?" so plain
+ *  narration ("checking your config...") never false-positives — but a
+ *  question mark alone is a weak signal on its own (rhetorical asides, code
+ *  comments), so it's additionally required NOT to match any of the standard
+ *  prompt shapes above. Pure and unit-tested; the caller decides what to do
+ *  with the result (attentionQueue below ranks it; PaneView badges it). */
+export function isOpenQuestion(text: string | undefined): boolean {
+  if (!text) return false;
+  const t = text.trim();
+  if (!t.endsWith("?")) return false;
+  return !STANDARD_PROMPT_RE.some((re) => re.test(t));
+}
+
+/** Ranked "needs you now" list: approval > a genuine open question > error >
+ *  plain waiting, and within a rank the pane that has needed you longest
+ *  comes first — a scan order, not a pile. A "waiting" pane whose last line
+ *  reads as an open question (UX-559) is promoted above plain waiting (and
+ *  above error — an unanswered question blocks progress at least as much as
+ *  a crash, and unlike an error it's actively expecting you right now) but
+ *  stays below an explicit approval prompt, which is the most literally
+ *  blocked state there is. */
 export function attentionQueue(workspaces: Workspace[], snoozed: Record<number, number> = {}): AttentionItem[] {
   const now = Date.now();
+  const rankOf = (p: AttentionItem["p"]): number => {
+    if (p.state === "waiting" && isOpenQuestion(lastLine.get(p.id))) return 0.5;
+    return ATTENTION_RANK[p.state] ?? 9;
+  };
   return workspaces
     .flatMap((w) =>
       w.panes
@@ -31,8 +73,8 @@ export function attentionQueue(workspaces: Workspace[], snoozed: Record<number, 
         .map((p) => ({ w, p, since: stateSince.get(p.id) ?? Date.now() }))
     )
     .sort((a, b) => {
-      const ra = ATTENTION_RANK[a.p.state] ?? 9;
-      const rb = ATTENTION_RANK[b.p.state] ?? 9;
+      const ra = rankOf(a.p);
+      const rb = rankOf(b.p);
       return ra === rb ? a.since - b.since : ra - rb;
     });
 }
