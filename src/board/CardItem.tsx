@@ -197,7 +197,7 @@ export function CardItem({
               {usage && (
                 <span
                   className="chip chip-usage"
-                  title={`Session tokens (from the agent's own transcript) — ${num(usage.contextTokens)} context, ${num(usage.outputTokens)} output across ${num(usage.turns)} turns`}
+                  title={`Session tokens (from the agent’s own transcript) — ${num(usage.contextTokens)} context, ${num(usage.outputTokens)} output across ${num(usage.turns)} turns`}
                 >
                   {compact(usage.contextTokens)} ctx
                 </span>

@@ -162,7 +162,7 @@ function renderInline(nodes: InlineNode[], mdPath: string): ReactNode {
           // untrusted scheme does nothing — previewed markdown is untrusted
           // input and must never reach the shell opener.
           if (blocked) {
-            useUI.getState().pushToast("info", "That link uses a scheme Flightdeck won't open.", { detail: n.href });
+            useUI.getState().pushToast("info", "That link uses a scheme Flightdeck won’t open.", { detail: n.href });
             return;
           }
           if (external) openUrl(n.href).catch(() => { /* best-effort */ });
@@ -266,12 +266,12 @@ type LoadState = "loading" | "loaded" | "error";
 function guessErrorMessage(err: unknown): string {
   const raw = String(err);
   if (/no such command|not found|unknown command|invoke/i.test(raw)) {
-    return "File preview needs one more backend piece that hasn't shipped yet.";
+    return "File preview needs one more backend piece that hasn’t shipped yet.";
   }
-  if (/no such file|not found|cannot find/i.test(raw)) return "This file isn't there any more.";
+  if (/no such file|not found|cannot find/i.test(raw)) return "This file isn’t there any more.";
   if (/denied|permission/i.test(raw)) return "Windows blocked reading this file.";
   if (/too large/i.test(raw)) return "This file is too large to preview.";
-  return "Couldn't read this file.";
+  return "Couldn’t read this file.";
 }
 
 function PreviewSkeleton() {

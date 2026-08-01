@@ -270,7 +270,7 @@ export function LeftPanel({ expanded, view, setView }: { expanded: boolean; view
             setView("terminals");
             pushToast("success", `Created workspace from ${path}`);
           })
-          .catch(() => pushToast("error", "That drop wasn't a folder — nothing created"));
+          .catch(() => pushToast("error", "That drop wasn’t a folder — nothing created"));
       })
       .then((fn) => { if (!cancelled) unlisten = fn; else fn(); });
     return () => { cancelled = true; unlisten?.(); };
@@ -296,7 +296,7 @@ export function LeftPanel({ expanded, view, setView }: { expanded: boolean; view
       const n = w.panes.length;
       requestConfirm({
         title: `Close ${w.name}?`,
-        body: `${n} pane${n === 1 ? "" : "s"} still live. Closing ends ${n === 1 ? "its session" : "their sessions"} — the running agents can't be brought back.`,
+        body: `${n} pane${n === 1 ? "" : "s"} still live. Closing ends ${n === 1 ? "its session" : "their sessions"} — the running agents can’t be brought back.`,
         confirmLabel: "Close & end sessions",
         danger: true,
         onConfirm: () => { closeWorkspaceWithCleanup(w); pushToast("info", `Closed ${w.name}`); },
@@ -352,14 +352,14 @@ export function LeftPanel({ expanded, view, setView }: { expanded: boolean; view
       if (!url) { pushToast("info", "No recognised origin remote for this workspace."); return; }
       await openUrl(url);
     } catch {
-      pushToast("error", "Couldn't work out this repo's web address.");
+      pushToast("error", "Couldn’t work out this repo’s web address.");
     }
   };
 
   const reveal = async (w: Workspace) => {
     setMenu(null);
     try { await revealItemInDir(w.root); }
-    catch { pushToast("error", `Couldn't reveal ${w.root}`); }
+    catch { pushToast("error", `Couldn’t reveal ${w.root}`); }
   };
 
   const onRowDragStart = (e: ReactDragEvent, id: number) => {
@@ -534,7 +534,7 @@ export function LeftPanel({ expanded, view, setView }: { expanded: boolean; view
         </div>
       )}
       <div className={"lp-list" + (sortByLast ? " sorted" : "")}>
-        {filtered.length === 0 && search.trim() && <div className="lp-empty">No workspaces match "{search.trim()}"</div>}
+        {filtered.length === 0 && search.trim() && <div className="lp-empty">No workspaces match “{search.trim()}”</div>}
         {ordered.map((w) => {
           const r = rollup(w.panes);
           const active = w.id === activeId && view === "terminals";

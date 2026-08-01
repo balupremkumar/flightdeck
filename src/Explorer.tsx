@@ -160,7 +160,7 @@ function QuickLookPopover({ name, path, pos, onClose }: { name: string; path: st
         </button>
       </div>
       <div className="ex-qlook-body">
-        {errored && <div className="ex-qlook-msg">Couldn't read this file.</div>}
+        {errored && <div className="ex-qlook-msg">Couldn’t read this file.</div>}
         {!errored && text === null && <div className="ex-qlook-msg">Loading…</div>}
         {!errored && text !== null && (
           <pre className="ex-qlook-pre">
@@ -481,7 +481,7 @@ export function Explorer({ root, wsId, vendor = "pwsh", paneRoot, paneLabel }: E
   // editor owns them; see the delivery report for the real-editor-launch gap.
   const handleOpenInEditor = useCallback((p: string) => {
     if (effectiveRoot) pushRecentFile(effectiveRoot, p);
-    openPath(p).catch((e) => pushToast("error", `Couldn't open ${p}: ${String(e)}`));
+    openPath(p).catch((e) => pushToast("error", `Couldn’t open ${p}: ${String(e)}`));
   }, [effectiveRoot, pushToast]);
 
   const [width, setWidth] = useState(loadWidth);
@@ -536,7 +536,7 @@ export function Explorer({ root, wsId, vendor = "pwsh", paneRoot, paneLabel }: E
   const revealActiveFile = () => {
     if (!activePreviewPath) { pushToast("info", "No file is open in preview."); return; }
     if (!effectiveRoot || !isAncestor(effectiveRoot, activePreviewPath)) {
-      pushToast("info", "That file isn't inside this explorer's folder.");
+      pushToast("info", "That file isn’t inside this explorer’s folder.");
       return;
     }
     setRevealTarget(activePreviewPath);
@@ -765,7 +765,7 @@ export function Explorer({ root, wsId, vendor = "pwsh", paneRoot, paneLabel }: E
           {status === "loading" && <SkeletonRows depth={0} count={5} />}
           {status === "error" && (
             <div className="ex-state">
-              Couldn't read this folder.
+              Couldn’t read this folder.
               <button className="ex-retry" onClick={() => load()}>Retry</button>
             </div>
           )}
@@ -777,7 +777,7 @@ export function Explorer({ root, wsId, vendor = "pwsh", paneRoot, paneLabel }: E
             filterLoading || filterFilesList === null ? (
               <SkeletonRows depth={0} count={5} />
             ) : filterRows.length === 0 ? (
-              <div className="ex-state">No files match "{filterQuery.trim()}".</div>
+              <div className="ex-state">No files match “{filterQuery.trim()}”.</div>
             ) : (
               <div className="ex-tree">
                 {filterRows.map((row) => {

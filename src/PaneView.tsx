@@ -160,8 +160,8 @@ function PaneViewInner({
     requestConfirm({
       title: `Close ${displayName}?`,
       body:
-        "This pane is still live. Closing it ends the session — the running agent can't be brought back." +
-        (isolated ? " Its worktree will be cleaned up (you'll be asked about unmerged work)." : ""),
+        "This pane is still live. Closing it ends the session — the running agent can’t be brought back." +
+        (isolated ? " Its worktree will be cleaned up (you’ll be asked about unmerged work)." : ""),
       confirmLabel: "Close & end session",
       danger: true,
       onConfirm: () => closePaneWithCleanup(wsId, pane),
@@ -297,7 +297,7 @@ function PaneViewInner({
       await navigator.clipboard.writeText(text);
       pushToast("success", okMsg);
     } catch {
-      pushToast("error", "Couldn't copy — clipboard unavailable.");
+      pushToast("error", "Couldn’t copy — clipboard unavailable.");
     }
   };
 
@@ -306,7 +306,7 @@ function PaneViewInner({
       await navigator.clipboard.writeText(pane.cwd);
       pushToast("success", "Copied working directory.");
     } catch {
-      pushToast("error", "Couldn't copy — clipboard unavailable.");
+      pushToast("error", "Couldn’t copy — clipboard unavailable.");
     }
     setMenuOpen(false);
   };
@@ -315,7 +315,7 @@ function PaneViewInner({
     try {
       await revealPath(pane.cwd);
     } catch {
-      pushToast("error", "Couldn't open Explorer for this folder.");
+      pushToast("error", "Couldn’t open Explorer for this folder.");
     }
     setMenuOpen(false);
   };
@@ -333,7 +333,7 @@ function PaneViewInner({
   const saveScrollback = (redacted: boolean) => {
     setMenuOpen(false);
     const raw = getScrollback();
-    if (raw == null) { pushToast("error", "Transcript export isn't wired up for this pane yet."); return; }
+    if (raw == null) { pushToast("error", "Transcript export isn’t wired up for this pane yet."); return; }
     downloadText(scrollbackFilename(pane.vendor, redacted), redacted ? redactText(raw) : raw);
     pushToast("success", redacted ? "Saved redacted scrollback." : "Saved scrollback.");
   };
@@ -342,7 +342,7 @@ function PaneViewInner({
     setMenuOpen(false);
     const raw = getScrollback();
     const cmd = raw != null ? extractLastCommand(toLines(raw)) : null;
-    if (!cmd) { pushToast("info", "Couldn't find a command in this pane's recent output."); return; }
+    if (!cmd) { pushToast("info", "Couldn’t find a command in this pane’s recent output."); return; }
     void copyText(cmd, "Copied last command.");
   };
 
@@ -377,7 +377,7 @@ function PaneViewInner({
       createWorkspace(def.root, def.panes.map((p) => ({ vendor: p.vendor, cwd: p.cwd })), def.setupCmd);
       pushToast("success", `Imported "${def.name}" as a new workspace.`);
     } catch (e) {
-      pushToast("error", e instanceof Error ? e.message : "Couldn't import that file.");
+      pushToast("error", e instanceof Error ? e.message : "Couldn’t import that file.");
     }
   };
 
@@ -401,8 +401,8 @@ function PaneViewInner({
       // header can say which it was.
       setGitStatus(null);
       setGitError(/not available|No such file|not recognized/i.test(String(e))
-        ? "git isn't installed or isn't on PATH"
-        : "couldn't read git status for this folder");
+        ? "git isn’t installed or isn’t on PATH"
+        : "couldn’t read git status for this folder");
     }
   }, GIT_POLL_MS, [pane.cwd, pane.epoch], paneVisible);
 
@@ -477,13 +477,13 @@ function PaneViewInner({
   const pasteFromClipboard = async () => {
     setCtxMenu(null);
     let text = "";
-    try { text = await navigator.clipboard.readText(); } catch { pushToast("error", "Couldn't read the clipboard."); return; }
+    try { text = await navigator.clipboard.readText(); } catch { pushToast("error", "Couldn’t read the clipboard."); return; }
     if (!text) return;
     const lines = text.split(/\r?\n/).filter((l) => l.length > 0).length;
     if (lines > 1) {
       requestConfirm({
         title: `Paste ${lines} lines into ${displayName}?`,
-        body: "Multi-line pastes can run every line at once in a shell. Check it's what you meant to send.",
+        body: "Multi-line pastes can run every line at once in a shell. Check it’s what you meant to send.",
         confirmLabel: `Paste ${lines} lines`,
         onConfirm: () => terminalRef.current?.paste(text),
       });
@@ -496,7 +496,7 @@ function PaneViewInner({
     setCtxMenu(null);
     setMenuOpen(false);
     terminalRef.current?.clearScrollback();
-    pushToast("info", "Cleared this pane's scrollback.");
+    pushToast("info", "Cleared this pane’s scrollback.");
   };
 
   // UI-126: escalate the "starting" copy once the wait stops looking normal.
@@ -698,7 +698,7 @@ function PaneViewInner({
           role="button"
           tabIndex={0}
           title={`${pane.cwd} — click to open in Explorer`}
-          onClick={() => { void revealPath(pane.cwd).catch(() => pushToast("error", "Couldn't open that folder.")); }}
+          onClick={() => { void revealPath(pane.cwd).catch(() => pushToast("error", "Couldn’t open that folder.")); }}
           onKeyDown={(e) => { if (e.key === "Enter") void revealPath(pane.cwd).catch(() => {}); }}
         >
           &middot; {baseName(pane.cwd)}
@@ -706,7 +706,7 @@ function PaneViewInner({
         {/* UX-555 folds this into the pane name itself (auto-title), so the
             chip only needs to appear when the two disagree — a manual
             rename, or the moment before the first auto-title lands. */}
-        {procName && procName !== displayName && <span className="pproc" title="Live process (pane name doesn't match)">{procName}</span>}
+        {procName && procName !== displayName && <span className="pproc" title="Live process (pane name doesn’t match)">{procName}</span>}
         {/* UI-27: a git problem is worth one quiet word — silence reads as
             "not a repo", which may be wrong. */}
         {!gitStatus && gitError && (
@@ -774,7 +774,7 @@ function PaneViewInner({
             <span
               className={"ptok " + level}
               title={
-                `Session tokens (from the agent's own transcript)
+                `Session tokens (from the agent’s own transcript)
 ` +
                 `context now: ${num(usage.contextTokens)} (${Math.round(pct * 100)}% of a ${compact(CONTEXT_WINDOW)} window)
 ` +
@@ -829,7 +829,7 @@ Running low — consider /compact in this pane.` : "")
           </button>
           {menuOpen && menuPos && createPortal(
             <div className="pmenu" style={{ top: menuPos.top, left: menuPos.left }} onMouseLeave={closeMenu}>
-              <div className="pmenu-path" title="This pane's working directory">
+              <div className="pmenu-path" title="This pane’s working directory">
                 {pane.cwd}
                 {/* UI-230: an isolated pane's worktree is a real disk cost —
                     say how much, where the pane itself is described. */}

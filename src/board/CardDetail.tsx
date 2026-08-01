@@ -107,7 +107,7 @@ export function CardDetail({ cardId, onClose }: { cardId: string; onClose: () =>
       await navigator.clipboard.writeText(lines.join("\n"));
       pushToast("success", "Card copied as Markdown");
     } catch {
-      pushToast("error", "Couldn't access the clipboard");
+      pushToast("error", "Couldn’t access the clipboard");
     }
   };
 
@@ -168,7 +168,7 @@ export function CardDetail({ cardId, onClose }: { cardId: string; onClose: () =>
             <textarea
               className="cd-textarea"
               rows={3}
-              placeholder="What's this task, and what does done look like?"
+              placeholder="What’s this task, and what does done look like?"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               onBlur={commitDescription}

@@ -89,8 +89,8 @@ const PRIORITY_LEGEND: Record<Priority, string> = {
 const EMPTY_COPY: Record<string, string> = {
   todo: "No tasks yet. Add one below.",
   inprogress: "Drag a card here to dispatch it to an agent pane.",
-  review: "Drag a card here once it's ready for review.",
-  complete: "Drag a card here when it's done.",
+  review: "Drag a card here once it’s ready for review.",
+  complete: "Drag a card here when it’s done.",
 };
 
 export function Board() {
@@ -264,10 +264,10 @@ export function Board() {
           rememberAgentForRepo(ws.root, vendor);
           pushToast("success", `Dispatched "${card.title}" to ${vendorShort(vendor)}`);
         } else {
-          pushToast("error", `Couldn't dispatch "${card.title}" — the pane didn't start.`);
+          pushToast("error", `Couldn’t dispatch "${card.title}" — the pane didn’t start.`);
         }
       })
-      .catch((e) => pushToast("error", `Couldn't dispatch "${card.title}": ${String(e)}`))
+      .catch((e) => pushToast("error", `Couldn’t dispatch "${card.title}": ${String(e)}`))
       .finally(() => setDispatching((d) => { const n = new Set(d); n.delete(card.id); return n; }));
   }
 
@@ -325,8 +325,8 @@ export function Board() {
           title: "Move to Done with unmerged work?",
           body:
             `"${card.title}"'s pane still has ${diff.files} file${diff.files === 1 ? "" : "s"} of changes ` +
-            `(+${diff.added}/−${diff.deleted}) that haven't been merged back. Moving it to Done doesn't merge or ` +
-            `discard that work — it stays exactly where it is in the pane's worktree until you deal with it.`,
+            `(+${diff.added}/−${diff.deleted}) that haven’t been merged back. Moving it to Done doesn’t merge or ` +
+            `discard that work — it stays exactly where it is in the pane’s worktree until you deal with it.`,
           confirmLabel: "Move to Done anyway",
           onConfirm: () => finishMove(id, target, source, card, index),
         });
@@ -575,7 +575,7 @@ export function Board() {
   function refresh() {
     requestConfirm({
       title: "Reset the board?",
-      body: "Every card, column, checklist and label is discarded and the board goes back to its seed contents. This can't be undone.",
+      body: "Every card, column, checklist and label is discarded and the board goes back to its seed contents. This can’t be undone.",
       confirmLabel: "Reset board",
       danger: true,
       onConfirm: () => {
@@ -592,7 +592,7 @@ export function Board() {
       await navigator.clipboard.writeText(exportBoardMarkdown(columns, cards));
       pushToast("success", "Board copied as Markdown");
     } catch {
-      pushToast("error", "Couldn't access the clipboard");
+      pushToast("error", "Couldn’t access the clipboard");
     }
   }
 
@@ -720,7 +720,7 @@ export function Board() {
             <option value="newest">Sort: Newest</option>
           </select>
           {/* UX-575: cut straight to what's actually running right now. */}
-          <label className="board-toggle" title="Show only cards linked to a pane that's still open">
+          <label className="board-toggle" title="Show only cards linked to a pane that’s still open">
             <input type="checkbox" checked={liveOnly} onChange={(e) => setLiveOnly(e.target.checked)} />
             Live panes only
           </label>
@@ -962,7 +962,7 @@ export function Board() {
         >
           <div className="bd-pop-head">Create from template</div>
           {templates.length === 0 && (
-            <div className="bd-pop-hint bd-pop-empty">No templates yet — open a card and "Save as template".</div>
+            <div className="bd-pop-hint bd-pop-empty">No templates yet — open a card and “Save as template”.</div>
           )}
           {templates.map((t) => (
             <div key={t.id} className="template-pop-row">

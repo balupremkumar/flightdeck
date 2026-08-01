@@ -14,7 +14,7 @@ import { clearPreferences, PREFERENCE_KEYS } from "./storageKeys";
 import {
   checkForUpdate, installUpdate, getReleasesDir, setReleasesDir,
   getAutoUpdateCheck, setAutoUpdateCheck, DEFAULT_RELEASES_DIR,
-  getPendingReleaseNotes, clearPendingReleaseNotes,
+  getPendingReleaseNotes, clearPendingReleaseNotes, type UpdateCheckResult,
 } from "./updater";
 import { trustedRepos, untrustRepo } from "./trust";
 import { spawnPane } from "./worktrees";
@@ -251,8 +251,36 @@ const CHANGELOG: Array<{ date: string; text: string }> = [
 // were built + tested but had zero UI — per-pane health, stray-process
 // recovery, and the redacted support bundle.
 // ---------------------------------------------------------------------
-interface PaneHealthRow { paneId: number; pid: number; cpuPercent: number; memoryMb: number; procName: string; }
+interface PaneHealthRow {
+  paneId: number; pid: number; cpuPercent: number; memoryMb: number; procName: string;
+  /** UX-596: the threshold the backend compared this reading against, echoed
+   *  back so the UI can label the number instead of inventing its own. */
+  memoryWarnMb?: number;
+  overMemoryWarn?: boolean;
+}
 interface OrphanRow { pid: number; ppid: number; name: string; }
+
+// UI-633: threshold colouring for the health table. Memory uses the backend's
+// own resolved ceiling (`overMemoryWarn`), so there is exactly one memory
+// threshold in the app; critical is simply double that same number, not a
+// second invented one. CPU has no backend threshold, so it gets an explicit
+// one here: cpuPercent is % of ONE core and is not normalised across cores, so
+// ~a saturated core warns and two-plus saturated cores is critical.
+const CPU_WARN_PERCENT = 90;
+const CPU_CRIT_PERCENT = 200;
+export function cpuLevelClass(cpuPercent: number): string {
+  if (cpuPercent >= CPU_CRIT_PERCENT) return "diag-crit";
+  if (cpuPercent >= CPU_WARN_PERCENT) return "diag-warn";
+  return "";
+}
+export function memoryLevelClass(h: Pick<PaneHealthRow, "memoryMb" | "memoryWarnMb" | "overMemoryWarn">): string {
+  const warnMb = h.memoryWarnMb;
+  if (warnMb && h.memoryMb >= warnMb * 2) return "diag-crit";
+  // Trust the backend's own compare when it made one; fall back to the echoed
+  // threshold only if an older build didn't send the boolean.
+  if (h.overMemoryWarn ?? (warnMb ? h.memoryMb >= warnMb : false)) return "diag-warn";
+  return "";
+}
 
 // UX-599: one small header row shape shared by every section that has real
 // per-section preference state to reset, so "reset this section" reads as one
@@ -312,7 +340,7 @@ function SessionSection() {
           await adoptSession(doc);
           useUI.getState().pushToast("success", `Restored the session from ${relTime(pt.savedAt)}.`);
         } catch (e) {
-          useUI.getState().pushToast("error", `Couldn't restore: ${String(e)}`);
+          useUI.getState().pushToast("error", `Couldn’t restore: ${String(e)}`);
         } finally {
           setBusy(false);
         }
@@ -344,7 +372,7 @@ function SessionSection() {
     if (typeof src !== "string") return;
     useUI.getState().requestConfirm({
       title: "Import this backup?",
-      body: "It replaces your current session: open workspaces close (worktrees cleaned up, work kept on branches) and the backup's workspaces reopen.",
+      body: "It replaces your current session: open workspaces close (worktrees cleaned up, work kept on branches) and the backup’s workspaces reopen.",
       confirmLabel: "Import & replace",
       danger: true,
       onConfirm: async () => {
@@ -408,6 +436,8 @@ function SessionSection() {
 // Lives in the About section. `updateAvailable` comes from the shared store so
 // this agrees with whatever last triggered a check (startup toast, the command
 // palette, or the button below).
+/** UX-592: how long the UI waits for a check before giving up on it. */
+const UPDATE_CHECK_TIMEOUT_MS = 10_000;
 function UpdatesBlock() {
   const updateAvailable = useUI((s) => s.updateAvailable);
   const [checking, setChecking] = useState(false);
@@ -421,7 +451,20 @@ function UpdatesBlock() {
   const runCheck = async () => {
     setChecking(true);
     setCheckError(null);
-    const res = await checkForUpdate();
+    // UX-592: the check itself never rejects (updater.ts catches), but it CAN
+    // fail to answer: the releases folder is user-configurable and may be a
+    // UNC share, and reading an unreachable share blocks for the SMB timeout.
+    // Without a bound the button would sit on "Checking…", disabled, forever.
+    // The underlying read can't be cancelled, so stop waiting on it and say so.
+    const res = await Promise.race<UpdateCheckResult>([
+      checkForUpdate(),
+      new Promise<UpdateCheckResult>((resolve) =>
+        window.setTimeout(
+          () => resolve({ available: false, error: "The releases folder didn’t answer in 10 seconds. If it’s on a network drive, check that you’re connected." }),
+          UPDATE_CHECK_TIMEOUT_MS,
+        ),
+      ),
+    ]);
     setChecking(false);
     setLastCheckedAt(Date.now());
     if (res.error) setCheckError(res.error);
@@ -448,7 +491,7 @@ function UpdatesBlock() {
       .flatMap((w) => w.panes)
       .filter((p) => p.state === "running" || p.state === "starting" || p.state === "waiting" || p.state === "permission");
     const liveNote = live.length > 0
-      ? ` ${live.length} pane${live.length === 1 ? "" : "s"} still live — closing ends ${live.length === 1 ? "its session" : "their sessions"}, the running agents can't be brought back.`
+      ? ` ${live.length} pane${live.length === 1 ? "" : "s"} still live — closing ends ${live.length === 1 ? "its session" : "their sessions"}, the running agents can’t be brought back.`
       : "";
     useUI.getState().requestConfirm({
       title: "Restart Flightdeck to finish updating?",
@@ -487,7 +530,7 @@ function UpdatesBlock() {
               : updateAvailable
               ? `Ready to install — Flightdeck ${updateAvailable.version}`
               : checkError
-              ? "Couldn't check — see below"
+              ? "Couldn’t check — see below"
               : lastCheckedAt
               ? `Up to date — checked ${relTime(lastCheckedAt)}`
               : "Not checked yet this session"}
@@ -497,21 +540,21 @@ function UpdatesBlock() {
           {checking ? "Checking…" : "Check for updates"}
         </button>
       </div>
-      {checkError && <div className="set-error">Couldn't check for updates: {checkError}</div>}
+      {checkError && <div className="set-error">Couldn’t check for updates: {checkError}</div>}
       {updateAvailable && (
         <div className="set-row set-row-block">
           {/* UX-585: the manifest's own notes, shown before the install button
               is ever clicked — never asking for a leap of faith. */}
           {updateAvailable.notes && (
             <div className="set-update-notes">
-              <div className="set-update-notes-t">What's in {updateAvailable.version}</div>
+              <div className="set-update-notes-t">What’s in {updateAvailable.version}</div>
               <div className="set-row-sub" style={{ whiteSpace: "pre-wrap" }}>{updateAvailable.notes}</div>
             </div>
           )}
           <button className="set-btn" onClick={confirmInstall} disabled={installing}>
             {installing ? "Installing…" : `Install ${updateAvailable.version} and restart`}
           </button>
-          {installError && <div className="set-error">Couldn't install: {installError}</div>}
+          {installError && <div className="set-error">Couldn’t install: {installError}</div>}
         </div>
       )}
       <div className="set-row">
@@ -565,7 +608,7 @@ function DiagnosticsSection() {
     if (orphans.length === 0) return;
     useUI.getState().requestConfirm({
       title: `Clean ${orphans.length} unused worktree${orphans.length === 1 ? "" : "s"}?`,
-      body: "These aren't claimed by any open pane. Any uncommitted work in them is committed to their branch first, so nothing is lost — only the folders go.",
+      body: "These aren’t claimed by any open pane. Any uncommitted work in them is committed to their branch first, so nothing is lost — only the folders go.",
       confirmLabel: "Clean up",
       onConfirm: async () => {
         let freed = 0;
@@ -614,7 +657,7 @@ function DiagnosticsSection() {
     setScanning(true);
     invoke<OrphanRow[]>("recover_orphans")
       .then(setOrphans)
-      .catch(() => pushToast("error", "Couldn't scan for stray processes."))
+      .catch(() => pushToast("error", "Couldn’t scan for stray processes."))
       .finally(() => setScanning(false));
   };
 
@@ -622,7 +665,7 @@ function DiagnosticsSection() {
     if (!orphans || orphans.length === 0) return;
     invoke("kill_orphans", { pids: orphans.map((o) => o.pid) })
       .then(() => { pushToast("success", `Ended ${orphans.length} stray process tree${orphans.length === 1 ? "" : "s"}.`); setOrphans([]); })
-      .catch(() => pushToast("error", "Couldn't end the stray processes."));
+      .catch(() => pushToast("error", "Couldn’t end the stray processes."));
   };
 
   const exportBundle = async () => {
@@ -632,7 +675,7 @@ function DiagnosticsSection() {
       await invoke("export_support_bundle", { destPath: dest });
       pushToast("success", "Support bundle exported (secrets redacted).");
     } catch (e) {
-      pushToast("error", `Couldn't export the bundle: ${String(e)}`);
+      pushToast("error", `Couldn’t export the bundle: ${String(e)}`);
     }
   };
 
@@ -661,10 +704,22 @@ function DiagnosticsSection() {
               <span>#{h.paneId}</span>
               <span className="diag-proc">{h.procName || "—"}</span>
               <span>{h.pid}</span>
-              <span>{h.cpuPercent.toFixed(1)}%</span>
+              {/* UI-633: only a reading that needs a look is coloured; a normal
+                  pane stays flat so the table doesn't read as an alarm. */}
+              <span
+                className={cpuLevelClass(h.cpuPercent)}
+                title={h.cpuPercent >= CPU_WARN_PERCENT ? `Over ${CPU_WARN_PERCENT}% of one core` : undefined}
+              >
+                {h.cpuPercent.toFixed(1)}%
+              </span>
               {/* UI-185: ~60s CPU trend — cpuHistory accumulates alongside health. */}
               <Sparkline data={cpuHistory[h.paneId] ?? []} />
-              <span>{h.memoryMb.toFixed(0)} MB</span>
+              <span
+                className={memoryLevelClass(h)}
+                title={h.memoryWarnMb ? `Memory ceiling: ${h.memoryWarnMb.toFixed(0)} MB` : undefined}
+              >
+                {h.memoryMb.toFixed(0)} MB
+              </span>
             </div>
           ))}
         </div>
@@ -844,7 +899,7 @@ export function Settings() {
     const pending = getPendingReleaseNotes();
     if (shouldShowWhatsNew(APP_VERSION, seen, pending)) {
       setWhatsNew(pending);
-      useUI.getState().pushToast("info", `Updated to Flightdeck ${APP_VERSION} — see What's new in Settings > About.`);
+      useUI.getState().pushToast("info", `Updated to Flightdeck ${APP_VERSION} — see What’s new in Settings > About.`);
     }
     try { localStorage.setItem(WHATSNEW_SEEN_KEY, APP_VERSION); } catch { /* non-persistent */ }
     clearPendingReleaseNotes();
@@ -1023,7 +1078,7 @@ export function Settings() {
     reader.onload = () => {
       const ok = importThemeJson(String(reader.result));
       if (ok) { setThemeId("custom"); setImportError(null); }
-      else setImportError("That file doesn't look like a Flightdeck theme export.");
+      else setImportError("That file doesn’t look like a Flightdeck theme export.");
     };
     reader.readAsText(file);
   }
@@ -1059,7 +1114,7 @@ export function Settings() {
         useUI.getState().pushToast("success", "Settings imported — reloading.");
         window.setTimeout(() => window.location.reload(), 600);
       } else {
-        setAllSettingsImportError("That file doesn't look like a Flightdeck settings export.");
+        setAllSettingsImportError("That file doesn’t look like a Flightdeck settings export.");
       }
     };
     reader.readAsText(file);
@@ -1199,7 +1254,7 @@ export function Settings() {
       window.setTimeout(poll, 400);
     });
     useUI.getState().setSettingsOpen(false);
-    useUI.getState().pushToast("info", `Test pane opened for ${short}. Close it when you're done.`);
+    useUI.getState().pushToast("info", `Test pane opened for ${short}. Close it when you’re done.`);
   }
 
   return (
@@ -1510,7 +1565,7 @@ export function Settings() {
                 <span>
                   <kbd>{conflict.combo}</kbd> is already used by <b>{conflict.otherLabel}</b>.
                   {conflict.fixed
-                    ? " That one is built in and can't be moved — pick a different combination."
+                    ? " That one is built in and can’t be moved — pick a different combination."
                     : " Reassigning leaves that action without a shortcut."}
                 </span>
                 <span className="kbd-conflict-actions">
@@ -1601,7 +1656,7 @@ export function Settings() {
                       <span className="agent-chip ok" title="The last test pane started cleanly">✓ launches</span>
                     )}
                     {launchCheck[v.id] === "error" && (
-                      <span className="agent-chip warn" title="The last test pane didn't reach a running state">✗ didn't start</span>
+                      <span className="agent-chip warn" title="The last test pane didn’t reach a running state">✗ didn’t start</span>
                     )}
                   </span>
                   <input
@@ -1632,7 +1687,7 @@ export function Settings() {
             {manifestProblems.length > 0 && (
               <div className="manifest-problems" role="alert">
                 <div className="manifest-problems-t">
-                  {manifestProblems.length} vendor file{manifestProblems.length === 1 ? "" : "s"} couldn't be loaded
+                  {manifestProblems.length} vendor file{manifestProblems.length === 1 ? "" : "s"} couldn’t be loaded
                 </div>
                 {manifestProblems.map((m) => (
                   <div className="manifest-problem" key={m.file}>
@@ -1647,8 +1702,8 @@ export function Settings() {
                 <div className="set-row-t">
                   <span className="set-row-name">Trusted folders</span>
                   <span className="set-row-sub">
-                    Folders you've let a trust-requiring agent (Antigravity) work in. Revoking means
-                    you'll be asked again next time.
+                    Folders you’ve let a trust-requiring agent (Antigravity) work in. Revoking means
+                    you’ll be asked again next time.
                   </span>
                 </div>
                 <div className="trust-list">
@@ -1676,7 +1731,7 @@ export function Settings() {
                 onClick={() => {
                   invoke<string | null>("vendors_dir")
                     .then((dir) => { if (dir) return revealPath(dir); })
-                    .catch(() => useUI.getState().pushToast("error", "Couldn't open the vendors folder."));
+                    .catch(() => useUI.getState().pushToast("error", "Couldn’t open the vendors folder."));
                 }}
               >
                 Open vendors folder
@@ -1771,12 +1826,12 @@ export function Settings() {
           className="agent-popover"
           style={{ top: popoverPos.top, left: popoverPos.left }}
           role="dialog"
-          aria-label={popover.kind === "install" ? `${popoverVendor.label} isn't installed` : `${popoverVendor.label} isn't signed in`}
+          aria-label={popover.kind === "install" ? `${popoverVendor.label} isn’t installed` : `${popoverVendor.label} isn’t signed in`}
         >
           {popover.kind === "install" ? (
             <>
-              <div className="agent-pop-title">{popoverVendor.label} isn't installed</div>
-              <div className="agent-pop-body">{popoverVendor.detail || "Flightdeck couldn't find this CLI on your PATH."}</div>
+              <div className="agent-pop-title">{popoverVendor.label} isn’t installed</div>
+              <div className="agent-pop-body">{popoverVendor.detail || "Flightdeck couldn’t find this CLI on your PATH."}</div>
               {popoverVendor.installHint && (
                 <div className="agent-pop-cmd">
                   <code>{popoverVendor.installHint}</code>
@@ -1800,7 +1855,7 @@ export function Settings() {
             </>
           ) : (
             <>
-              <div className="agent-pop-title">{popoverVendor.label} isn't signed in</div>
+              <div className="agent-pop-title">{popoverVendor.label} isn’t signed in</div>
               <div className="agent-pop-body">
                 {popoverVendor.authDetail || "No stored sign-in found."} The CLI handles its own login — running it
                 opens a pane in the current workspace so you can complete sign-in there.

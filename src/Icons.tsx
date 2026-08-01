@@ -3,7 +3,8 @@
 // One grid: viewBox 0 0 20 20, strokeWidth 1.6, round caps/joins,
 // optically tuned for the 16px render most call sites use.
 // Bell keeps ibell-arc-1 / ibell-arc-2 for the radar-ping keyframes.
-// Drag is a 6-dot grip. Settings knobs fill with var(--surface).
+// Drag is a 6-dot grip. Settings knobs are solid currentColor, so the glyph
+// carries no assumption about the background behind it.
 // ============================================================
 import type { SVGProps } from "react";
 
@@ -52,26 +53,22 @@ export const IconFolder = (p: IconProps) => (
 export const IconFile = (p: IconProps) => (
   <Svg {...p}><path d="M6 3.5 h5 l4 4 v9 a1 1 0 0 1 -1 1 h-8 a1 1 0 0 1 -1 -1 v-12 a1 1 0 0 1 1 -1 Z" /><path d="M11 3.5 V7.5 H15" /></Svg>
 );
-// Kanban icon (redesign): three lanes read as columns, not bars, because each
-// carries card ticks instead of being a solid block, the same "frame holds
-// contents" grammar Trello/Height/Linear all converge on for this glyph. The
-// lane rx (1.3) is intentionally a notch tighter than the 2px used on the
-// wider container icons (Panel/Workspace/Agent): same corner language,
-// scaled to a narrower shape so it doesn't read as a pill. The filled dot in
-// the middle (In Progress) lane reuses the small-filled-circle mark already
-// established by IconWorkspace/IconSettings, rather than inventing a new
-// motif, since this app's status language IS dots, so the board's own icon
-// says so too.
+// Kanban icon (UI-613, second pass). The previous version drew three separate
+// 3.8-wide lane rects with card ticks inside them; at the 16px render every
+// call site uses, that geometry could not survive. With strokeWidth 1.6 on a
+// 20-unit grid each lane wall occupies 1.6 units, so a 3.8-wide lane has only
+// 2.2 units of clear interior — less than a round-capped tick (1.7 + two 0.8
+// caps = 3.3) — and consecutive lanes sat 1.1 units apart, i.e. their walls
+// overlapped outright. Three lanes plus four ticks plus a 0.55r dot simply
+// cannot be resolved in 16 device pixels; it rendered as a block.
+// One container with two dividers keeps the columns-of-a-board reading, uses
+// the same container grammar as Panel/Workspace/Agent, and leaves ~2.9 units
+// (2.3px at 16) of clear space between every stroke.
 export const IconBoard = (p: IconProps) => (
   <Svg {...p}>
-    <rect x="3.2" y="4.7" width="3.8" height="10.6" rx="1.3" />
-    <rect x="8.1" y="4.7" width="3.8" height="7.3" rx="1.3" />
-    <rect x="13" y="4.7" width="3.8" height="9" rx="1.3" />
-    <path d="M4.3 7 H6" />
-    <path d="M4.3 9.1 H6" />
-    <path d="M9.2 7 H10.9" />
-    <path d="M14.1 7 H15.8" />
-    <circle cx="10" cy="10.6" r="0.55" fill="currentColor" stroke="none" />
+    <rect x="3.2" y="4.5" width="13.6" height="11" rx="2" />
+    <path d="M7.7 4.5 V15.5" />
+    <path d="M12.3 4.5 V15.5" />
   </Svg>
 );
 export const IconWorkspace = (p: IconProps) => (
@@ -83,8 +80,22 @@ export const IconDrag = (p: IconProps) => (
 export const IconAgent = (p: IconProps) => (
   <Svg {...p}><rect x="3" y="4.5" width="14" height="11" rx="2" /><path d="M6.5 8.5 L9 10.5 L6.5 12.5" /><path d="M10.5 12.5 H13.5" /></Svg>
 );
+// Sliders (UI-614, second pass). Three tracks 3.5 units apart carrying three
+// 1.7r stroked knobs meant each knob spanned 5 units of a 3.5-unit gap, so the
+// knobs crowded the neighbouring tracks and the whole glyph carried six
+// elements where the rest of the set carries two to four. The knobs also
+// faked their hole with fill="var(--surface)", which is only correct while the
+// icon sits on a surface-coloured background — on a hovered or accent button
+// it painted a mismatched disc.
+// Two tracks, two solid knobs: same control-panel reading, background
+// independent, and 2.8 units (2.2px at 16) of clear space around every knob.
 export const IconSettings = (p: IconProps) => (
-  <Svg {...p}><path d="M4 6.5 H16" /><path d="M4 10 H16" /><path d="M4 13.5 H16" /><circle cx="8" cy="6.5" r="1.7" fill="var(--surface)" /><circle cx="13" cy="10" r="1.7" fill="var(--surface)" /><circle cx="7" cy="13.5" r="1.7" fill="var(--surface)" /></Svg>
+  <Svg {...p}>
+    <path d="M4 7 H16" />
+    <path d="M4 13 H16" />
+    <circle cx="8" cy="7" r="1.6" fill="currentColor" stroke="none" />
+    <circle cx="13" cy="13" r="1.6" fill="currentColor" stroke="none" />
+  </Svg>
 );
 export const IconBell = ({ className, ...p }: IconProps) => (
   <Svg {...p} className={["icon-bell", className].filter(Boolean).join(" ")}>

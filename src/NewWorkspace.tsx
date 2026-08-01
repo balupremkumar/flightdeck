@@ -164,7 +164,7 @@ export function NewWorkspace() {
         const suggested = await invoke<string | null>("detect_setup_command", { cwd: dir }).catch(() => null);
         if (!cancelled && suggested) {
           setSetupCmd(suggested);
-          setSetupSource("suggested from this repo's lockfile");
+          setSetupSource("suggested from this repo’s lockfile");
         }
       });
     }, 350); // debounce typing
@@ -305,7 +305,7 @@ export function NewWorkspace() {
     <div className={"launcher" + (hasWorkspaces ? " overlay" : "")}>
       <div className="dialog">
         <div className="dh">
-          <h2>{firstEver ? "Welcome to Flightdeck" : "New Workspace"}</h2>
+          <h2>{firstEver ? "Welcome to Flightdeck" : "New workspace"}</h2>
           {hasWorkspaces && <span className="dh-x" onClick={cancelCreate}><IconClose size={13} /></span>}
         </div>
         {firstEver && (
@@ -405,13 +405,13 @@ export function NewWorkspace() {
             </div>
             {pathOk === false && (
               <div className="dir-err">
-                Couldn't read that folder — check the path, or use Browse. You can still create the
+                Couldn’t read that folder — check the path, or use Browse. You can still create the
                 workspace; panes will report the error if it really is missing.
               </div>
             )}
             <label className={"isolate-row" + (isRepo === false ? " off" : "")} title={
               isRepo === false
-                ? "This folder isn't a git repository — panes run directly in it."
+                ? "This folder isn’t a git repository — panes run directly in it."
                 : "Each agent works on its own branch in its own folder copy, so parallel agents never overwrite each other. Review & merge their changes from the pane header."
             }>
               <input
@@ -435,11 +435,11 @@ export function NewWorkspace() {
             {showIsolateHelp && (
               <div className="isolate-explain">
                 <b>With isolation on</b>, each agent gets its own copy of the repo on its own
-                branch, under Flightdeck's app data. Two agents editing the same file can't
+                branch, under Flightdeck’s app data. Two agents editing the same file can’t
                 overwrite each other, and you review and merge their work from the pane header.
                 <br />
                 <b>With it off</b>, every pane works directly in this folder — simpler, but
-                parallel agents will trample each other's edits.
+                parallel agents will trample each other’s edits.
                 <br />
                 Worktrees are removed when you close the pane; anything uncommitted is kept on
                 its branch first.
@@ -492,7 +492,7 @@ export function NewWorkspace() {
                     <span
                       className="slot-warn"
                       title={
-                        `${vendorMeta(s.vendor).label} isn't installed, so this pane will fail to start. ` +
+                        `${vendorMeta(s.vendor).label} isn’t installed, so this pane will fail to start. ` +
                         (vendorMeta(s.vendor).installHint
                           ? `Install it with: ${vendorMeta(s.vendor).installHint} — or pick another agent. `
                           : "Pick another agent, or install it first. ") +
@@ -524,7 +524,7 @@ export function NewWorkspace() {
         {!hasWorkspaces && (
           <div className="launcher-foot">
             Flightdeck v{APP_VERSION} — new here? Isolation keeps parallel agents out of each
-            other's way; everything else is discoverable from <kbd>Ctrl</kbd>+<kbd>K</kbd>.
+            other’s way; everything else is discoverable from <kbd>Ctrl</kbd>+<kbd>K</kbd>.
           </div>
         )}
         <div className="df">
