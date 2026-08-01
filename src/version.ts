@@ -4,4 +4,4 @@
 // wanting to show the version had to import a settings module (or, worse,
 // duplicate the literal and let it drift — exactly what happened with the
 // storage keys). Keep this in step with package.json and tauri.conf.json.
-export const APP_VERSION = "0.5.0";
+export const APP_VERSION = "0.5.1";
