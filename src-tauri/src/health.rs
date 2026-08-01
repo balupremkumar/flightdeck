@@ -20,6 +20,32 @@ pub struct PaneHealth {
     /// e.g. "claude" / "node" / "pwsh" — the deepest descendant of the pane's
     /// root pid, `.exe` stripped. Empty until the sampler's first tick.
     pub proc_name: String,
+    /// UX-596: the warning threshold this reading was compared against (echoed
+    /// back so the UI can label the number, e.g. "memory ceiling: 1024 MB").
+    pub memory_warn_mb: f64,
+    /// True when `memory_mb` is at or over `memory_warn_mb` — Diagnostics uses
+    /// this to flag the pane rather than every caller re-deriving the compare.
+    pub over_memory_warn: bool,
+}
+
+/// Sensible default when the caller (Settings, eventually) hasn't configured
+/// one yet: generous enough that a normal agent + its node/npm children don't
+/// trip it, low enough to actually catch a runaway process.
+pub const DEFAULT_MEMORY_WARN_MB: f64 = 1024.0;
+/// Clamp bounds for a caller-supplied threshold — keeps a fat-fingered or
+/// corrupt Settings value from disabling the warning entirely (too high) or
+/// making it fire constantly (too low).
+const MIN_MEMORY_WARN_MB: f64 = 64.0;
+const MAX_MEMORY_WARN_MB: f64 = 65536.0;
+
+/// UX-596: resolve the effective memory warning threshold from an optional
+/// caller-supplied value (Settings, eventually), clamped to a sane range so a
+/// bad value can't silently disable the warning or make it useless.
+pub fn resolve_memory_warn_mb(requested: Option<f64>) -> f64 {
+    match requested {
+        Some(mb) if mb.is_finite() => mb.clamp(MIN_MEMORY_WARN_MB, MAX_MEMORY_WARN_MB),
+        _ => DEFAULT_MEMORY_WARN_MB,
+    }
 }
 
 /// Cumulative (kernel+user) CPU time in 100ns units, and working-set memory
@@ -68,4 +94,27 @@ pub fn sample(pid: u32) -> Option<(u64, u64)> {
 #[cfg(not(windows))]
 pub fn sample(_pid: u32) -> Option<(u64, u64)> {
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn no_threshold_supplied_uses_the_default() {
+        assert_eq!(resolve_memory_warn_mb(None), DEFAULT_MEMORY_WARN_MB);
+    }
+
+    #[test]
+    fn a_sane_supplied_threshold_is_used_as_is() {
+        assert_eq!(resolve_memory_warn_mb(Some(2048.0)), 2048.0);
+    }
+
+    #[test]
+    fn out_of_range_thresholds_are_clamped_not_trusted() {
+        assert_eq!(resolve_memory_warn_mb(Some(1.0)), MIN_MEMORY_WARN_MB, "too low to be useful");
+        assert_eq!(resolve_memory_warn_mb(Some(1_000_000.0)), MAX_MEMORY_WARN_MB, "too high to ever fire");
+        assert_eq!(resolve_memory_warn_mb(Some(f64::NAN)), DEFAULT_MEMORY_WARN_MB, "NaN falls back to the default");
+        assert_eq!(resolve_memory_warn_mb(Some(f64::INFINITY)), DEFAULT_MEMORY_WARN_MB, "infinity falls back to the default");
+    }
 }

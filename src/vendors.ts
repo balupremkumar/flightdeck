@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 
 // Single frontend source of truth for "what agents/shells exist" (BACKLOG I1 /
 // 216). The list comes from the Rust registry (vendors.rs) via detect_vendors —
@@ -63,6 +64,20 @@ export const useVendors = create<VendorState>((set, get) => ({
     }
   },
 }));
+
+// UX-586: the vendors folder hot-reloads (vendors.rs polls it) — when a
+// manifest is added/edited/removed on disk, re-probe so New Workspace and
+// Settings > Agents pick it up without the user reopening the app. One
+// listener for the whole app lifetime; `catch` covers a browser preview with
+// no Tauri host (no event bus to listen on).
+let watcherArmed = false;
+export function armVendorHotReload() {
+  if (watcherArmed) return;
+  watcherArmed = true;
+  void listen("vendors://changed", () => {
+    void useVendors.getState().refresh();
+  }).catch(() => { /* no Tauri host — nothing to listen on */ });
+}
 
 /** Snapshot accessors, for non-reactive call sites (helpers, event handlers). */
 export function vendorList(): VendorInfo[] {

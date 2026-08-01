@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { useApp } from "./store";
+import { paneHasUnsentInput, useApp } from "./store";
 
 // The store is a singleton; reset the observable slice before each test.
 // (wseq/pseq id counters are module-level and keep incrementing — tests only
@@ -162,6 +162,28 @@ describe("app store", () => {
     useApp.getState().closeWorkspace(id);
     expect(useApp.getState().workspaces).toHaveLength(0);
     expect(useApp.getState().activeId).toBeNull();
+  });
+
+  it("setPaneDraft: records an unsent line, and blank clears it (UX-581/582)", () => {
+    useApp.getState().createWorkspace("/a", [{ vendor: "claude", cwd: "/a" }]);
+    const pane = useApp.getState().workspaces[0].panes[0];
+    expect(paneHasUnsentInput(pane)).toBe(false);
+
+    useApp.getState().setPaneDraft(pane.id, "still typing this out");
+    const withDraft = useApp.getState().workspaces[0].panes[0];
+    expect(withDraft.draft).toBe("still typing this out");
+    expect(paneHasUnsentInput(withDraft)).toBe(true);
+
+    useApp.getState().setPaneDraft(pane.id, "");
+    const cleared = useApp.getState().workspaces[0].panes[0];
+    expect(cleared.draft).toBeUndefined();
+    expect(paneHasUnsentInput(cleared)).toBe(false);
+  });
+
+  it("paneHasUnsentInput: whitespace-only draft doesn't count as unsent input", () => {
+    expect(paneHasUnsentInput({ draft: "   " })).toBe(false);
+    expect(paneHasUnsentInput({ draft: undefined })).toBe(false);
+    expect(paneHasUnsentInput({ draft: "x" })).toBe(true);
   });
 
   it("cancelCreate: guarded — stays open with zero workspaces, closes once one exists", () => {

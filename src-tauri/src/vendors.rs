@@ -559,6 +559,63 @@ pub fn manifest_dir() -> Option<PathBuf> {
     MANIFEST_DIR.read().unwrap().clone()
 }
 
+// ---------------------------------------------------------------------------
+// Hot-reload watcher (UX-586 / UI-188)
+// ---------------------------------------------------------------------------
+// `notify` isn't a dependency (Cargo.toml has no filesystem-watch crate) and
+// this feature doesn't justify pulling one in, so the watcher polls instead —
+// a modest interval is imperceptible for a folder a user hand-edits, and it's
+// one thread that does nothing but a directory listing + a hash compare.
+
+/// A cheap fingerprint of the manifest dir's contents: every *.json file's
+/// name, size and mtime, hashed together. Order-independent (sorted first) so
+/// touching one file doesn't get lost among unrelated ones, and two dirs with
+/// identical contents fingerprint identically (useful for tests).
+fn manifest_fingerprint(dir: &Path) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let Ok(entries) = std::fs::read_dir(dir) else { return 0 };
+    let mut rows: Vec<(String, u64, u128)> = entries
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().map(|x| x == "json").unwrap_or(false))
+        .map(|e| {
+            let name = e.file_name().to_string_lossy().into_owned();
+            let meta = e.metadata().ok();
+            let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+            let mtime = meta
+                .and_then(|m| m.modified().ok())
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_nanos())
+                .unwrap_or(0);
+            (name, size, mtime)
+        })
+        .collect();
+    rows.sort();
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    rows.hash(&mut h);
+    h.finish()
+}
+
+/// Poll the manifest dir on a modest interval; emit `vendors://changed`
+/// whenever its fingerprint moves, so New Workspace / Settings > Agents can
+/// re-run `detect_vendors` without the user reopening the app. Runs for the
+/// life of the process — there's one manifest dir per app, never torn down.
+pub fn spawn_manifest_watcher(app: tauri::AppHandle) {
+    use tauri::Emitter;
+    std::thread::spawn(move || {
+        const POLL_MS: u64 = 1500;
+        let mut last = manifest_dir().map(|d| manifest_fingerprint(&d));
+        loop {
+            std::thread::sleep(std::time::Duration::from_millis(POLL_MS));
+            let Some(dir) = manifest_dir() else { continue };
+            let now = manifest_fingerprint(&dir);
+            if last.is_some_and(|l| l != now) {
+                let _ = app.emit("vendors://changed", ());
+            }
+            last = Some(now);
+        }
+    });
+}
+
 #[derive(Clone, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct VendorManifest {
@@ -714,11 +771,26 @@ fn load_manifests_from(dir: &Path, taken: &[String]) -> Vec<ManifestVendor> {
 pub struct ManifestProblem {
     pub file: String,
     pub error: String,
+    /// UX-587: which manifest field the problem is about ("id", "exe", ...),
+    /// when the check itself identifies one. `None` for a JSON parse failure —
+    /// `line`/`column` locate those instead.
+    #[serde(default)]
+    pub field: Option<String>,
+    /// 1-based line where a JSON parse failure occurred (serde_json reports
+    /// this natively). `None` for a structural check (empty field, id
+    /// collision) — there's no single offending line for those.
+    #[serde(default)]
+    pub line: Option<u32>,
+    #[serde(default)]
+    pub column: Option<u32>,
 }
 
-/// UI-189: the same scan as load_manifests_from, but reporting WHY each bad
-/// file was skipped. A silently-ignored manifest is indistinguishable from a
-/// typo'd filename, which made #218 hard to debug.
+/// UI-189 / UX-587: the same scan as load_manifests_from, but reporting WHY
+/// each bad file was skipped — the file, which field (when identifiable), and
+/// the line/column a JSON parse failed at — so the UI can show the offending
+/// detail inline instead of a bare "invalid manifest". A silently-ignored
+/// manifest is indistinguishable from a typo'd filename, which made #218 hard
+/// to debug.
 pub fn manifest_problems() -> Vec<ManifestProblem> {
     let mut out = Vec::new();
     let Some(dir) = manifest_dir() else { return out };
@@ -739,22 +811,34 @@ pub fn manifest_problems() -> Vec<ManifestProblem> {
     files.sort();
     for f in files {
         let name = f.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-        let mut problem = |e: String| out.push(ManifestProblem { file: name.clone(), error: e });
+        let mut problem = |e: String, field: Option<&str>, line: Option<u32>, column: Option<u32>| {
+            out.push(ManifestProblem { file: name.clone(), error: e, field: field.map(String::from), line, column });
+        };
         let Ok(text) = std::fs::read_to_string(&f) else {
-            problem("couldn't read the file".into());
+            problem("couldn't read the file".into(), None, None, None);
             continue;
         };
         match serde_json::from_str::<VendorManifest>(&text) {
-            Err(e) => problem(format!("invalid JSON or missing a required field — {e}")),
+            Err(e) => problem(
+                format!("invalid JSON or missing a required field — {e}"),
+                None,
+                Some(e.line() as u32),
+                Some(e.column() as u32),
+            ),
             Ok(m) => {
                 if m.id.trim().is_empty() {
-                    problem("\"id\" is empty".into());
+                    problem("\"id\" is empty".into(), Some("id"), None, None);
                 } else if m.exe.trim().is_empty() {
-                    problem("\"exe\" is empty".into());
+                    problem("\"exe\" is empty".into(), Some("exe"), None, None);
                 } else if builtin.contains(&m.id) {
-                    problem(format!("id \"{}\" collides with a built-in vendor", m.id));
+                    problem(format!("id \"{}\" collides with a built-in vendor", m.id), Some("id"), None, None);
                 } else if seen.contains(&m.id) {
-                    problem(format!("duplicate id \"{}\" — an earlier file already claimed it", m.id));
+                    problem(
+                        format!("duplicate id \"{}\" — an earlier file already claimed it", m.id),
+                        Some("id"),
+                        None,
+                        None,
+                    );
                 } else {
                     seen.push(m.id);
                 }
@@ -986,6 +1070,71 @@ mod tests {
         assert!(named("collide.json").unwrap().contains("collides"));
         assert!(named("good.json").is_none(), "a valid manifest reports no problem");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// UX-587: a bad manifest must name the offending field or the exact
+    /// line/column a JSON parse failed at — a bare "invalid manifest" isn't
+    /// actionable when the folder has more than one file in it.
+    #[test]
+    fn manifest_problems_carry_field_and_parse_position() {
+        let dir = temp_manifest_dir();
+        std::fs::write(dir.join("broken.json"), "{\n  \"id\": \"x\",\n  not json\n}").unwrap();
+        std::fs::write(dir.join("noexe.json"), r#"{"id":"x","label":"X","exe":""}"#).unwrap();
+        std::fs::write(dir.join("noid.json"), r#"{"id":"","label":"X","exe":"x.exe"}"#).unwrap();
+        std::fs::write(dir.join("collide.json"), r#"{"id":"claude","label":"Fake","exe":"e.exe"}"#).unwrap();
+        set_manifest_dir(dir.clone());
+
+        let probs = manifest_problems();
+        let find = |n: &str| probs.iter().find(|p| p.file == n).unwrap();
+
+        let broken = find("broken.json");
+        assert!(broken.field.is_none(), "a parse failure has no single field to blame");
+        assert_eq!(broken.line, Some(3), "must locate the failing line: {:?}", broken.line);
+        assert!(broken.column.is_some());
+
+        assert_eq!(find("noexe.json").field.as_deref(), Some("exe"));
+        assert_eq!(find("noid.json").field.as_deref(), Some("id"));
+        assert_eq!(find("collide.json").field.as_deref(), Some("id"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // --- Hot-reload watcher (UX-586) ---------------------------------------
+
+    #[test]
+    fn fingerprint_changes_on_add_edit_and_remove() {
+        let dir = temp_manifest_dir();
+        let f0 = manifest_fingerprint(&dir);
+
+        std::fs::write(dir.join("a.json"), GOOD).unwrap();
+        let f1 = manifest_fingerprint(&dir);
+        assert_ne!(f0, f1, "adding a file must change the fingerprint");
+
+        // Force a distinguishable mtime/size on the edit (some filesystems
+        // have coarse mtime resolution; padding the content guarantees the
+        // size half of the fingerprint moves even if the clock doesn't).
+        std::fs::write(dir.join("a.json"), format!("{GOOD} ")).unwrap();
+        let f2 = manifest_fingerprint(&dir);
+        assert_ne!(f1, f2, "editing a file must change the fingerprint");
+
+        std::fs::remove_file(dir.join("a.json")).unwrap();
+        let f3 = manifest_fingerprint(&dir);
+        assert_eq!(f3, f0, "removing the file returns the fingerprint to its prior state");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn fingerprint_ignores_non_json_files() {
+        let dir = temp_manifest_dir();
+        let before = manifest_fingerprint(&dir);
+        std::fs::write(dir.join("readme.txt"), "not a manifest").unwrap();
+        assert_eq!(manifest_fingerprint(&dir), before, "non-JSON files must not affect the fingerprint");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn fingerprint_of_missing_dir_is_stable() {
+        let bogus = std::env::temp_dir().join("fd-manifest-does-not-exist-xyz");
+        assert_eq!(manifest_fingerprint(&bogus), manifest_fingerprint(&bogus));
     }
 
     #[test]

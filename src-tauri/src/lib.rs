@@ -8,6 +8,7 @@ mod gitstatus;
 mod health;
 mod job;
 mod orphans;
+mod outbuf;
 mod persist;
 mod procname;
 mod reveal;
@@ -189,9 +190,15 @@ fn pty_spawn(
     let last = std::sync::Arc::new(AtomicU64::new(now_ms()));
     let waiting = std::sync::Arc::new(AtomicU8::new(0)); // 0 = running, 1 = waiting
     let alive = std::sync::Arc::new(AtomicBool::new(true));
+    // UX-594: output coalescing/backpressure — see outbuf.rs. The reader only
+    // buffers; a separate flusher thread (below) is what actually emits.
+    let coalescer = std::sync::Arc::new(outbuf::OutputCoalescer::new());
 
-    // Reader thread: blocking read -> base64 -> Tauri event, plus activity bookkeeping.
-    let (app_r, last_r, waiting_r, alive_r) = (app.clone(), last.clone(), waiting.clone(), alive.clone());
+    // Reader thread: blocking read -> coalescer, plus activity bookkeeping.
+    // Emitting the output event is the flusher thread's job now, so a flood
+    // of small reads can't turn into a flood of IPC events.
+    let (app_r, last_r, waiting_r, alive_r, coal_r) =
+        (app.clone(), last.clone(), waiting.clone(), alive.clone(), coalescer.clone());
     std::thread::spawn(move || {
         let mut buf = [0u8; 8192];
         loop {
@@ -202,13 +209,19 @@ fn pty_spawn(
                     if waiting_r.swap(0, Ordering::Relaxed) != 0 {
                         let _ = app_r.emit("pty://state", StatePayload { pane_id: id, state: "running".into() });
                     }
-                    let b64 = STANDARD.encode(&buf[..n]);
-                    let _ = app_r.emit("pty://output", OutputPayload { pane_id: id, b64 });
+                    coal_r.push(&buf[..n]);
                 }
                 Err(_) => break,
             }
         }
         alive_r.store(false, Ordering::Relaxed);
+        // Flush whatever's still buffered now, synchronously, so the pane's
+        // last output reaches the frontend BEFORE the exit event — the async
+        // flusher thread would otherwise race it by up to one flush interval.
+        if let Some(chunk) = coal_r.drain() {
+            let b64 = STANDARD.encode(&chunk);
+            let _ = app_r.emit("pty://output", OutputPayload { pane_id: id, b64 });
+        }
         // Natural-exit path (pty_kill is NOT called here): read the child's exit
         // status to tell a crash from a clean quit, prune the dead pane from the
         // registry so its master/writer/child handles don't leak, then notify.
@@ -238,6 +251,27 @@ fn pty_spawn(
             let quiet_for = now_ms().saturating_sub(last_m.load(Ordering::Relaxed));
             if quiet_for > QUIET_MS && waiting_m.swap(1, Ordering::Relaxed) == 0 {
                 let _ = app_m.emit("pty://state", StatePayload { pane_id: id, state: "waiting".into() });
+            }
+        }
+    });
+
+    // Flusher thread (UX-594): drains the coalescer into ONE `pty://output`
+    // event per interval, decoupling emit rate from however fast the pane is
+    // actually producing bytes. ~60fps interval matches the frontend's own
+    // per-frame batching, so this never adds perceptible latency in the
+    // common case — it only kicks in as backpressure during a real flood.
+    let (app_f, alive_f, coal_f) = (app.clone(), alive.clone(), coalescer.clone());
+    std::thread::spawn(move || {
+        const FLUSH_MS: u64 = 16;
+        loop {
+            std::thread::sleep(Duration::from_millis(FLUSH_MS));
+            match coal_f.drain() {
+                Some(chunk) => {
+                    let b64 = STANDARD.encode(&chunk);
+                    let _ = app_f.emit("pty://output", OutputPayload { pane_id: id, b64 });
+                }
+                None if !alive_f.load(Ordering::Relaxed) => break,
+                None => {}
             }
         }
     });
@@ -340,8 +374,12 @@ fn fs_list_dir(path: String) -> Result<Vec<Entry>, String> {
 
 // Per-pane health metrics (202): pid, CPU%, memory. CPU% is a delta between
 // this call and the previous one, so the first poll for a pane always reads 0.
+// `memory_warn_mb` (UX-596): caller-supplied warning threshold — Settings can
+// wire a stored preference through; omitted/invalid falls back to a sane
+// default (health::resolve_memory_warn_mb).
 #[tauri::command]
-fn pane_health(reg: State<Registry>) -> Vec<health::PaneHealth> {
+fn pane_health(reg: State<Registry>, memory_warn_mb: Option<f64>) -> Vec<health::PaneHealth> {
+    let warn_mb = health::resolve_memory_warn_mb(memory_warn_mb);
     let panes = reg.panes.lock().unwrap();
     let now = now_ms();
     let mut out = Vec::new();
@@ -357,12 +395,15 @@ fn pane_health(reg: State<Registry>) -> Vec<health::PaneHealth> {
             let delta_100ns = cpu_100ns.saturating_sub(last_cpu) as f64;
             (delta_100ns / 10_000.0 / elapsed_ms) * 100.0
         };
+        let memory_mb = mem_bytes as f64 / (1024.0 * 1024.0);
         out.push(health::PaneHealth {
             pane_id: *id,
             pid,
             cpu_percent,
-            memory_mb: mem_bytes as f64 / (1024.0 * 1024.0),
+            memory_mb,
             proc_name: p.proc_name.lock().unwrap().clone(),
+            memory_warn_mb: warn_mb,
+            over_memory_warn: memory_mb >= warn_mb,
         });
     }
     out
@@ -524,6 +565,8 @@ pub fn run() {
     }
 
     spawn_proc_sampler(app.handle().clone());
+    // UX-586: hot-reload the vendor list when a manifest file changes on disk.
+    vendors::spawn_manifest_watcher(app.handle().clone());
 
     app.run(|app_handle, event| {
         // Reap every live pane's process tree when the app is asked to exit, so

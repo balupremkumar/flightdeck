@@ -42,3 +42,28 @@ pub fn git_status(cwd: String) -> GitStatus {
 
     GitStatus { is_repo: true, branch: Some(branch), dirty }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// UX-597: a non-repo folder (or git missing entirely — `run_git`'s
+    /// `.ok()?` collapses both to the same None) must degrade to a calm
+    /// default, never an error the caller has to unwrap.
+    #[test]
+    fn non_repo_dir_reports_not_a_repo_never_panics() {
+        let dir = std::env::temp_dir().join(format!("fd-gitstatus-not-a-repo-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let status = git_status(dir.to_string_lossy().into_owned());
+        assert!(!status.is_repo);
+        assert!(status.branch.is_none());
+        assert!(!status.dirty);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn nonexistent_dir_reports_not_a_repo_never_panics() {
+        let status = git_status("D:\\this-path-should-not-exist-flightdeck-gitstatus".to_string());
+        assert!(!status.is_repo);
+    }
+}

@@ -14,7 +14,11 @@ export interface WorktreeRef { worktreePath: string; branch: string; baseBranch:
 // `needsSetup`: the pane's worktree was freshly created and the workspace has a
 // setup command — the next PTY spawn runs it before the agent (Tier 0 follow-up).
 // Cleared once a spawn has consumed it so Restart doesn't re-run e.g. `npm ci`.
-export interface PaneModel extends Partial<WorktreeRef> { id: number; vendor: string; cwd: string; state: PaneState; epoch: number; title?: string; needsSetup?: boolean; }
+// UX-581: the pane's unsent input line (whatever's typed but not yet Entered
+// into the PTY). Terminal.tsx owns reading/writing the terminal's actual
+// input buffer; this field is just where that line survives a restart —
+// persisted through session.ts like everything else on PaneModel.
+export interface PaneModel extends Partial<WorktreeRef> { id: number; vendor: string; cwd: string; state: PaneState; epoch: number; title?: string; needsSetup?: boolean; draft?: string; }
 export interface Workspace { id: number; name: string; root: string; panes: PaneModel[]; focused: number | null; setupCmd?: string; }
 export interface NewPane extends Partial<WorktreeRef> { vendor: string; cwd: string; needsSetup?: boolean; }
 
@@ -32,6 +36,10 @@ interface AppState {
   closePane: (wsId: number, paneId: number) => void;
   focusPane: (wsId: number, paneId: number) => void;
   setPaneState: (paneId: number, state: PaneState) => void;
+  /** UX-581: record (or clear, with "") this pane's unsent input line so it
+   *  survives an app restart. Terminal.tsx calls this as the user types and
+   *  clears it on submit. */
+  setPaneDraft: (paneId: number, draft: string) => void;
   restartPane: (paneId: number) => void;
   renamePane: (paneId: number, title: string) => void;
   renameWorkspace: (wsId: number, name: string) => void;
@@ -42,6 +50,14 @@ interface AppState {
   movePaneToWorkspace: (fromWsId: number, paneId: number, toWsId: number) => void;
   // Session restore (session.ts): replace the whole tree with persisted state.
   hydrate: (workspaces: Workspace[], activeId: number | null) => void;
+}
+
+/** UX-582: true when a pane has a non-blank unsent input line — the
+ *  close-flow guard (worktrees.ts closePaneGuarded) checks this alongside
+ *  "is the agent still live" so closing doesn't silently throw away
+ *  something the user was mid-typing. */
+export function paneHasUnsentInput(pane: Pick<PaneModel, "draft">): boolean {
+  return !!pane.draft?.trim();
 }
 
 function reorder<T>(list: T[], from: number, to: number): T[] {
@@ -135,6 +151,14 @@ export const useApp = create<AppState>((set) => ({
       workspaces: s.workspaces.map((w) => ({
         ...w,
         panes: w.panes.map((p) => (p.id === paneId ? { ...p, state } : p)),
+      })),
+    })),
+
+  setPaneDraft: (paneId, draft) =>
+    set((s) => ({
+      workspaces: s.workspaces.map((w) => ({
+        ...w,
+        panes: w.panes.map((p) => (p.id === paneId ? { ...p, draft: draft || undefined } : p)),
       })),
     })),
 

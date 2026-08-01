@@ -57,6 +57,10 @@ pub struct PersistedPane {
     pub branch: Option<String>,
     #[serde(default)]
     pub base_branch: Option<String>,
+    // UX-581: the pane's unsent input line, so it survives an app restart.
+    // Absent for a pane with nothing typed; old session docs load with None.
+    #[serde(default)]
+    pub draft: Option<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]

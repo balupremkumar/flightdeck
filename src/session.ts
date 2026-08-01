@@ -19,15 +19,24 @@ import { useBoardStore, getBoardState, setBoardState } from "./board/boardStore"
 import type { BoardCards } from "./board/types";
 import { getStartupBehavior } from "./Settings";
 
+// UX-581: `draft` (the pane's unsent input line) isn't on persist.ts's
+// PersistedPane type yet — that file belongs to the persist.rs wiring, not
+// this module. The Rust side (persist.rs PersistedPane.draft) already
+// round-trips it; these local widened types let session.ts read/write the
+// field without waiting on persist.ts's type to catch up. JSON doesn't care
+// about the TS type, so this is fully functional today, not just a stub.
+type DraftPane = PersistedWorkspace["panes"][number] & { draft?: string };
+type DraftWorkspace = Omit<PersistedWorkspace, "panes"> & { panes: DraftPane[] };
+
 function toDraft(workspaces: Workspace[], activeId: number | null): SessionDraft {
   return {
     activeWorkspaceId: activeId,
-    workspaces: workspaces.map((w) => ({
+    workspaces: workspaces.map((w): DraftWorkspace => ({
       id: w.id,
       name: w.name,
       root: w.root,
       setupCmd: w.setupCmd,
-      panes: w.panes.map((p) => ({
+      panes: w.panes.map((p): DraftPane => ({
         id: p.id,
         vendor: p.vendor,
         cwd: p.cwd,
@@ -35,6 +44,7 @@ function toDraft(workspaces: Workspace[], activeId: number | null): SessionDraft
         worktreePath: p.worktreePath,
         branch: p.branch,
         baseBranch: p.baseBranch,
+        draft: p.draft,
       })),
     })),
     // The board rides in the opaque prefs blob (BACKLOG 229 — cards were
@@ -80,20 +90,54 @@ export function startAutosave() {
 // Restore
 // ---------------------------------------------------------------------------
 
+/** UX-583: per-pane worktree reconcile outcome, named so the UI can render
+ *  exactly what happened rather than a generic "session restored" banner. */
+export type PaneReconcileStatus =
+  | "plain"       // not an isolated pane — nothing to reconcile
+  | "intact"      // worktree dir still valid, used as-is
+  | "reattached"  // dir was gone, branch survived — worktree recreated
+  | "fell-back";  // repo/branch gone — pane reopened at the workspace root
+
+/** UX-583: names exactly which workspaces/panes came back from a restore and
+ *  how each pane's worktree reconciled, so a crash-recovery banner can say
+ *  more than "restored your session". Set at the end of every `hydrateFrom`
+ *  call (including `adoptSession`); read with `lastRestoreReport()`. */
+export interface RestoredPane {
+  paneId: number;
+  workspaceId: number;
+  workspaceName: string;
+  vendor: string;
+  title?: string;
+  status: PaneReconcileStatus;
+}
+
+let restoreReport: RestoredPane[] = [];
+/** UX-583: what the most recent `hydrateFrom` restored, for a banner to name. */
+export function lastRestoreReport(): RestoredPane[] {
+  return restoreReport;
+}
+
 /** Reattach one persisted pane's worktree (D5/D6 reconcile):
  *  - worktree dir still valid  -> keep as-is
  *  - dir gone, branch survived -> git_worktree_add reattaches it (idempotent)
  *  - repo/branch gone          -> plain pane at the workspace root            */
-async function reconcilePane(p: PaneModel, wsRoot: string, wsSetupCmd?: string): Promise<PaneModel> {
-  if (!p.worktreePath) return p;
-  if ((await repoToplevel(p.cwd)) != null) return p; // worktree intact
+async function reconcilePane(
+  p: PaneModel,
+  wsRoot: string,
+  wsSetupCmd?: string
+): Promise<{ pane: PaneModel; status: PaneReconcileStatus }> {
+  if (!p.worktreePath) return { pane: p, status: "plain" };
+  if ((await repoToplevel(p.cwd)) != null) return { pane: p, status: "intact" };
   const slug = p.branch?.startsWith("flightdeck/") ? p.branch.slice("flightdeck/".length) : null;
   if (slug) {
     try {
       const wt = await invoke<WorktreeInfo>("git_worktree_add", { repoDir: wsRoot, slug });
       // A recreated worktree dir is fresh (no node_modules) — re-run setup.
       const needsSetup = (wt.created && !!wsSetupCmd) || undefined;
-      return { ...p, cwd: wt.path, worktreePath: wt.path, branch: wt.branch, baseBranch: wt.baseBranch, needsSetup };
+      return {
+        pane: { ...p, cwd: wt.path, worktreePath: wt.path, branch: wt.branch, baseBranch: wt.baseBranch, needsSetup },
+        status: "reattached",
+      };
     } catch {
       /* fall through to the plain-pane fallback */
     }
@@ -103,14 +147,19 @@ async function reconcilePane(p: PaneModel, wsRoot: string, wsSetupCmd?: string):
     `Couldn't reattach ${p.branch ?? "a worktree"} in ${wsRoot.split(/[\\\/]/).pop() || wsRoot} ` +
     `(its repo or branch is gone) — the pane reopened at the workspace root instead.`
   );
-  return { ...p, cwd: wsRoot, worktreePath: undefined, branch: undefined, baseBranch: undefined };
+  return {
+    pane: { ...p, cwd: wsRoot, worktreePath: undefined, branch: undefined, baseBranch: undefined },
+    status: "fell-back",
+  };
 }
 
 export async function hydrateFrom(persisted: PersistedWorkspace[], activeId: number | null) {
   const workspaces: Workspace[] = [];
+  const report: RestoredPane[] = [];
   for (const w of persisted) {
     const panes: PaneModel[] = [];
-    for (const p of w.panes) {
+    for (const raw of w.panes) {
+      const p = raw as DraftPane;
       const model: PaneModel = {
         id: p.id,
         vendor: p.vendor,
@@ -121,11 +170,22 @@ export async function hydrateFrom(persisted: PersistedWorkspace[], activeId: num
         worktreePath: p.worktreePath,
         branch: p.branch,
         baseBranch: p.baseBranch,
+        draft: p.draft, // UX-581: the unsent line survives the restart too
       };
-      panes.push(await reconcilePane(model, w.root, w.setupCmd));
+      const { pane, status } = await reconcilePane(model, w.root, w.setupCmd);
+      panes.push(pane);
+      report.push({
+        paneId: pane.id,
+        workspaceId: w.id,
+        workspaceName: w.name,
+        vendor: pane.vendor,
+        title: pane.title,
+        status,
+      });
     }
     workspaces.push({ id: w.id, name: w.name, root: w.root, setupCmd: w.setupCmd, panes, focused: panes[0]?.id ?? null });
   }
+  restoreReport = report;
   useApp.getState().hydrate(workspaces, activeId);
 }
 

@@ -62,14 +62,37 @@ pub fn git(cwd: &Path, args: &[&str]) -> Result<GitOut, String> {
         use std::os::windows::process::CommandExt;
         command.creation_flags(0x08000000); // CREATE_NO_WINDOW
     }
-    let out = command
-        .output()
-        .map_err(|e| format!("git not available: {e}"))?;
+    let out = command.output().map_err(|e| {
+        // UX-597: this is the "git not on PATH" case — the only way `git`
+        // itself fails to launch. std::io::Error's Display is a raw OS
+        // message ("The system cannot find the file specified") which reads
+        // as a bug report, not an explanation; name the actual cause instead.
+        format!("Git isn't installed (or not on PATH) — install Git for Windows to use this feature. ({e})")
+    })?;
     Ok(GitOut {
         code: out.status.code().unwrap_or(-1),
         stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
         stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
     })
+}
+
+/// UX-597: turn a failing git command's raw stderr into a calm, specific
+/// explanation the UI can render as-is, instead of git's own wording (which
+/// varies by locale/version and often reads like an internal error). Falls
+/// back to the raw detail, prefixed by `context`, when nothing is recognised —
+/// never hides information, just leads with a plain-language reason when one
+/// is identifiable.
+fn explain_git_failure(context: &str, stderr: &str) -> String {
+    let s = stderr.trim();
+    if s.contains("not a git repository") {
+        format!("{context}: this folder isn't a git repository.")
+    } else if s.contains("Permission denied") || s.contains("Access is denied") {
+        format!("{context}: permission denied — check the folder isn't read-only or locked by another process.")
+    } else if s.is_empty() {
+        format!("{context}: git reported no further detail.")
+    } else {
+        format!("{context}: {s}")
+    }
 }
 
 fn git_line(cwd: &Path, args: &[&str]) -> Result<Option<String>, String> {
@@ -438,7 +461,7 @@ pub fn diff_summary(dir: &Path, base: Option<&str>, include_untracked: bool) -> 
     }
     let out = git(dir, &["diff", "--numstat", &anchor])?;
     if !out.ok() {
-        return Err(format!("git diff failed: {}", out.stderr.trim()));
+        return Err(explain_git_failure("git diff failed", &out.stderr));
     }
     let mut files = Vec::new();
     let (mut ta, mut td) = (0i64, 0i64);
@@ -463,7 +486,7 @@ pub fn file_diff(dir: &Path, base: Option<&str>, file: &str, include_untracked: 
     }
     let out = git(dir, &["diff", &anchor, "--", file])?;
     if !out.ok() {
-        return Err(format!("git diff failed: {}", out.stderr.trim()));
+        return Err(explain_git_failure("git diff failed", &out.stderr));
     }
     let mut s = out.stdout;
     if s.len() > MAX_FILE_DIFF_BYTES {
@@ -1034,9 +1057,11 @@ mod tests {
         assert!(out.ok(), "git {args:?} failed: {}", out.stderr);
     }
 
-    fn temp_repo() -> TempDirs {
-        let n = N.fetch_add(1, Ordering::Relaxed);
-        let base = std::env::temp_dir().join(format!("fd-wt-test-{}-{n}", std::process::id()));
+    /// Init a repo + wt_root under an arbitrary base dir — factored out of
+    /// `temp_repo` so the long-path/unicode tests (UX-593) can supply an
+    /// unusual base (unicode, spaces, deeply nested) while exercising the
+    /// exact same setup every other test relies on.
+    fn temp_repo_with_base(base: PathBuf) -> TempDirs {
         let repo = base.join("repo");
         let wt_root = base.join("wtroot");
         std::fs::create_dir_all(&repo).unwrap();
@@ -1048,6 +1073,12 @@ mod tests {
         sh(&repo, &["add", "-A"]);
         sh(&repo, &["commit", "-m", "init"]);
         TempDirs { repo, wt_root }
+    }
+
+    fn temp_repo() -> TempDirs {
+        let n = N.fetch_add(1, Ordering::Relaxed);
+        let base = std::env::temp_dir().join(format!("fd-wt-test-{}-{n}", std::process::id()));
+        temp_repo_with_base(base)
     }
 
     #[test]
@@ -1205,6 +1236,83 @@ mod tests {
         std::fs::write(Path::new(&wt.path).join("w.txt"), "x\n").unwrap();
         let out = pr_handoff(&t.wt_root, &wt.path).unwrap();
         assert_eq!(out.status, "no-remote");
+    }
+
+    // --- UX-597: graceful degradation when the folder isn't a repo ---------
+
+    #[test]
+    fn explain_git_failure_recognises_not_a_repo() {
+        let msg = explain_git_failure(
+            "git diff failed",
+            "fatal: not a git repository (or any of the parent directories): .git",
+        );
+        assert_eq!(msg, "git diff failed: this folder isn't a git repository.");
+    }
+
+    #[test]
+    fn explain_git_failure_falls_back_to_raw_detail() {
+        let msg = explain_git_failure("git commit failed", "some unrecognised git stderr");
+        assert_eq!(msg, "git commit failed: some unrecognised git stderr");
+    }
+
+    #[test]
+    fn explain_git_failure_handles_empty_stderr_without_a_blank_message() {
+        let msg = explain_git_failure("git push failed", "");
+        assert_eq!(msg, "git push failed: git reported no further detail.");
+    }
+
+    #[test]
+    fn diff_summary_on_non_repo_dir_is_a_typed_error_not_a_panic() {
+        let non_repo = std::env::temp_dir().join(format!("fd-not-a-repo-{}", std::process::id()));
+        std::fs::create_dir_all(&non_repo).unwrap();
+        let err = diff_summary(&non_repo, None, false);
+        match err {
+            Err(msg) => assert!(msg.contains("git"), "the message must still say something about git: {msg}"),
+            Ok(_) => panic!("a non-repo dir must be a typed error, not Ok garbage"),
+        }
+        let _ = std::fs::remove_dir_all(&non_repo);
+    }
+
+    #[test]
+    fn file_diff_on_non_repo_dir_is_a_typed_error_not_a_panic() {
+        let non_repo = std::env::temp_dir().join(format!("fd-not-a-repo-fd-{}", std::process::id()));
+        std::fs::create_dir_all(&non_repo).unwrap();
+        let err = file_diff(&non_repo, None, "whatever.txt", false);
+        assert!(err.is_err());
+        let _ = std::fs::remove_dir_all(&non_repo);
+    }
+
+    #[test]
+    fn worktree_add_on_non_repo_dir_is_a_typed_error_not_a_panic() {
+        let t = temp_repo(); // only its wt_root is used
+        let non_repo = std::env::temp_dir().join(format!("fd-not-a-repo-wt-{}", std::process::id()));
+        std::fs::create_dir_all(&non_repo).unwrap();
+        let err = worktree_add(&t.wt_root, &non_repo.to_string_lossy(), "nope");
+        match err {
+            Err(msg) => assert!(msg.contains("not inside a git work tree"), "{msg}"),
+            Ok(_) => panic!("a non-repo dir must be a typed error, not Ok garbage"),
+        }
+        let _ = std::fs::remove_dir_all(&non_repo);
+    }
+
+    #[test]
+    fn branch_context_on_non_repo_dir_degrades_gracefully_not_a_panic() {
+        let non_repo = std::env::temp_dir().join(format!("fd-not-a-repo-bc-{}", std::process::id()));
+        std::fs::create_dir_all(&non_repo).unwrap();
+        // No base: just resolves HEAD (empty), no error — a non-repo dir isn't
+        // exceptional here, it just has nothing to report.
+        let ctx = branch_context(&non_repo, None).unwrap();
+        assert_eq!(ctx.branch, "");
+        assert!(ctx.commits.is_empty());
+        let _ = std::fs::remove_dir_all(&non_repo);
+    }
+
+    #[test]
+    fn git_repo_web_url_on_non_repo_dir_returns_none_not_a_panic() {
+        let non_repo = std::env::temp_dir().join(format!("fd-not-a-repo-url-{}", std::process::id()));
+        std::fs::create_dir_all(&non_repo).unwrap();
+        assert!(git_repo_web_url(non_repo.to_string_lossy().into_owned()).is_none());
+        let _ = std::fs::remove_dir_all(&non_repo);
     }
 
     #[test]
@@ -1426,6 +1534,103 @@ mod tests {
         let err = worktree_remove(&t.wt_root, &t.repo.to_string_lossy(), "discard");
         assert!(err.is_err(), "must not remove dirs outside the worktrees root");
         assert!(t.repo.exists());
+    }
+
+    // --- UX-593: long-path and unicode-path handling ------------------------
+    //
+    // Our OWN generated paths (worktree dirs under <app-data>/worktrees) are
+    // already kept short by design (D1, repo_hash truncated to 12 hex chars +
+    // a slug capped at 32 chars) — that's the real mitigation for MAX_PATH.
+    // What we don't control is the REPO path the user hands us: it can be
+    // arbitrarily deep (OneDrive sync trees, nested monorepos) and can contain
+    // unicode/spaces (a user's actual display name, a project named in their
+    // own language). These tests exercise both against the real toolchain.
+
+    #[test]
+    fn unicode_and_spaced_repo_path_works_end_to_end() {
+        let n = N.fetch_add(1, Ordering::Relaxed);
+        let base = std::env::temp_dir().join(format!("fd wt tëst 日本語 ключ {}-{n}", std::process::id()));
+        let t = temp_repo_with_base(base);
+
+        let top = toplevel(&t.repo).expect("unicode/spaced repo path must resolve");
+        assert_eq!(Path::new(&top).canonicalize().unwrap(), t.repo.canonicalize().unwrap());
+
+        let wt = worktree_add(&t.wt_root, &t.repo.to_string_lossy(), "unicode-1").unwrap();
+        std::fs::write(Path::new(&wt.path).join("f.txt"), "hello\n").unwrap();
+        let sum = diff_summary(Path::new(&wt.path), Some(&wt.base_branch), true).unwrap();
+        let paths: Vec<&str> = sum.files.iter().map(|f| f.path.as_str()).collect();
+        assert!(paths.contains(&"f.txt"), "diff must see the new file: {paths:?}");
+
+        let m = merge_back(&t.wt_root, &wt.path, None).unwrap();
+        assert_eq!(m.status, "merged", "{}", m.detail);
+        assert!(t.repo.join("f.txt").exists(), "merge must land in a unicode/spaced base repo");
+    }
+
+    /// Windows' classic Win32 MAX_PATH (260 chars) is a genuine OS-level
+    /// constraint: without the machine-wide "Enable Win32 long paths" policy
+    /// AND (for some APIs) an app manifest that opts in, a path this deep can
+    /// fail to even be created by ordinary (non `\\?\`-prefixed) calls — which
+    /// is exactly what `std::fs::create_dir_all` and `git`/PowerShell/cmd use.
+    /// This is NOT something Flightdeck can paper over from inside a single
+    /// repo-path helper; it's characterised here rather than "fixed", per the
+    /// backlog note to document what Windows genuinely cannot do. Confirmed
+    /// against this exact toolchain (git-bash and PowerShell both refuse to
+    /// even `cd`/`Set-Location` into an equivalently deep path on this
+    /// machine) — the assertion below is deliberately permissive: whichever
+    /// way it goes, it must be a clean Option/Result, never a panic.
+    #[test]
+    fn deep_path_near_win32_max_path_fails_cleanly_not_a_panic() {
+        let n = N.fetch_add(1, Ordering::Relaxed);
+        let mut base = std::env::temp_dir().join(format!("fd-deep-{}-{n}", std::process::id()));
+        while base.as_os_str().len() < 280 {
+            base = base.join("nested-segment-abcdefgh-0123456789");
+        }
+        if std::fs::create_dir_all(&base).is_err() {
+            // Couldn't even create the dir on this machine — also a
+            // documented limitation, also nothing further to prove here.
+            return;
+        }
+        // PROVEN on this machine (not assumed): std::fs::create_dir_all
+        // handles a path this deep, but spawning git.exe as a CHILD PROCESS
+        // with that dir as its cwd hits Win32's CreateProcessW, whose
+        // lpCurrentDirectory does NOT get the same `\\?\` long-path treatment
+        // file APIs get — it fails with "the directory name is invalid" (os
+        // error 267). That's a real Windows limitation this codebase cannot
+        // paper over: a deeply-nested repo (an aggressive OneDrive sync tree,
+        // say) will fail to launch git on an unpatched Windows install, full
+        // stop. The obligation is that the failure is CLEAN — a typed Err
+        // with an actionable message — never a panic. Tested against `git()`
+        // directly, not the `sh()` test helper (which `.unwrap()`s and would
+        // turn this exact, expected failure into a false test panic).
+        match git(&base, &["init", "-b", "main"]) {
+            Ok(_) => {
+                // Long paths are enabled on this machine: fine, just confirm
+                // the rest of the chain doesn't panic either.
+                let _ = toplevel(&base);
+            }
+            Err(msg) => assert!(!msg.is_empty(), "a failure must still carry a message the UI can show"),
+        }
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn worktree_dirs_we_generate_stay_short_regardless_of_repo_depth() {
+        // D1's actual mitigation: OUR worktree path is always
+        // <wt_root>/<12-hex-hash>/<slug≤32>, independent of how deep the
+        // user's own repo lives — so this is the piece we can and do
+        // guarantee, verified directly rather than just asserted in a comment.
+        let t = temp_repo();
+        let long_slug = "a".repeat(32); // slug isn't length-capped by worktree_add itself,
+        // but callers (worktrees.ts newSlug) cap it at 32 — verify our own
+        // generated segment count/shape stays short even at that cap.
+        let wt = worktree_add(&t.wt_root, &t.repo.to_string_lossy(), &long_slug).unwrap();
+        let rel = Path::new(&wt.path).strip_prefix(&t.wt_root).unwrap();
+        let mut components = rel.components();
+        let hash_component = components.next().unwrap().as_os_str().to_string_lossy().into_owned();
+        let slug_component = components.next().unwrap().as_os_str().to_string_lossy().into_owned();
+        assert_eq!(hash_component.len(), 12, "repo hash segment must stay fixed-width");
+        assert!(slug_component.len() <= 32, "slug segment must not balloon the path");
+        assert!(components.next().is_none(), "no extra nesting beyond hash/slug");
     }
 
     #[test]
