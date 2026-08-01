@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseInline, parseMarkdown, isExternalHref, resolveMdLink } from "./markdown";
+import { parseInline, parseMarkdown, isExternalHref, isBlockedHref, isAbsoluteLocalPath, resolveMdLink } from "./markdown";
 import type { BlockNode } from "./markdown";
 
 describe("parseInline", () => {
@@ -195,5 +195,34 @@ describe("resolveMdLink", () => {
 
   it("strips a trailing anchor before resolving", () => {
     expect(resolveMdLink("./other.md#heading", md)).toBe("D:\\Dev\\ai\\projects\\active\\flightdeck\\docs\\other.md");
+  });
+});
+
+// Regression guard for the 2026-08-01 architectural review finding: previewed
+// markdown is untrusted (any cloned repo's README), and the old "anything with
+// a scheme is external" test sent javascript:, file:, custom protocol handlers
+// and Windows drive-absolute paths straight to the OS shell opener.
+describe("link scheme safety", () => {
+  it("only treats http(s)/mailto/tel as openable external links", () => {
+    expect(isExternalHref("https://example.com")).toBe(true);
+    expect(isExternalHref("mailto:a@b.c")).toBe(true);
+    expect(isExternalHref("javascript:alert(1)")).toBe(false);
+    expect(isExternalHref("file:///C:/Windows/System32/calc.exe")).toBe(false);
+    expect(isExternalHref("ms-msdt:/id")).toBe(false);
+  });
+
+  it("blocks untrusted schemes outright", () => {
+    expect(isBlockedHref("javascript:alert(1)")).toBe(true);
+    expect(isBlockedHref("ms-msdt:/id")).toBe(true);
+    expect(isBlockedHref("data:text/html,x")).toBe(true);
+    expect(isBlockedHref("https://example.com")).toBe(false);
+    expect(isBlockedHref("./relative.md")).toBe(false);
+  });
+
+  it("treats a Windows drive path as a local file, never a scheme", () => {
+    expect(isAbsoluteLocalPath("C:\\Windows\\System32\\calc.exe")).toBe(true);
+    expect(isBlockedHref("C:\\Windows\\System32\\calc.exe")).toBe(false);
+    expect(isExternalHref("C:\\Windows\\System32\\calc.exe")).toBe(false);
+    expect(resolveMdLink("C:\\a\\b.md", "D:\\docs\\readme.md")).toBe("C:\\a\\b.md");
   });
 });

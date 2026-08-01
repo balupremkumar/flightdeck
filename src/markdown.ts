@@ -231,12 +231,38 @@ export function parseMarkdown(src: string): BlockNode[] {
 // absolute path; relative hrefs/srcs resolve against ITS directory, not cwd.
 // ---------------------------------------------------------------------
 
+/** Schemes we will hand to the OS opener. Deliberately an ALLOWLIST.
+ *
+ *  Previewed markdown is untrusted input — a README from any cloned repo. The
+ *  earlier "anything with a scheme is external" test also matched `javascript:`,
+ *  `file:`, custom protocol handlers, and (because `c:` is a valid scheme shape)
+ *  Windows drive-absolute paths like `C:\Windows\System32\calc.exe`. All of
+ *  those were being passed to openUrl, i.e. the shell — so a link in someone
+ *  else's README could launch a program on click. */
+const SAFE_LINK_SCHEMES = /^(https?|mailto|tel):/i;
+const HAS_SCHEME = /^[a-z][a-z0-9+.-]*:/i;
+
 export function isExternalHref(href: string): boolean {
-  return /^[a-z][a-z0-9+.-]*:/i.test(href); // any scheme: http:, https:, mailto:, tel:, ...
+  return SAFE_LINK_SCHEMES.test(href);
+}
+
+/** A drive-absolute Windows path (`C:\x`, `C:/x`) or a POSIX absolute path.
+ *  Not "external" — it is a local file, and must be treated as one. */
+export function isAbsoluteLocalPath(href: string): boolean {
+  return /^[A-Za-z]:[\\/]/.test(href) || href.startsWith("/") || href.startsWith("\\\\");
+}
+
+/** Anything with a scheme we do not trust: `javascript:`, `file:`, `data:`,
+ *  `ms-msdt:` and friends. Rendered inert rather than opened. */
+export function isBlockedHref(href: string): boolean {
+  return HAS_SCHEME.test(href) && !SAFE_LINK_SCHEMES.test(href) && !isAbsoluteLocalPath(href);
 }
 
 export function resolveMdLink(href: string, mdFilePath: string): string {
   if (isExternalHref(href) || href.startsWith("#")) return href;
+  // An absolute local path is already resolved; joining it onto the md file's
+  // directory would produce nonsense.
+  if (isAbsoluteLocalPath(href)) return href.split("#")[0].split("?")[0];
   const clean = href.split("#")[0].split("?")[0];
   if (!clean) return href; // pure "#anchor"/"?query" already handled above; empty guard
   const isWin = /^[A-Za-z]:/.test(mdFilePath) || mdFilePath.includes("\\");

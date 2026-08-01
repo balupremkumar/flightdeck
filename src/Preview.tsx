@@ -20,7 +20,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useUI, useOverlayEsc } from "./ui";
 import type { PreviewTab } from "./ui";
-import { parseMarkdown, isExternalHref, resolveMdLink } from "./markdown";
+import { parseMarkdown, isExternalHref, isBlockedHref, resolveMdLink } from "./markdown";
 import type { BlockNode, InlineNode } from "./markdown";
 import { highlightLine, langFor } from "./diffhighlight";
 import type { Lang } from "./diffhighlight";
@@ -154,16 +154,29 @@ function renderInline(nodes: InlineNode[], mdPath: string): ReactNode {
         return <ImageNode key={i} src={n.src} alt={n.alt} mdPath={mdPath} />;
       case "link": {
         const external = isExternalHref(n.href);
+        const blocked = isBlockedHref(n.href);
         const onClick = (e: React.MouseEvent) => {
           e.preventDefault();
-          // UX-507: external links open the browser, relative links open
-          // that file right here in the preview (a new/existing tab).
+          // UX-507: http(s)/mailto/tel open the browser; a local path (relative
+          // or absolute) opens that file here in the preview. Anything with an
+          // untrusted scheme does nothing — previewed markdown is untrusted
+          // input and must never reach the shell opener.
+          if (blocked) {
+            useUI.getState().pushToast("info", "That link uses a scheme Flightdeck won't open.", { detail: n.href });
+            return;
+          }
           if (external) openUrl(n.href).catch(() => { /* best-effort */ });
           else if (!n.href.startsWith("#")) useUI.getState().openPreview(resolveMdLink(n.href, mdPath));
           // Bare "#anchor" links are a deferred scroll-to-heading feature.
         };
         return (
-          <a key={i} href={n.href} className="prv-link" onClick={onClick}>
+          <a
+            key={i}
+            href={blocked ? undefined : n.href}
+            className={"prv-link" + (blocked ? " prv-link-blocked" : "")}
+            title={blocked ? "Blocked link scheme" : undefined}
+            onClick={onClick}
+          >
             {renderInline(n.children, mdPath)}
           </a>
         );
