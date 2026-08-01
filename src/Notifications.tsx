@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useApp, type PaneState } from "./store";
-import { useUI } from "./ui";
+import { useUI, useOverlayEsc } from "./ui";
 import { IconBell, IconSettings } from "./Icons";
 import { getCurrentWindow, UserAttentionType } from "@tauri-apps/api/window";
 import { attentionQueue, forMins, stateSince, STATE_LABEL } from "./attention";
@@ -96,13 +96,11 @@ export function Notifications() {
   }, [panel]);
 
   // Esc closes (UI-30) — the menu previously only closed on mouse-leave,
-  // which stranded keyboard/touch users.
-  useEffect(() => {
-    if (panel === "none") return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setPanel("none"); };
-    window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
-  }, [panel]);
+  // which stranded keyboard/touch users. UX-542/543: registered into the
+  // shared overlay stack (ui.ts) rather than its own window listener, so Esc
+  // closes this bell menu ONLY when it's the top-most overlay, and focus
+  // returns to the bell button on close.
+  useOverlayEsc(panel !== "none", () => setPanel("none"));
 
   // Watch every pane for a state transition into a configured "notify" state.
   useEffect(() => {

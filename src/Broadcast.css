@@ -42,7 +42,44 @@
 .bc-chip.dead { opacity: .4; cursor: not-allowed; }
 .bc-chip:disabled { pointer-events: auto; }
 .bc-chip-ws { color: var(--faint); }
-.bc-last { font-size: 11px; color: var(--faint); padding: 0 2px; }
+
+/* UX-521: last-output-line per live target, linkified. */
+.bc-outputs {
+  display: flex; flex-direction: column; gap: 3px; max-height: 68px; overflow-y: auto;
+  padding: 6px 8px; background: var(--surface); border: 1px solid var(--line); border-radius: 9px;
+}
+.bc-output-row { display: flex; align-items: baseline; gap: 6px; font-size: 11px; min-width: 0; }
+.bc-output-who { flex: none; color: var(--faint); font-weight: 600; }
+.bc-output-line { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+
+.bc-last {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  font-size: 11px; color: var(--faint); padding: 0 2px;
+}
+/* UX-550: resend the last message to the current target selection. */
+.bc-resend {
+  flex: none; font: inherit; font-size: 10.5px; font-weight: 600; color: var(--muted);
+  background: transparent; border: 1px solid var(--line); border-radius: var(--r-pill);
+  padding: 3px 9px; cursor: pointer; transition: color var(--t-fast) ease, border-color var(--t-fast) ease;
+}
+.bc-resend:hover:not(:disabled) { color: var(--text); border-color: var(--accent); }
+.bc-resend:disabled { opacity: .45; cursor: not-allowed; }
+
+/* UX-552: {{placeholder}} fill-in step, shown above the target chips when a
+   snippet carrying tokens is inserted. */
+.bc-fill {
+  display: flex; flex-direction: column; gap: 8px; padding: 10px; background: var(--surface);
+  border: 1px solid var(--line-strong); border-radius: 10px;
+}
+.bc-fill-head { font-size: 12px; font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bc-fill-fields { display: flex; flex-wrap: wrap; gap: 8px; }
+.bc-fill-field { display: flex; flex-direction: column; gap: 3px; font-size: 10.5px; color: var(--muted); min-width: 120px; flex: 1; }
+.bc-fill-field input {
+  font: inherit; font-size: 12.5px; color: var(--text); background: var(--elevated);
+  border: 1px solid var(--line-strong); border-radius: 7px; padding: 5px 8px;
+}
+.bc-fill-field input:focus-visible { outline: var(--focus-ring-width) solid var(--focus-ring); outline-offset: 1px; }
+.bc-fill-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .bc-dot { width: 6px; height: 6px; border-radius: 50%; flex: none; background: var(--st-idle); }
 .bc-dot.starting { background: var(--st-starting); }
 .bc-dot.running { background: var(--st-running); }

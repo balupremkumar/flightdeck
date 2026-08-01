@@ -1,9 +1,16 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useApp, type PaneModel } from "./store";
-import { useUI } from "./ui";
+import { useUI, useOverlayEsc } from "./ui";
 import { IconClose } from "./Icons";
-import { relTime, timeTitle } from "./format";
+import { relTime, timeTitle, tailEllipsis } from "./format";
+import { lastLine } from "./attention";
+import { LinkifiedText } from "./LinkifiedText";
+import {
+  loadSnippets, saveSnippets, addSnippet, removeSnippet, type Snippet,
+  extractPlaceholders, fillPlaceholders,
+  loadPromptHistory, savePromptHistory, recordPrompt, historyFor,
+} from "./prompthistory";
 import "./Broadcast.css";
 
 type Scope = "workspace" | "all";
@@ -11,22 +18,11 @@ type Target = { w: { id: number; name: string }; p: PaneModel };
 
 import { vendorShort } from "./vendors";
 
-// UI-202: saved snippets — common prompts ("run the tests and fix what
-// fails") the user deliberately wants to reuse. Separate storage and a
-// separate affordance from the ArrowUp message history below: history is
-// "what was sent recently", snippets are "what I chose to keep".
-const SNIPPETS_KEY = "flightdeck-broadcast-snippets";
-interface Snippet { id: string; text: string; }
-function loadSnippets(): Snippet[] {
-  try {
-    const raw = localStorage.getItem(SNIPPETS_KEY);
-    if (raw) return JSON.parse(raw);
-  } catch { /* non-persistent */ }
-  return [];
-}
-function persistSnippets(list: Snippet[]) {
-  try { localStorage.setItem(SNIPPETS_KEY, JSON.stringify(list)); } catch { /* non-persistent */ }
-}
+// UI-202/UX-552: saved snippets — common prompts ("run the tests and fix
+// what fails") the user deliberately wants to reuse, now living in
+// prompthistory.ts (shared with the command palette's snippet-insert
+// actions — see HANDOFF EDITS) so both surfaces read the same list. History
+// is "what was sent recently" (below); snippets are "what I chose to keep".
 
 
 // Self-contained broadcast composer: one message, sent to all (or a chosen
@@ -47,15 +43,12 @@ export function Broadcast() {
   const [pressEnter, setPressEnter] = useState(true);
   const [sending, setSending] = useState(false);
 
-  // Esc closes the composer from anywhere (not just the textarea).
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: globalThis.KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
-    };
-    window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
-  }, [open, setOpen]);
+  // Esc closes the composer from anywhere (not just the textarea). UX-542/543:
+  // registered into the shared overlay stack (ui.ts) instead of its own
+  // window listener — Esc closes this ONLY when it's the top-most overlay,
+  // and closing it (by any means) returns focus to whatever had it before
+  // the composer opened.
+  useOverlayEsc(open, () => setOpen(false));
 
   // Every pane in scope, live or not — dead panes are shown greyed-out and
   // unselectable rather than silently dropped, so the scope stays honest.
@@ -76,6 +69,15 @@ export function Broadcast() {
     [pool]
   );
   const lastBroadcast = broadcasts[0];
+  // UX-521: what each live target last said, linkified — a glance at
+  // context before you send it more, same last-line source the attention
+  // queue reads from (attention.ts, written by each pane's tail tracker).
+  const targetsWithOutput = useMemo(
+    () => targets
+      .map(({ w, p }) => ({ w, p, line: lastLine.get(p.id) }))
+      .filter((t): t is { w: Target["w"]; p: PaneModel; line: string } => !!t.line),
+    [targets]
+  );
 
   const toggle = (paneId: number) => {
     setExcluded((s) => {
@@ -86,15 +88,31 @@ export function Broadcast() {
     });
   };
 
-  const send = async () => {
-    const msg = text.trim();
-    if (!msg || targets.length === 0 || sending) return;
+  // UX-551: per-vendor sent-prompt history, persisted across restarts.
+  const [promptHistory, setPromptHistory] = useState(loadPromptHistory);
+  // The vendor(s) actually being sent to right now — when it's exactly one,
+  // ArrowUp recall (below) prefers that vendor's own history over the mixed
+  // "sent to anyone" list, since an agy-flavoured prompt has no business
+  // surfacing when you're about to type at a shell pane.
+  const targetVendors = useMemo(() => Array.from(new Set(targets.map(({ p }) => p.vendor))), [targets]);
+  const singleVendor = targetVendors.length === 1 ? targetVendors[0] : null;
+
+  const sendText = async (msg: string) => {
+    const trimmed = msg.trim();
+    if (!trimmed || targets.length === 0 || sending) return;
     setSending(true);
-    const payload = pressEnter ? msg + "\r" : msg;
+    const payload = pressEnter ? trimmed + "\r" : trimmed;
     const results = await Promise.allSettled(targets.map(({ p }) => invoke("pty_write", { paneId: p.id, data: payload })));
     setSending(false);
     const failed = results.filter((r) => r.status === "rejected").length;
-    pushBroadcastRecord({ text: msg, sentTo: targets.length, failed });
+    pushBroadcastRecord({ text: trimmed, sentTo: targets.length, failed });
+    // UX-551: record under every vendor this send actually reached.
+    setPromptHistory((prev) => {
+      let next = prev;
+      for (const v of targetVendors) next = recordPrompt(next, v, trimmed);
+      savePromptHistory(next);
+      return next;
+    });
     if (failed === 0) {
       pushToast("success", `Sent to ${targets.length} pane${targets.length === 1 ? "" : "s"}`);
       setText("");
@@ -104,52 +122,84 @@ export function Broadcast() {
       pushToast("error", `Sent to ${targets.length - failed} of ${targets.length} — ${failed} failed`);
     }
   };
+  const send = () => sendText(text);
+  // UX-550: resend the last broadcast text to the CURRENT target selection —
+  // one pane if scope has been narrowed to one, N panes if it's still
+  // broadcast-wide. No retyping, no re-picking targets.
+  const resendLast = () => { if (lastBroadcast) void sendText(lastBroadcast.text); };
 
-  // UI-201: newest-first message history for arrow-key recall.
-  const history = useMemo(
+  // UI-201/UX-551: newest-first recall for ArrowUp — this vendor's own
+  // history when the send is scoped to exactly one vendor, otherwise the
+  // combined "sent to anyone" list (unchanged behaviour for a mixed send).
+  const vendorHistory = historyFor(promptHistory, singleVendor);
+  const combinedHistory = useMemo(
     () => Array.from(new Set(broadcasts.map((r) => r.text).filter(Boolean))),
     [broadcasts]
   );
+  const history = vendorHistory.length > 0 ? vendorHistory : combinedHistory;
   const [histIdx, setHistIdx] = useState(-1);
 
-  // UI-202: saved snippets — see the loadSnippets/persistSnippets note above.
+  // UI-202/UX-552: saved snippets, shared storage (prompthistory.ts) so the
+  // command palette's snippet-insert actions read the same list (HANDOFF).
   const [snippets, setSnippets] = useState<Snippet[]>(loadSnippets);
   const [snipOpen, setSnipOpen] = useState(false);
   const snipRef = useRef<HTMLDivElement>(null);
+  // UX-552: a snippet carrying {{placeholder}} tokens opens this small
+  // fill-in step instead of inserting straight away.
+  const [fillingSnippet, setFillingSnippet] = useState<{ snippet: Snippet; tokens: string[]; values: Record<string, string> } | null>(null);
 
+  // UX-542/543: same shared-stack treatment as the composer itself above.
+  useOverlayEsc(snipOpen, () => setSnipOpen(false));
   useEffect(() => {
     if (!snipOpen) return;
-    const onKey = (e: globalThis.KeyboardEvent) => { if (e.key === "Escape") setSnipOpen(false); };
     const onMouseDown = (e: MouseEvent) => {
       if (snipRef.current && !snipRef.current.contains(e.target as Node)) setSnipOpen(false);
     };
-    window.addEventListener("keydown", onKey, true);
     window.addEventListener("mousedown", onMouseDown);
-    return () => {
-      window.removeEventListener("keydown", onKey, true);
-      window.removeEventListener("mousedown", onMouseDown);
-    };
+    return () => window.removeEventListener("mousedown", onMouseDown);
   }, [snipOpen]);
 
   const saveCurrentSnippet = () => {
-    const msg = text.trim();
-    if (!msg) return;
-    if (snippets.some((s) => s.text === msg)) { pushToast("info", "Already saved."); return; }
-    const next = [{ id: crypto.randomUUID(), text: msg }, ...snippets];
-    setSnippets(next);
-    persistSnippets(next);
+    const { list, changed } = addSnippet(snippets, text);
+    if (!changed) { pushToast("info", text.trim() ? "Already saved." : "Type a message first."); return; }
+    setSnippets(list);
+    saveSnippets(list);
     pushToast("success", "Snippet saved.");
   };
-  const loadSnippet = (s: Snippet) => {
+  const insertSnippet = (s: Snippet) => {
+    const tokens = extractPlaceholders(s.text);
+    if (tokens.length > 0) {
+      setFillingSnippet({ snippet: s, tokens, values: Object.fromEntries(tokens.map((t) => [t, ""])) });
+      setSnipOpen(false);
+      return;
+    }
     setText(s.text);
     setHistIdx(-1); // a snippet load is a fresh edit, not a history step
     setSnipOpen(false);
   };
-  const deleteSnippet = (id: string) => {
-    const next = snippets.filter((s) => s.id !== id);
-    setSnippets(next);
-    persistSnippets(next);
+  const commitFilledSnippet = () => {
+    if (!fillingSnippet) return;
+    setText(fillPlaceholders(fillingSnippet.snippet.text, fillingSnippet.values));
+    setHistIdx(-1);
+    setFillingSnippet(null);
   };
+  const deleteSnippet = (id: string) => {
+    const next = removeSnippet(snippets, id);
+    setSnippets(next);
+    saveSnippets(next);
+  };
+
+  // UX-552: a snippet chosen from the command palette (ui.ts's
+  // pendingSnippetId) is picked up the moment the composer is open for it.
+  const pendingSnippetId = useUI((s) => s.pendingSnippetId);
+  const setPendingSnippet = useUI((s) => s.setPendingSnippet);
+  useEffect(() => {
+    if (!open || !pendingSnippetId) return;
+    const found = snippets.find((s) => s.id === pendingSnippetId);
+    setPendingSnippet(null);
+    if (found) insertSnippet(found);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, pendingSnippetId]);
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); setHistIdx(-1); void send(); return; }
@@ -221,7 +271,7 @@ export function Broadcast() {
                 <div className="bc-snip-list">
                   {snippets.map((s) => (
                     <div className="bc-snip-item" key={s.id}>
-                      <button className="bc-snip-text" onClick={() => loadSnippet(s)} title={s.text}>{s.text}</button>
+                      <button className="bc-snip-text" onClick={() => insertSnippet(s)} title={s.text}>{s.text}</button>
                       <button className="bc-snip-del" onClick={() => deleteSnippet(s.id)} title="Delete this snippet" aria-label="Delete this snippet">×</button>
                     </div>
                   ))}
@@ -232,6 +282,30 @@ export function Broadcast() {
         </div>
         <button className="bc-x" onClick={() => setOpen(false)} title="Collapse"><IconClose size={13} /></button>
       </div>
+
+      {/* UX-552: placeholder fill-in step for a {{token}}-carrying snippet. */}
+      {fillingSnippet && (
+        <div className="bc-fill" role="form" aria-label={`Fill in ${fillingSnippet.snippet.text}`}>
+          <div className="bc-fill-head">Fill in "{fillingSnippet.snippet.text}"</div>
+          <div className="bc-fill-fields">
+            {fillingSnippet.tokens.map((t) => (
+              <label className="bc-fill-field" key={t}>
+                <span>{t}</span>
+                <input
+                  autoFocus={t === fillingSnippet.tokens[0]}
+                  value={fillingSnippet.values[t] ?? ""}
+                  onChange={(e) => setFillingSnippet((f) => f && { ...f, values: { ...f.values, [t]: e.target.value } })}
+                  onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); commitFilledSnippet(); } }}
+                />
+              </label>
+            ))}
+          </div>
+          <div className="bc-fill-actions">
+            <button className="btn-ghost" type="button" onClick={() => setFillingSnippet(null)}>Cancel</button>
+            <button className="bc-send" type="button" onClick={commitFilledSnippet}>Insert</button>
+          </div>
+        </div>
+      )}
 
       <div className="bc-chips">
         {pool.length === 0 && <span className="bc-empty">No panes in scope — start a session first.</span>}
@@ -257,10 +331,30 @@ export function Broadcast() {
         })}
       </div>
 
+      {/* UX-521: what each live target last said — linkified, so a path or
+          url an agent just printed is clickable straight from here. */}
+      {targetsWithOutput.length > 0 && (
+        <div className="bc-outputs" aria-label="Last output from targeted panes">
+          {targetsWithOutput.map(({ w, p, line }) => (
+            <div className="bc-output-row" key={p.id}>
+              <span className="bc-output-who">{scope === "all" ? `${w.name} · ` : ""}{vendorShort(p.vendor)}</span>
+              <LinkifiedText className="bc-output-line" text={tailEllipsis(line, 140)} cwd={p.cwd} />
+            </div>
+          ))}
+        </div>
+      )}
+
       {lastBroadcast && (
         <div className="bc-last" title={timeTitle(lastBroadcast.at)}>
-          Last sent {relTime(lastBroadcast.at)} to {lastBroadcast.sentTo} pane{lastBroadcast.sentTo === 1 ? "" : "s"}
-          {lastBroadcast.failed > 0 ? ` (${lastBroadcast.failed} failed)` : ""}
+          <span>
+            Last sent {relTime(lastBroadcast.at)} to {lastBroadcast.sentTo} pane{lastBroadcast.sentTo === 1 ? "" : "s"}
+            {lastBroadcast.failed > 0 ? ` (${lastBroadcast.failed} failed)` : ""}
+          </span>
+          {/* UX-550: resend without retyping — goes to the current target
+              selection (one pane if narrowed, N if still broadcast-wide). */}
+          <button className="bc-resend" onClick={resendLast} disabled={targets.length === 0 || sending} title="Resend this exact message to the current target selection">
+            Resend
+          </button>
         </div>
       )}
 

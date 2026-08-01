@@ -53,3 +53,36 @@ export const STATE_LABEL: Record<PaneState, string> = {
  *  asking rather than just that it's asking. Written by Terminal's tail
  *  tracker; capped, ANSI already stripped by the caller. */
 export const lastLine = new Map<number, string>();
+
+/** UX-537: when each pane last produced output (ms epoch) — companion to
+ *  `lastLine` above, same writer (PaneView's `onLine`, see HANDOFF EDITS for
+ *  the one-line call-site addition). Powers "jump to the pane that most
+ *  recently produced output". */
+export const lastOutputAt = new Map<number, number>();
+
+/** Records a fresh line of output for `paneId` at `at` (defaults to now).
+ *  Call this alongside `lastLine.set` wherever a pane's tail tracker fires —
+ *  kept as a separate function (not folded into a `lastLine.set` override)
+ *  so the write site stays a plain, greppable one-liner. */
+export function recordOutput(paneId: number, at: number = Date.now()) {
+  lastOutputAt.set(paneId, at);
+}
+
+export interface RecentOutputItem { w: Workspace; p: PaneModel; at: number }
+
+/** UX-537: the single pane across every workspace that produced output most
+ *  recently, or null if nothing has ever been recorded (a fresh launch, or
+ *  every pane is a shell that's never printed a tracked line). Panes with no
+ *  recorded output are excluded rather than sorted last with `at: 0` — an
+ *  untouched pane isn't "the oldest activity", it's simply not a candidate. */
+export function mostRecentOutputPane(workspaces: Workspace[]): RecentOutputItem | null {
+  let best: RecentOutputItem | null = null;
+  for (const w of workspaces) {
+    for (const p of w.panes) {
+      const at = lastOutputAt.get(p.id);
+      if (at == null) continue;
+      if (!best || at > best.at) best = { w, p, at };
+    }
+  }
+  return best;
+}

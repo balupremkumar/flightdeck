@@ -147,3 +147,11 @@
 
 /* UI-144: repeat count on a collapsed run of identical events */
 .ntf-repeat { font-style: normal; font-weight: 700; color: var(--faint); margin-left: 3px; }
+
+/* UX-520/521: shared inline link style for LinkifiedText.tsx, wherever a
+   detected path/url appears outside a terminal (Broadcast's last-output-line,
+   the attention queue, board cards — see HANDOFF EDITS). Lives here because
+   Notifications is always mounted (Cockpit.tsx), so this class is guaranteed
+   loaded app-wide without every consumer importing its own copy. */
+.lnk { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.lnk:hover { color: var(--ice); }

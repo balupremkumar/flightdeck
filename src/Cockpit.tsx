@@ -17,10 +17,12 @@ import { AttentionQueue } from "./AttentionQueue";
 import { Shortcuts } from "./Shortcuts";
 import { Preview } from "./Preview";
 import { ZoomHud } from "./ZoomHud";
-import { useUI } from "./ui";
+import { useUI, closeTopOverlay } from "./ui";
 import { applyTheme, applyAccent, currentThemeId, currentAccentId, findTheme } from "./themes";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { spawnPane, closePaneGuarded, closeWorkspaceGuarded } from "./worktrees";
+import { isTypingTarget } from "./Shortcuts";
+import { attentionQueue, mostRecentOutputPane } from "./attention";
 
 // Quick light/dark flip. Goes through the themes registry (not a raw data-theme
 // write) so it stays in step with the richer theme picker in Settings, and
@@ -79,6 +81,62 @@ export function Cockpit() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // UX-542: Esc always closes exactly the top-most registered overlay —
+      // see ui.ts's overlay-stack comment for the bug this replaces (every
+      // overlay used to install its own capture-phase Esc listener, so with
+      // two open, Esc could close both at once). Only preventDefault when
+      // something was actually closed, so Esc still falls through to
+      // ordinary inputs (rename fields, the find box) when no overlay is
+      // registered — those aren't on the stack and don't need to be; their
+      // own onKeyDown already handles Escape locally.
+      if (e.key === "Escape") {
+        if (closeTopOverlay()) { e.preventDefault(); }
+        return;
+      }
+      // UX-537: one key, no modifier — jump straight to whichever pane most
+      // recently produced output, the pane you'd otherwise go hunting for.
+      // Guarded the same way "?" (Shortcuts.tsx) is: never steals the literal
+      // character from a text field, select, or terminal.
+      if (!e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey && e.key === "`") {
+        if (isTypingTarget(e.target as Element | null)) return;
+        const hit = mostRecentOutputPane(useApp.getState().workspaces);
+        if (hit) {
+          e.preventDefault();
+          useApp.getState().switchWorkspace(hit.w.id);
+          useApp.getState().focusPane(hit.w.id, hit.p.id);
+        }
+        return;
+      }
+      // UX-536: switch to pane N by its bare number key whenever focus isn't
+      // inside a terminal or a text field — Alt+1..9 below still works from
+      // ANYWHERE (including mid-typing in a terminal), this is the faster
+      // unmodified path for the common case of clicking around the chrome.
+      if (!e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey && /^[1-9]$/.test(e.key)) {
+        if (isTypingTarget(e.target as Element | null)) return;
+        const st = useApp.getState();
+        const ws = st.workspaces.find((w) => w.id === st.activeId);
+        const target = ws?.panes[parseInt(e.key, 10) - 1];
+        if (ws && target) { e.preventDefault(); st.focusPane(ws.id, target.id); }
+        return;
+      }
+      // UX-538: cycle only the panes that actually need you — approval,
+      // error, waiting — skipping calm running/idle ones. Same modifier
+      // family as the spatial Ctrl+Alt+Arrow cycle below, with Shift added
+      // (a "narrower" version of that cycle, not a competing shortcut).
+      if (e.ctrlKey && e.altKey && e.shiftKey && /^Arrow(Left|Right)$/.test(e.key)) {
+        const queue = attentionQueue(useApp.getState().workspaces, useUI.getState().snoozed);
+        if (queue.length === 0) return;
+        e.preventDefault();
+        const st = useApp.getState();
+        const ws = st.workspaces.find((w) => w.id === st.activeId);
+        const focusedPane = ws?.panes.find((p) => p.id === ws.focused);
+        const at = queue.findIndex((x) => x.p.id === focusedPane?.id);
+        const step = e.key === "ArrowRight" ? 1 : -1;
+        const next = queue[(Math.max(0, at) + step + queue.length) % queue.length];
+        st.switchWorkspace(next.w.id);
+        st.focusPane(next.w.id, next.p.id);
+        return;
+      }
       // Owner feedback item 3: Ctrl+=/-/0 must scale the WHOLE APP, the
       // browser-style expectation — previously only per-pane terminal font
       // zoom existed on these same keys (removed from PaneView.tsx to avoid
@@ -181,6 +239,22 @@ export function Cockpit() {
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
   }, [setSettingsOpen]);
+
+  // UX-531: mouse buttons 4/5 (browser back/forward, MouseEvent.button 3/4)
+  // drive the same back/forward stack as the preview drawer's buttons
+  // (ui.ts's navBack/navForward — see HANDOFF EDITS for the toolbar itself).
+  // A no-op when the stack is empty, so this is safe to leave listening
+  // globally rather than scoping it to "Preview is open".
+  useEffect(() => {
+    const onAux = (e: MouseEvent) => {
+      if (e.button !== 3 && e.button !== 4) return;
+      e.preventDefault();
+      if (e.button === 3) useUI.getState().navBack();
+      else useUI.getState().navForward();
+    };
+    window.addEventListener("mouseup", onAux);
+    return () => window.removeEventListener("mouseup", onAux);
+  }, []);
 
   // Quit guard (UI-44 / QOL 373): closing a pane or workspace confirms, but the
   // OS window X — the most destructive action of all — didn't. Intercept close

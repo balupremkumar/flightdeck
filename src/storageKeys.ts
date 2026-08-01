@@ -62,6 +62,13 @@ export const SESSION_KEYS = [
   // make the banner reappear for a version you've already seen.
   "flightdeck-whatsnew-seen-version",
   "flightdeck-pending-release-notes",
+  // UX-551: per-vendor sent-prompt history (prompthistory.ts) — recall state,
+  // not a preference, same reasoning as flightdeck-broadcast-snippets above.
+  "flightdeck-prompt-history",
+  // UX-540/527 (other wave-1 work): per-pane scroll position and the recent-
+  // files list are both "what you were doing", not appearance/behaviour.
+  "flightdeck-explorer-scroll",
+  "flightdeck-quickopen-recent",
 ] as const;
 
 /**

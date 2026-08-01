@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { useEffect, useRef } from "react";
 import type { PaneState } from "./store";
 
 // Lightweight UI-only store (kept separate from the app/domain store): confirm
@@ -159,8 +160,10 @@ interface UIState {
   // close (registered by Preview itself, only while it has focus).
   previewTabs: PreviewTab[];
   activePreviewId: number | null;
-  /** Opens `path` as a tab (or refocuses/updates it if already open). */
-  openPreview: (path: string, opts?: { line?: number; fontSize?: number }) => void;
+  /** Opens `path` as a tab (or refocuses/updates it if already open). Also
+   *  records the path into the back/forward nav stack (UX-531) unless the
+   *  caller is the stack itself replaying a step — see navBack/navForward. */
+  openPreview: (path: string, opts?: { line?: number; fontSize?: number; skipHistory?: boolean }) => void;
   closePreview: (id: number) => void;
   /** Dismisses the whole drawer (every tab) — Esc / clicking the scrim. */
   closeAllPreviews: () => void;
@@ -168,8 +171,26 @@ interface UIState {
   /** Ctrl+Tab / Ctrl+Shift+Tab among open preview tabs. */
   cyclePreview: (dir: 1 | -1) => void;
 
+  // UX-531: browser-style back/forward across every path opened in the
+  // preview drawer (terminal clicks, markdown links, Explorer — once wired,
+  // see HANDOFF). `navHistory`/`navIndex` are exposed directly (rather than
+  // derived canGoBack/canGoForward booleans) so a consumer can also show
+  // "3 of 7" if it wants to; see navCanGoBack/navCanGoForward below for the
+  // common case.
+  navHistory: string[];
+  navIndex: number;
+  navBack: () => void;
+  navForward: () => void;
+
   broadcasts: BroadcastRecord[];
   pushBroadcastRecord: (r: Omit<BroadcastRecord, "id" | "at">) => void;
+
+  // UX-552: a saved-snippet id chosen from the command palette, waiting for
+  // Broadcast to pick it up the moment it (re)opens — the palette can't fill
+  // a placeholder itself since the snippet-insert UI lives in Broadcast.
+  // Cleared by Broadcast once consumed, so it never re-fires on a later open.
+  pendingSnippetId: string | null;
+  setPendingSnippet: (id: string | null) => void;
 
   // Whole-app zoom (owner feedback item 3): one numeric value, persisted and
   // applied at boot (main.tsx), driven by both Settings > UI size and the
@@ -226,7 +247,7 @@ function saveNotifySettings(s: NotifySettings) {
   try { localStorage.setItem(NOTIFY_KEY, JSON.stringify(s)); } catch { /* non-persistent */ }
 }
 
-export const useUI = create<UIState>((set) => ({
+export const useUI = create<UIState>((set, get) => ({
   confirm: null,
   requestConfirm: (r) => set({ confirm: r }),
   dismissConfirm: () => set({ confirm: null }),
@@ -332,16 +353,22 @@ export const useUI = create<UIState>((set) => ({
   activePreviewId: null,
   openPreview: (path, opts) =>
     set((s) => {
+      // UX-531: record into the back/forward stack. A step that's just
+      // replaying history (navBack/navForward calling openPreview themselves)
+      // sets skipHistory so it doesn't push a duplicate entry or truncate the
+      // forward branch it's walking back into.
+      const nav = opts?.skipHistory ? { navHistory: s.navHistory, navIndex: s.navIndex } : navPush(s.navHistory, s.navIndex, path);
       const existing = s.previewTabs.find((t) => t.path === path);
       if (existing) {
         const updated = { ...existing, line: opts?.line ?? existing.line, fontSize: opts?.fontSize ?? existing.fontSize };
         return {
           previewTabs: s.previewTabs.map((t) => (t.id === existing.id ? updated : t)),
           activePreviewId: existing.id,
+          ...nav,
         };
       }
       const tab: PreviewTab = { id: ++pseq, path, line: opts?.line, fontSize: opts?.fontSize };
-      return { previewTabs: [...s.previewTabs, tab], activePreviewId: tab.id };
+      return { previewTabs: [...s.previewTabs, tab], activePreviewId: tab.id, ...nav };
     }),
   closePreview: (id) =>
     set((s) => {
@@ -365,9 +392,29 @@ export const useUI = create<UIState>((set) => ({
       return { activePreviewId: s.previewTabs[next].id };
     }),
 
+  navHistory: [],
+  navIndex: -1,
+  navBack: () => {
+    const s = get();
+    const r = navStep(s.navHistory, s.navIndex, -1);
+    if (r.path == null) return;
+    set({ navIndex: r.index });
+    get().openPreview(r.path, { skipHistory: true });
+  },
+  navForward: () => {
+    const s = get();
+    const r = navStep(s.navHistory, s.navIndex, 1);
+    if (r.path == null) return;
+    set({ navIndex: r.index });
+    get().openPreview(r.path, { skipHistory: true });
+  },
+
   broadcasts: [],
   pushBroadcastRecord: (r) =>
     set((s) => ({ broadcasts: [{ ...r, id: ++bseq, at: Date.now() }, ...s.broadcasts].slice(0, 20) })),
+
+  pendingSnippetId: null,
+  setPendingSnippet: (id) => set({ pendingSnippetId: id }),
 
   uiZoom: loadUiZoom(),
   setUiZoom: (z) => set(() => { applyUiScale(z); return { uiZoom: z }; }),
@@ -429,6 +476,124 @@ export function applyUiScale(scale: number) {
   try { localStorage.setItem("flightdeck-uiscale", String(scale)); } catch { /* non-persistent */ }
   // Nudge xterm's fit addon (ResizeObserver) so terminals re-measure at the new scale.
   window.dispatchEvent(new Event("resize"));
+}
+
+// ---------------------------------------------------------------------
+// UX-531: back/forward navigation stack (currently drives the preview
+// drawer via openPreview/navBack/navForward above; Explorer selection can
+// join the same stack — see HANDOFF). Pure and exported so the ordering
+// rules are directly testable without touching the store.
+// ---------------------------------------------------------------------
+
+/** Pushes `path` onto the stack at `index`. Re-visiting the CURRENT entry is
+ *  a no-op (clicking the same link twice shouldn't grow the stack). Opening
+ *  a new path while sitting mid-history drops everything ahead of it — the
+ *  same rule every browser's address bar follows. */
+export function navPush(history: string[], index: number, path: string): { navHistory: string[]; navIndex: number } {
+  if (index >= 0 && history[index] === path) return { navHistory: history, navIndex: index };
+  const truncated = history.slice(0, index + 1);
+  const next = [...truncated, path];
+  return { navHistory: next, navIndex: next.length - 1 };
+}
+
+/** One step back (`dir` -1) or forward (`dir` 1). `path` is null at either
+ *  end of the stack — the caller (ui.ts's navBack/navForward) no-ops then. */
+export function navStep(history: string[], index: number, dir: 1 | -1): { index: number; path: string | null } {
+  const next = index + dir;
+  if (next < 0 || next >= history.length) return { index, path: null };
+  return { index: next, path: history[next] };
+}
+
+// ---------------------------------------------------------------------
+// UX-542/543: one overlay stack for every dismissible overlay in the app.
+// Each overlay registers its close handler while open via useOverlayEsc
+// below, instead of installing its own capture-phase Escape listener (the
+// old per-overlay pattern — the real bug it caused: with N overlays open,
+// Esc fired all N listeners at once, closing more than the top one). A
+// single shared listener (installed once, see Cockpit.tsx's shared keydown
+// handler calling closeTopOverlay()) closes ONLY the most-recently-opened
+// overlay. Closing it — by Esc, a scrim click, a Cancel button, anything —
+// also restores focus to wherever it was before the overlay opened
+// (UX-543), because that's a property of the REGISTRATION, not of Esc
+// specifically.
+//
+// The stack itself is plain module state (not zustand) so push/pop/close
+// are synchronous and don't fight React's render cycle; useOverlayEsc is
+// the only DOM/React-touching part, kept thin on purpose so the ordering
+// logic below is directly unit-testable without jsdom.
+// ---------------------------------------------------------------------
+interface OverlayHandle { id: number; close: () => void; }
+let overlaySeq = 0;
+const overlayStack: OverlayHandle[] = [];
+
+/** Registers `close` at the top of the stack. Returns an id — pass it to
+ *  popOverlay in a cleanup effect (not only "on Esc"): an overlay can also
+ *  close via a scrim click or a Cancel button and must not linger
+ *  registered, or a later Esc press would close the wrong (already-gone)
+ *  overlay. */
+export function pushOverlay(close: () => void): number {
+  const id = ++overlaySeq;
+  overlayStack.push({ id, close });
+  return id;
+}
+export function popOverlay(id: number) {
+  const i = overlayStack.findIndex((o) => o.id === id);
+  if (i !== -1) overlayStack.splice(i, 1);
+}
+/** Closes exactly the top-most registered overlay. Pops it off the stack
+ *  IMMEDIATELY (synchronously), rather than waiting for the overlay's own
+ *  close() to eventually trigger its cleanup effect's popOverlay — React's
+ *  effect cleanup runs on the next commit, not inline, so two Escape
+ *  presses (or, as in ui.test.ts, two synchronous closeTopOverlay calls)
+ *  arriving before that commit would otherwise both hit the same top entry.
+ *  The overlay's own cleanup-effect popOverlay call becomes a safe no-op
+ *  once this has already removed it (popOverlay no-ops on an unknown id).
+ *  Returns true if it closed something (the caller — Cockpit's shared
+ *  Escape handler — only preventDefault()s in that case, so Esc still
+ *  reaches ordinary form fields/inputs when no overlay is open). */
+export function closeTopOverlay(): boolean {
+  const top = overlayStack.pop();
+  if (!top) return false;
+  top.close();
+  return true;
+}
+export function overlayStackDepth(): number {
+  return overlayStack.length;
+}
+/** Test-only: the stack is module-level singleton state, so tests must reset
+ *  it between cases the same way ui.test.ts resets zustand slices. */
+export function __resetOverlayStackForTests() {
+  overlayStack.length = 0;
+  overlaySeq = 0;
+}
+
+/** Registers `onClose` as the active overlay's Esc/focus-return handler
+ *  while `open` is true. Drop this into any dismissible overlay in place of
+ *  its own `window.addEventListener("keydown", ...)` Escape effect — see
+ *  HANDOFF EDITS for the exact swap in each overlay this session didn't own.
+ *  `restoreFocus: false` opts an overlay out of the focus-return step (a
+ *  transient dropdown whose trigger button already holds focus by the time
+ *  it closes doesn't need it). */
+export function useOverlayEsc(open: boolean, onClose: () => void, opts?: { restoreFocus?: boolean }) {
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+  const restoreFocus = opts?.restoreFocus !== false;
+
+  useEffect(() => {
+    if (!open) return;
+    const returnEl = (typeof document !== "undefined" ? (document.activeElement as HTMLElement | null) : null);
+    const id = pushOverlay(() => closeRef.current());
+    return () => {
+      popOverlay(id);
+      if (restoreFocus && returnEl && document.contains(returnEl)) {
+        // Deferred a frame: the overlay's own unmount hasn't necessarily
+        // committed yet, and focusing too early can be stolen back by
+        // React's reconciliation of whatever's replacing it.
+        requestAnimationFrame(() => returnEl.focus());
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 }
 
 export function setTheme(mode: "dark" | "light") {
