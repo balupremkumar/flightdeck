@@ -3,7 +3,13 @@
 Updated: 2026-08-01 (demo mock fixes, from the kove-site showcase re-cut session).
 
 **WAVE 1 COMPLETE + GATED 2026-08-01** (tsc clean, vitest 223/223, cargo 85/85, frontend build clean; integration 0b33022, handoffs 3ed7171). Click-to-open works end to end: linkify.ts (36 tests, written against real npm/tsc/vitest/git output), Preview drawer with dependency-free markdown rendering (React elements only, no dangerouslySetInnerHTML, so file content can't inject HTML), and NEW Rust commands fs_read_text_file (5MB cap) / fs_read_file_base64 (10MB, images as data URIs) — without those two the whole feature rendered an error state. Ctrl+Tab/Ctrl+W yield to the preview drawer while it has focus. Also: pane drafts survive restart, vendor manifests hot-reload, crash-restore toast names each pane + its worktree fate, board custom columns/archive/bulk+undo/templates, editor choice in Settings, cheat sheet mounted.
-## v0.4.0 RELEASED + PUSHED 2026-08-01 (HEAD a3b166d)
+## v0.4.1 IS THE CURRENT RELEASE (supersedes 0.4.0, 2026-08-01)
+Fable's architectural review found a real defect in 0.4.0 and it was re-cut. **Do not install 0.4.0.**
+FINDING (fixed, 9e713d2): previewed markdown is untrusted input (any cloned repo's README) and `isExternalHref` matched ANY scheme — so `javascript:`, `file:`, custom protocol handlers, and Windows drive-absolute paths (`c:` is a valid scheme shape) were all passed to `openUrl`, i.e. the OS shell. A crafted link in someone else's README could launch a program on click. Now an allowlist: http(s)/mailto/tel open externally, local paths open in the preview, everything else renders inert. 3 regression tests.
+STILL OPEN from that review, Balu's call (posture, not a bug): `fs_read_text_file`/`fs_read_file_base64` accept ANY absolute path with no scoping — zero canonicalize/starts_with checks anywhere in lib.rs. Consistent with the documented full-trust posture, but they are a NEW arbitrary-file-read capability over IPC. Mitigating: the preview has no network egress, so read is not exfiltration.
+Also noted: `ui.ts` has become the app's god-module (overlay stack, nav stack, preview tabs, toasts, snooze, zoom, view state, pending snippet). Not urgent, but it is the file most likely to hurt later.
+
+## v0.4.0 released then SUPERSEDED (HEAD a3b166d)
 Release cut via `tools/release.ps1` after the full gate: tsc clean, vitest 355/355, cargo 86/86, build clean.
 `releases/Flightdeck_0.4.0_x64-setup.exe` + `latest.json` published; **everything is pushed to GitHub** (main up to date).
 **Balu's installed 0.3.0 will offer v0.4.0 at next launch or via Settings > About.** This is the FIRST real /S upgrade-relaunch — watch it land; if it misbehaves the installer can be run by hand from `releases\`.
