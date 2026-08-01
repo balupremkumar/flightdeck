@@ -163,6 +163,22 @@ export function Notifications() {
   // returns to the bell button on close.
   useOverlayEsc(panel !== "none", () => setPanel("none"));
 
+  // Owner call 2026-08-01: the dropdown used to close on mouse-leave, which
+  // was fine when a row was three words but not now they carry the agent's
+  // actual question — drifting a few pixels off the panel mid-read threw it
+  // away. Click-to-close instead: mousedown anywhere outside the bell and its
+  // panel dismisses it, the same local pattern Board's popovers use.
+  const wrapRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (panel === "none") return;
+    const close = (e: MouseEvent) => {
+      if (wrapRef.current?.contains(e.target as Node)) return;
+      setPanel("none");
+    };
+    window.addEventListener("mousedown", close);
+    return () => window.removeEventListener("mousedown", close);
+  }, [panel]);
+
   // Watch every pane for a state transition into a configured "notify" state.
   useEffect(() => {
     for (const w of workspaces) {
@@ -299,7 +315,7 @@ export function Notifications() {
   );
 
   return (
-    <div className="ntf-wrap">
+    <div className="ntf-wrap" ref={wrapRef}>
       <button
         className={"ntf-bell" + (needsAttention.length ? " on" : "") + (notify.dnd ? " dnd" : "") + (pulse ? " pulse" : "")}
         onClick={() => setPanel((p) => (p === "none" ? "feed" : "none"))}
@@ -322,7 +338,7 @@ export function Notifications() {
       </span>
 
       {panel === "feed" && (
-        <div className="ntf-menu" onMouseLeave={() => setPanel("none")} role="menu" aria-label="Notifications">
+        <div className="ntf-menu" role="menu" aria-label="Notifications">
           <div className="ntf-head">
             <span>Notifications</span>
             <button className="ntf-gear" title="Notification settings" onClick={() => setPanel("settings")}>
@@ -399,7 +415,7 @@ export function Notifications() {
       )}
 
       {panel === "settings" && (
-        <div className="ntf-menu ntf-settings" onMouseLeave={() => setPanel("none")} role="menu" aria-label="Notification settings">
+        <div className="ntf-menu ntf-settings" role="menu" aria-label="Notification settings">
           <div className="ntf-head">
             <span>Notification settings</span>
             <button className="ntf-back" onClick={() => setPanel("feed")}>Back</button>
