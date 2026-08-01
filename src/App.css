@@ -40,7 +40,7 @@ body {
 .cockpit > .launcher { flex: 1; min-width: 0; }
 /* UI-245: full-screen modal dialog, same tier as the Settings scrim. */
 .launcher.overlay { position: fixed; inset: 0; height: auto; background: rgba(0,0,0,.55); z-index: var(--z-settings); }
-.dialog { width: 470px; max-width: calc(100% - 32px); max-height: 88vh; display: flex; flex-direction: column; background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; box-shadow: 0 30px 70px -20px rgba(0,0,0,.8); }
+.dialog { width: 470px; max-width: calc(100% - 32px); max-height: 88vh; display: flex; flex-direction: column; background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; box-shadow: var(--shadow-lg); }
 .dialog .dh { display: flex; align-items: center; padding: 16px 18px 12px; }
 .dialog .dh h2 { margin: 0; font-size: 16px; font-weight: 700; }
 .dialog .dh .dh-x { margin-left: auto; display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 6px; color: var(--tmuted); cursor: pointer; transition: color .14s ease, background-color .14s ease; }
@@ -67,7 +67,7 @@ body {
 .slot-row { display: flex; align-items: center; gap: 8px; }
 .slot-row .slot-n { font-size: 12px; color: var(--tmuted); width: 52px; flex: none; }
 .vsel { flex: 1; min-width: 0; font: inherit; font-size: 12.5px; color: var(--text-primary); background: var(--bg-input); border: 1px solid var(--border); border-radius: 7px; padding: 6px 10px; cursor: pointer; transition: border-color .14s ease; }
-.vsel:focus-visible { outline: 2px solid var(--ice); outline-offset: 1px; }
+.vsel:focus-visible { outline: var(--focus-ring-width) solid var(--focus-ring); outline-offset: 1px; }
 .dirbtn { display: inline-flex; align-items: center; gap: 6px; font: inherit; font-size: 11.5px; color: var(--text-secondary); background: var(--bg-input); border: 1px solid var(--border); border-radius: 7px; padding: 6px 9px; cursor: pointer; max-width: 130px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: none; transition: border-color .14s ease; }
 .dirbtn svg { flex: none; }
 .dirbtn:hover { border-color: var(--border-focus); }
@@ -89,7 +89,7 @@ body {
 .topbar { height: 44px; flex: none; display: flex; align-items: center; gap: 10px; padding: 0 10px; border-bottom: 1px solid var(--border); background: var(--bg-app); }
 .topbar .tb-toggle { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 30px; border: 0; background: transparent; color: var(--tmuted); border-radius: 7px; cursor: pointer; transition: color .14s ease, background-color .14s ease; }
 .topbar .tb-toggle:hover { color: var(--text-primary); background: color-mix(in srgb, var(--text) 6%, transparent); }
-.topbar .tb-toggle:focus-visible, .topbar .tb-ic:focus-visible, .ntf-bell:focus-visible { outline: 2px solid var(--ice); outline-offset: 1px; }
+.topbar .tb-toggle:focus-visible, .topbar .tb-ic:focus-visible, .ntf-bell:focus-visible { outline: var(--focus-ring-width) solid var(--focus-ring); outline-offset: 1px; }
 .topbar .brand-mark { display: inline-flex; color: var(--accent); margin-left: 2px; }
 .topbar .brand { font-weight: 700; font-size: 14.5px; letter-spacing: -0.01em; }
 /* UI-audit 2.5: a long workspace name must never crowd the icon row. */
@@ -130,7 +130,7 @@ body {
 .lp-ic.add { background: transparent; color: var(--tmuted); }
 .lp-ic.add:hover { color: var(--text-primary); background: var(--bg-elevated); }
 .lp-ic:hover { color: var(--text-primary); }
-.lp-ic:focus-visible { outline: 2px solid var(--ice); outline-offset: 1px; }
+.lp-ic:focus-visible { outline: var(--focus-ring-width) solid var(--focus-ring); outline-offset: 1px; }
 .lp-ic.active { color: var(--text-primary); background: var(--accent-dim); }
 .lp-ic.active::before { content: ""; position: absolute; left: -9px; top: 5px; bottom: 5px; width: 3px; border-radius: 0 3px 3px 0; background: var(--accent); box-shadow: 0 0 8px var(--accent); }
 .lp-ic .lp-badge.sm { position: absolute; right: -3px; top: -3px; }
@@ -242,7 +242,7 @@ body {
 .phead .x { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border: 0; background: transparent; color: var(--tmuted); cursor: pointer; border-radius: 6px; transition: color .14s ease, background-color .14s ease; }
 .phead .x:hover { color: var(--text-primary); background: color-mix(in srgb, var(--text) 9%, transparent); }
 .phead .x { flex: none; }
-.phead .x:focus-visible { outline: 2px solid var(--ice); outline-offset: 1px; }
+.phead .x:focus-visible { outline: var(--focus-ring-width) solid var(--focus-ring); outline-offset: 1px; }
 .phead .prestart { display: inline-flex; align-items: center; gap: 5px; min-height: 28px; font: inherit; font-size: 12px; font-weight: 600; color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent); border-radius: 7px; padding: 3px 10px; cursor: pointer; flex: none; transition: background-color .14s ease; }
 .phead .prestart:hover { background: color-mix(in srgb, var(--accent) 24%, transparent); }
 

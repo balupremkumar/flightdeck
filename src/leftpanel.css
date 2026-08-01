@@ -171,6 +171,7 @@
 .lpanel .lp-ic[data-tip] { position: relative; }
 .lpanel .lp-ic[data-tip]::after {
   content: attr(data-tip);
+  z-index: var(--z-tooltip);
   position: absolute; left: calc(100% + 10px); top: 50%; transform: translateY(-50%);
   padding: 5px 9px; border-radius: var(--r-sm);
   background: var(--elevated); border: 1px solid var(--line-strong); box-shadow: var(--shadow-2);

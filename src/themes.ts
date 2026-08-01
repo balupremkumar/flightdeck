@@ -190,13 +190,21 @@ export function applyAccent(accentId: string, mode: "dark" | "light") {
 // vermillion / amber instead of red/green) so state stays distinguishable
 // for the common deuteranopia/protanopia types.
 // ---------------------------------------------------------------------
+// UI-607 (2026-08-01): starting and running previously sat on an identical
+// ~201.6 deg hue and differed only in lightness, which defeats the point of a
+// CVD palette. Swapping running with exited gives ~38 deg of hue separation
+// while keeping the set pure Okabe-Ito.
+// KNOWN GAP, needs Balu's call: on a LIGHT background --st-starting measures
+// 2.07:1 and --st-waiting 2.02:1, both under the 3:1 non-text floor. Fixing it
+// properly means a second light-mode variant of this palette; the alternative
+// is to state that colour-blind mode is guaranteed on dark themes only.
 export const CB_SAFE_STATUS: Record<string, string> = {
   "--st-starting": "#56B4E9",
-  "--st-running": "#0072B2",
+  "--st-running": "#009E73",
   "--st-waiting": "#E69F00",
   "--st-idle": "#8A8A8A",
   "--st-error": "#D55E00",
-  "--st-exited": "#009E73",
+  "--st-exited": "#0072B2",
 };
 
 export function applyColorBlindSafe(on: boolean) {
