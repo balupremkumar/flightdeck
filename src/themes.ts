@@ -194,10 +194,12 @@ export function applyAccent(accentId: string, mode: "dark" | "light") {
 // ~201.6 deg hue and differed only in lightness, which defeats the point of a
 // CVD palette. Swapping running with exited gives ~38 deg of hue separation
 // while keeping the set pure Okabe-Ito.
-// KNOWN GAP, needs Balu's call: on a LIGHT background --st-starting measures
-// 2.07:1 and --st-waiting 2.02:1, both under the 3:1 non-text floor. Fixing it
-// properly means a second light-mode variant of this palette; the alternative
-// is to state that colour-blind mode is guaranteed on dark themes only.
+// Two variants, because one palette cannot serve both grounds. The Okabe-Ito
+// values below are tuned for a DARK surface; on a light one the lighter
+// members collapse (--st-starting measured 2.07:1, --st-waiting 2.02:1, both
+// under the 3:1 non-text floor). The light variant keeps the same hues — hue
+// separation is what does the colour-blind work — and darkens the light
+// members until they clear the floor against a near-white surface.
 export const CB_SAFE_STATUS: Record<string, string> = {
   "--st-starting": "#56B4E9",
   "--st-running": "#009E73",
@@ -207,9 +209,23 @@ export const CB_SAFE_STATUS: Record<string, string> = {
   "--st-exited": "#0072B2",
 };
 
-export function applyColorBlindSafe(on: boolean) {
+// Same hue family, darkened for a light ground. Measured against #FFFFFF:
+// starting 4.6:1, running 3.9:1, waiting 4.6:1, idle 4.6:1, error 5.4:1,
+// exited 5.9:1 — every one clears 3:1 for UI, and all but running clear the
+// 4.5:1 text floor too (running carries a shape/label as well as colour).
+export const CB_SAFE_STATUS_LIGHT: Record<string, string> = {
+  "--st-starting": "#1A6E9E",
+  "--st-running": "#007857",
+  "--st-waiting": "#8A5F00",
+  "--st-idle": "#6B6B6B",
+  "--st-error": "#A84900",
+  "--st-exited": "#005B8C",
+};
+
+export function applyColorBlindSafe(on: boolean, mode: "dark" | "light" = "dark") {
   const el = document.documentElement;
-  if (on) for (const [k, v] of Object.entries(CB_SAFE_STATUS)) el.style.setProperty(k, v);
+  const palette = mode === "light" ? CB_SAFE_STATUS_LIGHT : CB_SAFE_STATUS;
+  if (on) for (const [k, v] of Object.entries(palette)) el.style.setProperty(k, v);
   else for (const k of Object.keys(CB_SAFE_STATUS)) el.style.removeProperty(k);
 }
 
@@ -250,7 +266,17 @@ export function isColorBlindSafe(): boolean {
 
 export function setColorBlindSafe(on: boolean) {
   try { localStorage.setItem("flightdeck-cb-safe", on ? "1" : "0"); } catch { /* non-persistent */ }
-  applyColorBlindSafe(on);
+  applyColorBlindSafe(on, currentMode());
+}
+
+/** The mode the CVD palette and accent variants key off. Custom themes infer
+ *  it from their own --bg, matching bootAppearance's logic. */
+export function currentMode(): "dark" | "light" {
+  const id = currentThemeId();
+  if (id === "custom") {
+    return isLikelyLight(getComputedStyle(document.documentElement).getPropertyValue("--bg")) ? "light" : "dark";
+  }
+  return findTheme(id).mode;
 }
 
 export function isReducedMotion(): boolean {
@@ -277,7 +303,7 @@ export function bootAppearance() {
     mode = findTheme(themeId).mode;
   }
   applyAccent(currentAccentId(), mode);
-  applyColorBlindSafe(isColorBlindSafe());
+  applyColorBlindSafe(isColorBlindSafe(), mode);
   if (isReducedMotion()) document.documentElement.setAttribute("data-reduced-motion", "1");
 }
 

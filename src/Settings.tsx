@@ -24,7 +24,7 @@ import {
   THEMES, ACCENTS, findTheme, findAccent, CUSTOM_ACCENT_ID, customAccentHex, setCustomAccent,
   applyTheme, applyAccent, setAccent,
   currentThemeId, currentAccentId,
-  isColorBlindSafe, setColorBlindSafe,
+  isColorBlindSafe, setColorBlindSafe, applyColorBlindSafe,
   isReducedMotion, setReducedMotion,
   exportThemeJson, importThemeJson,
   DEFAULT_THEME_ID, DEFAULT_ACCENT_ID,
@@ -987,6 +987,9 @@ export function Settings() {
     applyTheme(id);
     setThemeId(id);
     applyAccent(accentId, findTheme(id).mode);
+    // The colour-blind palette is mode-specific — reapply so a light theme
+    // doesn't keep the dark-tuned values (which fail contrast on a light ground).
+    applyColorBlindSafe(isColorBlindSafe(), findTheme(id).mode);
   }
   function selectAccent(id: string) {
     setAccent(id, mode);

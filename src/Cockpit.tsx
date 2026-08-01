@@ -19,7 +19,7 @@ import { Preview } from "./Preview";
 import { QuickOpen } from "./QuickOpenOverlay";
 import { ZoomHud } from "./ZoomHud";
 import { useUI, closeTopOverlay } from "./ui";
-import { applyTheme, applyAccent, currentThemeId, currentAccentId, findTheme } from "./themes";
+import { applyTheme, applyAccent, currentThemeId, currentAccentId, findTheme, applyColorBlindSafe, isColorBlindSafe } from "./themes";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { spawnPane, closePaneGuarded, closeWorkspaceGuarded } from "./worktrees";
 import { isTypingTarget } from "./Shortcuts";
@@ -33,6 +33,7 @@ function toggleTheme() {
   const nextId = cur.mode === "light" ? "dark" : "light";
   applyTheme(nextId);
   applyAccent(currentAccentId(), findTheme(nextId).mode);
+  applyColorBlindSafe(isColorBlindSafe(), findTheme(nextId).mode);
 }
 
 export function Cockpit() {

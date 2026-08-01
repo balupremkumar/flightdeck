@@ -7,13 +7,15 @@ import { Settings } from "./Settings";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { ToastHost } from "./ToastHost";
 import { useUI } from "./ui";
-import { applyTheme, currentThemeId, findTheme } from "./themes";
+import { applyTheme, currentThemeId, findTheme, applyColorBlindSafe, isColorBlindSafe } from "./themes";
 
 // Same light/dark flip as Cockpit's top bar — routed through the themes
 // registry so it stays in step with the richer theme picker in Settings.
 function toggleTheme() {
   const cur = findTheme(currentThemeId());
-  applyTheme(cur.mode === "light" ? "dark" : "light");
+  const nextId = cur.mode === "light" ? "dark" : "light";
+  applyTheme(nextId);
+  applyColorBlindSafe(isColorBlindSafe(), findTheme(nextId).mode);
 }
 
 // Minimal chrome for the pre-first-workspace state: no workspace rail (there's
