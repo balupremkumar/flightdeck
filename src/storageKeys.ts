@@ -32,6 +32,9 @@ export const PREFERENCE_KEYS = [
   "flightdeck-explorer-expanded",
   "flightdeck-diff-split",
   "flightdeck-vendor-fonts",
+  // UX-560: per-vendor "quiet before we call it waiting" default. A cosmetic
+  // tuning preference, so a settings reset should clear it with the rest.
+  "flightdeck-vendor-quiet",
   "flightdeck-ws-tint",
   "flightdeck-ws-sort",
   "flightdeck-isolate",
@@ -57,6 +60,10 @@ export const SESSION_KEYS = [
   "flightdeck-recent-roots",
   "flightdeck-cmdp-recent",
   "flightdeck-ws-lastactive",
+  // UX-562: named session snapshots. Emphatically NOT a preference — a
+  // settings reset must never destroy saved sessions the user deliberately
+  // named and kept.
+  "flightdeck-session-snapshots",
   // UX-600: bookkeeping for the "what's new since your last version" panel —
   // not a preference (nothing to configure), so a settings reset must not
   // make the banner reappear for a version you've already seen.
