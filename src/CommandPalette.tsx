@@ -3,9 +3,12 @@ import { useApp, type PaneState } from "./store";
 import { useUI, setTheme } from "./ui";
 import { closePaneGuarded } from "./worktrees";
 import { checkForUpdate } from "./updater";
+import { getShortcuts, FIXED_SHORTCUTS } from "./Settings";
 import { IconWorkspace, IconAgent, IconSettings, IconClose } from "./Icons";
 import { VendorGlyph } from "./VendorGlyph";
 import "./leftpanel.css";
+// UX-530: .cmdp-shortcut + the global <kbd> look live in overlays.css.
+import "./overlays.css";
 
 // Self-contained fuzzy command palette (Ctrl+K / Ctrl+P): jump to any
 // workspace or pane, or run a handful of app actions. Mount once with
@@ -17,6 +20,9 @@ interface Item {
   section: Section;
   label: string;
   hint?: string;
+  /** UX-530: the bound key combo, shown as a distinct kbd row from `hint`
+   *  (which is a free-text path/context string, not a shortcut). */
+  shortcut?: string;
   keywords?: string;
   /** UI-205: pane rows render a live status dot. */
   state?: PaneState;
@@ -36,8 +42,30 @@ function pushRecent(id: string) {
   } catch { /* non-persistent */ }
 }
 
+// UX-529: puts the most-recently-run commands first when the query is empty.
+// Pure so it's testable without mounting the palette. `recent` is newest-first
+// (as loadRecent/pushRecent already store it); anything not in it keeps its
+// original relative order.
+export function rankByRecent<T extends { id: string }>(items: T[], recent: string[]): T[] {
+  const byId = new Map(items.map((it) => [it.id, it]));
+  const recentItems = recent.map((id) => byId.get(id)).filter((x): x is T => !!x);
+  const rest = items.filter((it) => !recent.includes(it.id));
+  return [...recentItems, ...rest];
+}
+
+// UX-530: id->combo lookup built from Settings.tsx's two shortcut registries
+// (the single source of truth — see FIXED_SHORTCUTS there) so the palette
+// never carries its own hand-typed copy to drift out of sync. Recomputed by
+// the palette on every open rather than cached, so a rebind in Settings shows
+// up immediately.
+export function buildShortcutMap(): Record<string, string> {
+  const map: Record<string, string> = {};
+  for (const s of [...getShortcuts(), ...FIXED_SHORTCUTS]) map[s.id] = s.combo;
+  return map;
+}
+
 // Ordered-subsequence fuzzy match. Lower score = better match; null = no match.
-function fuzzyScore(haystack: string, query: string): number | null {
+export function fuzzyScore(haystack: string, query: string): number | null {
   const s = haystack.toLowerCase();
   const q = query.toLowerCase();
   let si = 0, score = 0, streak = 0;
@@ -57,6 +85,25 @@ function fuzzyScore(haystack: string, query: string): number | null {
 function toggleSidePanel() {
   window.dispatchEvent(new KeyboardEvent("keydown", { key: "b", ctrlKey: true, bubbles: true }));
 }
+// Same re-dispatch pattern for the keyboard cheat sheet (Shortcuts.tsx owns
+// its own open state via a "?" listener, mirroring how CommandPalette owns
+// its own Ctrl+K/P state).
+function openCheatSheet() {
+  window.dispatchEvent(new KeyboardEvent("keydown", { key: "?", bubbles: true }));
+}
+
+// UX-530: maps a palette action's id to the shortcut-registry id it
+// represents (Settings.tsx's DEFAULT_SHORTCUTS/FIXED_SHORTCUTS) — kept as one
+// small table here rather than hand-typing each combo a second time.
+const ACTION_SHORTCUT_ID: Record<string, string> = {
+  "act:settings": "settings",
+  "act:toggle-panel": "toggle-panel",
+  "act:attention-queue": "attention-queue",
+  "act:zoom-in": "zoom-in",
+  "act:zoom-out": "zoom-out",
+  "act:zoom-reset": "zoom-reset",
+  "act:cheat-sheet": "cheat-sheet",
+};
 
 export function CommandPalette() {
   const workspaces = useApp((s) => s.workspaces);
@@ -154,10 +201,12 @@ export function CommandPalette() {
       }
     }
     list.push({ id: "act:new-workspace", section: "Actions", label: "New workspace", run: () => startCreate() });
-    list.push({ id: "act:settings", section: "Actions", label: "Open settings", hint: "Ctrl+,", run: () => setSettingsOpen(true) });
-    // UI-181: eleven Settings sections is more than anyone scrolls willingly —
-    // the palette is already how people navigate, so let it land on one.
-    for (const sec of ["Appearance", "Terminal", "Agents", "Shortcuts", "Startup", "Session", "Diagnostics", "Reset", "About"]) {
+    list.push({ id: "act:settings", section: "Actions", label: "Open settings", run: () => setSettingsOpen(true) });
+    list.push({ id: "act:cheat-sheet", section: "Actions", label: "Keyboard shortcuts cheat sheet", run: openCheatSheet });
+    // UI-181/UX-598: every Settings section, so the palette is a complete
+    // index of the app's preferences, not just the ones that existed when
+    // this list was first written.
+    for (const sec of ["Appearance", "Terminal", "Editor", "Shortcuts", "Agents", "Startup", "Session", "Diagnostics", "Reset", "About"]) {
       list.push({
         id: `act:settings:${sec}`,
         section: "Actions",
@@ -181,8 +230,8 @@ export function CommandPalette() {
     });
     list.push({ id: "act:theme-dark", section: "Actions", label: "Switch to dark theme", run: () => setTheme("dark") });
     list.push({ id: "act:theme-light", section: "Actions", label: "Switch to light theme", run: () => setTheme("light") });
-    list.push({ id: "act:toggle-panel", section: "Actions", label: "Toggle side panel", hint: "Ctrl+B", run: toggleSidePanel });
-    list.push({ id: "act:attention-queue", section: "Actions", label: "Open attention queue", hint: "Ctrl+Shift+A", run: () => useUI.getState().setAttentionOpen(true) });
+    list.push({ id: "act:toggle-panel", section: "Actions", label: "Toggle side panel", run: toggleSidePanel });
+    list.push({ id: "act:attention-queue", section: "Actions", label: "Open attention queue", run: () => useUI.getState().setAttentionOpen(true) });
     list.push({
       id: "act:toggle-explorer",
       section: "Actions",
@@ -192,9 +241,9 @@ export function CommandPalette() {
     list.push({ id: "act:open-broadcast", section: "Actions", label: "Open broadcast", run: () => setBroadcastOpen(true) });
     // Owner feedback item 3: whole-app zoom, same store actions the
     // Ctrl+=/-/0 shortcut and Settings > UI size use.
-    list.push({ id: "act:zoom-in", section: "Actions", label: "Zoom in", hint: "Ctrl+=", run: () => useUI.getState().stepUiZoom(1) });
-    list.push({ id: "act:zoom-out", section: "Actions", label: "Zoom out", hint: "Ctrl+-", run: () => useUI.getState().stepUiZoom(-1) });
-    list.push({ id: "act:zoom-reset", section: "Actions", label: "Reset zoom", hint: "Ctrl+0", run: () => useUI.getState().resetUiZoom() });
+    list.push({ id: "act:zoom-in", section: "Actions", label: "Zoom in", run: () => useUI.getState().stepUiZoom(1) });
+    list.push({ id: "act:zoom-out", section: "Actions", label: "Zoom out", run: () => useUI.getState().stepUiZoom(-1) });
+    list.push({ id: "act:zoom-reset", section: "Actions", label: "Reset zoom", run: () => useUI.getState().resetUiZoom() });
     // UI-206: after a crash wave, restarting six panes one at a time is the
     // wrong amount of work.
     const errored = workspaces.flatMap((w) => w.panes.filter((p) => p.state === "error").map((p) => ({ w, p })));
@@ -220,6 +269,14 @@ export function CommandPalette() {
         run: () => setReviewPane(focusedPane.id),
       });
     }
+    // UX-530: attach the real bound combo where one exists, read fresh off
+    // Settings.tsx's registries on every recompute (open/close, workspace
+    // changes) so a rebind is reflected without a special cache-bust path.
+    const shortcutMap = buildShortcutMap();
+    for (const it of list) {
+      const sid = ACTION_SHORTCUT_ID[it.id];
+      if (sid && shortcutMap[sid]) it.shortcut = shortcutMap[sid];
+    }
     return list;
   }, [
     workspaces, switchWorkspace, focusPane, restartPane, startCreate,
@@ -229,11 +286,7 @@ export function CommandPalette() {
   const results = useMemo(() => {
     const q = query.trim();
     if (!q) {
-      const recent = loadRecent();
-      const byId = new Map(items.map((it) => [it.id, it]));
-      const recentItems = recent.map((id) => byId.get(id)).filter((x): x is Item => !!x);
-      const rest = items.filter((it) => !recent.includes(it.id));
-      return [...recentItems, ...rest];
+      return rankByRecent(items, loadRecent());
     }
     return items
       .map((it) => ({ it, score: fuzzyScore(`${it.label} ${it.keywords ?? ""}`, q) }))
@@ -313,6 +366,12 @@ export function CommandPalette() {
                   {it.state && <span className={"pdot " + it.state} title={it.state} />}
                   <span className="cmdp-label">{it.label}</span>
                   {it.hint && <span className="cmdp-hint">{it.hint}</span>}
+                  {/* UX-530: the bound combo, distinct from a hint path/context string. */}
+                  {it.shortcut && (
+                    <span className="cmdp-shortcut">
+                      {it.shortcut.split("+").map((k) => <kbd key={k}>{k}</kbd>)}
+                    </span>
+                  )}
                 </div>
               </div>
             );

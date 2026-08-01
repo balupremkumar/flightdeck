@@ -37,6 +37,7 @@ export const PREFERENCE_KEYS = [
   "flightdeck-isolate",
   "flightdeck-auto-update-check",
   "flightdeck-releases-dir",
+  "flightdeck-editor-settings",
 ] as const;
 
 /**
@@ -56,6 +57,11 @@ export const SESSION_KEYS = [
   "flightdeck-recent-roots",
   "flightdeck-cmdp-recent",
   "flightdeck-ws-lastactive",
+  // UX-600: bookkeeping for the "what's new since your last version" panel —
+  // not a preference (nothing to configure), so a settings reset must not
+  // make the banner reappear for a version you've already seen.
+  "flightdeck-whatsnew-seen-version",
+  "flightdeck-pending-release-notes",
 ] as const;
 
 /**

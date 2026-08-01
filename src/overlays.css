@@ -35,10 +35,22 @@
 .set-body { padding: 8px 20px 20px; display: flex; flex-direction: column; gap: 22px; overflow-y: auto; }
 .set-section { display: flex; flex-direction: column; gap: 12px; padding-top: 14px; }
 .set-label { font-family: var(--font-mono); font-size: 11px; font-weight: 500; letter-spacing: .18em; text-transform: uppercase; color: var(--azure); }
+/* ---------- Section header row (UI-632 / UX-599) ----------
+   Every section that holds real preference state gets the same label + reset
+   shape, so "reset just this section" reads as one consistent affordance
+   instead of a bespoke button placed differently per section. */
+.set-section-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.set-section-reset {
+  font: inherit; font-size: 10.5px; font-weight: 600; letter-spacing: .02em; color: var(--faint);
+  background: transparent; border: 1px solid var(--line-strong); border-radius: 6px;
+  padding: 3px 9px; cursor: pointer; transition: color .14s ease, border-color .14s ease;
+}
+.set-section-reset:hover { color: var(--st-error); border-color: color-mix(in srgb, var(--st-error) 45%, var(--line-strong)); }
 .set-row { display: flex; align-items: center; gap: 16px; }
 .set-row-t { display: flex; flex-direction: column; gap: 2px; }
 .set-row-name { font-size: 14.5px; font-weight: 500; color: var(--text); }
 .set-row-sub { font-size: 12px; color: var(--faint); }
+.set-row-sub code { font-family: var(--font-mono); font-size: 11px; color: var(--muted); }
 
 .seg { margin-left: auto; display: inline-flex; background: var(--surface); border: 1px solid var(--line-strong); border-radius: 10px; padding: 3px; gap: 2px; flex: none; }
 .seg button {
@@ -145,6 +157,10 @@ kbd {
 .set-select { margin-left: auto; flex: none; cursor: pointer; }
 .set-select:focus-visible, .set-input:focus-visible { outline: 2px solid var(--ice); outline-offset: 1px; }
 .set-input-num { margin-left: auto; flex: none; width: 84px; text-align: right; font-family: var(--font-mono); }
+/* ---------- Editor settings (UX-517) ---------- */
+.set-input-wide { margin-left: auto; flex: 1; min-width: 0; max-width: 320px; font-family: var(--font-mono); font-size: 12px; }
+.editor-preview { font-family: var(--font-mono); font-size: 12px; overflow-x: auto; white-space: pre; }
+.editor-preview span { overflow-x: auto; }
 
 /* ---------- Terminal font/cursor preview (UI-138 / UI-139) ---------- */
 .term-preview {
@@ -287,6 +303,21 @@ button.agent-chip:hover { filter: brightness(1.15); }
 .set-changelog li { font-size: 12px; color: var(--muted); line-height: 1.45; }
 .set-cl-date { font-family: var(--font-mono); font-size: 10.5px; color: var(--faint); margin-right: 4px; }
 
+/* ---------- What's new since your last version (UX-600) ----------
+   Fed straight from the release manifest's own notes (see updater.ts) —
+   shown once, distinct from the hand-kept full changelog below it. */
+.set-whatsnew {
+  border: 1px solid color-mix(in srgb, var(--ice) 40%, transparent);
+  background: color-mix(in srgb, var(--ice) 8%, transparent);
+  border-radius: var(--r-md); padding: 11px 13px;
+}
+.set-whatsnew-t { font-size: 12.5px; font-weight: 700; color: var(--text); margin-bottom: 5px; }
+.set-whatsnew-body { font-size: 12.5px; color: var(--muted); line-height: 1.5; white-space: pre-wrap; }
+
+/* ---------- Update notes before install (UX-585) ---------- */
+.set-update-notes { display: flex; flex-direction: column; gap: 4px; }
+.set-update-notes-t { font-size: 11.5px; font-weight: 600; color: var(--faint); text-transform: uppercase; letter-spacing: .06em; }
+
 /* ---------- Per-vendor accent (UI-51) ---------- */
 .agent-row { grid-template-columns: 108px 1fr 1fr auto auto; }
 .agent-color { position: relative; display: inline-flex; cursor: pointer; }
@@ -393,6 +424,30 @@ button.agent-chip.agent-test:hover { color: var(--accent); border-color: var(--a
   border: 0; padding: 0; cursor: pointer;
 }
 .agent-pop-link:hover { text-decoration: underline; }
+
+/* ---------- Command palette shortcut hints (UX-530) ----------
+   Rendered by CommandPalette.tsx, which doesn't otherwise own the .cmdp-*
+   namespace (leftpanel.css does) — scoped here as its own class so this
+   agent's addition can't collide with that file. */
+.cmdp-shortcut { margin-left: auto; flex: none; display: inline-flex; gap: 4px; }
+.cmdp-shortcut kbd { font-size: 10px; padding: 1px 6px; }
+
+/* ---------- Keyboard cheat sheet (UX-545) ----------
+   Reuses .ov-scrim + the .kbd-* row shapes Settings > Shortcuts already
+   defines — the whole point of the overlay is showing the same source of
+   truth, so it should look like the same list, not a redesign of it. */
+.cheat-modal {
+  width: 480px; max-width: calc(100% - 32px); max-height: 82vh;
+  display: flex; flex-direction: column;
+  background: var(--elevated); border: 1px solid var(--line-strong); border-radius: 16px;
+  box-shadow: var(--shadow-lg); overflow: hidden;
+  animation: ov-pop .18s var(--ease-out);
+}
+.cheat-head { display: flex; align-items: center; gap: 12px; padding: 18px 20px 14px; border-bottom: 1px solid var(--line); }
+.cheat-head h2 { margin: 0; font-size: 17px; font-weight: 700; letter-spacing: -0.02em; flex: 1; }
+.cheat-body { padding: 4px 20px 18px; display: flex; flex-direction: column; gap: 18px; overflow-y: auto; }
+.cheat-group + .cheat-group { padding-top: 4px; border-top: 1px solid var(--line); }
+.cheat-foot { padding: 12px 20px; border-top: 1px solid var(--line); font-size: 11.5px; color: var(--faint); }
 
 /* K0a: trusted-folder list */
 .set-row-block { flex-direction: column; align-items: stretch; gap: 8px; }

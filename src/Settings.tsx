@@ -14,6 +14,7 @@ import { clearPreferences, PREFERENCE_KEYS } from "./storageKeys";
 import {
   checkForUpdate, installUpdate, getReleasesDir, setReleasesDir,
   getAutoUpdateCheck, setAutoUpdateCheck, DEFAULT_RELEASES_DIR,
+  getPendingReleaseNotes, clearPendingReleaseNotes,
 } from "./updater";
 import { trustedRepos, untrustRepo } from "./trust";
 import { spawnPane } from "./worktrees";
@@ -26,6 +27,7 @@ import {
   isColorBlindSafe, setColorBlindSafe,
   isReducedMotion, setReducedMotion,
   exportThemeJson, importThemeJson,
+  DEFAULT_THEME_ID, DEFAULT_ACCENT_ID,
 } from "./themes";
 import "./overlays.css";
 
@@ -75,15 +77,37 @@ const DEFAULT_SHORTCUTS: ShortcutDef[] = [
   { id: "toggle-panel", label: "Toggle side panel", combo: "Ctrl+B" },
 ];
 // Shipped shortcuts that aren't rebindable — hardcoded elsewhere (CommandPalette's
-// own key handler, Cockpit's Ctrl+1-9 workspace switcher). Shown here read-only so
-// Settings doesn't undersell what the app actually supports.
-const FIXED_SHORTCUTS: ShortcutDef[] = [
+// own key handler, Cockpit's global keydown, PaneView's pane-scoped ones). Shown
+// here read-only so Settings doesn't undersell what the app actually supports.
+// UX-545/530: this is now the single source both the Settings list, the
+// command palette's shortcut hints, and the standalone cheat sheet
+// (Shortcuts.tsx) read from — the fix for the old #105/#269 duplicate-entry
+// problem was never having two hand-typed copies to drift apart.
+export const FIXED_SHORTCUTS: ShortcutDef[] = [
   { id: "cmdp-k", label: "Command palette", combo: "Ctrl+K" },
   { id: "cmdp-p", label: "Command palette", combo: "Ctrl+P" },
+  { id: "cheat-sheet", label: "Keyboard shortcuts cheat sheet", combo: "?" },
   { id: "switch-workspace", label: "Switch to workspace 1-9", combo: "Ctrl+1..9" },
+  { id: "cycle-workspace", label: "Cycle workspaces (most-recent first)", combo: "Ctrl+Tab" },
+  { id: "cycle-workspace-back", label: "Cycle workspaces backwards", combo: "Ctrl+Shift+Tab" },
+  { id: "attention-queue", label: "Open attention queue", combo: "Ctrl+Shift+A" },
+  { id: "focus-pane-n", label: "Focus pane 1-9 in this workspace", combo: "Alt+1..9" },
+  { id: "focus-pane-arrows", label: "Move pane focus", combo: "Ctrl+Alt+Arrows" },
+  { id: "close-pane", label: "Close the focused pane", combo: "Ctrl+W" },
+  { id: "close-workspace", label: "Close the active workspace", combo: "Ctrl+Shift+W" },
   { id: "zoom-in", label: "Zoom in (whole app)", combo: "Ctrl+=" },
   { id: "zoom-out", label: "Zoom out (whole app)", combo: "Ctrl+-" },
   { id: "zoom-reset", label: "Reset zoom", combo: "Ctrl+0" },
+];
+// Bound only while a specific surface has focus, so they're listed separately
+// in the cheat sheet rather than implying they work everywhere.
+export const CONTEXTUAL_SHORTCUTS: Array<ShortcutDef & { context: string }> = [
+  { id: "review-next-file", label: "Next changed file", combo: "J", context: "Review drawer" },
+  { id: "review-prev-file", label: "Previous changed file", combo: "K", context: "Review drawer" },
+  { id: "review-next-hunk", label: "Next diff hunk", combo: "N", context: "Review drawer" },
+  { id: "review-prev-hunk", label: "Previous diff hunk", combo: "P", context: "Review drawer" },
+  { id: "board-move-column", label: "Move focused card to the next/previous column", combo: "Arrow ←/→", context: "Board (card focused)" },
+  { id: "board-reorder-card", label: "Reorder the focused card within its column", combo: "Arrow ↑/↓", context: "Board (card focused)" },
 ];
 export function getShortcuts(): ShortcutDef[] {
   let overrides: Record<string, string> = {};
@@ -138,6 +162,47 @@ function saveAgentSettings(next: AgentSettings) {
 }
 
 // ---------------------------------------------------------------------
+// Editor choice (UX-517 / UX-516). Persisted here for the open-in-editor
+// call site (elsewhere) to read. Persisted key: "flightdeck-editor-settings".
+// Shape: { editor: EditorId, command: string }. `command` is always the FULL
+// resolved command template (preset commands are copied in verbatim when a
+// preset is picked, so the consumer never needs its own copy of the preset
+// table) — replace the literal substrings "{file}" and "{line}" with the
+// target path and 1-based line number, then run it. Presets shell out via
+// each editor's own CLI launcher; "custom" is whatever the user typed.
+// ---------------------------------------------------------------------
+export type EditorId = "vscode" | "vscode-insiders" | "jetbrains" | "notepadpp" | "custom";
+export interface EditorSettings { editor: EditorId; command: string; }
+export const EDITOR_PRESETS: Record<Exclude<EditorId, "custom">, { label: string; command: string }> = {
+  vscode: { label: "VS Code", command: 'code --goto "{file}:{line}"' },
+  "vscode-insiders": { label: "VS Code Insiders", command: 'code-insiders --goto "{file}:{line}"' },
+  jetbrains: { label: "JetBrains IDE", command: 'idea64 --line {line} "{file}"' },
+  notepadpp: { label: "Notepad++", command: 'notepad++ -n{line} "{file}"' },
+};
+const DEFAULT_EDITOR_SETTINGS: EditorSettings = { editor: "vscode", command: EDITOR_PRESETS.vscode.command };
+const EDITOR_SETTINGS_KEY = "flightdeck-editor-settings";
+export function getEditorSettings(): EditorSettings {
+  try {
+    const raw = localStorage.getItem(EDITOR_SETTINGS_KEY);
+    if (raw) {
+      const p = JSON.parse(raw);
+      if (p && typeof p.editor === "string" && typeof p.command === "string") return p;
+    }
+  } catch { /* non-persistent */ }
+  return DEFAULT_EDITOR_SETTINGS;
+}
+function saveEditorSettings(next: EditorSettings) {
+  try { localStorage.setItem(EDITOR_SETTINGS_KEY, JSON.stringify(next)); } catch { /* non-persistent */ }
+}
+/** Fills a command template with a concrete file (and optional 1-based line).
+ *  Pure — shared by the live preview below and by whichever call site ends up
+ *  owning the actual editor launch. */
+export function resolveEditorCommand(template: string, file: string, line?: number): string {
+  // .split().join() rather than replaceAll — this project targets ES2020.
+  return template.split("{file}").join(file).split("{line}").join(line != null ? String(line) : "1");
+}
+
+// ---------------------------------------------------------------------
 // Startup behaviour (91).
 // ---------------------------------------------------------------------
 export type StartupBehavior = "reopen" | "launcher";
@@ -151,6 +216,22 @@ function saveStartupBehavior(v: StartupBehavior) {
 // Shown in About + useful for bug reports. Keep in step with package.json /
 // tauri.conf.json version bumps.
 export const APP_VERSION = "0.3.0";
+
+// UX-600: "what's new since your last version", fed by the release manifest's
+// own `notes` field (releases\latest.json, round-tripped through updater.ts'
+// getPendingReleaseNotes — see the comment there) rather than a second
+// hand-typed copy of the changelog below. Pure so it's testable without a
+// component: seenVersion is what Settings last recorded showing, pending is
+// whatever checkForUpdate most recently captured.
+export function shouldShowWhatsNew(
+  currentVersion: string,
+  seenVersion: string | null,
+  pending: { version: string; notes: string } | null
+): boolean {
+  if (currentVersion === seenVersion) return false;
+  return !!pending && pending.version === currentVersion && pending.notes.trim().length > 0;
+}
+const WHATSNEW_SEEN_KEY = "flightdeck-whatsnew-seen-version";
 
 // Newest first; trim to the last ~10 entries as it grows.
 const CHANGELOG: Array<{ date: string; text: string }> = [
@@ -169,6 +250,20 @@ const CHANGELOG: Array<{ date: string; text: string }> = [
 // ---------------------------------------------------------------------
 interface PaneHealthRow { paneId: number; pid: number; cpuPercent: number; memoryMb: number; procName: string; }
 interface OrphanRow { pid: number; ppid: number; name: string; }
+
+// UX-599: one small header row shape shared by every section that has real
+// per-section preference state to reset, so "reset this section" reads as one
+// consistent affordance rather than a bespoke button per section (UI-632).
+function SectionHead({ label, onReset }: { label: string; onReset?: () => void }) {
+  return (
+    <div className="set-section-head">
+      <div className="set-label">{label}</div>
+      {onReset && (
+        <button className="set-section-reset" onClick={onReset}>Reset section</button>
+      )}
+    </div>
+  );
+}
 
 // UI-185: ~60s of CPU history per pane, sampled at the same 3s cadence as the
 // health poll (20 points). Plain inline SVG — one polyline, no charting lib.
@@ -377,11 +472,19 @@ function UpdatesBlock() {
       <div className="set-row">
         <div className="set-row-t">
           <span className="set-row-name">Updates</span>
+          {/* UX-584: one honest line per real state — checking, ready, up to
+              date, or failed (below). There's no separate "downloading" state:
+              the update is a local file already on this machine (see Settings
+              > Releases folder), so nothing is fetched over the network. */}
           <span className="set-row-sub">
             {checking
               ? "Checking…"
+              : installing
+              ? `Installing ${updateAvailable?.version ?? ""}…`
               : updateAvailable
-              ? `Flightdeck ${updateAvailable.version} is available`
+              ? `Ready to install — Flightdeck ${updateAvailable.version}`
+              : checkError
+              ? "Couldn't check — see below"
               : lastCheckedAt
               ? `Up to date — checked ${relTime(lastCheckedAt)}`
               : "Not checked yet this session"}
@@ -394,7 +497,14 @@ function UpdatesBlock() {
       {checkError && <div className="set-error">Couldn't check for updates: {checkError}</div>}
       {updateAvailable && (
         <div className="set-row set-row-block">
-          {updateAvailable.notes && <div className="set-row-sub" style={{ whiteSpace: "pre-wrap" }}>{updateAvailable.notes}</div>}
+          {/* UX-585: the manifest's own notes, shown before the install button
+              is ever clicked — never asking for a leap of faith. */}
+          {updateAvailable.notes && (
+            <div className="set-update-notes">
+              <div className="set-update-notes-t">What's in {updateAvailable.version}</div>
+              <div className="set-row-sub" style={{ whiteSpace: "pre-wrap" }}>{updateAvailable.notes}</div>
+            </div>
+          )}
           <button className="set-btn" onClick={confirmInstall} disabled={installing}>
             {installing ? "Installing…" : `Install ${updateAvailable.version} and restart`}
           </button>
@@ -689,6 +799,12 @@ export function Settings() {
   >(null);
   const [agents, setAgents] = useState(getAgentSettings());
   const [startup, setStartup] = useState(getStartupBehavior());
+  const [editor, setEditor] = useState(getEditorSettings());
+  // UX-588: per-vendor "does it actually launch" probe result. Session-only —
+  // the app-mounted Settings instance keeps it even while the modal is closed
+  // (see the "test launch" click handler, which closes Settings so the pane
+  // is visible), so the checklist is still there next time it's reopened.
+  const [launchCheck, setLaunchCheck] = useState<Record<string, "testing" | "ok" | "error">>({});
   const [importError, setImportError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   // UI-182: separate file + error state from the theme import above it — the
@@ -711,6 +827,25 @@ export function Settings() {
     tick();
     const id = setInterval(tick, 5000);
     return () => clearInterval(id);
+  }, []);
+
+  // UX-600: compare the running version against what was last acknowledged.
+  // Runs once on mount regardless of whether Settings is open, so a toast can
+  // fire the moment the app boots on a freshly-installed version, not only
+  // when Balu happens to open Settings. Notes only ever come from the release
+  // manifest (see updater.ts) — never invented copy.
+  const [whatsNew, setWhatsNew] = useState<{ version: string; notes: string } | null>(null);
+  useEffect(() => {
+    let seen: string | null = null;
+    try { seen = localStorage.getItem(WHATSNEW_SEEN_KEY); } catch { /* non-persistent */ }
+    const pending = getPendingReleaseNotes();
+    if (shouldShowWhatsNew(APP_VERSION, seen, pending)) {
+      setWhatsNew(pending);
+      useUI.getState().pushToast("info", `Updated to Flightdeck ${APP_VERSION} — see What's new in Settings > About.`);
+    }
+    try { localStorage.setItem(WHATSNEW_SEEN_KEY, APP_VERSION); } catch { /* non-persistent */ }
+    clearPendingReleaseNotes();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // UI-181: the palette can ask for a specific section. Consume the request
@@ -951,6 +1086,112 @@ export function Settings() {
     saveStartupBehavior(v);
     setStartup(v);
   }
+  function updateEditor(next: EditorSettings) {
+    saveEditorSettings(next);
+    setEditor(next);
+  }
+
+  // UX-599: per-section reset. Same confirm weight as the other destructive
+  // actions in this file; restores just that section's own keys, never the
+  // others and never session state.
+  function resetSection(title: string, body: string, apply: () => void) {
+    useUI.getState().requestConfirm({ title, body, confirmLabel: "Reset section", danger: true, onConfirm: apply });
+  }
+  function resetAppearanceSection() {
+    resetSection(
+      "Reset appearance?",
+      "Theme, accent colour, colour-blind-safe and reduced-motion go back to defaults.",
+      () => {
+        selectTheme(DEFAULT_THEME_ID);
+        selectAccent(DEFAULT_ACCENT_ID);
+        if (cbSafe) toggleCbSafe();
+        if (reducedMotion) toggleReducedMotion();
+        try { localStorage.removeItem("flightdeck-accent-custom"); } catch { /* non-persistent */ }
+        useUI.getState().pushToast("success", "Appearance reset.");
+      }
+    );
+  }
+  function resetTerminalSection() {
+    resetSection(
+      "Reset terminal settings?",
+      "Font, size, cursor style and scrollback go back to defaults.",
+      () => {
+        try { localStorage.removeItem("flightdeck-terminal-settings"); } catch { /* non-persistent */ }
+        window.dispatchEvent(new CustomEvent("flightdeck-terminal-settings-changed", { detail: DEFAULT_TERMINAL_SETTINGS }));
+        setTerm(DEFAULT_TERMINAL_SETTINGS);
+        useUI.getState().pushToast("success", "Terminal settings reset.");
+      }
+    );
+  }
+  function resetShortcutsSection() {
+    resetSection(
+      "Reset shortcuts?",
+      "Rebound keys go back to their defaults.",
+      () => {
+        resetShortcuts();
+        setShortcuts(getShortcuts());
+        useUI.getState().pushToast("success", "Shortcuts reset.");
+      }
+    );
+  }
+  function resetAgentsSection() {
+    resetSection(
+      "Reset agent settings?",
+      "Default vendor, extra flags, binary path overrides and per-agent colours go back to defaults.",
+      () => {
+        saveAgentSettings(DEFAULT_AGENT_SETTINGS);
+        setAgents(DEFAULT_AGENT_SETTINGS);
+        try { localStorage.removeItem("flightdeck-vendor-accents"); } catch { /* non-persistent */ }
+        useUI.getState().pushToast("success", "Agent settings reset.");
+      }
+    );
+  }
+  function resetStartupSection() {
+    resetSection("Reset startup behaviour?", "Goes back to showing the launcher on start.", () => {
+      updateStartup("launcher");
+      useUI.getState().pushToast("success", "Startup behaviour reset.");
+    });
+  }
+  function resetEditorSection() {
+    resetSection("Reset editor settings?", "Goes back to VS Code.", () => {
+      updateEditor(DEFAULT_EDITOR_SETTINGS);
+      useUI.getState().pushToast("success", "Editor settings reset.");
+    });
+  }
+
+  // UX-588: light first-run checklist — reuses the same throwaway-pane probe
+  // as the existing "test launch" chip, but now watches the pane's own state
+  // and turns the click into a pass/fail result instead of a fire-and-forget.
+  function testLaunch(vendorId: string, short: string) {
+    const st = useApp.getState();
+    const ws = st.workspaces.find((w) => w.id === st.activeId);
+    if (!ws) {
+      useUI.getState().pushToast("info", "Open a workspace first — the test pane opens inside it.");
+      return;
+    }
+    setLaunchCheck((r) => ({ ...r, [vendorId]: "testing" }));
+    const startedAt = Date.now();
+    void spawnPane(ws.id, vendorId, ws.root, false).then((paneId) => {
+      if (paneId == null) {
+        setLaunchCheck((r) => ({ ...r, [vendorId]: "error" }));
+        return;
+      }
+      const poll = () => {
+        const pane = useApp.getState().workspaces.flatMap((w) => w.panes).find((p) => p.id === paneId);
+        if (!pane) return; // closed before resolving — leave the last known result showing
+        if (pane.state === "error") { setLaunchCheck((r) => ({ ...r, [vendorId]: "error" })); return; }
+        if (pane.state === "running" || pane.state === "waiting" || pane.state === "permission") {
+          setLaunchCheck((r) => ({ ...r, [vendorId]: "ok" }));
+          return;
+        }
+        if (Date.now() - startedAt < 8000) window.setTimeout(poll, 400);
+        else setLaunchCheck((r) => ({ ...r, [vendorId]: "error" }));
+      };
+      window.setTimeout(poll, 400);
+    });
+    useUI.getState().setSettingsOpen(false);
+    useUI.getState().pushToast("info", `Test pane opened for ${short}. Close it when you're done.`);
+  }
 
   return (
     <div className="ov-scrim" onMouseDown={() => setOpen(false)}>
@@ -971,7 +1212,7 @@ export function Settings() {
         <div className="set-body" ref={bodyRef}>
 
           <section className="set-section">
-            <div className="set-label">Appearance</div>
+            <SectionHead label="Appearance" onReset={resetAppearanceSection} />
 
             <div className="theme-grid">
               {THEMES.map((t) => (
@@ -1127,7 +1368,7 @@ export function Settings() {
           </section>
 
           <section className="set-section">
-            <div className="set-label">Terminal</div>
+            <SectionHead label="Terminal" onReset={resetTerminalSection} />
             <div className="set-row">
               <div className="set-row-t"><span className="set-row-name">Font</span></div>
               {/* UI-138: each option renders in its own typeface — a name alone
@@ -1171,8 +1412,66 @@ export function Settings() {
             </div>
           </section>
 
+          {/* UX-517/UX-516: which editor "open in editor" / jump-to-file:line
+              hands off to. Persisted key: flightdeck-editor-settings, shape
+              { editor: EditorId, command: string } — `command` is always the
+              FULL resolved template (presets copy their command in verbatim),
+              so the consumer only ever needs to replaceAll "{file}"/"{line}". */}
           <section className="set-section">
-            <div className="set-label">Shortcuts</div>
+            <SectionHead label="Editor" onReset={resetEditorSection} />
+            <div className="set-row">
+              <div className="set-row-t">
+                <span className="set-row-name">Open files in</span>
+                <span className="set-row-sub">Used by "open in editor" and jump-to-line actions</span>
+              </div>
+              <div className="seg">
+                {(Object.keys(EDITOR_PRESETS) as Array<Exclude<EditorId, "custom">>).map((id) => (
+                  <button
+                    key={id}
+                    className={editor.editor === id ? "on" : ""}
+                    onClick={() => updateEditor({ editor: id, command: EDITOR_PRESETS[id].command })}
+                  >
+                    {EDITOR_PRESETS[id].label}
+                  </button>
+                ))}
+                <button
+                  className={editor.editor === "custom" ? "on" : ""}
+                  onClick={() => updateEditor({ editor: "custom", command: editor.editor === "custom" ? editor.command : "" })}
+                >
+                  Custom
+                </button>
+              </div>
+            </div>
+            {editor.editor === "custom" && (
+              <div className="set-row">
+                <div className="set-row-t">
+                  <span className="set-row-name">Command template</span>
+                  <span className="set-row-sub">
+                    Use <code>{"{file}"}</code> for the path and <code>{"{line}"}</code> for the line number
+                  </span>
+                </div>
+                <input
+                  className="set-input set-input-wide"
+                  placeholder='e.g. subl "{file}:{line}"'
+                  spellCheck={false}
+                  value={editor.command}
+                  onChange={(e) => updateEditor({ editor: "custom", command: e.target.value })}
+                />
+              </div>
+            )}
+            <div className="set-row">
+              <div className="set-row-t">
+                <span className="set-row-name">Preview</span>
+                <span className="set-row-sub">What runs for a file at a line</span>
+              </div>
+            </div>
+            <div className="term-preview editor-preview">
+              <span>{resolveEditorCommand(editor.command || "—", "src\\App.tsx", 42) || "Enter a command template above"}</span>
+            </div>
+          </section>
+
+          <section className="set-section">
+            <SectionHead label="Shortcuts" onReset={resetShortcutsSection} />
             <div className="kbd-list">
               {shortcuts.map((s) => (
                 <div className="kbd-row" key={s.id}>
@@ -1226,11 +1525,10 @@ export function Settings() {
               </div>
             )}
             <div className="set-row-sub">Only the shortcuts above with a Change button can be rebound.</div>
-            <button className="btn-ghost set-reset" onClick={() => { resetShortcuts(); setShortcuts(getShortcuts()); }}>Reset to defaults</button>
           </section>
 
           <section className="set-section">
-            <div className="set-label">Agents</div>
+            <SectionHead label="Agents" onReset={resetAgentsSection} />
             <div className="set-row">
               <div className="set-row-t"><span className="set-row-name">Default vendor</span><span className="set-row-sub">Pre-selected for new panes</span></div>
               <div className="seg">
@@ -1275,27 +1573,26 @@ export function Settings() {
                     {v.installed && v.authState === "ok" && v.kind === "agent" && (
                       <span className="agent-chip ok" title="Stored sign-in found">signed in</span>
                     )}
-                    {/* UI-239: prove a vendor launches without committing a
-                        workspace to it — one throwaway pane, isolation off, so
-                        there's no worktree to clean up afterwards. */}
+                    {/* UI-239/UX-588: prove a vendor launches without committing
+                        a workspace to it — one throwaway pane, isolation off,
+                        so there's no worktree to clean up afterwards. The
+                        result (launched cleanly / didn't) shows as a small
+                        checklist badge once the probe resolves — the light
+                        first-run "does each agent actually work" check. */}
                     {v.installed && (
                       <button
                         className="agent-chip agent-test"
                         title={`Open a throwaway ${v.short} pane to check it launches`}
-                        onClick={() => {
-                          const st = useApp.getState();
-                          const ws = st.workspaces.find((w) => w.id === st.activeId);
-                          if (!ws) {
-                            useUI.getState().pushToast("info", "Open a workspace first — the test pane opens inside it.");
-                            return;
-                          }
-                          void spawnPane(ws.id, v.id, ws.root, false);
-                          useUI.getState().setSettingsOpen(false);
-                          useUI.getState().pushToast("info", `Test pane opened for ${v.short}. Close it when you're done.`);
-                        }}
+                        onClick={() => testLaunch(v.id, v.short)}
                       >
-                        test launch
+                        {launchCheck[v.id] === "testing" ? "testing…" : "test launch"}
                       </button>
+                    )}
+                    {launchCheck[v.id] === "ok" && (
+                      <span className="agent-chip ok" title="The last test pane started cleanly">✓ launches</span>
+                    )}
+                    {launchCheck[v.id] === "error" && (
+                      <span className="agent-chip warn" title="The last test pane didn't reach a running state">✗ didn't start</span>
                     )}
                   </span>
                   <input
@@ -1379,7 +1676,7 @@ export function Settings() {
           </section>
 
           <section className="set-section">
-            <div className="set-label">Startup</div>
+            <SectionHead label="Startup" onReset={resetStartupSection} />
             <div className="set-row">
               <div className="set-row-t"><span className="set-row-name">On launch</span></div>
               <div className="seg">
@@ -1432,10 +1729,20 @@ export function Settings() {
                 : `Session last saved ${savedAgo}.`}
             </div>
             <div className="set-about">Flightdeck v{APP_VERSION} — a multi-agent terminal cockpit. Deep Cove build.</div>
+            {/* UX-600: the manifest's own notes for the version just installed,
+                shown once. Distinct from the hand-kept CHANGELOG below it —
+                this is always exactly what shipped, straight from the source
+                that produced this build. */}
+            {whatsNew && (
+              <div className="set-whatsnew">
+                <div className="set-whatsnew-t">New since your last version ({whatsNew.version})</div>
+                <div className="set-whatsnew-body">{whatsNew.notes}</div>
+              </div>
+            )}
             <UpdatesBlock />
             {/* UI-42: a real "what's new" — the cheapest active-development signal. */}
             <details className="set-changelog">
-              <summary>What's new</summary>
+              <summary>Full changelog</summary>
               <ul>
                 {CHANGELOG.map((c) => (
                   <li key={c.date + c.text}><span className="set-cl-date">{c.date}</span> {c.text}</li>

@@ -49,6 +49,31 @@ interface RawCheckResult {
   error?: string;
 }
 
+// UX-600: "what's new since your last version" reads the release manifest's
+// own `notes`, not a hand-typed changelog. checkForUpdate is the only place
+// that ever sees a newer version's notes (the app exits itself to install —
+// see updates.rs — so nothing in memory survives the relaunch), so it's
+// stashed here every time a newer version is seen. Settings compares its own
+// APP_VERSION against this on mount: once they match, the just-installed
+// version's real notes are shown once, then cleared.
+const PENDING_NOTES_KEY = "flightdeck-pending-release-notes";
+export interface PendingRelease { version: string; notes: string; }
+function savePendingReleaseNotes(v: PendingRelease) {
+  try { localStorage.setItem(PENDING_NOTES_KEY, JSON.stringify(v)); } catch { /* non-persistent */ }
+}
+export function getPendingReleaseNotes(): PendingRelease | null {
+  try {
+    const raw = localStorage.getItem(PENDING_NOTES_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed.version === "string" && typeof parsed.notes === "string") return parsed;
+    return null;
+  } catch { return null; }
+}
+export function clearPendingReleaseNotes() {
+  try { localStorage.removeItem(PENDING_NOTES_KEY); } catch { /* non-persistent */ }
+}
+
 /** Runs the local-file check and mirrors the outcome into the UI store (topbar
  *  gear dot + Settings > About both read `updateAvailable` from there, so
  *  every trigger — startup, the command palette, the Settings button — stays
@@ -65,6 +90,7 @@ export async function checkForUpdate(): Promise<UpdateCheckResult> {
   if (raw.available && raw.version && raw.installerPath) {
     const info: UpdateInfo = { version: raw.version, notes: raw.notes ?? "", installerPath: raw.installerPath };
     useUI.getState().setUpdateAvailable(info);
+    savePendingReleaseNotes({ version: raw.version, notes: raw.notes ?? "" });
     return { available: true, info };
   }
   useUI.getState().setUpdateAvailable(null);
