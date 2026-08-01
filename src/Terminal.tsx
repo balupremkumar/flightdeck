@@ -1,4 +1,5 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
+import { useApp } from "./store";
 import { Terminal as XTerm } from "@xterm/xterm";
 import type { ILinkProvider, ILink, ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
@@ -155,6 +156,9 @@ interface TerminalProps {
    *  the store can clear the pane's needsSetup flag (Restart skips setup). */
   setup?: string;
   onSetupConsumed?: () => void;
+  /** UX-581: the pane's unsent input line from the previous run, re-typed on
+   *  spawn so a restart doesn't silently discard it. */
+  initialDraft?: string;
   fontSize?: number;
   ligatures?: boolean;
   /** How long the pane must be quiet before it's marked "waiting" — computed
@@ -182,7 +186,7 @@ const HIDDEN_BUFFER_CAP = 262144; // 256KB
 
 // One live terminal bound to a PTY in the Rust core.
 export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Terminal(
-  { vendor, cwd, setup, onSetupConsumed, fontSize = 12.5, ligatures = false, quietThresholdMs = 3000, onExit, onState, onProc, onBell, onLine, onScrollAway, onProgress },
+  { vendor, cwd, setup, onSetupConsumed, initialDraft, fontSize = 12.5, ligatures = false, quietThresholdMs = 3000, onExit, onState, onProc, onBell, onLine, onScrollAway, onProgress },
   ref
 ) {
   const elRef = useRef<HTMLDivElement>(null);
@@ -486,7 +490,24 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
       // fires before onResize is wired), so push the current size once.
       invoke("pty_resize", { paneId, cols: term.cols, rows: term.rows });
 
-      term.onData((d) => invoke("pty_write", { paneId, data: d }));
+      // UX-581: mirror the unsent input line into the store so a restart can
+      // restore it. Approximates line editing (it does not follow arrow-key
+      // cursor movement), which is enough to not lose a typed-but-unsent
+      // prompt. Debounced so a fast typist doesn't thrash the session save.
+      if (initialDraft) invoke("pty_write", { paneId, data: initialDraft });
+      let draftBuf = initialDraft ?? "";
+      let draftTimer: ReturnType<typeof setTimeout> | undefined;
+      const saveDraft = () => {
+        if (draftTimer) clearTimeout(draftTimer);
+        draftTimer = setTimeout(() => useApp.getState().setPaneDraft(paneId, draftBuf), 400);
+      };
+      term.onData((d) => {
+        invoke("pty_write", { paneId, data: d });
+        if (d === "\r" || d === "\n") draftBuf = "";
+        else if (d === "\x7f" || d === "\b") draftBuf = draftBuf.slice(0, -1);
+        else if (!d.startsWith("\x1b")) draftBuf += d;
+        saveDraft();
+      });
       term.onResize(({ cols, rows }) => invoke("pty_resize", { paneId, cols, rows }));
       term.focus();
     })();

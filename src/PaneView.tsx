@@ -726,6 +726,7 @@ Running low — consider /compact in this pane.` : "")
           ref={terminalRef}
           vendor={pane.vendor}
           cwd={pane.cwd}
+          initialDraft={pane.draft}
           setup={pane.needsSetup ? setupCmd : undefined}
           onSetupConsumed={() => clearNeedsSetup(pane.id)}
           fontSize={fontSize}
