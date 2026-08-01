@@ -2,6 +2,8 @@
 
 Updated: 2026-08-01 (demo mock fixes, from the kove-site showcase re-cut session).
 
+**2026-08-01 (later, 702255e):** demo/site-dist rebuilt output committed so the repo's bundle matches what shipped to kove.nz (same content as their commit 3a07082).
+
 **2026-08-01 (commit 1e29206, pushed):** interactive demo mock fixed — `git_file_diff` destructured `path` but Review.tsx sends `file`, so every patch in the live kove.nz/flightdeck-demo Review drawer rendered `a/undefined`; migrate pane's two diffs now hand-written (redisStore.ts new-file, store.ts rewrite). Bundle rebuilt and shipped in kove-site (their commit 3a07082) together with the new 40.6s flightdeck-showcase-v2 video (replaces the 25MB dark cut; scenario at kove-site seo-tools/showcase/flightdeck.scenario.mjs).
 
 **DONE 2026-07-24 (session 9; commits df97964, 98a4633, 0b542ab; gates green at each: tsc, vitest 93/93, cargo 54/54, build, E2E 26/26):**
