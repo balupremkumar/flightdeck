@@ -14,6 +14,7 @@ import { CommandPalette } from "./CommandPalette";
 import { Explorer } from "./Explorer";
 import { Review } from "./Review";
 import { AttentionQueue } from "./AttentionQueue";
+import { Shortcuts } from "./Shortcuts";
 import { ZoomHud } from "./ZoomHud";
 import { useUI } from "./ui";
 import { applyTheme, applyAccent, currentThemeId, currentAccentId, findTheme } from "./themes";
@@ -306,6 +307,7 @@ export function Cockpit() {
       <Broadcast />
       <Review />
       <AttentionQueue />
+      <Shortcuts />
       <ZoomHud />
 
       <div className="cockpit">
