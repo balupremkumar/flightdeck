@@ -29,6 +29,18 @@ export interface UpdateInfo {
   installerPath: string;
 }
 
+// UX-505/513: one open tab in the file preview drawer.
+export interface PreviewTab {
+  id: number;
+  path: string;
+  /** 1-based line to scroll to on open — carried over from a terminal
+   *  path:line[:col] match. */
+  line?: number;
+  /** Font-size (px) inherited from the pane that opened it (UX-510) so the
+   *  preview visually matches the terminal zoom it was opened from. */
+  fontSize?: number;
+}
+
 // One entry per pane-state transition that matched the configured bell rules.
 // Repeats of the same pane+state within COLLAPSE_WINDOW_MS bump `repeats` and
 // refresh `at` in place instead of pushing a new row (owner feedback: a pane
@@ -140,6 +152,22 @@ interface UIState {
   reviewPaneId: number | null;
   setReviewPane: (paneId: number | null) => void;
 
+  // File preview drawer (UX-505/513): read-only tabs opened by clicking a
+  // linkified path in a terminal. Store-level for the same reason as the
+  // review drawer above — Terminal.tsx (any pane) opens it, Preview.tsx
+  // renders it. Multiple files stay open as tabs; Ctrl+Tab/Ctrl+W cycle and
+  // close (registered by Preview itself, only while it has focus).
+  previewTabs: PreviewTab[];
+  activePreviewId: number | null;
+  /** Opens `path` as a tab (or refocuses/updates it if already open). */
+  openPreview: (path: string, opts?: { line?: number; fontSize?: number }) => void;
+  closePreview: (id: number) => void;
+  /** Dismisses the whole drawer (every tab) — Esc / clicking the scrim. */
+  closeAllPreviews: () => void;
+  setActivePreview: (id: number) => void;
+  /** Ctrl+Tab / Ctrl+Shift+Tab among open preview tabs. */
+  cyclePreview: (dir: 1 | -1) => void;
+
   broadcasts: BroadcastRecord[];
   pushBroadcastRecord: (r: Omit<BroadcastRecord, "id" | "at">) => void;
 
@@ -159,6 +187,7 @@ interface UIState {
 let tseq = 0;
 let nseq = 0;
 let bseq = 0;
+let pseq = 0;
 
 const NOTIFY_KEY = "flightdeck-notify-settings";
 const FEED_COLLAPSE_WINDOW_MS = 5 * 60_000;
@@ -298,6 +327,43 @@ export const useUI = create<UIState>((set) => ({
 
   reviewPaneId: null,
   setReviewPane: (reviewPaneId) => set({ reviewPaneId }),
+
+  previewTabs: [],
+  activePreviewId: null,
+  openPreview: (path, opts) =>
+    set((s) => {
+      const existing = s.previewTabs.find((t) => t.path === path);
+      if (existing) {
+        const updated = { ...existing, line: opts?.line ?? existing.line, fontSize: opts?.fontSize ?? existing.fontSize };
+        return {
+          previewTabs: s.previewTabs.map((t) => (t.id === existing.id ? updated : t)),
+          activePreviewId: existing.id,
+        };
+      }
+      const tab: PreviewTab = { id: ++pseq, path, line: opts?.line, fontSize: opts?.fontSize };
+      return { previewTabs: [...s.previewTabs, tab], activePreviewId: tab.id };
+    }),
+  closePreview: (id) =>
+    set((s) => {
+      const idx = s.previewTabs.findIndex((t) => t.id === id);
+      if (idx === -1) return s;
+      const previewTabs = s.previewTabs.filter((t) => t.id !== id);
+      let activePreviewId = s.activePreviewId;
+      if (activePreviewId === id) {
+        const next = previewTabs[idx] ?? previewTabs[idx - 1];
+        activePreviewId = next ? next.id : null;
+      }
+      return { previewTabs, activePreviewId };
+    }),
+  closeAllPreviews: () => set({ previewTabs: [], activePreviewId: null }),
+  setActivePreview: (id) => set({ activePreviewId: id }),
+  cyclePreview: (dir) =>
+    set((s) => {
+      if (s.previewTabs.length < 2) return s;
+      const idx = s.previewTabs.findIndex((t) => t.id === s.activePreviewId);
+      const next = (idx + dir + s.previewTabs.length) % s.previewTabs.length;
+      return { activePreviewId: s.previewTabs[next].id };
+    }),
 
   broadcasts: [],
   pushBroadcastRecord: (r) =>

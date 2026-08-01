@@ -372,6 +372,31 @@ fn fs_list_dir(path: String) -> Result<Vec<Entry>, String> {
     Ok(out)
 }
 
+// Read-only file preview (UX-505). Text only, with a size cap so a huge log or
+// a binary can't stall the UI thread. Lossy decode on purpose: a preview should
+// show something useful for a mostly-text file rather than refuse it.
+#[tauri::command]
+fn fs_read_text_file(path: String) -> Result<String, String> {
+    let meta = std::fs::metadata(&path).map_err(|e| e.to_string())?;
+    if meta.len() > 5 * 1024 * 1024 {
+        return Err("too large to preview (over 5MB)".into());
+    }
+    let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+// Images referenced from a previewed markdown file (UX-508), returned as base64
+// for a data: URI. Never fetched over the network.
+#[tauri::command]
+fn fs_read_file_base64(path: String) -> Result<String, String> {
+    let meta = std::fs::metadata(&path).map_err(|e| e.to_string())?;
+    if meta.len() > 10 * 1024 * 1024 {
+        return Err("too large to preview (over 10MB)".into());
+    }
+    let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+    Ok(STANDARD.encode(&bytes))
+}
+
 // Per-pane health metrics (202): pid, CPU%, memory. CPU% is a delta between
 // this call and the previous one, so the first poll for a pane always reads 0.
 // `memory_warn_mb` (UX-596): caller-supplied warning threshold — Settings can
@@ -521,6 +546,8 @@ pub fn run() {
             pty_resize,
             pty_kill,
             fs_list_dir,
+            fs_read_text_file,
+            fs_read_file_base64,
             detect_vendors,
             vendors_dir,
             manifest_problems,

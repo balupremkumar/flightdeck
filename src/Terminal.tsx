@@ -8,10 +8,11 @@ import { LigaturesAddon } from "@xterm/addon-ligatures";
 import "@xterm/xterm/css/xterm.css";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { openUrl } from "@tauri-apps/plugin-opener";
-import { revealPath } from "./reveal";
+import { openUrl, openPath } from "@tauri-apps/plugin-opener";
 import { terminalThemeFor } from "./terminal-theme";
 import { getTerminalSettings } from "./Settings";
+import { linkify, resolvePath } from "./linkify";
+import { useUI } from "./ui";
 
 // Reads the app's active theme straight off the DOM — the app dispatches no
 // theme-change event, so this (plus the MutationObserver below) is how the
@@ -19,10 +20,6 @@ import { getTerminalSettings } from "./Settings";
 function activeThemeId(): string {
   return document.documentElement.getAttribute("data-theme") ?? "dark";
 }
-
-// Matches Windows/POSIX-ish file paths in terminal output (with an optional
-// trailing :line[:col]), e.g. `D:\proj\src\App.tsx:42:5`, `./src/foo.ts`, `/etc/hosts`.
-const FILE_PATH_RE = /(?:[A-Za-z]:[\\/]|\.{1,2}[\\/]|~[\\/]|\/)[^\s:"'<>|*?]+(?:\.[A-Za-z0-9]{1,10})?(?::\d+(?::\d+)?)?/g;
 
 function hexToRgba(hex: string, alpha: number): string {
   const h = hex.replace("#", "");
@@ -44,30 +41,94 @@ function searchDecorations(theme: ITheme) {
   };
 }
 
-function registerFilePathLinks(term: XTerm): { dispose(): void } {
+// UX-501..504/523: clickable file paths in terminal output. URLs are left to
+// WebLinksAddon (registered alongside this in the mount effect below) — this
+// provider only emits `linkify()`'s 'path' matches, so the two never fight
+// over the same span. Plain click previews the file in-app (UX-505); Ctrl/Cmd
+// +click opens it in the OS-default editor via plugin-opener, the same
+// mechanism Explorer's "open file" already uses. Existence is checked via the
+// one Rust command that's actually available for it (`fs_list_dir`, reading
+// the parent directory) — a path that isn't there loses its link styling and
+// its click turns into a "not found" toast instead of a dead navigation.
+function registerPathLinks(term: XTerm, cwd: string, fontSizeRef: { current: number }): { dispose(): void } {
+  const dirCache = new Map<string, Promise<Set<string>>>();
+  const dirOf = (p: string): string => {
+    const i = Math.max(p.lastIndexOf("\\"), p.lastIndexOf("/"));
+    return i > 0 ? p.slice(0, i) : p;
+  };
+  const baseOf = (p: string): string => {
+    const i = Math.max(p.lastIndexOf("\\"), p.lastIndexOf("/"));
+    return i >= 0 ? p.slice(i + 1) : p;
+  };
+  const listDir = (dir: string): Promise<Set<string>> => {
+    let cached = dirCache.get(dir);
+    if (!cached) {
+      cached = invoke<{ name: string; dir: boolean }[]>("fs_list_dir", { path: dir })
+        .then((entries) => new Set(entries.map((e) => e.name.toLowerCase())))
+        .catch(() => new Set<string>()); // unreadable/missing dir — nothing in it "exists"
+      dirCache.set(dir, cached);
+    }
+    return cached;
+  };
+
+  // UX-504: a small DOM tooltip explaining click vs Ctrl+click. Per xterm's
+  // own ILink.hover doc it must live inside term.element and carry the
+  // xterm-hover class so xterm doesn't treat the pointer leaving the link
+  // text (onto the tooltip itself) as ending the hover.
+  const tip = document.createElement("div");
+  tip.className = "xterm-hover";
+  tip.style.cssText =
+    "position:fixed;z-index:1000;pointer-events:none;display:none;white-space:nowrap;" +
+    "background:var(--elevated);color:var(--text);border:1px solid var(--line-strong);" +
+    "border-radius:6px;padding:4px 8px;font:11px var(--font-sans);box-shadow:var(--shadow-2);";
+  term.element?.appendChild(tip);
+  const showTip = (event: MouseEvent, msg: string) => {
+    tip.textContent = msg;
+    tip.style.left = `${event.clientX + 12}px`;
+    tip.style.top = `${event.clientY + 16}px`;
+    tip.style.display = "block";
+  };
+  const hideTip = () => { tip.style.display = "none"; };
+
   const provider: ILinkProvider = {
     provideLinks(bufferLineNumber, callback) {
       const line = term.buffer.active.getLine(bufferLineNumber - 1);
       if (!line) { callback(undefined); return; }
       const text = line.translateToString(true);
-      const links: ILink[] = [];
-      FILE_PATH_RE.lastIndex = 0;
-      let m: RegExpExecArray | null;
-      while ((m = FILE_PATH_RE.exec(text))) {
-        if (m[0].length < 3) continue; // skip bare "//" / lone punctuation
-        const start = m.index;
-        const end = start + m[0].length;
-        const target = m[0].replace(/:\d+(?::\d+)?$/, ""); // strip trailing :line:col before revealing
-        links.push({
-          range: { start: { x: start + 1, y: bufferLineNumber }, end: { x: end, y: bufferLineNumber } },
-          text: m[0],
-          activate: () => { void revealPath(target).catch(() => { /* not a real path — ignore */ }); },
+      const matches = linkify(text).filter((m) => m.kind === "path");
+      if (!matches.length) { callback(undefined); return; }
+
+      const links: ILink[] = matches.map((m) => {
+        const abs = resolvePath(m, cwd);
+        const openInEditor = () => {
+          openPath(abs).catch(() => useUI.getState().pushToast("error", `Couldn't open ${abs}`));
+        };
+        const openInPreview = () => {
+          useUI.getState().openPreview(abs, { line: m.line, fontSize: fontSizeRef.current });
+        };
+        const link: ILink = {
+          range: { start: { x: m.start + 1, y: bufferLineNumber }, end: { x: m.end, y: bufferLineNumber } },
+          text: m.text,
+          decorations: { pointerCursor: true, underline: true },
+          activate: (event) => { if (event.ctrlKey || event.metaKey) openInEditor(); else openInPreview(); },
+          hover: (event) => showTip(event, "Click — preview   ·   Ctrl+click — open in editor"),
+          leave: hideTip,
+        };
+        // Fire-and-forget existence check; ILink.decorations is documented as
+        // tracked, so mutating it in place after the fact still repaints.
+        listDir(dirOf(abs)).then((names) => {
+          if (names.has(baseOf(abs).toLowerCase())) return;
+          link.decorations = { pointerCursor: false, underline: false };
+          link.activate = () => useUI.getState().pushToast("error", `${abs} — not found on disk`);
+          link.hover = (event) => showTip(event, "Not found on disk");
         });
-      }
-      callback(links.length ? links : undefined);
+        return link;
+      });
+      callback(links);
     },
   };
-  return term.registerLinkProvider(provider);
+  const disp = term.registerLinkProvider(provider);
+  return { dispose() { disp.dispose(); tip.remove(); } };
 }
 
 export interface TerminalHandle {
@@ -130,6 +191,10 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
   const searchAddonRef = useRef<SearchAddon | null>(null);
   const ligAddonRef = useRef<LigaturesAddon | null>(null);
   const quietThresholdRef = useRef(quietThresholdMs);
+  // UX-510: the preview drawer reads this at open-time so it starts at the
+  // same zoom as the pane the click came from, without forcing a re-register
+  // of the link provider on every zoom step.
+  const fontSizeRef = useRef(fontSize);
   const themeRef = useRef<ITheme>(terminalThemeFor(activeThemeId()));
   // Mirrors the effect-local paneId so imperative handle methods (paste, etc.)
   // can reach the live PTY.
@@ -176,13 +241,14 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
     term.loadAddon(search);
     const webLinks = new WebLinksAddon((_e, uri) => { openUrl(uri).catch(() => { /* best-effort */ }); });
     term.loadAddon(webLinks);
-    const fileLinks = registerFilePathLinks(term);
 
     term.open(el);
     termRef.current = term;
     fitRef.current = fit;
     searchAddonRef.current = search;
     try { fit.fit(); } catch { /* not measured yet */ }
+    // Needs term.element, so registered only after open() above.
+    const pathLinks = registerPathLinks(term, cwd, fontSizeRef);
 
     let paneId = 0;
     let disposed = false;
@@ -463,7 +529,7 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
       io.disconnect();
       themeObserver.disconnect();
       if (themeRaf) cancelAnimationFrame(themeRaf);
-      fileLinks.dispose();
+      pathLinks.dispose();
       scrollDisp.dispose();
       writeDisp.dispose();
       unOut?.();
@@ -484,6 +550,7 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
 
   // Live font-size zoom: mutate the existing terminal in place, no remount.
   useEffect(() => {
+    fontSizeRef.current = fontSize;
     const term = termRef.current;
     if (!term) return;
     term.options.fontSize = fontSize;

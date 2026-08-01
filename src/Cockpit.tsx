@@ -15,6 +15,7 @@ import { Explorer } from "./Explorer";
 import { Review } from "./Review";
 import { AttentionQueue } from "./AttentionQueue";
 import { Shortcuts } from "./Shortcuts";
+import { Preview } from "./Preview";
 import { ZoomHud } from "./ZoomHud";
 import { useUI } from "./ui";
 import { applyTheme, applyAccent, currentThemeId, currentAccentId, findTheme } from "./themes";
@@ -111,6 +112,9 @@ export function Cockpit() {
       // UI-156: Ctrl+Tab cycles workspaces most-recently-used first, like a
       // browser — Ctrl+1..9 is positional, this is "back to what I was on".
       if (e.ctrlKey && e.key === "Tab") {
+        // UX-513: the file preview drawer owns Ctrl+Tab for cycling its own
+        // tabs while it has focus, so don't also spin the workspace ring.
+        if ((e.target as HTMLElement)?.closest?.(".prv-drawer")) return;
         e.preventDefault();
         const st = useApp.getState();
         if (st.workspaces.length < 2) return;
@@ -148,6 +152,8 @@ export function Cockpit() {
       // both go through the same live-session confirms as the buttons.
       if (e.ctrlKey && (e.key === "w" || e.key === "W")) {
         if ((e.target as HTMLElement)?.closest?.(".pbody")) return;
+        // UX-513: let the preview drawer close its own active tab instead.
+        if ((e.target as HTMLElement)?.closest?.(".prv-drawer")) return;
         e.preventDefault();
         const st = useApp.getState();
         const ws = st.workspaces.find((w) => w.id === st.activeId);
@@ -306,6 +312,7 @@ export function Cockpit() {
       <CommandPalette />
       <Broadcast />
       <Review />
+      <Preview />
       <AttentionQueue />
       <Shortcuts />
       <ZoomHud />
