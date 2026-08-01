@@ -20,7 +20,32 @@
    count (informational) -> folder name (redundant with the branch pill) ->
    diff badge (duplicated as "Review changes" in the overflow menu) ->
    branch pill (state dot + vendor glyph still show the pane's identity).
-   ============================================================ */
+
+   UI-605 addendum — three more candidates landed (sparkline+idle UX-556/557,
+   board-card link UX-573) on top of an already-crowded row. Rather than
+   just appending three more permanent chips, the density calls made here:
+     - The process chip (`.pproc`) is mostly RETIRED, not added to: UX-555
+       now writes the live process name straight into the pane's own name
+       once nothing else has claimed it, so the common case shows it for
+       free with zero extra header real estate. `.pproc` only reappears when
+       the name and the live process actually disagree (a manual rename, or
+       the instant before the first auto-title lands) — rare, so it keeps
+       its existing low fold priority rather than earning a higher one.
+     - The sparkline+idle widget (`.pspark`) is the LOWEST priority of all:
+       it's ambient ("is this pane quiet") rather than a fact you look
+       something up by, and the idle text inside it only renders once idle
+       actually exceeds a minute — a busy pane costs the row nothing but a
+       thin strip of bars. It folds before everything else.
+     - The board-card pill (`.pcard`) is conditional (most panes have no
+       card) and, when present, is a navigation shortcut rather than status
+       — ranked with the folder name: useful, but not identity-critical the
+       way the branch pill is.
+   Priority order, lowest first (unchanged items keep their old thresholds):
+   sparkline+idle (ambient) -> live process name (transient, now rare) ->
+   token count (informational) -> folder name (redundant with the branch
+   pill) -> board-card link (navigation, conditional) -> diff badge
+   (duplicated in the overflow menu) -> branch pill (state dot + vendor
+   glyph still show the pane's identity even with everything else folded). */
 .phead { container-type: inline-size; container-name: phead; }
 .phead .prepo {
   flex: 0 1 auto; min-width: 0; max-width: 160px;
@@ -38,9 +63,11 @@
    chrome across the row before any chip gets a share of the space. Every
    fold threshold below is bumped by the same margin so chips still fold at
    the same effective "room for the buttons" point as before, not sooner. */
+@container phead (max-width: 660px) { .pane .phead .pspark { display: none; } }
 @container phead (max-width: 600px) { .pane .phead .pproc { display: none; } }
 @container phead (max-width: 520px) { .pane .phead .ptok { display: none; } }
 @container phead (max-width: 460px) { .pane .phead .prepo { display: none; } }
+@container phead (max-width: 420px) { .pane .phead .pcard { display: none; } }
 @container phead (max-width: 380px) { .pane .phead .pdiff { display: none; } }
 @container phead (max-width: 320px) { .pane .phead .branch { display: none; } }
 
@@ -75,6 +102,34 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+/* UX-556/557: activity sparkline + idle readout. Small and quiet by design —
+   this is ambient status, not a fact to look up (see the UI-605 addendum
+   above the fold order for the density reasoning). */
+.phead .pspark {
+  display: inline-flex; align-items: center; gap: 4px; flex: none;
+}
+.pspark-bars { display: inline-flex; align-items: flex-end; gap: 1px; height: 11px; }
+.pspark-bar {
+  width: 2px; min-height: 1px; border-radius: 1px;
+  background: var(--faint); transition: height .3s ease;
+}
+.pspark-idle {
+  font-family: var(--font-mono); font-size: 9.5px; color: var(--st-waiting);
+  white-space: nowrap;
+}
+
+/* UX-573: board card <-> pane linkage, pane side. */
+.phead .pcard {
+  display: inline-flex; align-items: center; gap: 4px; flex: 0 1 auto;
+  min-width: 0; max-width: 140px; font-size: 10.5px; color: var(--muted);
+  cursor: pointer; padding: 2px 8px; border-radius: 999px;
+  border: 1px solid var(--line); background: var(--surface);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  transition: border-color .14s ease, color .14s ease;
+}
+.phead .pcard:hover { border-color: var(--accent); color: var(--text); }
+.phead .pcard:focus-visible { outline: 2px solid var(--ice); outline-offset: 1px; }
 
 /* UI-3: live token chip (from the agent's own session transcript) */
 .phead .ptok {

@@ -20,6 +20,8 @@ import { invalidateCwd, usePoll } from "./poll";
 import { closePaneGuarded } from "./worktrees";
 import { useBoardStore } from "./board/boardStore";
 import type { Card, ColumnId } from "./board/types";
+import { mapPatchLines } from "./difflines";
+import { nextUnreviewed } from "./reviewstate";
 import "./review.css";
 
 // Patch-line classes for the unified diff view.
@@ -31,15 +33,31 @@ function lineClass(l: string): string {
   return "";
 }
 
+// Shared by the file-list "open" action, conflict-file "open" action and
+// UX-519's line-click preview — one place that turns a diff-relative path
+// into an absolute one under `root`.
+function toAbsPath(root: string, relPath: string): string {
+  const sep = root.includes("/") && !root.includes("\\") ? "/" : "\\";
+  return root.replace(/[\\\/]+$/, "") + sep + relPath.replace(/\//g, sep);
+}
+
 // UI-167: past this many changed files a flat list stops being scannable.
 const GROUP_THRESHOLD = 15;
 
 // UI-179: a conflict lives in the pane's worktree — open the conflicted file
 // there rather than the shared cwd, in case the two ever diverge.
 function openConflictFile(pane: { worktreePath?: string | null; cwd: string }, relPath: string, onErr: () => void) {
-  const root = pane.worktreePath || pane.cwd;
-  const sep = root.includes("/") && !root.includes("\\") ? "/" : "\\";
-  void openPath(root.replace(/[\\\/]+$/, "") + sep + relPath.replace(/\//g, sep)).catch(onErr);
+  void openPath(toAbsPath(pane.worktreePath || pane.cwd, relPath)).catch(onErr);
+}
+
+// Local — not in Icons.tsx, matches its grid (20x20, strokeWidth 1.6, round
+// caps). UX-567's "mark reviewed" affordance.
+function IconCheck({ size = 13 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4 10.5 L8.2 14.8 L16 6" />
+    </svg>
+  );
 }
 
 export function Review() {
@@ -47,6 +65,9 @@ export function Review() {
   const setReviewPane = useUI((s) => s.setReviewPane);
   const pushToast = useUI((s) => s.pushToast);
   const requestConfirm = useUI((s) => s.requestConfirm);
+  // UX-519: diff lines open the same read-only preview drawer other file
+  // links use, jumped to the line's real position in the current file.
+  const openPreview = useUI((s) => s.openPreview);
   // Subscribe to workspaces so the drawer follows renames/closes live.
   const workspaces = useApp((s) => s.workspaces);
   const hit = useMemo(() => {
@@ -65,6 +86,11 @@ export function Review() {
   // (`size === 0`) that the merge call turns into `files: null` — the exact
   // all-files code path, unchanged from before this feature existed.
   const [deselected, setDeselected] = useState<Set<string>>(() => new Set());
+  // UX-567: files marked reviewed for THIS drawer session — resets with the
+  // diff (new pane, or the diff reloading with a different file set). This is
+  // deliberately not persisted: "reviewed" tracks having looked at the diff
+  // in front of you right now, not a permanent record.
+  const [reviewed, setReviewed] = useState<Set<string>>(() => new Set());
   const [handing, setHanding] = useState(false);
   // UI-5: a failed merge surfaces its conflicted files + a way forward here,
   // instead of vanishing into a toast.
@@ -114,6 +140,13 @@ export function Review() {
         const next = new Set([...d].filter((p) => s.files.some((f) => f.path === p)));
         return next.size === d.size ? d : next;
       });
+      // UX-567: a file that's no longer in the diff (reverted, or the merge
+      // that just landed it) can't stay "reviewed" — there's nothing left to
+      // review.
+      setReviewed((r) => {
+        const next = new Set([...r].filter((p) => s.files.some((f) => f.path === p)));
+        return next.size === r.size ? r : next;
+      });
     } catch (e) {
       setSummary(null);
       setError(String(e));
@@ -137,7 +170,7 @@ export function Review() {
   }, 8000, [pane?.cwd, pane?.baseBranch], paneId != null);
 
   useEffect(() => { seenTotals.current = ""; setStaleSince(null); }, [paneId, selected]);
-  useEffect(() => { setConflict(null); setDeselected(new Set()); }, [paneId]);
+  useEffect(() => { setConflict(null); setDeselected(new Set()); setReviewed(new Set()); }, [paneId]);
 
   // Load the selected file's patch.
   useEffect(() => {
@@ -153,6 +186,9 @@ export function Review() {
   // UI-166: which tokens actually changed within each paired -/+ line.
   const wordMarks = useMemo(() => wordDiffMap(lines), [lines]);
   const splitRows = useMemo(() => (split ? toSplitRows(lines) : []), [split, lines]);
+  // UX-519/UI-617: each line's real old/new file line number — drives both
+  // the unified view's gutter and the "click a line to preview it" jump.
+  const patchLineNos = useMemo(() => mapPatchLines(lines), [lines]);
   const hunkLines = useMemo(() => lines.reduce<number[]>((acc, l, i) => (l.startsWith("@@") ? [...acc, i] : acc), []), [lines]);
   // UI-171: highlighting is chosen once per selected file, not per line.
   const lang = useMemo(() => (selected ? langFor(selected) : null), [selected]);
@@ -183,6 +219,31 @@ export function Review() {
     el?.scrollIntoView({ block: "center" });
   };
 
+  // UX-519: open the file preview at a specific diff line's real position in
+  // the current (new) file. Deleted lines have no such position — the click
+  // handler that wires this in only fires when patchLineNos gave one.
+  const openAtLine = (line: number) => {
+    if (!pane || !selected) return;
+    openPreview(toAbsPath(pane.cwd, selected), { line });
+  };
+
+  // UX-567: toggle the selected file's reviewed mark, and when it's just been
+  // marked (not un-marked), jump on to the next unreviewed file — the same
+  // "clear the list" flow j/k already supports, one keystroke shorter.
+  const toggleReviewed = (path: string) => {
+    const willReview = !reviewed.has(path);
+    setReviewed((r) => {
+      const next = new Set(r);
+      if (willReview) next.add(path); else next.delete(path);
+      return next;
+    });
+    if (willReview) {
+      const files = summary?.files.map((f) => f.path) ?? [];
+      const next = nextUnreviewed(files, path, reviewed);
+      if (next) setSelected(next);
+    }
+  };
+
   // UI-168: files still selected for the merge, in diff order.
   const selectedFiles = useMemo(
     () => (summary?.files ?? []).map((f) => f.path).filter((p) => !deselected.has(p)),
@@ -196,6 +257,16 @@ export function Review() {
     });
   };
 
+  // UX-577: line totals for whatever's actually going into the merge, so the
+  // preflight can quote the real delta rather than just a file count.
+  const selectedStats = useMemo(() => {
+    const files = summary?.files ?? [];
+    return files.reduce(
+      (acc, f) => (deselected.has(f.path) ? acc : { added: acc.added + f.added, deleted: acc.deleted + f.deleted }),
+      { added: 0, deleted: 0 }
+    );
+  }, [summary, deselected]);
+
   const mergeBack = () => {
     if (!pane?.worktreePath || merging) return;
     const allSelected = deselected.size === 0;
@@ -203,14 +274,21 @@ export function Review() {
     // a partial selection sends only the paths still checked.
     const files = allSelected ? null : selectedFiles;
     if (files && files.length === 0) return; // guarded by the button's disabled state too
-    const n = files?.length ?? 0;
+    const n = files?.length ?? fileCount;
+    // UX-577: one preflight, everything you need to decide in it — how much
+    // is landing (files + lines) and whether base has moved since the branch
+    // forked — instead of a title that only names the branch.
+    const stat = allSelected
+      ? `${fileCount} file${fileCount === 1 ? "" : "s"}, +${summary?.totalAdded ?? 0} −${summary?.totalDeleted ?? 0}`
+      : `${n} of ${fileCount} file${fileCount === 1 ? "" : "s"}, +${selectedStats.added} −${selectedStats.deleted}`;
+    const drift = ctx && ctx.baseAhead > 0
+      ? ` ${pane.baseBranch ?? ctx.baseBranch ?? "base"} has moved ${ctx.baseAhead} commit${ctx.baseAhead === 1 ? "" : "s"} ahead since this branch forked.`
+      : "";
     requestConfirm({
-      title: allSelected
-        ? `Merge ${pane.branch ?? "this branch"} into ${pane.baseBranch ?? "base"}?`
-        : `Merge ${n} of ${fileCount} file${fileCount === 1 ? "" : "s"} from ${pane.branch ?? "this branch"} into ${pane.baseBranch ?? "base"}?`,
-      body: allSelected
-        ? "Outstanding work is committed to the pane's branch first. A conflict aborts cleanly and leaves both branches untouched."
-        : "Only the checked files are committed to the pane's branch and merged. Everything else stays uncommitted in the worktree so the agent can keep working on it. A conflict aborts cleanly and leaves both branches untouched.",
+      title: `Merge ${pane.branch ?? "this branch"} into ${pane.baseBranch ?? "base"}?`,
+      body: `${stat}.${drift} Outstanding work is committed to the pane's branch first.` +
+        (allSelected ? "" : " Everything else stays uncommitted in the worktree so the agent can keep working on it.") +
+        " A conflict aborts cleanly and leaves both branches untouched.",
       confirmLabel: allSelected ? "Merge back" : `Merge ${n} file${n === 1 ? "" : "s"}`,
       onConfirm: () => {
         setMerging(true);
@@ -218,9 +296,9 @@ export function Review() {
         invoke<MergeOutcome>("git_merge_back", { worktreePath: pane.worktreePath, files })
           .then((m) => {
             if (m.status === "merged") {
-              pushToast("success", allSelected
-                ? `Merged ${pane.branch} into ${pane.baseBranch}.`
-                : `Merged ${n} file${n === 1 ? "" : "s"} from ${pane.branch} into ${pane.baseBranch}.`);
+              // UX-578: name what actually landed — the same file/line
+              // delta the preflight showed — rather than just "merged".
+              pushToast("success", `Merged ${pane.branch} into ${pane.baseBranch} — ${stat}.`);
               // UI-159: a merge is the ONLY unambiguous "this work landed"
               // signal. The obvious heuristic — the pane's diff going to zero —
               // fires identically on `git reset --hard`, on the agent reverting
@@ -341,11 +419,13 @@ export function Review() {
       else if (e.key === "k" && files.length) { e.preventDefault(); setSelected(files[Math.max(0, at - 1)]); }
       else if (e.key === "n") { e.preventDefault(); jumpHunk(1); }
       else if (e.key === "p") { e.preventDefault(); jumpHunk(-1); }
+      // UX-567: mark the current file reviewed without leaving the diff.
+      else if (e.key === "r" && selected) { e.preventDefault(); toggleReviewed(selected); }
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [paneId, setReviewPane, summary, selected, hunkLines, hunkIdx]);
+  }, [paneId, setReviewPane, summary, selected, hunkLines, hunkIdx, reviewed]);
 
   if (paneId == null) return null;
   if (!pane) { setReviewPane(null); return null; }
@@ -360,13 +440,24 @@ export function Review() {
     ? "Merge back"
     : `Merge ${selectedFiles.length} of ${fileCount} file${fileCount === 1 ? "" : "s"}`;
 
-  // Shared by the flat and grouped (UI-167) file lists. The checkbox is a
-  // sibling of the file button, not nested inside it — a <button> may not
-  // contain other interactive content (its existing role="button" span gets
-  // away with that because it isn't a real control; a real checkbox needs
-  // its own place). Only isolated panes get one: only they can merge back.
+  // Shared by the flat and grouped (UI-167) file lists. The checkbox and the
+  // reviewed mark are siblings of the file button, not nested inside it — a
+  // <button> may not contain other interactive content (its existing
+  // role="button" span gets away with that because it isn't a real control;
+  // a real checkbox needs its own place). Only isolated panes get the merge
+  // checkbox: only they can merge back. Every pane gets the reviewed mark —
+  // reviewing a diff doesn't require merge capability.
   const renderFile = (f: DiffFile) => (
     <div key={f.path} className={"rv-file-row" + (deselected.has(f.path) ? " excluded" : "")}>
+      <span
+        className={"rv-file-reviewed" + (reviewed.has(f.path) ? " on" : "")}
+        role="button"
+        tabIndex={-1}
+        title={reviewed.has(f.path) ? "Mark unreviewed" : "Mark reviewed (r)"}
+        onClick={(e) => { e.stopPropagation(); toggleReviewed(f.path); }}
+      >
+        <IconCheck size={12} />
+      </span>
       {pane.worktreePath && (
         <input
           type="checkbox"
@@ -377,7 +468,7 @@ export function Review() {
         />
       )}
       <button
-        className={"rv-file" + (selected === f.path ? " sel" : "")}
+        className={"rv-file" + (selected === f.path ? " sel" : "") + (reviewed.has(f.path) ? " reviewed" : "")}
         onClick={() => setSelected(f.path)}
         title={f.path}
       >
@@ -389,9 +480,7 @@ export function Review() {
           title="Open this file"
           onClick={(e) => {
             e.stopPropagation();
-            const sep = pane.cwd.includes("/") && !pane.cwd.includes("\\") ? "/" : "\\";
-            void openPath(pane.cwd.replace(/[\\\/]+$/, "") + sep + f.path.replace(/\//g, sep))
-              .catch(() => pushToast("error", "Couldn't open that file."));
+            void openPath(toAbsPath(pane.cwd, f.path)).catch(() => pushToast("error", "Couldn't open that file."));
           }}
         >
           open
@@ -465,6 +554,11 @@ export function Review() {
               <div className="rv-files-head">
                 {fileCount} file{fileCount === 1 ? "" : "s"}
                 <span className="rv-stat"><em className="add">+{summary.totalAdded}</em> <em className="del">−{summary.totalDeleted}</em></span>
+                {/* UX-567: remaining count — the whole point of marking files
+                    reviewed is knowing how much is left. */}
+                <span className={"rv-reviewed-count" + (reviewed.size === fileCount ? " done" : "")} title="Reviewed in this pass (r to toggle)">
+                  {reviewed.size === fileCount ? "all reviewed" : `${fileCount - reviewed.size} left to review`}
+                </span>
               </div>
               {groups ? (
                 // UI-167: past GROUP_THRESHOLD files a flat list is noise —
@@ -518,51 +612,79 @@ export function Review() {
               </div>
               {split ? (
                 <div className="rv-split" ref={patchRef as unknown as React.RefObject<HTMLDivElement>}>
-                  {splitRows.map((r, k) => (
-                    <div key={k} data-line={r.index} className={"rv-srow " + r.kind}>
-                      {r.kind === "hunk" || r.kind === "meta" ? (
-                        <div className="rv-sfull">{r.left}</div>
-                      ) : (
-                        <>
-                          <span className="rv-sno">{r.leftNo ?? ""}</span>
-                          <span className="rv-sside left">{r.left ?? ""}</span>
-                          <span className="rv-sno">{r.rightNo ?? ""}</span>
-                          <span className="rv-sside right">{r.right ?? ""}</span>
-                        </>
-                      )}
-                    </div>
-                  ))}
+                  {splitRows.map((r, k) => {
+                    // UX-519: same rule as the unified view — only a row that
+                    // has a new-side line number has anywhere to jump to.
+                    const clickable = r.kind !== "hunk" && r.kind !== "meta" && r.rightNo != null;
+                    return (
+                      <div
+                        key={k}
+                        data-line={r.index}
+                        className={"rv-srow " + r.kind + (clickable ? " rv-clickable" : "")}
+                        onClick={clickable ? () => openAtLine(r.rightNo!) : undefined}
+                        title={clickable ? `Open ${selected} at line ${r.rightNo}` : undefined}
+                      >
+                        {r.kind === "hunk" || r.kind === "meta" ? (
+                          <div className="rv-sfull">{r.left}</div>
+                        ) : (
+                          <>
+                            <span className="rv-sno">{r.leftNo ?? ""}</span>
+                            <span className="rv-sside left">{r.left ?? ""}</span>
+                            <span className="rv-sno">{r.rightNo ?? ""}</span>
+                            <span className="rv-sside right">{r.right ?? ""}</span>
+                          </>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               ) : (
               <pre className="rv-patch" ref={patchRef}>
                 {lines.map((l, i) => {
                   const cls = lineClass(l);
+                  // UX-519/UI-617: aligned old/new gutters, and a click jumps
+                  // the file preview to this line — only where the line
+                  // actually exists in the current (new) file. A pure
+                  // deletion has nothing to jump to, so it stays inert; that
+                  // asymmetry is deliberate rather than a gap (see report).
+                  const no = patchLineNos[i];
+                  const clickable = cls !== "rv-hunk" && cls !== "rv-meta" && no?.newLine != null;
                   return (
-                    <span key={i} data-line={i} className={"rv-line " + cls}>
-                      {wordMarks.has(i) ? (
-                        <>
-                          {l[0]}
-                          {wordMarks.get(i)!.map((seg, k) =>
-                            seg.changed
-                              ? <em key={k} className="rv-word">{seg.text}</em>
-                              : <span key={k}>{seg.text}</span>
-                          )}
-                        </>
-                      ) : cls === "" && lang && l ? (
-                        // UI-171: only unmarked context lines get syntax
-                        // colour. Add/del lines already carry meaning through
-                        // colour (green/red) and, when paired, word-diff's
-                        // .rv-word — token colours on top of either would
-                        // fight the thing that's supposed to stand out.
-                        <>
-                          {l[0]}
-                          {highlightLine(l.slice(1), lang).map((tok, k) =>
-                            tok.kind === "plain"
-                              ? <span key={k}>{tok.text}</span>
-                              : <span key={k} className={"rv-tok-" + tok.kind}>{tok.text}</span>
-                          )}
-                        </>
-                      ) : (l || " ")}
+                    <span
+                      key={i}
+                      data-line={i}
+                      className={"rv-line " + cls + (clickable ? " rv-clickable" : "")}
+                      onClick={clickable ? () => openAtLine(no!.newLine!) : undefined}
+                      title={clickable ? `Open ${selected} at line ${no!.newLine}` : undefined}
+                    >
+                      <span className="rv-gno rv-gno-old">{no?.oldLine ?? ""}</span>
+                      <span className="rv-gno rv-gno-new">{no?.newLine ?? ""}</span>
+                      <span className="rv-lc">
+                        {wordMarks.has(i) ? (
+                          <>
+                            {l[0]}
+                            {wordMarks.get(i)!.map((seg, k) =>
+                              seg.changed
+                                ? <em key={k} className="rv-word">{seg.text}</em>
+                                : <span key={k}>{seg.text}</span>
+                            )}
+                          </>
+                        ) : cls === "" && lang && l ? (
+                          // UI-171: only unmarked context lines get syntax
+                          // colour. Add/del lines already carry meaning through
+                          // colour (green/red) and, when paired, word-diff's
+                          // .rv-word — token colours on top of either would
+                          // fight the thing that's supposed to stand out.
+                          <>
+                            {l[0]}
+                            {highlightLine(l.slice(1), lang).map((tok, k) =>
+                              tok.kind === "plain"
+                                ? <span key={k}>{tok.text}</span>
+                                : <span key={k} className={"rv-tok-" + tok.kind}>{tok.text}</span>
+                            )}
+                          </>
+                        ) : (l || " ")}
+                      </span>
                       {"\n"}
                     </span>
                   );

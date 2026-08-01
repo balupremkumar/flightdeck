@@ -58,20 +58,32 @@
   padding: 8px 6px;
 }
 .rv-files-head {
-  display: flex; align-items: center; justify-content: space-between;
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
   font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase;
   color: var(--faint); padding: 2px 8px 8px;
 }
-.rv-stat em, .rv-file-stat em, .rv-dirstat em { font-style: normal; font-family: var(--mono); font-size: 10.5px; }
+.rv-stat em, .rv-file-stat em, .rv-dirstat em { font-style: normal; font-family: var(--mono); font-size: 10.5px; font-variant-numeric: tabular-nums; }
 em.add { color: var(--st-running); }
 em.del { color: var(--st-error); margin-left: 5px; }
+/* UX-567: remaining-to-review count — pushed to the far end of the head row. */
+.rv-reviewed-count { margin-left: auto; text-transform: none; letter-spacing: normal; font-size: 10px; }
+.rv-reviewed-count.done { color: var(--st-running); }
 /* UI-168: the checkbox lives outside the file button — a <button> can't
-   contain another real control (see the render comment for why). */
+   contain another real control (see the render comment for why). Same for
+   the reviewed mark (UX-567). */
 .rv-file-row { display: flex; align-items: center; gap: 4px; width: 100%; }
 .rv-file-check {
   flex: none; accent-color: var(--accent); width: 13px; height: 13px; cursor: pointer;
 }
+.rv-file-reviewed {
+  flex: none; display: inline-flex; align-items: center; justify-content: center;
+  width: 16px; height: 16px; border-radius: 4px; color: var(--faint); cursor: pointer;
+  border: 1px solid transparent; transition: color .12s ease, border-color .12s ease;
+}
+.rv-file-reviewed:hover { color: var(--text); border-color: var(--line); }
+.rv-file-reviewed.on { color: var(--st-running); }
 .rv-file-row.excluded .rv-file { color: var(--faint); opacity: .6; }
+.rv-file.reviewed .rv-file-path { color: var(--faint); }
 .rv-file {
   display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0;
   padding: 6px 8px; border: 0; border-radius: 7px; background: transparent;
@@ -111,17 +123,33 @@ em.del { color: var(--st-error); margin-left: 5px; }
   padding: 7px 10px; border-bottom: 1px solid var(--line);
 }
 .rv-patch-file { font-family: var(--mono); font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.rv-hunk-count { font-family: var(--mono); font-size: 10.5px; color: var(--faint); }
+.rv-hunk-count { font-family: var(--mono); font-size: 10.5px; color: var(--faint); font-variant-numeric: tabular-nums; }
+/* UI-617: diff typography. Wrap policy is deliberately "never" — code lines
+   wrapping mid-token is harder to read than scrolling, and wrapping would
+   also break the gutter alignment below (a wrapped line's continuation has
+   nowhere honest to put a line number). Same policy GitHub/GitLab/VS Code
+   default to; `.rv-patch`/`.rv-split` both scroll horizontally instead. */
 .rv-patch {
   flex: 1; overflow: auto; margin: 0; padding: 10px 0 24px;
   background: var(--abyss);
   font-family: var(--mono); font-size: 11.5px; line-height: 1.5;
+  font-variant-numeric: tabular-nums;
 }
-.rv-line { display: block; padding: 0 12px; white-space: pre; color: var(--muted); }
+.rv-line { display: flex; align-items: baseline; white-space: pre; color: var(--muted); }
 .rv-line.rv-add { color: var(--st-running); background: color-mix(in srgb, var(--st-running) 9%, transparent); }
 .rv-line.rv-del { color: var(--st-error); background: color-mix(in srgb, var(--st-error) 9%, transparent); }
 .rv-line.rv-hunk { color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
 .rv-line.rv-meta { color: var(--faint); }
+/* UX-519: aligned old/new gutters (two columns, GitHub-style) and the
+   click-to-preview affordance on lines that exist in the current file. */
+.rv-gno {
+  flex: none; width: 38px; padding: 0 6px; text-align: right;
+  color: var(--faint); user-select: none;
+}
+.rv-line.rv-hunk .rv-gno, .rv-line.rv-meta .rv-gno { visibility: hidden; }
+.rv-lc { flex: 1; min-width: 0; padding: 0 12px; }
+.rv-line.rv-clickable { cursor: pointer; }
+.rv-line.rv-clickable:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
 
 /* Footer / merge action */
 .rv-foot {
@@ -303,10 +331,12 @@ em.del { color: var(--st-error); margin-left: 5px; }
   font-family: var(--mono); font-size: 11.5px; line-height: 1.55;
 }
 .rv-srow { display: grid; grid-template-columns: 42px 1fr 42px 1fr; min-width: max-content; }
+.rv-srow.rv-clickable { cursor: pointer; }
+.rv-srow.rv-clickable:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
 .rv-sno {
   padding: 0 6px; text-align: right; color: var(--faint);
   background: color-mix(in srgb, var(--text) 4%, transparent);
-  user-select: none; font-size: 10.5px;
+  user-select: none; font-size: 10.5px; font-variant-numeric: tabular-nums;
 }
 .rv-sside { padding: 0 8px; white-space: pre; }
 /* Deleted side red, added side green; a half-row's empty side is inert. */

@@ -87,14 +87,21 @@ export function AttentionQueue() {
                 onClick={() => jump(w.id, p.id)}
                 onMouseEnter={() => setSel(i)}
               >
+                {/* UI-630: severity reads first — the rank number, the coloured
+                    dot, and what kind of attention it is all lead the row, ahead
+                    of which pane/workspace it's about. Duration is the last
+                    fact before the row's one action (snooze). The queue is
+                    already sorted by severity then longest-waiting (attention.ts);
+                    this just makes that order visible in the row itself, not
+                    only in the list's ordering. */}
                 {i < 9 && <span className="aq-n">{i + 1}</span>}
                 <span className={"ntf-dot " + p.state} />
+                <span className="aq-state">{STATE_LABEL[p.state]}</span>
                 <span className="aq-main">
                   <span className="aq-pane">{p.title || vendorShort(p.vendor)}</span>
                   {/* UI-141: what it's actually asking, not just that it asked. */}
                   <span className="aq-ws">{lastLine.get(p.id) || w.name}</span>
                 </span>
-                <span className="aq-state">{STATE_LABEL[p.state]}</span>
                 <span className="aq-since">{forMins(since)}</span>
                 {/* UI-143: park a pane you've decided to deal with later. */}
                 <span

@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { revealPath } from "./reveal";
 import { useApp, type PaneModel, type PaneState } from "./store";
@@ -6,17 +6,18 @@ import { useUI } from "./ui";
 import { Terminal, type TerminalHandle } from "./Terminal";
 import {
   IconBranch, IconClose, IconRefresh, IconDrag, IconOverflow,
-  IconMaximizePane, IconMinimize, IconFolder, IconChevron, IconDiff,
+  IconMaximizePane, IconMinimize, IconFolder, IconChevron, IconDiff, IconBoard,
 } from "./Icons";
 import type { DiffSummary } from "./worktrees";
 import { cachedInvoke, usePoll, useVisible } from "./poll";
-import { compact, num, duration, bytes } from "./format";
+import { compact, num, duration, bytes, relTime, tailEllipsis } from "./format";
 import { stateSince, lastLine, STATE_LABEL as STATE_TITLE } from "./attention";
 import "./panes.css";
 
 import { vendorShort, vendorMeta, vendorColor } from "./vendors";
 import { VendorGlyph } from "./VendorGlyph";
 import { closePaneWithCleanup } from "./worktrees";
+import { useBoardStore, useCardForPane } from "./board/boardStore";
 const MIN_FONT = 9;
 const MAX_FONT = 22;
 const DEFAULT_FONT = 13;
@@ -166,6 +167,22 @@ function PaneViewInner({
   const menuBtnRef = useRef<HTMLButtonElement>(null);
   const findRef = useRef<HTMLInputElement>(null);
   const terminalRef = useRef<TerminalHandle>(null);
+
+  // UX-555: auto-title this pane from its live foreground process, but only
+  // while nothing else has claimed the title text. `lastAutoTitle` remembers
+  // what WE last wrote — if pane.title ever drifts from that (a manual
+  // rename via the header, or the user clearing it back to blank) auto-
+  // titling backs off until the title is cleared again. A pane that already
+  // has a title when this first runs (e.g. restored from a prior session) is
+  // treated as manually named — conservative, but it means a real rename can
+  // never be silently overwritten.
+  const lastAutoTitle = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (!procName || procName === pane.title) return;
+    if (pane.title && pane.title !== lastAutoTitle.current) return; // manual rename — leave it
+    renamePane(pane.id, procName);
+    lastAutoTitle.current = procName;
+  }, [procName, pane.title, pane.id, renamePane]);
 
   useEffect(() => {
     if (!searchOpen) { setMatchInfo(null); return; }
@@ -398,6 +415,52 @@ function PaneViewInner({
     }
   }, 15000, [pane.cwd, pane.epoch], paneVisible);
 
+  // UX-556/557: activity sparkline + idle-time, kept cheap on purpose. Output
+  // arrives far more often than the header should re-render, so a ref-backed
+  // ring buffer counts lines per bucket on the hot path (onLine below) and a
+  // slow, visibility-gated tick is the ONLY thing that triggers a redraw —
+  // never a per-line state write. Off-screen panes (paneVisible false) don't
+  // even run that tick, matching every other poll in this file.
+  const ACTIVITY_BUCKETS = 16;
+  const BUCKET_MS = 3000;
+  const activityRef = useRef<number[]>(new Array(ACTIVITY_BUCKETS).fill(0));
+  const bucketStart = useRef(Date.now());
+  const lastOutputRef = useRef(Date.now());
+  const [activityTick, setActivityTick] = useState(0);
+  const recordActivity = () => {
+    const now = Date.now();
+    lastOutputRef.current = now;
+    const shift = Math.floor((now - bucketStart.current) / BUCKET_MS);
+    if (shift > 0) {
+      const arr = activityRef.current;
+      for (let i = 0; i < Math.min(shift, arr.length); i++) { arr.shift(); arr.push(0); }
+      bucketStart.current += shift * BUCKET_MS;
+    }
+    activityRef.current[activityRef.current.length - 1]++;
+  };
+  useEffect(() => {
+    if (!paneVisible) return;
+    const id = setInterval(() => setActivityTick((t) => t + 1), 4000);
+    return () => clearInterval(id);
+  }, [paneVisible]);
+  const activityBars = useMemo(() => {
+    const counts = activityRef.current;
+    const max = Math.max(1, ...counts);
+    return counts.map((c) => Math.round((c / max) * 100));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activityTick]);
+  const IDLE_SHOW_MS = 60_000;
+  // Re-read on every render; the 4s tick above is what makes this move.
+  const idleLabel = paneVisible && Date.now() - lastOutputRef.current > IDLE_SHOW_MS ? relTime(lastOutputRef.current) : null;
+
+  // UX-573: this pane's linked board card, if any — click focuses it on the
+  // board. Read-only from here; the board owns the card (board/boardStore.ts).
+  const card = useCardForPane(wsId, pane.id);
+  const focusCardOnBoard = () => {
+    useBoardStore.getState().setFocusCardId(card!.id);
+    useUI.getState().setActiveView("board");
+  };
+
   return (
     <div
       className={
@@ -483,6 +546,16 @@ function PaneViewInner({
             {displayName}
           </span>
         )}
+        {/* UX-556/557: activity sparkline + idle readout. The bars stay quiet
+            and small on purpose (glance-only, no numbers) — the idle label
+            only appears once there's actually something to say (>60s since
+            output), so a busy pane shows nothing extra at all. */}
+        <span className="pspark" title={`Activity — last output ${relTime(lastOutputRef.current)}`}>
+          <span className="pspark-bars">
+            {activityBars.map((h, i) => <span key={i} className="pspark-bar" style={{ height: `${Math.max(8, h)}%` }} />)}
+          </span>
+          {idleLabel && <span className="pspark-idle">idle {idleLabel}</span>}
+        </span>
         <span
           className="prepo prepo-click"
           role="button"
@@ -493,7 +566,10 @@ function PaneViewInner({
         >
           &middot; {baseName(pane.cwd)}
         </span>
-        {procName && <span className="pproc" title="Running process">{procName}</span>}
+        {/* UX-555 folds this into the pane name itself (auto-title), so the
+            chip only needs to appear when the two disagree — a manual
+            rename, or the moment before the first auto-title lands. */}
+        {procName && procName !== displayName && <span className="pproc" title="Live process (pane name doesn't match)">{procName}</span>}
         {/* UI-27: a git problem is worth one quiet word — silence reads as
             "not a repo", which may be wrong. */}
         {!gitStatus && gitError && (
@@ -512,6 +588,21 @@ function PaneViewInner({
             {gitStatus.dirty && (
               <span aria-hidden className="dirty-dot" />
             )}
+          </span>
+        )}
+        {/* UX-573: this pane dispatched (or was dispatched from) a board
+            card — click focuses it there. Read-only linkage; the board owns
+            the card. */}
+        {card && (
+          <span
+            className="pcard"
+            role="button"
+            tabIndex={0}
+            title={`Board card: ${card.title} — click to focus it on the board`}
+            onClick={focusCardOnBoard}
+            onKeyDown={(e) => { if (e.key === "Enter") focusCardOnBoard(); }}
+          >
+            <IconBoard size={11} /> {tailEllipsis(card.title, 16)}
           </span>
         )}
         {/* UI-129: this pane is in the attention queue — show it where the user is looking. */}
@@ -624,6 +715,17 @@ Running low — consider /compact in this pane.` : "")
               </button>
               <button className="pmenu-item" onClick={reveal}>
                 <IconFolder size={13} /> Reveal in Explorer
+              </button>
+              {/* UX-579: worktrees were only reachable from Settings >
+                  Diagnostics — jump straight there from wherever you're
+                  actually looking at one. Shown on every pane (not just
+                  isolated ones) since the inventory is app-wide, not
+                  per-pane. */}
+              <button
+                className="pmenu-item"
+                onClick={() => { closeMenu(); useUI.getState().openSettingsAt("Diagnostics"); }}
+              >
+                <IconFolder size={13} /> Worktree inventory
               </button>
               <div className="pmenu-zoom">
                 <span className="pmenu-zoom-label">Font size (this pane)</span>
@@ -739,7 +841,7 @@ Running low — consider /compact in this pane.` : "")
           onState={(st) => setPaneState(pane.id, st as PaneState)}
           onProc={setProcName}
           onBell={pulseBell}
-          onLine={(l) => lastLine.set(pane.id, l)}
+          onLine={(l) => { lastLine.set(pane.id, l); recordActivity(); }}
           onScrollAway={setBehind}
           onProgress={setProgress}
         />
