@@ -3,6 +3,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { useApp } from "./store";
+import { useOverlayEsc } from "./ui";
 import { IconClose, IconFolder, IconRefresh } from "./Icons";
 import { useVendors, vendorMeta, vendorShort, defaultCycle } from "./vendors";
 import { VendorGlyph } from "./VendorGlyph";
@@ -252,10 +253,14 @@ export function NewWorkspace() {
   };
 
   // UI-110: Esc closes (matches every other overlay) — only when there's
-  // something to go back to. UI-100: Enter submits from any field.
+  // something to go back to (the forced first-run case, zero workspaces, has
+  // nothing to cancel back to, so it's deliberately never registered then).
+  // UX-542/543: shared overlay stack (ui.ts).
+  useOverlayEsc(hasWorkspaces && !busy, cancelCreate);
+
+  // UI-100: Enter submits from any field.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && hasWorkspaces && !busy) { e.preventDefault(); cancelCreate(); return; }
       if (e.key === "Enter" && !busy && canCreate && !(e.target as HTMLElement)?.closest?.("select")) {
         e.preventDefault();
         void create();
@@ -264,7 +269,7 @@ export function NewWorkspace() {
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasWorkspaces, busy, root, slots, isolate, setupCmd, count]);
+  }, [busy, root, slots, isolate, setupCmd, count]);
 
   // UI-113: drop a folder anywhere on the dialog to fill the directory.
   useEffect(() => {

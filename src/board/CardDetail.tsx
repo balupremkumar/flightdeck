@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useApp } from "../store";
-import { useUI } from "../ui";
+import { useUI, useOverlayEsc } from "../ui";
 import { IconClose } from "../Icons";
 import { useFocusTrap } from "../useFocusTrap";
 import { useBoardStore, makeId, LABEL_SWATCHES } from "./boardStore";
@@ -54,14 +54,10 @@ export function CardDetail({ cardId, onClose }: { cardId: string; onClose: () =>
     setDescription(card?.description ?? "");
   }, [card?.id]);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    // capture: xterm swallows Escape otherwise
-    window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
-  }, [onClose]);
+  // UX-542/543: CardDetail is only ever mounted while open (Board.tsx renders
+  // it conditionally on `detailId`), so the overlay is registered for its
+  // whole mounted lifetime.
+  useOverlayEsc(true, onClose);
 
   if (!card) return null;
 

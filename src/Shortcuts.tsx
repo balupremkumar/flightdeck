@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useOverlayEsc } from "./ui";
 import { getShortcuts, FIXED_SHORTCUTS, CONTEXTUAL_SHORTCUTS } from "./Settings";
 import { IconClose } from "./Icons";
 import "./overlays.css";
@@ -37,16 +38,8 @@ export function Shortcuts() {
     return () => window.removeEventListener("keydown", onKey, true);
   }, []);
 
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") { e.preventDefault(); setOpen(false); }
-    };
-    // Capture phase: xterm swallows Escape on bubble, same reasoning as
-    // every other overlay's dismiss listener in this app.
-    window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
-  }, [open]);
+  // UX-542/543: shared overlay stack (ui.ts).
+  useOverlayEsc(open, () => setOpen(false));
 
   if (!open) return null;
 

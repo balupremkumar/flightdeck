@@ -1,6 +1,7 @@
 import { useEffect, useState, type DragEvent } from "react";
 import { createPortal } from "react-dom";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { useOverlayEsc } from "../ui";
 import type { Card, ColumnId, Vendor } from "./types";
 import { PRIORITY_COLORS, STATE_COLORS, STATE_LABELS } from "./palette";
 import { agentVendors, vendorColor, vendorShort } from "../vendors";
@@ -54,13 +55,13 @@ export function CardItem({
   // UI-158: "Send to agent…" — a small vendor picker, portalled to <body> so
   // a column's overflow:auto scroller (col-list) can't clip it.
   const [agentMenu, setAgentMenu] = useState<{ x: number; y: number } | null>(null);
+  // UX-542/543: shared overlay stack (ui.ts).
+  useOverlayEsc(!!agentMenu, () => setAgentMenu(null));
   useEffect(() => {
     if (!agentMenu) return;
     const close = () => setAgentMenu(null);
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setAgentMenu(null); };
     window.addEventListener("mousedown", close);
-    window.addEventListener("keydown", onKey, true); // capture: xterm swallows Escape otherwise
-    return () => { window.removeEventListener("mousedown", close); window.removeEventListener("keydown", onKey, true); };
+    return () => window.removeEventListener("mousedown", close);
   }, [agentMenu]);
 
   return (

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type CSSProperties, type DragEvent } from 
 import { createPortal } from "react-dom";
 import { IconBoard, IconWipe, IconPlus, IconClose, IconChevron } from "./Icons";
 import { useApp } from "./store";
-import { useUI } from "./ui";
+import { useUI, useOverlayEsc } from "./ui";
 import "./Board.css";
 import { useBoardStore, archivedCardsOf, lastAgentForRepo, rememberAgentForRepo } from "./board/boardStore";
 import { useVendors, agentVendors, vendorShort } from "./vendors";
@@ -164,31 +164,30 @@ export function Board() {
 
   // UI-164: priority-stripe legend popover, portalled like the card menus.
   const [legendPos, setLegendPos] = useState<{ x: number; y: number } | null>(null);
+  // UX-542/543: shared overlay stack (ui.ts) — Esc handling for each of these
+  // three menus, mousedown-outside stays its own local listener below.
+  useOverlayEsc(!!legendPos, () => setLegendPos(null));
   useEffect(() => {
     if (!legendPos) return;
     const close = () => setLegendPos(null);
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setLegendPos(null); };
     window.addEventListener("mousedown", close);
-    window.addEventListener("keydown", onKey, true); // capture: xterm swallows Escape otherwise
-    return () => { window.removeEventListener("mousedown", close); window.removeEventListener("keydown", onKey, true); };
+    return () => window.removeEventListener("mousedown", close);
   }, [legendPos]);
 
+  useOverlayEsc(!!manageOpen, () => { setManageOpen(null); setEditingColId(null); });
   useEffect(() => {
     if (!manageOpen) return;
     const close = () => { setManageOpen(null); setEditingColId(null); };
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") close(); };
     window.addEventListener("mousedown", close);
-    window.addEventListener("keydown", onKey, true);
-    return () => { window.removeEventListener("mousedown", close); window.removeEventListener("keydown", onKey, true); };
+    return () => window.removeEventListener("mousedown", close);
   }, [manageOpen]);
 
+  useOverlayEsc(!!templatePos, () => setTemplatePos(null));
   useEffect(() => {
     if (!templatePos) return;
     const close = () => setTemplatePos(null);
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setTemplatePos(null); };
     window.addEventListener("mousedown", close);
-    window.addEventListener("keydown", onKey, true);
-    return () => { window.removeEventListener("mousedown", close); window.removeEventListener("keydown", onKey, true); };
+    return () => window.removeEventListener("mousedown", close);
   }, [templatePos]);
 
   useEffect(() => {

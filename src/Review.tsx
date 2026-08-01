@@ -7,7 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl, openPath } from "@tauri-apps/plugin-opener";
 import { useApp } from "./store";
-import { useUI } from "./ui";
+import { useUI, useOverlayEsc } from "./ui";
 import { vendorShort } from "./vendors";
 import { IconBranch, IconClose, IconChevron, IconDiff, IconMerge, IconRefresh, IconCopy } from "./Icons";
 import type { DiffSummary, DiffFile, MergeOutcome, BranchContext } from "./worktrees";
@@ -405,12 +405,16 @@ export function Review() {
     }
   };
 
-  // Esc closes (matches Settings behavior). UI-172: j/k walk the file list,
-  // n/p walk hunks — vim-ish, and consistent with the existing hunk buttons.
+  // UX-542/543: Esc registered on the shared overlay stack (ui.ts) instead of
+  // this listener, so it only closes the drawer when it's the top-most
+  // overlay (e.g. a confirm opened from Merge back must eat Esc first).
+  useOverlayEsc(paneId != null, () => setReviewPane(null));
+
+  // UI-172: j/k walk the file list, n/p walk hunks — vim-ish, and consistent
+  // with the existing hunk buttons.
   useEffect(() => {
     if (paneId == null) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") { setReviewPane(null); return; }
       // Never steal keys from a text field inside the drawer.
       if ((e.target as HTMLElement)?.closest?.("input, textarea")) return;
       const files = summary?.files.map((f) => f.path) ?? [];

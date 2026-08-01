@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useApp, type PaneState } from "./store";
-import { useUI, setTheme } from "./ui";
+import { useUI, useOverlayEsc, setTheme } from "./ui";
 import { closePaneGuarded } from "./worktrees";
 import { checkForUpdate } from "./updater";
 import { getShortcuts, FIXED_SHORTCUTS } from "./Settings";
@@ -306,11 +306,14 @@ export function CommandPalette() {
     setOpen(false);
   };
 
+  // UX-542/543: Esc on the shared overlay stack (ui.ts); arrow/Enter
+  // navigation stays in its own local listener below.
+  useOverlayEsc(open, () => setOpen(false));
+
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") { e.preventDefault(); setOpen(false); }
-      else if (e.key === "ArrowDown") { e.preventDefault(); setIndex((i) => Math.min(i + 1, results.length - 1)); }
+      if (e.key === "ArrowDown") { e.preventDefault(); setIndex((i) => Math.min(i + 1, results.length - 1)); }
       else if (e.key === "ArrowUp") { e.preventDefault(); setIndex((i) => Math.max(i - 1, 0)); }
       else if (e.key === "Enter") { e.preventDefault(); const it = results[index]; if (it) runItem(it); }
     };

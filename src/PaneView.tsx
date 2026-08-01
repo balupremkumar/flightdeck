@@ -2,7 +2,7 @@ import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { revealPath } from "./reveal";
 import { useApp, type PaneModel, type PaneState } from "./store";
-import { useUI } from "./ui";
+import { useUI, useOverlayEsc } from "./ui";
 import { Terminal, type TerminalHandle } from "./Terminal";
 import {
   IconBranch, IconClose, IconRefresh, IconDrag, IconOverflow,
@@ -228,13 +228,9 @@ function PaneViewInner({
   };
   const closeMenu = () => setMenuOpen(false);
 
-  // Esc closes the overflow menu (UI-30) — was mouse-leave only.
-  useEffect(() => {
-    if (!menuOpen) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setMenuOpen(false); };
-    window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
-  }, [menuOpen]);
+  // Esc closes the overflow menu (UI-30) — was mouse-leave only. UX-542/543:
+  // shared overlay stack (ui.ts).
+  useOverlayEsc(menuOpen, closeMenu);
 
   useEffect(() => {
     if (!editing) return;
@@ -360,13 +356,13 @@ function PaneViewInner({
   };
   useEffect(() => () => clearTimeout(bellTimer.current), []);
 
+  // UX-542/543: shared overlay stack (ui.ts) — right-click context menu.
+  useOverlayEsc(!!ctxMenu, () => setCtxMenu(null));
   useEffect(() => {
     if (!ctxMenu) return;
     const close = () => setCtxMenu(null);
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setCtxMenu(null); };
     window.addEventListener("mousedown", close);
-    window.addEventListener("keydown", onKey, true);
-    return () => { window.removeEventListener("mousedown", close); window.removeEventListener("keydown", onKey, true); };
+    return () => window.removeEventListener("mousedown", close);
   }, [ctxMenu]);
 
   // UI-133: pasting many lines into a shell can execute them all — confirm

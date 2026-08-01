@@ -5,7 +5,7 @@
 // "See all".
 import { useEffect, useMemo, useState } from "react";
 import { useApp } from "./store";
-import { useUI } from "./ui";
+import { useUI, useOverlayEsc } from "./ui";
 import { attentionQueue, forMins, lastLine, STATE_LABEL } from "./attention";
 import { vendorShort } from "./vendors";
 import { IconBell, IconClose } from "./Icons";
@@ -42,10 +42,14 @@ export function AttentionQueue() {
     setOpen(false);
   };
 
+  // UX-542/543: Escape moved onto the shared overlay stack (see ui.ts) so it
+  // only closes this when it's the top-most overlay; arrow/Enter/1-9
+  // navigation stays in its own local listener below.
+  useOverlayEsc(open, () => setOpen(false));
+
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") { e.preventDefault(); setOpen(false); return; }
       if (e.key === "ArrowDown") { e.preventDefault(); setSel((i) => Math.min(queue.length - 1, i + 1)); return; }
       if (e.key === "ArrowUp") { e.preventDefault(); setSel((i) => Math.max(0, i - 1)); return; }
       if (e.key === "Enter" && queue[sel]) { e.preventDefault(); jump(queue[sel].w.id, queue[sel].p.id); return; }

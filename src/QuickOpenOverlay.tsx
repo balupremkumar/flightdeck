@@ -18,7 +18,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useApp } from "./store";
-import { useUI } from "./ui";
+import { useUI, useOverlayEsc } from "./ui";
 import { IconFile, IconClose } from "./Icons";
 import {
   walkFiles, filterFiles, loadRecentFiles, pushRecentFile, baseName,
@@ -153,11 +153,14 @@ export function QuickOpen() {
     setOpen(false);
   };
 
+  // UX-542/543: Esc on the shared overlay stack (ui.ts); arrow/Enter
+  // navigation stays in its own local listener below.
+  useOverlayEsc(open, () => setOpen(false));
+
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") { e.preventDefault(); setOpen(false); }
-      else if (e.key === "ArrowDown") { e.preventDefault(); setIndex((i) => Math.min(i + 1, results.length - 1)); }
+      if (e.key === "ArrowDown") { e.preventDefault(); setIndex((i) => Math.min(i + 1, results.length - 1)); }
       else if (e.key === "ArrowUp") { e.preventDefault(); setIndex((i) => Math.max(i - 1, 0)); }
       else if (e.key === "Enter") { e.preventDefault(); const r = results[index]; if (r) choose(r.file); }
     };

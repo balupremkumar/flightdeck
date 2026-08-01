@@ -1,5 +1,4 @@
-import { useEffect } from "react";
-import { useUI } from "./ui";
+import { useUI, useOverlayEsc } from "./ui";
 import "./overlays.css";
 
 // Single global confirm dialog, driven by useUI().requestConfirm(...).
@@ -15,17 +14,13 @@ export function ConfirmDialog() {
     dismiss();
   };
 
-  useEffect(() => {
-    if (!confirm) return;
-    const onKey = (e: KeyboardEvent) => {
-      // Esc cancels. No Enter-to-confirm: these dialogs guard destructive actions,
-      // so confirmation must be a deliberate click.
-      if (e.key === "Escape") cancel();
-    };
-    window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [confirm, dismiss]);
+  // UX-542/543: this dialog is modal by nature — it can be opened FROM inside
+  // another open overlay (e.g. Review's "Merge back" confirm), so it must
+  // register on top of whatever's already on the stack and win the next Esc.
+  // The stack is plain LIFO by push order (ui.ts), and a confirm always opens
+  // strictly after whatever it was opened from, so this falls out for free —
+  // no explicit priority/z-index bookkeeping needed here.
+  useOverlayEsc(!!confirm, cancel);
 
   if (!confirm) return null;
   const { title, body, confirmLabel, danger, onConfirm } = confirm;

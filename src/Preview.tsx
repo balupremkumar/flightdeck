@@ -18,7 +18,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { useUI } from "./ui";
+import { useUI, useOverlayEsc } from "./ui";
 import type { PreviewTab } from "./ui";
 import { parseMarkdown, isExternalHref, resolveMdLink } from "./markdown";
 import type { BlockNode, InlineNode } from "./markdown";
@@ -373,6 +373,12 @@ export function Preview() {
 
   useFocusTrap(drawerRef, isOpen);
 
+  // UX-542/543: was a local onKeyDown on the drawer (bubble-phase, only
+  // reachable while focus was inside it) — moved onto the shared overlay
+  // stack so Esc closes this the same way regardless of what has focus, and
+  // only when it's the top-most overlay.
+  useOverlayEsc(isOpen, closeAllPreviews);
+
   if (!isOpen) return null;
 
   return (
@@ -383,7 +389,6 @@ export function Preview() {
         tabIndex={-1}
         role="dialog"
         aria-label="File preview"
-        onKeyDown={(e) => { if (e.key === "Escape") { e.stopPropagation(); closeAllPreviews(); } }}
       >
         <div className="prv-tabs" role="tablist" aria-label="Open files">
           {tabs.map((t) => (

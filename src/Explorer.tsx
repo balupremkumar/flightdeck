@@ -11,7 +11,7 @@ import { spawnPane } from "./worktrees";
 import type { DiffFile, DiffSummary } from "./worktrees";
 import { cachedInvoke, usePoll } from "./poll";
 import { revealPath } from "./reveal";
-import { useUI } from "./ui";
+import { useUI, useOverlayEsc } from "./ui";
 // Reuses the workspace-list search input's look (.lp-search) for the new
 // filter box below — same visual language, no new input styling needed.
 import "./leftpanel.css";
@@ -517,13 +517,13 @@ export function Explorer({ root, wsId, vendor = "pwsh", paneRoot, paneLabel }: E
 
   // UI-211: right-click path actions (copy path / copy relative / reveal).
   const [ctx, setCtx] = useState<{ x: number; y: number; path: string; dir: boolean } | null>(null);
+  // UX-542/543: shared overlay stack — see ui.ts.
+  useOverlayEsc(!!ctx, () => setCtx(null));
   useEffect(() => {
     if (!ctx) return;
     const close = () => setCtx(null);
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setCtx(null); };
     window.addEventListener("mousedown", close);
-    window.addEventListener("keydown", onKey, true);
-    return () => { window.removeEventListener("mousedown", close); window.removeEventListener("keydown", onKey, true); };
+    return () => window.removeEventListener("mousedown", close);
   }, [ctx]);
 
   // UX-533: reveal-active-file — syncs the tree to whatever the preview

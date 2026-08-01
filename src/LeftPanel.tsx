@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { CSSProperties, MouseEvent as ReactMouseEvent, DragEvent as ReactDragEvent, SVGProps } from "react";
 import { useApp, type PaneModel, type Workspace } from "./store";
-import { useUI } from "./ui";
+import { useUI, useOverlayEsc } from "./ui";
 import { defaultCycle, vendorShort } from "./vendors";
 import { attentionQueue, STATE_LABEL } from "./attention";
 import { closeWorkspaceWithCleanup, preparePanes, isolationPref, rememberedOrSuggestedSetup } from "./worktrees";
@@ -276,14 +276,14 @@ export function LeftPanel({ expanded, view, setView }: { expanded: boolean; view
     return () => { cancelled = true; unlisten?.(); };
   }, [createWorkspace, setView, pushToast]);
 
-  // Context menu: dismiss on outside click / Esc.
+  // Context menu: dismiss on outside click / Esc. UX-542/543: Esc on the
+  // shared overlay stack (ui.ts), outside-click stays a local listener.
+  useOverlayEsc(!!menu, () => setMenu(null));
   useEffect(() => {
     if (!menu) return;
     const close = () => setMenu(null);
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setMenu(null); };
     window.addEventListener("mousedown", close);
-    window.addEventListener("keydown", onKey, true);
-    return () => { window.removeEventListener("mousedown", close); window.removeEventListener("keydown", onKey, true); };
+    return () => window.removeEventListener("mousedown", close);
   }, [menu]);
 
   useEffect(() => {

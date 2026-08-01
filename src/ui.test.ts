@@ -164,4 +164,50 @@ describe("overlay stack (ui.ts, UX-542/543)", () => {
     expect(closedB).toHaveBeenCalledTimes(1);
     expect(closedA).not.toHaveBeenCalled();
   });
+
+  it("closing a mid-stack overlay directly (button/scrim, not Esc) removes only that one, leaving the rest of the stack untouched and in order", () => {
+    const closedA = vi.fn();
+    const closedB = vi.fn();
+    const closedC = vi.fn();
+    pushOverlay(closedA);
+    const idB = pushOverlay(closedB); // e.g. Settings' popover
+    pushOverlay(closedC); // e.g. a confirm opened from inside the popover
+    popOverlay(idB); // B closed itself directly (not via Esc) while C was still on top
+    expect(overlayStackDepth()).toBe(2);
+    // C is still on top and closes first — B's removal didn't reshuffle order.
+    closeTopOverlay();
+    expect(closedC).toHaveBeenCalledTimes(1);
+    expect(closedB).not.toHaveBeenCalled();
+    closeTopOverlay();
+    expect(closedA).toHaveBeenCalledTimes(1);
+  });
+
+  it("three overlays deep (e.g. Settings > a popover > a confirm opened from it) still unwind strictly LIFO", () => {
+    const order: string[] = [];
+    pushOverlay(() => order.push("settings"));
+    pushOverlay(() => order.push("popover"));
+    pushOverlay(() => order.push("confirm"));
+    expect(overlayStackDepth()).toBe(3);
+    closeTopOverlay();
+    closeTopOverlay();
+    closeTopOverlay();
+    expect(order).toEqual(["confirm", "popover", "settings"]);
+    expect(overlayStackDepth()).toBe(0);
+  });
+
+  it("an overlay that unmounts without ever being closed via Esc still unregisters itself (what useOverlayEsc's cleanup effect calls on unmount) — a later Esc reaches what's actually still open, not a stale entry", () => {
+    const closedOuter = vi.fn();
+    const closedInner = vi.fn();
+    pushOverlay(closedOuter);
+    const idInner = pushOverlay(closedInner);
+    // Simulates React unmounting the inner overlay's component (e.g. its
+    // parent conditional stopped rendering it) without the user ever
+    // pressing Esc on it — useOverlayEsc's effect cleanup calls popOverlay
+    // unconditionally, exactly like this.
+    popOverlay(idInner);
+    expect(overlayStackDepth()).toBe(1);
+    expect(closeTopOverlay()).toBe(true);
+    expect(closedOuter).toHaveBeenCalledTimes(1);
+    expect(closedInner).not.toHaveBeenCalled(); // never told to close — it just unregistered
+  });
 });

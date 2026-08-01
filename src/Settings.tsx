@@ -4,7 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { save, open as openDialog } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { revealPath } from "./reveal";
-import { useUI, ZOOM_STEPS } from "./ui";
+import { useUI, useOverlayEsc, ZOOM_STEPS } from "./ui";
 import { useApp } from "./store";
 import { bytes, relTime, absTime } from "./format";
 import { useFocusTrap } from "./useFocusTrap";
@@ -903,19 +903,18 @@ export function Settings() {
     setPopoverPos({ top: r.bottom + 6, left: Math.min(r.left, window.innerWidth - 296) });
     setPopover({ vendorId, kind });
   }
+  // UX-542/543: registered on the shared overlay stack — opens strictly after
+  // Settings itself, so it naturally sits on top and takes the next Esc
+  // first (LIFO), without Settings needing to know about it explicitly.
+  useOverlayEsc(!!popover, () => setPopover(null));
   useEffect(() => {
     if (!popover) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setPopover(null); };
     const onMouseDown = (e: MouseEvent) => {
       const el = e.target as HTMLElement;
       if (!el.closest(".agent-popover") && !el.closest(".agent-popover-trigger")) setPopover(null);
     };
-    window.addEventListener("keydown", onKey, true);
     window.addEventListener("mousedown", onMouseDown);
-    return () => {
-      window.removeEventListener("keydown", onKey, true);
-      window.removeEventListener("mousedown", onMouseDown);
-    };
+    return () => window.removeEventListener("mousedown", onMouseDown);
   }, [popover]);
   const popoverVendor = popover ? vendors.find((v) => v.id === popover.vendorId) ?? null : null;
 
@@ -932,6 +931,14 @@ export function Settings() {
   // completed in a pane should show as "signed in" without an app restart.
   useEffect(() => { void useVendors.getState().refresh(); }, []);
 
+  // UX-542/543: capturing is a nested modal sub-state (rebinding a shortcut,
+  // not itself an on-screen overlay) — pushed onto the SAME shared stack, on
+  // top of Settings' own entry below, so an Esc cancels ONLY the capture and
+  // leaves Settings open, rather than the raw combo-listener's own Escape
+  // branch racing Cockpit's global dispatcher (both are window listeners;
+  // registration order between them isn't guaranteed). `restoreFocus: false`
+  // — the rebind button that started capturing already holds focus.
+  useOverlayEsc(!!capturing, () => setCapturing(null), { restoreFocus: false });
   useEffect(() => {
     if (!capturing) return;
     const onKey = (e: KeyboardEvent) => {
@@ -964,16 +971,12 @@ export function Settings() {
     return () => window.removeEventListener("keydown", onKey, true);
   }, [capturing]);
 
-  // Esc closes — every other overlay does; Settings was the odd one out (QOL 328).
-  // Skipped while capturing a shortcut rebind so Esc can be bound/cancelled there.
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !capturing && !popover) setOpen(false);
-    };
-    window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
-  }, [open, capturing, popover, setOpen]);
+  // Esc closes — every other overlay does; Settings was the odd one out (QOL
+  // 328). UX-542/543: on the shared overlay stack now, so this fires only
+  // when Settings is the top-most overlay — capturing and popover above
+  // (both pushed after Settings, see their own useOverlayEsc calls) take Esc
+  // first, no manual `!capturing && !popover` guard needed any more.
+  useOverlayEsc(open, () => setOpen(false));
 
   if (!open) return null;
 
