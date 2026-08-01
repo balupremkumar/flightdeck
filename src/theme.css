@@ -39,7 +39,21 @@
   --red:#FF5C6A;
   --accent:#43A6F5;
 
-  /* pane status */
+  /* Pane status (UI-606, audited 2026-08-01) — this --st-* set is already
+     the single canonical token; every consumer (App.css .pdot,
+     Notifications.css .ntf-dot/.aq-row, board/palette.ts
+     STATE_COLORS/PRIORITY_COLORS) reads these directly and there is no
+     parallel/duplicate status colour anywhere else in the app. Only
+     ErrorBoundary.tsx hardcodes literals instead, and that's intentional
+     (its own comment: "avoids app CSS dependencies so it renders even if
+     the theme layer is what broke") — a crash screen can't depend on the
+     CSS that might be the thing that broke.
+     Colour-blind-safe override lives in themes.ts (CB_SAFE_STATUS,
+     Okabe-Ito derived) and is outside this file's ownership. UI-607 audit
+     found one weak pair worth fixing there: --st-starting/--st-running
+     share an identical ~202° hue in that set (only luminance differs), and
+     on a light theme --st-starting drops to 2.07:1 against a light --bg
+     (below the 3:1 non-text minimum). See HANDOFF EDITS (themes.ts). */
   --st-starting:#43A6F5;
   --st-running:#52E08A;
   --st-waiting:#F2B03D;  /* Kove-tuned warm gold (palette has no amber) */
@@ -55,21 +69,57 @@
   --glow:0 0 0 1px rgba(67,166,245,0.20), 0 8px 40px rgba(67,166,245,0.22);
   --shadow-lg:0 30px 70px -20px rgba(0,0,0,0.75);
 
+  /* Type scale (UI-601) — one ratio (1.125, "major second": tight enough for
+     a dense information UI, still a clean step) instead of the ~30 hand-
+     picked px values (9px..22px) scattered across the CSS files. This
+     PUBLISHES the scale only — nothing below has been repointed at it, so
+     treat these as the target grid for new/touched rules, not a live
+     restyle. Intended mapping (from the audit of what's on screen today):
+       --fs-xs   9.5px  chip-mono, mini badges, dense meta      (was 9-9.5px)
+       --fs-sm   10.5px chips, timestamps, secondary meta        (was 10-11px)
+       --fs-base 12px   default row/body text — the dominant cluster (was 11.5-12.5px)
+       --fs-md   13.5px sub-headers, panel titles                (was 13-14px)
+       --fs-lg   15px   section headers                          (was 14.5-16px)
+       --fs-xl   17px   modal/dialog titles                      (was 17-19px)
+     Line-heights are named by role, not tied 1:1 to a size — pick the one
+     that matches how the text is used. */
+  --fs-xs:9.5px;
+  --fs-sm:10.5px;
+  --fs-base:12px;
+  --fs-md:13.5px;
+  --fs-lg:15px;
+  --fs-xl:17px;
+  --lh-tight:1.15;   /* --fs-xl / big numerals — headings don't need air */
+  --lh-snug:1.3;      /* --fs-md / --fs-lg labels and section titles */
+  --lh-normal:1.45;   /* --fs-xs / --fs-sm / --fs-base — anything that can wrap in a row */
+  --lh-relaxed:1.6;   /* long-form prose — preview/markdown body, UI-619 */
+
   /* type */
   --font-sans:"Schibsted Grotesk","Segoe UI Variable","Segoe UI",system-ui,sans-serif;
   --font-mono:"JetBrains Mono","Cascadia Code",Consolas,ui-monospace,monospace;
 
-  /* motion */
-  --ease-out:cubic-bezier(0.16,1,0.3,1);
-  --ease-soft:cubic-bezier(0.4,0,0.1,1);
+  /* Motion language (UI-602). --ease-standard / --ease-emphasised and
+     --dur-fast / --dur-base / --dur-slow are the canonical set. Everything
+     else motion-related below is an ALIAS kept for the ~90 existing call
+     sites across the other CSS files, so nothing there has to change for the
+     app to speak one motion language — new rules should reach for the
+     canonical names directly. */
+  --ease-standard:cubic-bezier(0.4,0,0.2,1);     /* simple, small moves: colour/hover tints, chip borders */
+  --ease-emphasised:cubic-bezier(0.16,1,0.3,1);  /* entrances/exits with weight: overlays, drawers, panel moves */
+  --dur-fast:120ms;   /* hover/press tints, chip borders */
+  --dur-base:180ms;   /* overlays in/out, drawer slide, crossfades */
+  --dur-slow:320ms;   /* status pulses, attention emphasis */
 
-  /* Motion durations (UI-247). Scattered .12s/.14s/.16s literals resolve here
-     so the whole app can be slowed/sped as one system. */
-  --t-fast:120ms;   /* hover/press tints, chip borders */
-  --t-med:180ms;    /* overlays in/out, drawer slide, crossfades */
-  --t-slow:320ms;   /* status pulses, attention emphasis */
+  /* Aliases — UI-247's original names, now sourced from the canonical set above. */
+  --ease-out:var(--ease-emphasised);
+  --ease-soft:var(--ease-standard);
+  --t-fast:var(--dur-fast);
+  --t-med:var(--dur-base);
+  --t-slow:var(--dur-slow);
   /* One pulse cadence for every animated status dot (UI-240) — pband, pdot and
-     the left-panel dots drifted out of phase when each owned its own timing. */
+     the left-panel dots drifted out of phase when each owned its own timing.
+     Deliberately outside the fast/base/slow scale: it's a cadence, not a
+     transition duration. */
   --t-pulse:1800ms;
 
   /* Elevation scale (UI-241) — was a per-file shadow value in five places. */
@@ -84,17 +134,56 @@
   --r-lg:12px;
   --r-pill:999px;
 
-  /* Overlay z-index scale (UI-245). Single documented stack — every overlay
-     must use one of these, never a fresh literal:
-       explorer/panel chrome  1-10
-       menus (portalled or not: pane/board/left-panel/add-pane/explorer)  90
-       bell/notification menu 110
-       review drawer          120
-       attention queue        130
-       command palette        140
-       settings / modal dialogs (incl. New Workspace overlay) 150
-       confirm dialog         160
-       toasts (always on top) 170 */
+  /* Scrollbar tokens (UI-621) — see the `*::-webkit-scrollbar*` rule below
+     for which surfaces this reaches. */
+  --scrollbar-w:10px;
+  --scrollbar-w-thin:8px; /* published for a future dense-surface variant (tree/diff gutters); unused today */
+  --scrollbar-radius:6px;
+  --scrollbar-thumb:color-mix(in srgb, var(--muted) 26%, transparent);
+  --scrollbar-thumb-hover:color-mix(in srgb, var(--muted) 42%, transparent);
+
+  /* Focus ring (UI-609) — single token so every focus-visible rule in the
+     app (this file's global rule below, plus the ~12 component-level rules
+     in App.css/Broadcast.css/explorer.css/panes.css/overlays.css) can be
+     repointed at one source instead of each hardcoding `var(--ice)`
+     independently. See the :where() rule near the bottom of this file for
+     the per-theme contrast measured against it. */
+  --focus-ring:var(--ice);
+  --focus-ring-width:2px;
+  --focus-ring-offset:2px;
+
+  /* Elevation / z-index scale (UI-245, re-audited under UI-624 — this is the
+     class that caused real z-order bugs before, so the mapping to
+     components matters as much as the numbers). Every overlay must use one
+     of these tokens, never a fresh literal. Two tiers are deliberately NOT
+     tokens — see the note on "panes" below.
+       base     0    default stacking; everything not listed below
+       panes    1-9  LOCAL to a single .pane — pane-focus ring (App.css
+                      .pane.focused), pmax/dropzone layering inside
+                      PaneView/panes.css. These only order siblings inside
+                      one pane and never compete with the overlay stack
+                      below, so small raw ints there are fine and
+                      intentionally excluded from this scale.
+       menu     90   .addpane-menu, board column menu, Broadcast @-mention
+                      menu, explorer context menu, left-panel workspace
+                      menu, review recents/commit-list dropdowns
+       notify   110  Notifications bell popover; toast pop-in start point
+       drawer   120  Review drawer (review.css .rv-drawer / .ov-scrim)
+       queue    130  Attention queue overlay (Notifications.css)
+       palette  140  Command palette (leftpanel.css)
+       settings 150  Settings / New Workspace / other modal dialogs
+                      (overlays.css .ov-scrim)
+       confirm  160  Confirm dialog (overlays.css .ov-confirm) — above
+                      settings because a confirm can be spawned FROM a
+                      settings modal and must read on top of it
+       toast    170  Toast stack (overlays.css .toast-host) — always on top
+                      of every other overlay so a success/error message is
+                      never hidden behind a modal
+       tooltip  180  Designed tooltips (leftpanel.css [data-tip]::after) —
+                      the single highest tier: a tooltip must never be
+                      clipped or buried by a modal/toast that opens while
+                      it's showing. NOT applied at its call site today (no
+                      z-index declared there) — see HANDOFF EDITS. */
   --z-menu:90;
   --z-notify:110;
   --z-drawer:120;
@@ -103,6 +192,7 @@
   --z-settings:150;
   --z-confirm:160;
   --z-toast:170;
+  --z-tooltip:180;
 }
 
 :root[data-theme="light"] {
@@ -159,6 +249,11 @@
   --ice:#8BE9FD; --azure:#62D6F5; --aqua:#69FFC4; --deepblue:#6272A4; --red:#FF5555; --accent:#BD93F9;
   --st-starting:#8BE9FD; --st-running:#50FA7B; --st-waiting:#F1FA8C; --st-idle:#6272A4; --st-error:#FF5555; --st-exited:#69FFC4;
   --agent-claude:#BD93F9;
+  /* UI-636/638 audit: --on-accent/--on-warn weren't declared here before —
+     they were silently resolving to the dark base theme's values via
+     cascade (same near-black on this bright accent-grad, but undocumented
+     and fragile). Made explicit; contrast unchanged. */
+  --on-accent:#05080E; --on-warn:#1a1400;
   --accent-grad:linear-gradient(125deg,#8BE9FD 0%,#BD93F9 48%,#FF79C6 100%);
   --glow:0 0 0 1px rgba(189,147,249,0.22), 0 8px 40px rgba(189,147,249,0.22);
   --shadow-lg:0 30px 70px -20px rgba(0,0,0,0.80);
@@ -171,6 +266,8 @@
   --ice:#83A598; --azure:#458588; --aqua:#8EC07C; --deepblue:#458588; --red:#FB4934; --accent:#FE8019;
   --st-starting:#83A598; --st-running:#B8BB26; --st-waiting:#FABD2F; --st-idle:#928374; --st-error:#FB4934; --st-exited:#8EC07C;
   --agent-claude:#D3869B;
+  /* UI-636/638 audit: see the same note in the dracula block above. */
+  --on-accent:#05080E; --on-warn:#1a1400;
   --accent-grad:linear-gradient(125deg,#FABD2F 0%,#FE8019 48%,#D65D0E 100%);
   --glow:0 0 0 1px rgba(254,128,25,0.22), 0 8px 40px rgba(254,128,25,0.20);
   --shadow-lg:0 30px 70px -20px rgba(0,0,0,0.75);
@@ -185,6 +282,8 @@
      header, making an idle pane's dot invisible in this theme. */
   --st-starting:#88C0D0; --st-running:#A3BE8C; --st-waiting:#EBCB8B; --st-idle:#7C8AA6; --st-error:#BF616A; --st-exited:#8FBCBB;
   --agent-claude:#B48EAD;
+  /* UI-636/638 audit: see the same note in the dracula block above. */
+  --on-accent:#05080E; --on-warn:#1a1400;
   --accent-grad:linear-gradient(125deg,#88C0D0 0%,#81A1C1 48%,#5E81AC 100%);
   --glow:0 0 0 1px rgba(136,192,208,0.20), 0 8px 40px rgba(136,192,208,0.20);
   --shadow-lg:0 30px 70px -20px rgba(0,0,0,0.75);
@@ -197,28 +296,48 @@
   --ice:#FFD400; --azure:#5AC8FA; --aqua:#00E5A0; --deepblue:#5AC8FA; --red:#FF3B30; --accent:#FFD400;
   --st-starting:#5AC8FA; --st-running:#00E5A0; --st-waiting:#FFD400; --st-idle:#8C8C8C; --st-error:#FF3B30; --st-exited:#FFFFFF;
   --agent-claude:#5AC8FA;
+  /* UI-636/637 audit: see the same note in the dracula block above (high
+     contrast wants max separation anyway — near-black ink on this bright
+     accent-grad/waiting-yellow is the correct call, not just a fallback). */
+  --on-accent:#05080E; --on-warn:#1a1400;
   --accent-grad:linear-gradient(125deg,#FFEB6E 0%,#FFD400 55%,#FFAA00 100%);
   --glow:0 0 0 2px var(--accent), 0 0 0 1px var(--abyss);
   --shadow-lg:0 0 0 1px rgba(255,255,255,0.40), 0 30px 70px -20px rgba(0,0,0,0.90);
 }
 
-/* Scrollbars (QOL 336) — raw OS scrollbars read foreign against the chrome.
+/* Scrollbars (QOL 336, tokenised under UI-621) — raw OS scrollbars read
+   foreign against the chrome. The selector is `*`, so this one rule already
+   covers every scrollable surface without per-surface CSS: xterm
+   (.xterm-viewport — confirmed no competing ::-webkit-scrollbar rule ships
+   in the vendored @xterm/xterm/css/xterm.css), the Explorer tree (.ex-list,
+   overflow-y:auto), the diff/patch body (review.css .rv-patch-body /
+   .rv-conflict-file-list) and the file preview surfaces in panes.css.
    Token-driven so all six themes get a matching, quiet treatment. */
-*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar { width: var(--scrollbar-w); height: var(--scrollbar-w); }
 *::-webkit-scrollbar-track { background: transparent; }
 *::-webkit-scrollbar-thumb {
-  background: color-mix(in srgb, var(--muted) 26%, transparent);
-  border-radius: 6px;
+  background: var(--scrollbar-thumb);
+  border-radius: var(--scrollbar-radius);
   border: 2px solid transparent;
   background-clip: padding-box;
 }
-*::-webkit-scrollbar-thumb:hover { background: color-mix(in srgb, var(--muted) 42%, transparent); background-clip: padding-box; border: 2px solid transparent; }
+*::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-thumb-hover); background-clip: padding-box; border: 2px solid transparent; }
 *::-webkit-scrollbar-corner { background: transparent; }
 
-/* Focus ring — 2px accent, offset. Applies to every interactive element. */
+/* Focus ring — canonical --focus-ring token (UI-609), see above for where
+   it's defined. Applies to every interactive element by default.
+   Contrast of --focus-ring (= --ice) against each theme's --surface (WCAG
+   1.4.11 non-text UI component minimum is 3:1), measured 2026-08-01:
+     dark            14.1:1     light            4.59:1
+     dracula          8.5:1     gruvbox          4.31:1
+     nord              5.0:1     high-contrast   12.9:1
+   Weakest is gruvbox at 4.31:1 — still comfortably clears 3:1, no colour
+   change needed. The forced-colors rule further down overrides to the
+   system `Highlight` colour regardless, so this token is the fallback for
+   browsers that honour the theme but not forced-colors mode. */
 :where(button, a, input, select, [tabindex]):focus-visible {
-  outline:2px solid var(--ice);
-  outline-offset:2px;
+  outline:var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset:var(--focus-ring-offset);
 }
 
 /* Reduced motion (93) — opt-in via Settings. Collapses every CSS transition
@@ -234,10 +353,15 @@
   scroll-behavior: auto !important;
 }
 
-/* OS reduced-motion (UI-214): the Settings toggle is an override, but the
-   system preference must be the DEFAULT — a user who set it at OS level
-   shouldn't have to find our checkbox. `[data-reduced-motion="0"]` (explicit
-   opt-in to motion) still wins. */
+/* OS reduced-motion (UI-214, verified under UI-639): the Settings toggle is
+   an override, but the system preference must be the DEFAULT — a user who
+   set it at OS level shouldn't have to find our checkbox. Note this is the
+   OPPOSITE of the kove.nz website rule (which never respects the OS
+   setting) — don't port that behaviour here.
+   `[data-reduced-motion="0"]` (explicit opt-in to motion) still wins. This
+   block neutralises every transition/animation `!important`, so it already
+   covers the --dur-fast/--dur-base/--dur-slow / --ease-standard/
+   --ease-emphasised tokens above with no further wiring needed. */
 @media (prefers-reduced-motion: reduce) {
   :root:not([data-reduced-motion="0"]) *,
   :root:not([data-reduced-motion="0"]) *::before,
@@ -259,7 +383,7 @@
   }
   .pdot, .ntf-dot, .pband { forced-color-adjust: none; }
   :where(button, a, input, select, [tabindex]):focus-visible {
-    outline: 2px solid Highlight;
+    outline: var(--focus-ring-width) solid Highlight; /* colour must stay a system keyword in forced-colors */
   }
 }
 

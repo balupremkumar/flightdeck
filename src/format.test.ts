@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { relTime, duration, num, compact, bytes } from "./format";
+import { relTime, duration, num, compact, bytes, relTimeTitle, absTime, middleEllipsis, tailEllipsis } from "./format";
 
 describe("format", () => {
   it("relTime buckets across all units", () => {
@@ -31,5 +31,29 @@ describe("format", () => {
     expect(bytes(2048)).toBe("2 KB");
     expect(bytes(5 * 1024 ** 2)).toBe("5.0 MB");
     expect(bytes(3 * 1024 ** 3)).toBe("3.00 GB");
+  });
+
+  it("relTimeTitle pairs relTime's text with absTime's title", () => {
+    const now = 1_000_000_000_000;
+    const at = now - 12 * 60_000;
+    const r = relTimeTitle(at, now);
+    expect(r.text).toBe(relTime(at, now));
+    expect(r.title).toBe(absTime(at));
+    expect(r.text).toBe("12m ago");
+  });
+
+  it("middleEllipsis keeps both ends of a long path", () => {
+    expect(middleEllipsis("short.txt", 20)).toBe("short.txt");
+    expect(middleEllipsis("D:/Dev/ai/projects/active/flightdeck/src/PaneView.tsx", 24)).toBe("D:/Dev/ai/pr…aneView.tsx");
+    expect(middleEllipsis("abcdefghij", 10)).toBe("abcdefghij");
+    expect(middleEllipsis("abcdefghij", 9)).toBe("abcd…ghij");
+    expect(middleEllipsis("abcdefghij", 1)).toBe("…");
+  });
+
+  it("tailEllipsis cuts the end and keeps the front", () => {
+    expect(tailEllipsis("Short title", 20)).toBe("Short title");
+    expect(tailEllipsis("A very long pane title that overflows", 12)).toBe("A very long…");
+    expect(tailEllipsis("abcdefghij", 10)).toBe("abcdefghij");
+    expect(tailEllipsis("abcdefghij", 1)).toBe("…");
   });
 });

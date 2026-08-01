@@ -33,6 +33,13 @@ export function timeTitle(at: number): string {
   return `${relTime(at)} — ${absTime(at)}`;
 }
 
+/** UI-647: the display text and its hover title in one call, so a call site
+ *  never has to invoke relTime/absTime separately (and never forgets the
+ *  title). `<span title={r.title}>{r.text}</span>`. */
+export function relTimeTitle(at: number, now: number = Date.now()): { text: string; title: string } {
+  return { text: relTime(at, now), title: absTime(at) };
+}
+
 /** Thousands-separated integers (UI-222). */
 export function num(n: number): string {
   return Math.round(n).toLocaleString();
@@ -52,4 +59,24 @@ export function bytes(n: number): string {
   if (n < 1024 ** 2) return `${(n / 1024).toFixed(0)} KB`;
   if (n < 1024 ** 3) return `${(n / 1024 ** 2).toFixed(1)} MB`;
   return `${(n / 1024 ** 3).toFixed(2)} GB`;
+}
+
+/** UI-648 truncation policy: paths keep both ends (drive/root + filename
+ *  carry the meaning), so the cut goes in the middle. Always pair with a
+ *  full-string tooltip — a truncated path can't be read in full otherwise. */
+export function middleEllipsis(s: string, max: number): string {
+  if (s.length <= max) return s;
+  if (max <= 1) return "…";
+  const keep = max - 1; // room for the ellipsis character
+  const head = Math.ceil(keep / 2);
+  const tail = Math.floor(keep / 2);
+  return s.slice(0, head) + "…" + (tail > 0 ? s.slice(s.length - tail) : "");
+}
+
+/** UI-648 truncation policy: titles/labels carry their meaning up front, so
+ *  the cut goes at the tail. Always pair with a full-string tooltip. */
+export function tailEllipsis(s: string, max: number): string {
+  if (s.length <= max) return s;
+  if (max <= 1) return "…";
+  return s.slice(0, max - 1) + "…";
 }
