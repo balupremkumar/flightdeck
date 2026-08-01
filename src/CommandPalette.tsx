@@ -129,7 +129,9 @@ export function CommandPalette() {
   // focused terminal (same `.pbody` guard Cockpit uses for Ctrl+B).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const combo = e.ctrlKey && !e.shiftKey && !e.altKey && (e.key === "k" || e.key === "K" || e.key === "p" || e.key === "P");
+      // UX-526: Ctrl+P now belongs to quick-open (go to file), the editor
+      // convention. Leaving it here as well opened BOTH overlays at once.
+      const combo = e.ctrlKey && !e.shiftKey && !e.altKey && (e.key === "k" || e.key === "K");
       if (!combo) return;
       if ((e.target as HTMLElement)?.closest?.(".pbody")) return;
       e.preventDefault();

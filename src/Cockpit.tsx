@@ -16,6 +16,7 @@ import { Review } from "./Review";
 import { AttentionQueue } from "./AttentionQueue";
 import { Shortcuts } from "./Shortcuts";
 import { Preview } from "./Preview";
+import { QuickOpen } from "./QuickOpenOverlay";
 import { ZoomHud } from "./ZoomHud";
 import { useUI, closeTopOverlay } from "./ui";
 import { applyTheme, applyAccent, currentThemeId, currentAccentId, findTheme } from "./themes";
@@ -384,6 +385,7 @@ export function Cockpit() {
       <ConfirmDialog />
       <ToastHost />
       <CommandPalette />
+      <QuickOpen />
       <Broadcast />
       <Review />
       <Preview />

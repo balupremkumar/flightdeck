@@ -85,7 +85,10 @@ const DEFAULT_SHORTCUTS: ShortcutDef[] = [
 // problem was never having two hand-typed copies to drift apart.
 export const FIXED_SHORTCUTS: ShortcutDef[] = [
   { id: "cmdp-k", label: "Command palette", combo: "Ctrl+K" },
-  { id: "cmdp-p", label: "Command palette", combo: "Ctrl+P" },
+  { id: "quickopen-p", label: "Quick open (go to file)", combo: "Ctrl+P" },
+  { id: "focus-recent-output", label: "Jump to pane with newest output", combo: "`" },
+  { id: "cycle-attention", label: "Cycle panes needing attention", combo: "Ctrl+Alt+Shift+Arrows" },
+  { id: "nav-back-forward", label: "Preview back / forward", combo: "Mouse 4 / 5" },
   { id: "cheat-sheet", label: "Keyboard shortcuts cheat sheet", combo: "?" },
   { id: "switch-workspace", label: "Switch to workspace 1-9", combo: "Ctrl+1..9" },
   { id: "cycle-workspace", label: "Cycle workspaces (most-recent first)", combo: "Ctrl+Tab" },
