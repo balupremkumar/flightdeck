@@ -1,9 +1,40 @@
 /* Shared overlay chrome: Settings modal, ConfirmDialog, Toasts.
    Consumes the Deep Cove tokens from theme.css. */
 
+/* ------------------------------------------------------------------
+   UI-626: modal vs drawer policy. Read this before adding a new
+   dismissible surface — pick the one whose reason matches, don't default
+   to whichever is easier to wire up.
+
+   MODAL (centred, .ov-scrim, blocks everything behind it — Settings,
+   ConfirmDialog, New Workspace, the command palette, the attention queue):
+     - the decision is BINARY and must be made (or explicitly cancelled)
+       before the user can do anything else — a destructive confirm, a
+       blocking setup step, a picker.
+     - OR the content is short enough that centring it doesn't waste space
+       (a form, a list of settings, a single question).
+     - Closes on Escape + scrim click; nothing behind it is usable while open.
+
+   DRAWER (right-side slide-in, e.g. review.css .rv-drawer, preview.css
+   .prv-drawer — same primitive, deliberately visual siblings):
+     - the content is REFERENCE material read alongside the thing that
+       triggered it — a diff you're checking while panes keep running
+       behind it, a file you're previewing mid-session.
+     - the content can be long/scrollable (a patch, a rendered markdown
+       file) where centring in a modal would either clip it or leave the
+       rest of the screen dead.
+     - the user plausibly wants to glance back at what's behind it without
+       fully dismissing — a drawer only covers ~40-90% of the width, a
+       modal's scrim covers everything.
+
+   Rule of thumb: if closing it destroys unsaved state or answers a
+   yes/no question, it's a modal. If it's something you'd want open
+   side-by-side with the rest of the app, it's a drawer.
+   ------------------------------------------------------------------ */
+
 .ov-scrim {
   position: fixed; inset: 0; z-index: var(--z-settings);
-  background: rgba(3, 6, 12, .58);
+  background: var(--scrim);
   /* A confirm can be raised FROM Settings (reset-all, destructive actions), so
      it must outrank it — see the z-scale in theme.css. */
   backdrop-filter: blur(3px);
@@ -267,6 +298,26 @@ button.agent-chip:hover { filter: brightness(1.15); }
 .toast-error .toast-dot { background: var(--st-error); box-shadow: 0 0 8px var(--st-error); }
 .toast-text { font-size: 13px; color: var(--text); }
 
+/* UI-625 (CSS side — repeat-collapse count and the max-visible overflow
+   affordance are logic, see HANDOFF EDITS for ui.ts/ToastHost.tsx).
+   Pause-on-hover already existed (ToastHost.tsx). */
+.toast-count {
+  flex: none; display: inline-flex; align-items: center; justify-content: center;
+  min-width: 17px; height: 17px; padding: 0 4px; border-radius: var(--r-pill);
+  font-size: 10px; font-weight: 800; font-variant-numeric: tabular-nums;
+  background: color-mix(in srgb, var(--text) 14%, transparent); color: var(--text);
+}
+.toast-success .toast-count { background: color-mix(in srgb, var(--st-running) 26%, transparent); }
+.toast-error .toast-count { background: color-mix(in srgb, var(--st-error) 26%, transparent); }
+/* A dimmer, non-interactive row for "+N more" when the stack is capped —
+   deliberately quieter than a real toast (no dot, no pointer) since it
+   isn't a message, just a count. */
+.toast-overflow {
+  display: flex; align-items: center; justify-content: center;
+  min-width: 220px; padding: 6px 14px; border-radius: 11px;
+  border: 1px dashed var(--line-strong); color: var(--faint); font-size: 11.5px;
+}
+
 /* ---------- Diagnostics (UI-4) ---------- */
 .set-btn {
   font: inherit; font-size: 11.5px; font-weight: 600;
@@ -283,11 +334,22 @@ button.agent-chip:hover { filter: brightness(1.15); }
   display: grid; grid-template-columns: 52px 1fr 70px 64px 76px;
   gap: 8px; padding: 6px 12px; font-size: 11.5px; color: var(--muted);
   font-family: var(--mono); border-top: 1px solid var(--line);
+  /* UI-633: PID/CPU/memory columns are numeric — tabular figures so digits
+     line up column-to-column instead of drifting with proportional widths. */
+  font-variant-numeric: tabular-nums;
 }
 .diag-tr:first-child { border-top: 0; }
 .diag-th { font-family: var(--font-sans, inherit); font-size: 10px; letter-spacing: .07em; text-transform: uppercase; color: var(--faint); background: var(--surface); }
 .diag-proc { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .diag-empty { padding: 4px 2px 10px; font-size: 11.5px; color: var(--faint); }
+
+/* UI-633: threshold colour for the CPU/Memory columns — published for
+   Settings.tsx to apply (see HANDOFF EDITS), currently unused by any
+   shipped className so this is inert until wired. A flat --muted number is
+   correct for the common case; only the value that actually needs a look
+   should draw the eye. */
+.diag-warn { color: var(--st-waiting); font-weight: 600; }
+.diag-crit { color: var(--st-error); font-weight: 600; }
 
 /* ---------- Pane health CPU sparkline (UI-185) ----------
    Own column count — the worktree table reuses .diag-tr at 5 columns, so

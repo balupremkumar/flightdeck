@@ -134,6 +134,21 @@
   --r-lg:12px;
   --r-pill:999px;
 
+  /* Scrim token (UI-636/637/638 audit) — three near-identical full-screen
+     dark overlays had each hand-picked their own rgba (App.css
+     .launcher.overlay rgba(0,0,0,.55), leftpanel.css .cmdp-scrim
+     rgba(3,6,12,.55), overlays.css .ov-scrim rgba(3,6,12,.58)). Deliberately
+     NOT theme-derived (unlike aq-scrim/prv-scrim, which tint with
+     color-mix(var(--abyss)) for a lighter glass feel on light themes) — a
+     scrim's job is to drop whatever is behind it to a consistent, theme-
+     independent depth so the modal on top reads as the one thing in focus;
+     letting it lighten on light themes would defeat that. One value, picked
+     from the strongest of the three (.58) since that's what the
+     highest-tier surface (Settings/New Workspace modals) already used.
+     Consumers still layer their own backdrop-filter blur — only the tint
+     is centralised here. */
+  --scrim:rgba(3,6,12,.58);
+
   /* Scrollbar tokens (UI-621) — see the `*::-webkit-scrollbar*` rule below
      for which surfaces this reaches. */
   --scrollbar-w:10px;

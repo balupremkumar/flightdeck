@@ -331,7 +331,7 @@
 .card:hover {
   transform: translateY(-3px);
   border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
-  box-shadow: 0 12px 26px -8px rgba(0, 0, 0, 0.5);
+  box-shadow: var(--shadow-3);
 }
 
 .card:active {
@@ -592,7 +592,7 @@
 /* ---------- Keyboard selection ---------- */
 .card-selected {
   border-color: var(--accent) !important;
-  box-shadow: 0 0 0 1px var(--accent), 0 12px 26px -8px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 0 0 1px var(--accent), var(--shadow-3);
 }
 
 /* ---------- Complete micro-animation ---------- */

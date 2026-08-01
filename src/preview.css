@@ -99,12 +99,24 @@
 /* ---------- Rendered markdown ---------- */
 .prv-md { padding: 18px 22px 40px; max-width: 780px; color: var(--text); font-size: inherit; line-height: 1.6; }
 .prv-md p { margin: 0 0 14px; }
-.prv-h { margin: 22px 0 10px; font-weight: 700; line-height: 1.3; }
-.prv-h1 { font-size: 1.7em; border-bottom: 1px solid var(--line); padding-bottom: 6px; }
-.prv-h2 { font-size: 1.4em; border-bottom: 1px solid var(--line); padding-bottom: 5px; }
+/* UI-620: headings previously matched the GitHub-readme convention exactly
+   (bold text + full-width grey bottom border on h1/h2) — the one spot in
+   this file that read as a borrowed default rather than Deep Cove. Swapped
+   the full-width rule for a short --accent-grad tick (the same device the
+   app already uses for "this is the important line" elsewhere — see
+   review.css .rv-line.rv-hunk / overlays.css .seg button.on), and h5/h6
+   become a small eyebrow label instead of shrinking to body size. */
+.prv-h { margin: 22px 0 10px; font-weight: 700; line-height: var(--lh-tight); letter-spacing: -0.01em; }
+.prv-h1, .prv-h2 { padding-bottom: 10px; }
+.prv-h1::after, .prv-h2::after {
+  content: ""; display: block; margin-top: 9px; height: 2px; width: 44px; border-radius: 2px;
+  background: var(--accent-grad);
+}
+.prv-h1 { font-size: 1.7em; }
+.prv-h2 { font-size: 1.4em; }
 .prv-h3 { font-size: 1.2em; }
 .prv-h4 { font-size: 1.08em; }
-.prv-h5, .prv-h6 { font-size: 1em; color: var(--muted); }
+.prv-h5, .prv-h6 { font-size: .82em; font-weight: 700; color: var(--faint); text-transform: uppercase; letter-spacing: .07em; }
 .prv-md hr { border: 0; border-top: 1px solid var(--line); margin: 22px 0; }
 .prv-quote {
   margin: 0 0 14px; padding: 4px 14px; border-left: 3px solid var(--line-strong);

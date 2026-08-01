@@ -6,6 +6,23 @@
 
 .lpanel { position: relative; }
 
+/* UI-627: left panel density at small window heights. Height-based (not a
+   container query) because .lpanel is stretched to the full window height
+   by the cockpit flex column, so viewport height is an accurate, much
+   simpler proxy than `container-type: size` on a flex-stretched child.
+   Compresses row padding/gaps progressively so more workspaces stay
+   visible before the panel has to scroll — nothing is hidden, since a
+   missing search box or count is a worse trade than a slightly denser row. */
+@media (max-height: 700px) {
+  .lp-list { gap: 1px; }
+  .lp-ws { padding: 6px 9px; }
+  .lp-search-wrap { padding: 2px 14px 6px; }
+}
+@media (max-height: 560px) {
+  .lp-ws { padding: 4px 9px; }
+  .lp-search-wrap { padding: 2px 14px 4px; }
+}
+
 /* ---------- search / filter ---------- */
 .lp-search-wrap { padding: 2px 14px 8px; }
 .lp-search {
@@ -99,7 +116,7 @@
    ============================================================ */
 .cmdp-scrim {
   position: fixed; inset: 0; z-index: var(--z-palette);
-  background: rgba(3, 6, 12, .55); backdrop-filter: blur(3px);
+  background: var(--scrim); backdrop-filter: blur(3px);
   display: flex; justify-content: center; padding-top: 12vh;
   animation: ov-fade .14s ease;
 }
@@ -129,6 +146,28 @@
 .cmdp-item.active .cmdp-ic { color: var(--ice); }
 .cmdp-label { flex: 1; min-width: 0; font-size: 13.5px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cmdp-hint { flex: none; font-size: 11.5px; color: var(--faint); font-family: var(--font-mono); max-width: 40%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* UI-631 fix: this row's status dot had no styling anywhere — App.css only
+   scopes `.phead .pdot`, so a bare `.pdot` inside a palette row (not inside
+   a pane header) rendered at 0x0. Mirrors the same state→colour mapping. */
+.cmdp-item .pdot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--st-idle); }
+.cmdp-item .pdot.running { background: var(--st-running); }
+.cmdp-item .pdot.starting { background: var(--st-starting); }
+.cmdp-item .pdot.waiting { background: var(--st-waiting); }
+.cmdp-item .pdot.error { background: var(--st-error); }
+.cmdp-item .pdot.permission { background: var(--st-waiting); }
+
+/* UI-631 fix: the bound-combo `<kbd>` (distinct from .cmdp-hint's plain
+   text) also had no rule, so it fell back to the browser's default kbd
+   chrome (inset border, serif-ish UA styling) — the one unstyled element in
+   an otherwise fully token-driven row. Matches .cmdp-foot kbd below. */
+.cmdp-shortcut { flex: none; display: inline-flex; gap: 3px; }
+.cmdp-shortcut kbd {
+  font-family: var(--font-mono); font-size: 10px; color: var(--muted);
+  background: var(--surface); border: 1px solid var(--line-strong); border-bottom-width: 2px;
+  border-radius: 5px; padding: 1px 5px;
+}
+.cmdp-item.active .cmdp-shortcut kbd { color: var(--text); border-color: color-mix(in srgb, var(--ice) 45%, var(--line-strong)); }
 .cmdp-empty { padding: 18px 10px; text-align: center; font-size: 13px; color: var(--faint); }
 .cmdp-foot {
   display: flex; align-items: center; gap: 16px; padding: 9px 14px; border-top: 1px solid var(--line);

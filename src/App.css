@@ -39,7 +39,7 @@ body {
    without flex:1 it shrinks to content width and the dialog pins left. */
 .cockpit > .launcher { flex: 1; min-width: 0; }
 /* UI-245: full-screen modal dialog, same tier as the Settings scrim. */
-.launcher.overlay { position: fixed; inset: 0; height: auto; background: rgba(0,0,0,.55); z-index: var(--z-settings); }
+.launcher.overlay { position: fixed; inset: 0; height: auto; background: var(--scrim); z-index: var(--z-settings); }
 .dialog { width: 470px; max-width: calc(100% - 32px); max-height: 88vh; display: flex; flex-direction: column; background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; box-shadow: var(--shadow-lg); }
 .dialog .dh { display: flex; align-items: center; padding: 16px 18px 12px; }
 .dialog .dh h2 { margin: 0; font-size: 16px; font-weight: 700; }
@@ -96,6 +96,17 @@ body {
 .topbar .ws { color: var(--text-secondary); font-size: 13.5px; min-width: 0; max-width: 260px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .topbar .sp { flex: 1; }
 .topbar .tb-ic { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 30px; border: 0; background: transparent; color: var(--tmuted); border-radius: 7px; cursor: pointer; transition: color .14s ease, background-color .14s ease; }
+
+/* UI-629: spacing rhythm by function, not one flat gap. The alerts group
+   (bell) and the destination action (Settings — opens a whole other
+   surface, not an in-place toggle) each get a hairline break from the
+   view-toggle cluster between them (Explorer/Broadcast/Theme). Positional
+   selectors because every icon in that cluster shares .tb-ic with no
+   distinguishing class — `.sp + .ntf-wrap` (bell is always the first thing
+   after the spacer) and `:last-child` (Settings is always the last topbar
+   action) are stable as long as that ordering in Cockpit.tsx holds. */
+.topbar .sp + .ntf-wrap { margin-left: 4px; padding-left: 12px; border-left: 1px solid var(--line); }
+.topbar > .tb-ic:last-child { margin-left: 6px; padding-left: 12px; border-left: 1px solid var(--line); }
 .topbar .tb-ic:hover { color: var(--text-primary); background: color-mix(in srgb, var(--text) 6%, transparent); }
 /* Self-update available (updater.ts) — a calm presence dot, not a loud badge;
    the toast already announced it once, this is just "still true". */
