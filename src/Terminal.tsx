@@ -141,6 +141,9 @@ export interface TerminalHandle {
   clearScrollback: () => void;
   /** UI-128: jump back to the live tail. */
   scrollToBottom: () => void;
+  /** UX-546/547: the whole scrollback as text, for the transcript browser
+   *  and the save / save-redacted / copy-last-command actions. */
+  getScrollbackText: () => string;
   /** UI-132: selection helpers for the context menu. */
   getSelection: () => string;
   selectAll: () => void;
@@ -216,6 +219,16 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
     },
     clearScrollback: () => termRef.current?.clear(),
     scrollToBottom: () => termRef.current?.scrollToBottom(),
+    // UX-546/547: whole scrollback as plain text. Walks the buffer rather than
+    // selecting, so it never disturbs the user's own selection.
+    getScrollbackText: () => {
+      const t = termRef.current;
+      if (!t) return "";
+      const buf = t.buffer.active;
+      const lines: string[] = [];
+      for (let i = 0; i < buf.length; i++) lines.push(buf.getLine(i)?.translateToString(true) ?? "");
+      return lines.join("\n");
+    },
     getSelection: () => termRef.current?.getSelection() ?? "",
     selectAll: () => termRef.current?.selectAll(),
     copySelection: async () => {
