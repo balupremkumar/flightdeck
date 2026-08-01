@@ -21,6 +21,8 @@ export function CardDetail({ cardId, onClose }: { cardId: string; onClose: () =>
   });
   const updateCard = useBoardStore((s) => s.updateCard);
   const deleteCard = useBoardStore((s) => s.deleteCard);
+  const archiveCard = useBoardStore((s) => s.archiveCard);
+  const saveAsTemplate = useBoardStore((s) => s.saveAsTemplate);
   const toggleChecklist = useBoardStore((s) => s.toggleChecklist);
   const addChecklistItem = useBoardStore((s) => s.addChecklistItem);
   const removeChecklistItem = useBoardStore((s) => s.removeChecklistItem);
@@ -40,6 +42,10 @@ export function CardDetail({ cardId, onClose }: { cardId: string; onClose: () =>
   const [description, setDescription] = useState(card?.description ?? "");
   const [newItem, setNewItem] = useState("");
   const [labelMenu, setLabelMenu] = useState(false);
+  // UX-574: inline "save as template" name field, same low-ceremony pattern
+  // as the label swatch menu — no native prompt() dialog.
+  const [templateMenu, setTemplateMenu] = useState(false);
+  const [templateName, setTemplateName] = useState("");
   const status = usePaneStatus(card?.paneId);
   const ws = card?.wsId != null ? workspaces.find((w) => w.id === card.wsId) : undefined;
 
@@ -76,15 +82,26 @@ export function CardDetail({ cardId, onClose }: { cardId: string; onClose: () =>
   const doDelete = () => {
     requestConfirm({
       title: `Delete "${card.title}"?`,
-      body: "This removes the card and its checklist. It can't be undone.",
+      body: "This removes the card and its checklist. A short Undo window appears on the board right after.",
       confirmLabel: "Delete card",
       danger: true,
       onConfirm: () => {
-        deleteCard(card.id);
-        pushToast("info", "Card deleted");
+        deleteCard(card.id); // undo-tracked (boardStore) — the board's undo toast covers it
         onClose();
       },
     });
+  };
+  // UX-570: a soft delete — hidden from the board but recoverable from the
+  // Archive panel, unlike doDelete above which is permanent. Also undo-tracked.
+  const doArchive = () => {
+    archiveCard(card.id);
+    onClose();
+  };
+  const submitTemplate = () => {
+    saveAsTemplate(card.id, templateName.trim());
+    pushToast("success", "Saved as a template — use it from + New Task > From template");
+    setTemplateMenu(false);
+    setTemplateName("");
   };
   const copyMarkdown = async () => {
     const lines = [`- [ ] **${card.title}** _(${card.priority})_`];
@@ -230,7 +247,27 @@ export function CardDetail({ cardId, onClose }: { cardId: string; onClose: () =>
 
         <div className="cd-foot">
           <button className="btn-danger" onClick={doDelete}>Delete card</button>
+          <button className="btn-ghost" onClick={doArchive}>Archive</button>
           <span className="board-spacer" />
+          <div className="cd-template-wrap">
+            <button className="btn-ghost" onClick={() => setTemplateMenu((v) => !v)}>Save as template</button>
+            {templateMenu && (
+              <div className="cd-swatch-menu cd-template-menu" onMouseDown={(e) => e.stopPropagation()}>
+                <input
+                  className="cd-new-item"
+                  autoFocus
+                  placeholder="Template name…"
+                  value={templateName}
+                  onChange={(e) => setTemplateName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") { e.preventDefault(); submitTemplate(); }
+                    else if (e.key === "Escape") { e.preventDefault(); setTemplateMenu(false); }
+                  }}
+                />
+                <button type="button" className="btn-primary cd-template-save" onClick={submitTemplate}>Save</button>
+              </div>
+            )}
+          </div>
           <button className="btn-ghost" onClick={copyMarkdown}>Copy as Markdown</button>
           <button className="btn-primary" onClick={onClose}>Done</button>
         </div>

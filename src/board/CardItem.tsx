@@ -25,6 +25,9 @@ interface CardItemProps {
   /** UI-158: explicit vendor pick, instead of the card's preset agent or
    *  whichever agent happens to be first installed. */
   onSendToAgent: (card: Card, vendor: Vendor) => void;
+  /** UX-571: bulk-action checkbox state, independent of the single keyboard-move selection above. */
+  isChecked: boolean;
+  onToggleCheck: (id: string, e: { shiftKey: boolean }) => void;
 }
 
 export function CardItem({
@@ -40,6 +43,8 @@ export function CardItem({
   onSelect,
   onOpenDetail,
   onSendToAgent,
+  isChecked,
+  onToggleCheck,
 }: CardItemProps) {
   const status = usePaneStatus(card.paneId);
   const usage = usePaneUsage(card.paneId);
@@ -66,7 +71,8 @@ export function CardItem({
           "card" +
           (isDragging ? " card-source" : "") +
           (isSelected ? " card-selected" : "") +
-          (isCompleting ? " card-pop" : "")
+          (isCompleting ? " card-pop" : "") +
+          (isChecked ? " card-checked" : "")
         }
         style={isDragging ? undefined : { borderLeft: `2px solid ${PRIORITY_COLORS[card.priority]}` }}
         draggable
@@ -86,6 +92,20 @@ export function CardItem({
       >
         {!isDragging && (
           <>
+            {/* UX-571: bulk-select checkbox — quiet until hover/checked so it
+                doesn't compete with the title (UI-616). */}
+            <label
+              className="card-check"
+              onClick={(e) => e.stopPropagation()}
+              onMouseDown={(e) => e.stopPropagation()}
+              title="Select for bulk actions"
+            >
+              <input
+                type="checkbox"
+                checked={isChecked}
+                onChange={(e) => onToggleCheck(card.id, { shiftKey: (e.nativeEvent as MouseEvent).shiftKey })}
+              />
+            </label>
             <span className="card-grip" aria-hidden="true">
               <span /><span /><span /><span /><span /><span />
             </span>

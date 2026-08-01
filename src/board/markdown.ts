@@ -1,6 +1,5 @@
-import { COLUMNS } from "./boardStore";
 import { vendorShort } from "../vendors";
-import type { BoardCards, Card } from "./types";
+import type { BoardCards, Card, Column } from "./types";
 
 function cardToMarkdown(c: Card): string {
   const bits: string[] = [`- [${c.checklist.length && c.checklist.every((i) => i.done) ? "x" : " "}] **${c.title}** _(${c.priority})_`];
@@ -16,15 +15,16 @@ function cardToMarkdown(c: Card): string {
 // Whole-board export (BACKLOG D30). One card = one checkbox line, with its
 // own checklist nested underneath. Kept to plain Markdown, no board-specific
 // syntax, so it pastes cleanly into a PR description or a notes file.
-export function exportBoardMarkdown(cards: BoardCards): string {
+export function exportBoardMarkdown(columns: Column[], cards: BoardCards): string {
   const lines: string[] = ["# Board export", ""];
-  for (const col of COLUMNS) {
+  for (const col of columns) {
     lines.push(`## ${col.name}`, "");
-    if (cards[col.id].length === 0) {
+    const list = (cards[col.id] ?? []).filter((c) => !c.archived);
+    if (list.length === 0) {
       lines.push("_No cards._", "");
       continue;
     }
-    for (const c of cards[col.id]) lines.push(cardToMarkdown(c), "");
+    for (const c of list) lines.push(cardToMarkdown(c), "");
   }
   return lines.join("\n").trimEnd() + "\n";
 }
