@@ -926,3 +926,181 @@ grouped by surface only for navigation; work in any order, all at once.
 ## Bugs found in testing (Balu adds below)
 
 _(add items here; reference the IDs above where relevant)_
+
+
+## 2026-08-01 — DAILY-DRIVER UX BATCH (UX-501..600) + UI BATCH (UI-601..650)
+
+Balu ruled Flightdeck the priority project 2026-08-01: it is his main driver, so the bar is
+"streamlined daily use", not feature count. Numbering starts at 501/601 to clear the existing
+schemes (plain 1-384, UI-1..51, UI-100..249). Where an item already existed it is CITED, not
+duplicated. STALE-CLAIMS TRAP: verify against code before building anything old.
+
+Named pains from Balu (2026-08-01), all in Phase U1: clicking a link or file path in agent output
+does nothing; .md files have no in-app viewer; small navigation frictions everywhere.
+
+### Phase U1 — The click-to-open gap (Balu's named pain; do this first, in this order)
+UX-501. Clickable URLs in terminal output via @xterm/addon-web-links, opened with plugin-opener [was #53/#251, never built]
+UX-502. Clickable FILE PATHS in terminal output: detect absolute + repo-relative, Windows + POSIX separators, quoted paths
+UX-503. Path detection includes file:line and file:line:col (agent output constantly emits these)
+UX-504. Ctrl+click = open in editor, plain click = in-app preview; hover shows which is which
+UX-505. In-app file preview pane, read-only, syntax-highlit [UI-209, promote from optional to core]
+UX-506. Markdown files RENDER in the preview (headings, code, tables, task lists), toggle raw/rendered
+UX-507. Markdown links inside a rendered .md are themselves clickable: relative links open the target file, http opens the browser
+UX-508. Images in rendered markdown display inline from disk (screenshots in READMEs are the common case)
+UX-509. Mermaid/code fences render as code with copy button; no external network
+UX-510. Preview honours the app theme and the pane font-size zoom
+UX-511. Explorer: single click previews, double click opens in editor [extends #110]
+UX-512. Explorer: Enter previews, Space quick-looks, both keyboard-only
+UX-513. Preview tabs: keep several files open, Ctrl+Tab between them, close with Ctrl+W
+UX-514. "Open containing folder" on any previewed file, and on any detected path
+UX-515. Copy-path / copy-relative-path from preview, Explorer, and detected terminal paths
+UX-516. Jump to file:line straight into the configured editor [was #177, Phase 4 — pull forward]
+UX-517. Editor choice in Settings (VS Code, VS Code Insiders, JetBrains, Notepad++, custom command template)
+UX-518. Fall back gracefully when the editor is missing: toast with the reason, offer preview instead
+UX-519. Diff lines in the Review drawer are clickable to the same preview at that line
+UX-520. Board card descriptions and checklists linkify paths and URLs the same way
+UX-521. Broadcast + attention-queue rows linkify their last-output-line
+UX-522. Git branch pill click opens the repo's web URL when a remote exists
+UX-523. A detected path that no longer exists shows a clear "missing" affordance rather than failing silently
+UX-524. Terminal scrollback search [was #250, @xterm/addon-search — the sibling of clickability]
+UX-525. Search results navigable with Enter/Shift+Enter, count shown, Esc closes
+
+### Phase U2 — Navigation friction (the "I have to hunt for it" class)
+UX-526. Global quick-open: Ctrl+P by path across the focused pane's repo, fuzzy, opens preview
+UX-527. Recent files list per workspace, in the palette
+UX-528. Command palette gains file actions (open, preview, reveal, copy path)
+UX-529. Palette remembers most-recent commands and ranks them first
+UX-530. Palette shows the keyboard shortcut next to every command that has one
+UX-531. Back/forward navigation stack for preview + Explorer selection (mouse buttons 4/5 too)
+UX-532. Breadcrumb bar above the preview, each segment clickable
+UX-533. Explorer: reveal-active-file button that syncs the tree to the current preview
+UX-534. Explorer: type-to-jump within the expanded tree
+UX-535. Explorer: filter box that matches on subsequences, showing matched parents
+UX-536. Pane switch by number without the Alt chord when focus is outside a terminal
+UX-537. Jump to the pane that most recently produced output (one key)
+UX-538. Cycle only panes that need attention (approval/error/waiting), skipping the calm ones
+UX-539. Workspace switcher gains fuzzy search when more than N workspaces exist
+UX-540. Remember scroll position per pane across view switches (board <-> terminals)
+UX-541. Remember Explorer expansion + scroll per workspace, not just per session
+UX-542. Esc-stack discipline: Esc always closes the top-most overlay, never two at once
+UX-543. Focus returns to where you came from when any overlay closes
+UX-544. A visible focus ring on every interactive element in every theme [feeds UI-32]
+UX-545. Keyboard cheat-sheet overlay [was #105/#269, dup entries — build once]
+
+### Phase U3 — Agent-session ergonomics (running the fleet, not one pane)
+UX-546. Per-pane transcript browser: scroll back through this pane's run history [UI-7]
+UX-547. Save/export a pane's scrollback to file [was #57], redacted variant [UI-48]
+UX-548. "Copy last agent message" as one action, without mouse selection
+UX-549. Copy the last command the agent ran (parse from output where the vendor marks it)
+UX-550. Re-send the last prompt to a pane, and to N panes at once
+UX-551. Prompt history per vendor, up-arrow style, persisted across restarts
+UX-552. Saved prompt snippets with placeholders, insertable from the palette
+UX-553. Shift+click multi-select panes for bulk restart/close/broadcast [UI-130]
+UX-554. Pane groups: name a set of panes, act on the group
+UX-555. Auto-title panes from the live foreground process [UI-48 remainder, backend already emits it]
+UX-556. Activity sparkline per pane header [was #56] so a quiet pane is visibly quiet
+UX-557. Idle-time indicator: how long since this pane last produced output
+UX-558. "Nudge" action: send a newline to a pane that looks wedged
+UX-559. Detect and surface an agent asking a question that is not a standard approval prompt
+UX-560. Per-vendor quiet-threshold tuning surfaced in the pane menu, not just Settings
+UX-561. Session summary on quit: what each pane was doing, saved to the session doc
+UX-562. Named session snapshots [was #81] and restore-to-snapshot
+UX-563. Export/import a workspace definition [was #82] so a machine move is one file
+UX-564. Duplicate a pane with the same cwd and vendor, one action
+UX-565. Move a pane between workspaces without closing it
+
+### Phase U4 — Review and board flow (where the work actually lands)
+UX-566. Review drawer: keyboard-first file navigation (j/k or arrows) without leaving the diff
+UX-567. Review: mark a file reviewed, remaining count visible
+UX-568. Review: comment-to-agent — select diff lines, send them back to that pane as a prompt
+UX-569. Review: "explain this diff" action that prompts the pane with its own patch
+UX-570. Board: custom columns [#258], collapse [#259], archive [#261]
+UX-571. Board: bulk actions [#262] and undo [#263]
+UX-572. Board: edge autoscroll while dragging [#264]
+UX-573. Board card <-> pane linkage visible from both sides
+UX-574. Board: card templates for recurring task shapes
+UX-575. Board: filter to only cards with live panes
+UX-576. Send-to-agent from a card picks the vendor by rule (last used for this repo)
+UX-577. Merge-back preflight summary: files, lines, base drift, in one confirm
+UX-578. Post-merge "what changed" toast that links to the merge commit
+UX-579. Worktree inventory reachable from the pane menu, not only Settings
+UX-580. Stale-worktree nudge when one has been idle for days
+
+### Phase U5 — Reliability and trust (small things that erode confidence daily)
+UX-581. Never lose typed input: preserve a pane's unsent line across restart
+UX-582. Warn before closing a pane with unsent input
+UX-583. Crash-recovery banner naming exactly which panes were restored
+UX-584. Surface the updater's state honestly (checking, downloading, ready, failed) [0.3.0 updater]
+UX-585. Update changelog shown before install, from the release manifest
+UX-586. Vendors folder file-watcher so manifests hot-reload [UI-188]
+UX-587. Manifest validation errors shown inline with the offending line
+UX-588. First-run checklist that verifies each vendor launches [light version of #213]
+UX-589. "Run diagnostics" one-click bundle from the About page
+UX-590. Clear, non-scary copy when a vendor is not signed in, with the fix action inline
+UX-591. Per-pane error detail expandable rather than a truncated toast
+UX-592. Offline behaviour: nothing in the UI blocks or spins forever without a network
+UX-593. Long-path and unicode-path handling verified end to end (Windows MAX_PATH trap)
+UX-594. Large-output resilience: a pane emitting megabytes must not freeze the app
+UX-595. Cold-start and steady-state budgets measured and asserted [#279]
+UX-596. Memory ceiling per pane surfaced in Diagnostics with a warning threshold
+UX-597. Graceful degradation when git is missing or the repo is not a repo
+UX-598. Settings search covers every setting including the new ones [UI-180 verify]
+UX-599. Reset-to-defaults per section, not only global
+UX-600. An in-app "what's new since your last version" panel fed by the manifest
+
+### UI batch (UI-601..650) — look and feel of the daily surface
+UI-601. Type scale collapsed to a ratio system (the parked solo-pass item)
+UI-602. Single easing/duration language app-wide [UI-41]
+UI-603. Loading skeletons instead of spinners for panes, diff, and Explorer
+UI-604. Every screen audited for empty/loading/partial/error/ideal [ui-states skill]
+UI-605. Pane header density pass: what is essential at a glance vs on hover
+UI-606. Status colour semantics unified across dot, band, badge and queue rows
+UI-607. Colour-blind-safe status set verified against the CVD palette [UI-32]
+UI-608. Terminal-vs-chrome palette cross-check per theme [UI-34]
+UI-609. Focus-visible styling that reads in all six themes
+UI-610. Tooltip style policy applied app-wide [UI-221]
+UI-611. Typographic quotes and dashes in user-facing strings [UI-224]
+UI-612. Sentence case everywhere; kill title-case drift
+UI-613. Icon set audit for stroke and optical size consistency across surfaces [UI-45]
+UI-614. 16px-legibility check on every tray/taskbar surface
+UI-615. Empty-state illustrations or marks that teach the next action
+UI-616. Board card visual hierarchy: title first, chips subordinate
+UI-617. Diff typography: tabular numerals, aligned gutters, wrap policy
+UI-618. Split-diff column balance at narrow widths
+UI-619. Preview pane typography for prose vs code (measure, leading)
+UI-620. Markdown rendering styles that match the Deep Cove system, not GitHub default
+UI-621. Scrollbar treatment consistent across xterm, tree, diff and preview
+UI-622. Resize handles discoverable without being loud
+UI-623. Drag affordances on panes and cards use one visual language
+UI-624. Overlay elevation scale documented and applied (the z-order bugs came from this)
+UI-625. Toast stack behaviour: max visible, collapse repeats, hover to hold
+UI-626. Modal vs drawer policy: which surface for which decision
+UI-627. Left panel information density at small heights
+UI-628. Workspace tile: monogram, status roll-up, and needy badge composition pass
+UI-629. Topbar spacing rhythm and grouping by function
+UI-630. Attention-queue row scannability (severity first, duration last)
+UI-631. Command palette result rows: icon, title, context, shortcut alignment
+UI-632. Settings layout: section rhythm, control alignment, help-text placement
+UI-633. Diagnostics tables readable at a glance (units, thresholds, colour)
+UI-634. Vendor accent usage rules so five vendors never fight each other
+UI-635. Per-vendor glyphs finished and consistent [UI-236]
+UI-636. Light-theme audit of every surface added since the last light pass
+UI-637. High-contrast theme audit of the same
+UI-638. Dracula/Gruvbox/Nord parity check on new surfaces
+UI-639. Motion respects the OS reduced-motion setting (app default, unlike the website)
+UI-640. Window chrome at small sizes: min-window-size enforcement [UI-43]
+UI-641. Multi-monitor DPI change handling without stale layout
+UI-642. Zoom levels 80-150% verified on every surface
+UI-643. Print/export styling for anything exportable (support bundle, markdown)
+UI-644. App icon variants for light and dark taskbars
+UI-645. Splash/first-paint that is not a white flash
+UI-646. Consistent number formatting (tokens, durations, bytes) via format.ts everywhere
+UI-647. Relative time everywhere with absolute on hover
+UI-648. Truncation policy: middle-ellipsis for paths, tail for titles, tooltip always
+UI-649. Copy microcopy pass: every button says what it does to what
+UI-650. A design-critique pass on the whole app once U1-U5 land, before calling any of it done
+
+### Suggested order
+U1 first and whole (it is the named pain and the highest daily-friction fix), then U2.
+U3-U5 by dogfooding: whatever annoys Balu that week goes to the top.
+The UI batch runs alongside as small passes, EXCEPT UI-604 and UI-650 which are gates, not items.

@@ -2,6 +2,8 @@
 
 Updated: 2026-08-01 (demo mock fixes, from the kove-site showcase re-cut session).
 
+**2026-08-01 (priority ruling + UX batch):** Balu ruled Flightdeck the PRIORITY project — it is his daily driver and the bar is streamlined daily use. **150 new items in BACKLOG.md: UX-501..600 (usability) + UI-601..650 (look and feel).** Phase U1 is his named pain and goes first: links and file paths in agent output are not clickable, .md files have no in-app viewer, plus file:line jumping, in-app preview with rendered markdown, and scrollback search. Numbering starts at 501/601 to clear all existing schemes; existing items are CITED not duplicated (#53/#251 clickable paths, UI-209 preview, #110 open-in-editor, #177 jump-to-line, #250 search, UI-130/188/221/224). Also fixed this session from a red-team drive of the live demo: Review drawer base-drift pill rendered "undefined" for non-isolated panes (3907688, 93/93 vitest).
+
 **2026-08-01 (later, 702255e):** demo/site-dist rebuilt output committed so the repo's bundle matches what shipped to kove.nz (same content as their commit 3a07082).
 
 **2026-08-01 (commit 1e29206, pushed):** interactive demo mock fixed — `git_file_diff` destructured `path` but Review.tsx sends `file`, so every patch in the live kove.nz/flightdeck-demo Review drawer rendered `a/undefined`; migrate pane's two diffs now hand-written (redisStore.ts new-file, store.ts rewrite). Bundle rebuilt and shipped in kove-site (their commit 3a07082) together with the new 40.6s flightdeck-showcase-v2 video (replaces the 25MB dark cut; scenario at kove-site seo-tools/showcase/flightdeck.scenario.mjs).
