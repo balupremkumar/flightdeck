@@ -1,4 +1,8 @@
-# Runsheet — Flightdeck v0.5.0 (2026-08-01)
+# Runsheet — Flightdeck v0.5.1 (2026-08-01)
+
+> **v0.5.1 supersedes 0.5.0.** Only change: the bell dropdown now closes on a click
+> outside it (or Esc, or the bell) instead of when the mouse drifts off. Everything
+> below still applies; expect 0.5.1 in step 0.
 
 Fifteen minutes, ordered by risk. Anything that fails: note the step number and what you saw.
 Everything below was built and gated but NEVER run in a real GUI, because you were using the app
@@ -69,8 +73,7 @@ Protection history. Tell me the banner text; that is exactly the diagnostic it w
   short tail, so approving blind was the wrong affordance. It jumps you to the pane instead.
 - Two icons (Board, Settings) were rebuilt by geometry, not by eye. If they look off at 16px, say so.
 - The "Recent" feed still lists quiet panes as history. Correct by design; tell me if it reads as nagging.
-- The bell dropdown closes on mouse-leave. Pre-existing; more annoying now the rows are worth reading.
-  Say the word and I will change it to click-to-close.
+- ~~The bell dropdown closes on mouse-leave.~~ FIXED in 0.5.1 — click outside, Esc, or the bell itself.
 - Zoom floor is 85%, not 80%.
 - The installer is unsigned. See docs/SIGNING.md.
 
