@@ -20,7 +20,7 @@
 }
 
 .ntf-menu {
-  position: absolute; right: 0; top: 38px; width: 280px; max-height: 70vh; overflow-y: auto;
+  position: absolute; right: 0; top: 38px; width: 344px; max-height: 70vh; overflow-y: auto;
   background: var(--elevated); border: 1px solid var(--line-strong); border-radius: 12px;
   box-shadow: var(--shadow-lg); z-index: var(--z-notify); animation: ntf-pop .16s var(--ease-out);
 }
@@ -55,7 +55,62 @@
 .ntf-ag { font-size: 11.5px; color: var(--faint); }
 .ntf-state { margin-left: auto; font-size: 10.5px; color: var(--faint); }
 
+/* --- UX-601: "needs you" detail rows (bell dropdown) ----------------------- */
+.nq-group + .nq-group { margin-top: 8px; }
+.nq-group-head {
+  display: flex; align-items: baseline; gap: 6px;
+  font-size: 10.5px; font-weight: 700; letter-spacing: .04em;
+  color: var(--muted); padding: 4px 2px 3px;
+}
+.nq-group-head.permission { color: var(--st-waiting); }
+.nq-group-head.error { color: var(--st-error); }
+.nq-group-head.question { color: var(--azure); }
+.nq-group-n { font-family: var(--mono); font-size: 10px; color: var(--faint); font-weight: 600; }
+
+.nq-row { display: flex; align-items: stretch; gap: 4px; border-radius: 8px; }
+.nq-row:hover { background: color-mix(in srgb, var(--text) 5%, transparent); }
+.nq-main {
+  flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; text-align: left;
+  font: inherit; border: 0; background: transparent; color: var(--text);
+  padding: 7px 6px; border-radius: 8px; cursor: pointer;
+}
+.nq-meta { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 10.5px; }
+.nq-kind { font-weight: 700; color: var(--muted); flex: none; }
+.nq-row.permission .nq-kind { color: var(--st-waiting); }
+.nq-row.error .nq-kind { color: var(--st-error); }
+.nq-row.question .nq-kind { color: var(--azure); }
+/* --muted, not --faint: "which workspace/pane" is the second thing the eye
+   needs and --faint at 10.5px sits under the contrast floor. */
+.nq-where { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nq-meta .nq-since { margin-left: auto; flex: none; font-family: var(--mono); color: var(--faint); }
+/* The ask itself is the point of the row — biggest, highest contrast, clamped
+   to two lines so one chatty agent can't push the rest of the list off-screen. */
+.nq-ask {
+  font-size: 12.5px; line-height: 1.35; color: var(--text);
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.nq-ask.none { color: var(--faint); font-style: italic; }
+.nq-snooze {
+  flex: none; align-self: center; font: inherit; font-size: 10px; color: var(--faint);
+  background: transparent; border: 1px solid transparent; border-radius: var(--r-pill);
+  padding: 3px 7px; cursor: pointer; opacity: 0;
+  transition: opacity var(--t-fast) ease, color var(--t-fast) ease, border-color var(--t-fast) ease;
+}
+.nq-row:hover .nq-snooze, .nq-snooze:focus-visible { opacity: 1; }
+.nq-snooze:hover { color: var(--text); border-color: var(--line-strong); }
+.nq-main:focus-visible, .nq-snooze:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring); outline-offset: -1px;
+}
+.nq-empty { display: flex; flex-direction: column; gap: 3px; padding: 10px 2px 8px; font-size: 12px; color: var(--muted); }
+.nq-empty strong { font-size: 12.5px; color: var(--text); font-weight: 600; }
+.nq-empty-sub { font-size: 11px; color: var(--faint); }
+.ntf-note { font-size: 11px; color: var(--faint); margin: -2px 0 6px; }
+
 .ntf-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--st-idle); }
+/* UX-601: `question` is its own signal — a genuine question is neither an
+   approval (gold) nor a failure (red). Azure keeps it distinct at a glance. */
+.ntf-dot.question { background: var(--azure); box-shadow: 0 0 6px var(--azure); }
 .ntf-dot.starting { background: var(--st-starting); }
 .ntf-dot.running { background: var(--st-running); }
 .ntf-dot.idle { background: var(--st-idle); }
@@ -117,9 +172,23 @@
 .aq-row.error .aq-state { color: var(--st-error); font-weight: 600; }
 .aq-since { flex: none; width: 58px; text-align: right; font-family: var(--mono); font-size: 10.5px; color: var(--faint); }
 .aq-foot {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
   padding: 8px 14px; border-top: 1px solid var(--line);
   font-size: 10.5px; color: var(--faint);
 }
+/* UX-601: quiet panes are context, so they get one muted line in the footer —
+   never a row, never a count on the bell. */
+.aq-ambient { flex: none; color: var(--faint); opacity: .8; }
+.aq-group { display: flex; flex-direction: column; gap: 2px; }
+.aq-group + .aq-group { margin-top: 8px; }
+.aq-group .nq-group-head { padding: 4px 10px 3px; }
+.aq-empty strong { font-size: 13px; color: var(--text); font-weight: 600; }
+/* The ask leads the row here too — same information order as the bell. */
+.aq-ask {
+  font-size: 12.5px; line-height: 1.35; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.aq-ask.none { color: var(--faint); font-style: italic; }
+.aq-row.question.sel { background: color-mix(in srgb, var(--azure) 12%, transparent); }
 
 /* UI-142: split bell badges — errors (red) and approvals (gold) counted apart */
 .ntf-badge.err { background: var(--st-error); color: var(--on-accent); }

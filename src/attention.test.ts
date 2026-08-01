@@ -1,5 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { attentionQueue, forMins, isOpenQuestion, stateSince, lastLine, lastOutputAt, recordOutput, mostRecentOutputPane } from "./attention";
+import {
+  ambientQueue,
+  attentionKind,
+  attentionQueue,
+  forMins,
+  isOpenQuestion,
+  needsHumanQueue,
+  stateSince,
+  lastLine,
+  lastOutputAt,
+  recordOutput,
+  mostRecentOutputPane,
+} from "./attention";
 import type { PaneState, Workspace } from "./store";
 
 function ws(id: number, panes: { id: number; state: PaneState }[]): Workspace {
@@ -14,6 +26,7 @@ function ws(id: number, panes: { id: number; state: PaneState }[]): Workspace {
 
 describe("attention queue", () => {
   it("ranks approval > error > waiting, longest-needed first within a rank", () => {
+    lastLine.clear();
     const now = Date.now();
     stateSince.set(1, now - 60_000); // waiting, 1m
     stateSince.set(2, now - 300_000); // waiting, 5m — older, should lead its rank
@@ -85,23 +98,69 @@ describe("isOpenQuestion (UX-559)", () => {
   });
 });
 
-describe("attentionQueue promotes an open question above plain waiting (UX-559)", () => {
-  it("ranks: permission > open question > error > plain waiting", () => {
+describe("needs-you gate (UX-601, owner ruling 2026-08-01)", () => {
+  const scene = () =>
+    ws(9, [
+      { id: 21, state: "waiting" }, // plain quiet — ambient, must never notify
+      { id: 22, state: "waiting" }, // quiet AND asking something — needs a human
+      { id: 23, state: "error" },
+      { id: 24, state: "permission" },
+      { id: 25, state: "running" },
+      { id: 26, state: "idle" },
+    ]);
+
+  const seed = () => {
     lastLine.clear();
     const now = Date.now();
-    stateSince.set(21, now - 1000); // waiting, plain
-    stateSince.set(22, now - 1000); // waiting, open question
-    stateSince.set(23, now - 1000); // error
-    stateSince.set(24, now - 1000); // permission
+    for (const id of [21, 22, 23, 24, 25, 26]) stateSince.set(id, now - 1000);
+    lastLine.set(21, "Running the test suite...");
     lastLine.set(22, "Which environment should this deploy to?");
-    const q = attentionQueue([
-      ws(9, [
-        { id: 21, state: "waiting" },
-        { id: 22, state: "waiting" },
-        { id: 23, state: "error" },
-        { id: 24, state: "permission" },
-      ]),
-    ]);
-    expect(q.map((x) => x.p.id)).toEqual([24, 22, 23, 21]);
+  };
+
+  it("classifies each pane: permission/error always, quiet only when it asked something", () => {
+    seed();
+    const kinds = Object.fromEntries(scene().panes.map((p) => [p.id, attentionKind(p)]));
+    expect(kinds).toEqual({ 21: null, 22: "question", 23: "error", 24: "permission", 25: null, 26: null });
+  });
+
+  it("keeps a merely-quiet pane OUT of the queue — quiet is ambient, not a notification", () => {
+    seed();
+    const q = needsHumanQueue([scene()]);
+    expect(q.map((x) => x.p.id)).not.toContain(21);
+    expect(ambientQueue([scene()]).map((x) => x.p.id)).toEqual([21]);
+  });
+
+  it("puts an open-question pane IN the queue, and permission/error always", () => {
+    seed();
+    const q = needsHumanQueue([scene()]);
+    // Grouped by urgency: approvals, then errors, then questions.
+    expect(q.map((x) => x.p.id)).toEqual([24, 23, 22]);
+    expect(q.map((x) => x.kind)).toEqual(["permission", "error", "question"]);
+  });
+
+  it("goes completely empty when every pane is quiet or working — the bell can rest", () => {
+    lastLine.clear();
+    lastLine.set(31, "Compiling...");
+    const q = needsHumanQueue([ws(3, [{ id: 31, state: "waiting" }, { id: 32, state: "running" }, { id: 33, state: "idle" }])]);
+    expect(q).toHaveLength(0);
+  });
+
+  it("a quiet pane with no captured output at all stays ambient", () => {
+    lastLine.clear();
+    const q = needsHumanQueue([ws(4, [{ id: 41, state: "waiting" }])]);
+    expect(q).toHaveLength(0);
+    expect(ambientQueue([ws(4, [{ id: 41, state: "waiting" }])])).toHaveLength(1);
+  });
+
+  it("snooze still removes a pane from both halves", () => {
+    seed();
+    const snoozed = { 24: Date.now() + 60_000, 21: Date.now() + 60_000 };
+    expect(needsHumanQueue([scene()], snoozed).map((x) => x.p.id)).toEqual([23, 22]);
+    expect(ambientQueue([scene()], snoozed)).toHaveLength(0);
+  });
+
+  it("attentionQueue (navigation call sites) still sees needs-you first, then quiet", () => {
+    seed();
+    expect(attentionQueue([scene()]).map((x) => x.p.id)).toEqual([24, 23, 22, 21]);
   });
 });

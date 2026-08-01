@@ -3,7 +3,19 @@ import { useApp, type PaneState } from "./store";
 import { useUI, useOverlayEsc } from "./ui";
 import { IconBell, IconSettings } from "./Icons";
 import { getCurrentWindow, UserAttentionType } from "@tauri-apps/api/window";
-import { attentionQueue, forMins, stateSince, STATE_LABEL } from "./attention";
+import {
+  ambientQueue,
+  attentionKind,
+  forMins,
+  KIND_HEADING,
+  KIND_LABEL,
+  lastLine,
+  needsHumanQueue,
+  stateSince,
+  STATE_LABEL,
+  type AttentionItem,
+  type AttentionKind,
+} from "./attention";
 import { timeTitle } from "./format";
 import { vendorShort } from "./vendors";
 import "./Notifications.css";
@@ -11,6 +23,20 @@ import "./Notifications.css";
 // All configurable states, approval/waiting/error first since those are the
 // ones most likely to be toggled on.
 const CONFIGURABLE_STATES: PaneState[] = ["permission", "waiting", "error", "idle", "running", "starting"];
+
+// UX-601: the per-state alert settings predate the needs-you/ambient split, so
+// each attention KIND borrows the closest existing key. "waiting" can now only
+// ever reach an alert path as a genuine question (plain quiet is gated out
+// upstream), which is why its default flipped to on in ui.ts. See HANDOFF
+// EDITS — the settings shape wants to become per-kind, and Settings.tsx isn't
+// ours to reshape.
+const KIND_SETTING_KEY: Record<AttentionKind, PaneState> = {
+  permission: "permission",
+  error: "error",
+  question: "waiting",
+};
+
+const KIND_ORDER: AttentionKind[] = ["permission", "error", "question"];
 
 // Short sine chime via WebAudio — no bundled asset, degrades silently if the
 // AudioContext API is unavailable (e.g. autoplay-blocked before user gesture).
@@ -56,6 +82,40 @@ async function flashTaskbar() {
 
 type Panel = "none" | "feed" | "settings";
 
+/** UX-601: one row of the "needs you" list. The old row read
+ *  "acme-web · Claude · Waiting · just now", which never said what was being
+ *  asked. This one leads with the agent's actual last line (the prompt or the
+ *  question), then where it is and how long it has been blocked, with a jump
+ *  as the row's primary action and snooze as the quiet secondary.
+ *
+ *  No inline approve: see the report / HANDOFF EDITS. The response key differs
+ *  per prompt shape (numbered menu vs y/n vs bare Enter) and a 120-char tail
+ *  isn't enough context to approve a command blind, so the action is "take me
+ *  there" rather than a guessed keystroke written into a live terminal. */
+function NeedsYouRow({ item, onJump, onSnooze }: { item: AttentionItem; onJump: () => void; onSnooze: () => void }) {
+  const { w, p, since, kind } = item;
+  const ask = lastLine.get(p.id);
+  const where = `${w.name} › ${p.title || vendorShort(p.vendor)}`;
+  return (
+    <div className={"nq-row " + (kind ?? "")}>
+      <button className="nq-main" onClick={onJump} title={`Jump to ${where}`}>
+        <span className="nq-meta">
+          <span className={"ntf-dot " + (kind ?? "")} />
+          <span className="nq-kind">{kind ? KIND_LABEL[kind] : STATE_LABEL[p.state]}</span>
+          <span className="nq-where">{where}</span>
+          <span className="nq-since">{forMins(since)}</span>
+        </span>
+        <span className={"nq-ask" + (ask ? "" : " none")}>
+          {ask || "No output captured yet — open the pane to see."}
+        </span>
+      </button>
+      <button className="nq-snooze" onClick={onSnooze} title="Snooze for 10 minutes">
+        Snooze
+      </button>
+    </div>
+  );
+}
+
 // Self-contained notification bell: configurable per-state rules, OS toast +
 // taskbar flash + sound cue when the window is unfocused, a feed/history,
 // and per-workspace mute + do-not-disturb. Mount once: <Notifications />.
@@ -75,6 +135,7 @@ export function Notifications() {
   // UI-145: a maximised pane means focus mode — alerts stand down, feed keeps recording.
   const focusMode = useUI((s) => s.maximizedPaneId != null);
   const snoozedMap = useUI((s) => s.snoozed);
+  const snoozePane = useUI((s) => s.snoozePane);
   const pushNotifyEvent = useUI((s) => s.pushNotifyEvent);
   const clearFeed = useUI((s) => s.clearFeed);
 
@@ -115,6 +176,14 @@ export function Notifications() {
         if (!notify.notifyOn[p.state]) continue;
 
         pushNotifyEvent({ wsId: w.id, wsName: w.name, paneId: p.id, vendor: p.vendor, title: p.title, state: p.state });
+
+        // UX-601: the feed above is HISTORY and still records a pane going
+        // quiet. Alerts are not history. Everything below this line — pulse,
+        // chime, OS toast, taskbar flash — fires only when a human is actually
+        // needed, so a pane that merely stopped printing stays silent.
+        const kind = attentionKind(p);
+        if (!kind) continue;
+
         // One-shot pulse on arrival — see the `pulse` state comment above.
         setPulse(true);
         clearTimeout(pulseTimer.current);
@@ -123,11 +192,14 @@ export function Notifications() {
         const muted = notify.dnd || notify.mutedWorkspaces.includes(w.id) || focusMode;
         if (muted) continue;
         if (notify.sound) playChime();
-        // Owner feedback: OS toast defaults follow a per-state gate (waiting
-        // off, approval/error on) layered under the master switch — a
-        // routine "waiting" transition no longer pops a toast by default.
-        if (notify.osToast && notify.osToastOn[p.state] && !document.hasFocus()) {
-          void osToast(`${w.name} — ${p.title || vendorShort(p.vendor)}`, `${STATE_LABEL[p.state]}: pane needs you`);
+        if (notify.osToast && notify.osToastOn[KIND_SETTING_KEY[kind]] && !document.hasFocus()) {
+          // The toast carries WHAT is being asked, not just that something is:
+          // the pane's last output line, same text the bell dropdown shows.
+          const ask = lastLine.get(p.id);
+          void osToast(
+            `${w.name} — ${p.title || vendorShort(p.vendor)}`,
+            ask ? `${KIND_LABEL[kind]}: ${ask}` : KIND_LABEL[kind]
+          );
           void flashTaskbar();
         }
       }
@@ -145,10 +217,17 @@ export function Notifications() {
   const followAttention = useUI((s) => s.followAttention);
   const prevApprovals = useRef(0);
 
-  // The attention QUEUE (UI-1) — shared ranking in attention.ts.
-  const needsAttention = attentionQueue(workspaces, snoozedMap);
-  const approvalCount = needsAttention.filter((x) => x.p.state === "permission").length;
-  const errCount = needsAttention.filter((x) => x.p.state === "error").length;
+  // The attention QUEUE (UI-1) — shared ranking in attention.ts. UX-601: this
+  // is now the NARROW list (approval / error / genuine question). A pane that
+  // has merely gone quiet is in `ambient` instead and never touches the bell.
+  const needsAttention = needsHumanQueue(workspaces, snoozedMap);
+  const ambient = ambientQueue(workspaces, snoozedMap);
+  const approvalCount = needsAttention.filter((x) => x.kind === "permission").length;
+  const errCount = needsAttention.filter((x) => x.kind === "error").length;
+  const questionCount = needsAttention.filter((x) => x.kind === "question").length;
+  // Gold badge = "someone is asking you something" (approvals + questions);
+  // red badge = "something broke". Two numbers, two jobs — no third badge.
+  const askCount = approvalCount + questionCount;
 
   // UI-147: when Flightdeck is behind other windows, the in-app bell is
   // invisible. Windows can show a count on the taskbar icon — that's the whole
@@ -179,7 +258,7 @@ export function Notifications() {
   const lastFollowed = useRef<number | null>(null);
   useEffect(() => {
     if (!followAttention) return;
-    const top = needsAttention.find((x) => x.p.state === "permission");
+    const top = needsAttention.find((x) => x.kind === "permission");
     if (!top || top.p.id === lastFollowed.current) return;
     lastFollowed.current = top.p.id;
     switchWorkspace(top.w.id);
@@ -193,31 +272,53 @@ export function Notifications() {
     setPanel("none");
   };
 
+  // UX-601: at rest the bell says "all calm" and nothing else — no colour, no
+  // badge, no motion. The tooltip carries the same sentence a screen reader
+  // hears, so hovering answers "do I need to look?" without opening anything.
+  const restTitle = notify.dnd
+    ? "Notifications — Do Not Disturb"
+    : needsAttention.length === 0
+      ? ambient.length > 0
+        ? `Nothing needs you · ${ambient.length} pane${ambient.length === 1 ? "" : "s"} quiet`
+        : "Nothing needs you"
+      : [
+          approvalCount > 0 && `${approvalCount} waiting on your approval`,
+          errCount > 0 && `${errCount} errored`,
+          questionCount > 0 && `${questionCount} asked you something`,
+        ]
+          .filter(Boolean)
+          .join(" · ");
+
+  const jumpRow = (item: AttentionItem) => (
+    <NeedsYouRow
+      key={item.p.id}
+      item={item}
+      onJump={() => jump(item.w.id, item.p.id)}
+      onSnooze={() => snoozePane(item.p.id, 10 * 60_000)}
+    />
+  );
+
   return (
     <div className="ntf-wrap">
       <button
         className={"ntf-bell" + (needsAttention.length ? " on" : "") + (notify.dnd ? " dnd" : "") + (pulse ? " pulse" : "")}
         onClick={() => setPanel((p) => (p === "none" ? "feed" : "none"))}
-        title={notify.dnd ? "Notifications (Do Not Disturb)" : "Notifications"}
-        aria-label="Notifications"
+        title={restTitle}
+        aria-label={`Notifications — ${restTitle}`}
       >
         <IconBell size={19} />
-        {/* UI-142: approvals and errors are different jobs — one number hid
-            which kind was waiting. Errors take the red slot. */}
+        {/* UI-142/UX-601: two numbers, two jobs — red is "something broke",
+            gold is "someone is asking you something" (approvals + questions).
+            A quiet pane produces no badge at all. */}
         {errCount > 0 && <span className="ntf-badge err">{errCount}</span>}
-        {approvalCount > 0 && <span className={"ntf-badge warn" + (errCount > 0 ? " second" : "")}>{approvalCount}</span>}
-        {errCount === 0 && approvalCount === 0 && needsAttention.length > 0 && (
-          <span className="ntf-badge">{needsAttention.length}</span>
-        )}
+        {askCount > 0 && <span className={"ntf-badge warn" + (errCount > 0 ? " second" : "")}>{askCount}</span>}
       </button>
 
       {/* UI-148: the badge is a visual-only signal; announce changes politely
-          so a screen-reader user learns an agent needs them. */}
+          so a screen-reader user learns an agent needs them. Silent when
+          nothing needs a human — see UX-601. */}
       <span className="sr-only" role="status" aria-live="polite">
-        {needsAttention.length === 0
-          ? ""
-          : `${needsAttention.length} pane${needsAttention.length === 1 ? "" : "s"} need attention` +
-            (approvalCount > 0 ? `, ${approvalCount} awaiting approval` : "")}
+        {needsAttention.length === 0 ? "" : restTitle}
       </span>
 
       {panel === "feed" && (
@@ -229,10 +330,13 @@ export function Notifications() {
             </button>
           </div>
 
-          {needsAttention.length > 0 && (
-            <div className="ntf-section">
-              <div className="ntf-label-row">
-                <span className="ntf-label">Needs you now</span>
+          {/* UX-601: grouped by urgency, not chronology — approvals, then
+              errors, then questions. Each row carries what is being asked,
+              where, and how long it has been blocked. */}
+          <div className="ntf-section">
+            <div className="ntf-label-row">
+              <span className="ntf-label">Needs you</span>
+              {needsAttention.length > 0 && (
                 <button
                   className="ntf-clear"
                   title="Open the full attention queue (Ctrl+Shift+A)"
@@ -240,19 +344,34 @@ export function Notifications() {
                 >
                   See all
                 </button>
-              </div>
-              {needsAttention.map(({ w, p, since }) => (
-                <div className="ntf-item" key={p.id} onClick={() => jump(w.id, p.id)}>
-                  <span className={"ntf-dot " + p.state} />
-                  <span className="ntf-ws">{w.name}</span>
-                  <span className="ntf-ag">{p.title || vendorShort(p.vendor)}</span>
-                  <span className="ntf-state">
-                    {STATE_LABEL[p.state]} · {forMins(since)}
-                  </span>
-                </div>
-              ))}
+              )}
             </div>
-          )}
+
+            {needsAttention.length === 0 ? (
+              <div className="nq-empty">
+                <strong>Nothing needs you right now</strong>
+                <span>
+                  {ambient.length > 0
+                    ? `${ambient.length} pane${ambient.length === 1 ? " is" : "s are"} quiet — that's normal, no action needed.`
+                    : "Every agent is working."}
+                </span>
+                <span className="nq-empty-sub">Approvals, errors and questions show up here.</span>
+              </div>
+            ) : (
+              KIND_ORDER.map((kind) => {
+                const rows = needsAttention.filter((x) => x.kind === kind);
+                if (rows.length === 0) return null;
+                return (
+                  <div className="nq-group" key={kind}>
+                    <div className={"nq-group-head " + kind}>
+                      {KIND_HEADING[kind]} <span className="nq-group-n">{rows.length}</span>
+                    </div>
+                    {rows.map(jumpRow)}
+                  </div>
+                );
+              })
+            )}
+          </div>
 
           <div className="ntf-section">
             <div className="ntf-label-row">
@@ -287,7 +406,12 @@ export function Notifications() {
           </div>
 
           <div className="ntf-section">
-            <div className="ntf-label">Ring the bell on</div>
+            <div className="ntf-label">Record in the feed</div>
+            {/* UX-601: these gates control the Recent feed (history). The bell
+                itself is not configurable by state any more — by ruling it
+                lights only for approvals, errors, and questions. Saying so
+                here stops the checkboxes reading as a broken promise. */}
+            <div className="ntf-note">The bell only lights for approvals, errors and questions.</div>
             {CONFIGURABLE_STATES.map((st) => (
               <label className="ntf-check" key={st}>
                 <input type="checkbox" checked={!!notify.notifyOn[st]} onChange={(e) => setNotifyOn(st, e.target.checked)} />
@@ -303,16 +427,21 @@ export function Notifications() {
               <input type="checkbox" checked={notify.osToast} onChange={(e) => setNotifyOsToast(e.target.checked)} />
               OS toast + taskbar flash when unfocused
             </label>
-            {/* Owner feedback: per-state toast gate, layered under the master
-                switch above — only shown for states the bell actually rings
-                on. Defaults: waiting off, approval/error on. */}
+            {/* Owner feedback + UX-601: per-kind toast gate under the master
+                switch. Only the three kinds that can reach a human are listed —
+                a pane going quiet can no longer toast at all, so a toggle for
+                it would be a lie. */}
             {notify.osToast && (
               <div className="ntf-subgroup">
-                {CONFIGURABLE_STATES.filter((st) => notify.notifyOn[st]).map((st) => (
-                  <label className="ntf-check ntf-check-sub" key={st}>
-                    <input type="checkbox" checked={!!notify.osToastOn[st]} onChange={(e) => setOsToastOn(st, e.target.checked)} />
-                    <span className={"ntf-dot " + st} />
-                    {STATE_LABEL[st]}
+                {KIND_ORDER.filter((k) => notify.notifyOn[KIND_SETTING_KEY[k]]).map((k) => (
+                  <label className="ntf-check ntf-check-sub" key={k}>
+                    <input
+                      type="checkbox"
+                      checked={!!notify.osToastOn[KIND_SETTING_KEY[k]]}
+                      onChange={(e) => setOsToastOn(KIND_SETTING_KEY[k], e.target.checked)}
+                    />
+                    <span className={"ntf-dot " + k} />
+                    {KIND_LABEL[k]}
                   </label>
                 ))}
               </div>

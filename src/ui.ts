@@ -225,9 +225,11 @@ function defaultNotifySettings(): NotifySettings {
     notifyOn: { starting: false, running: false, idle: false, waiting: true, permission: true, error: true },
     sound: false,
     osToast: true,
-    // Owner feedback: waiting is routine, approval/error are not — toast
-    // defaults follow that split even though the bell/feed ring for all three.
-    osToastOn: { starting: false, running: false, idle: false, waiting: false, permission: true, error: true },
+    // UX-601: the `waiting` key now only ever reaches an alert as a genuine
+    // question — attention.ts gates plain quiet out before the toast path — so
+    // it defaults ON. Under the old meaning ("a pane stopped printing") it had
+    // to be off, which is exactly the noise this ruling removed.
+    osToastOn: { starting: false, running: false, idle: false, waiting: true, permission: true, error: true },
     dnd: false,
     mutedWorkspaces: [],
   };
