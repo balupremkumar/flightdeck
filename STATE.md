@@ -2,6 +2,8 @@
 
 Updated: 2026-08-01 (demo mock fixes, from the kove-site showcase re-cut session).
 
+**0.3.0 INSTALL CONFIRMED 2026-08-01** (verified from the running process: `C:\Users\User\AppData\Local\Flightdeck\projectsactivefd-scaffold.exe`, FileVersion 0.3.0). The old "Balu must hand-install 0.3.0 once" caveat is CLOSED — the in-app updater is live on his machine, so the next `tools/release.ps1` cut notifies him in-app. That release is still the FIRST real /S upgrade-relaunch E2E; watch it land.
+
 **2026-08-01 (priority ruling + UX batch):** Balu ruled Flightdeck the PRIORITY project — it is his daily driver and the bar is streamlined daily use. **150 new items in BACKLOG.md: UX-501..600 (usability) + UI-601..650 (look and feel).** Phase U1 is his named pain and goes first: links and file paths in agent output are not clickable, .md files have no in-app viewer, plus file:line jumping, in-app preview with rendered markdown, and scrollback search. Numbering starts at 501/601 to clear all existing schemes; existing items are CITED not duplicated (#53/#251 clickable paths, UI-209 preview, #110 open-in-editor, #177 jump-to-line, #250 search, UI-130/188/221/224). Also fixed this session from a red-team drive of the live demo: Review drawer base-drift pill rendered "undefined" for non-isolated panes (3907688, 93/93 vitest).
 
 **2026-08-01 (later, 702255e):** demo/site-dist rebuilt output committed so the repo's bundle matches what shipped to kove.nz (same content as their commit 3a07082).
