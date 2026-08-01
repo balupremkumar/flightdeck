@@ -1,5 +1,14 @@
 # Flightdeck — architecture notes
 
+## File naming: never differ only by case
+
+A component file and a logic file whose names differ only in case (`Transcript.tsx` + `transcript.ts`, `QuickOpen.tsx` + `quickopen.ts`) are the SAME module on this Windows filesystem.
+TypeScript resolves the `.ts` and never sees the component, so the import fails with "has no exported member" even though the export is plainly there.
+This bit twice in one session (2026-08-01) and both times the tests still passed — only `tsc`/`npm run build` caught it.
+
+Give the component a distinct name: `QuickOpenOverlay.tsx` alongside `quickopen.ts`, `TranscriptView.tsx` alongside `transcript.ts`.
+
+
 ## Overlay Escape handling
 
 Every dismissible overlay (modal, drawer, dropdown, context menu, popover) closes on Escape through the shared stack in `src/ui.ts`, not its own `window.addEventListener("keydown", ...)` listener.
