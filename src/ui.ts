@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { useEffect, useRef } from "react";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import type { PaneState } from "./store";
 
 // Lightweight UI-only store (kept separate from the app/domain store): confirm
@@ -481,8 +482,27 @@ export function nextZoomStep(current: number, dir: 1 | -1): number {
 
 // Persisted UI scale (whole-app zoom). Applied on boot (main.tsx) and from
 // Settings / the Ctrl+=/-/0 shortcut via the store actions above.
+//
+// Native webview zoom, NOT CSS `zoom` on <html>. xterm hit-tests mouse events
+// itself — (clientX − rect.left) ÷ measured cell size — and under CSS zoom the
+// pixel distance is scaled while the cell measurement is not, so clicks land
+// 1-2+ rows away from the cursor, drifting worse toward the bottom of the
+// terminal (repro: any zoom ≠ 1, any DPR). Native zoom is what the browser's
+// own Ctrl+= does; coordinates stay consistent for everything, terminals
+// included. getCurrentWebview() throws *synchronously* outside Tauri (the
+// LeftPanel/NewWorkspace trap), and setZoom rejects if the capability is
+// missing — both fall back to CSS zoom so the browser rigs still scale.
 export function applyUiScale(scale: number) {
-  document.documentElement.style.zoom = String(scale);
+  const cssFallback = () => { document.documentElement.style.zoom = scale === 1 ? "" : String(scale); };
+  try {
+    getCurrentWebview().setZoom(scale)
+      // An older run's fallback (or a pre-fix build) may have left CSS zoom
+      // behind; clear it or the two would multiply.
+      .then(() => { document.documentElement.style.zoom = ""; })
+      .catch(cssFallback);
+  } catch {
+    cssFallback();
+  }
   try { localStorage.setItem("flightdeck-uiscale", String(scale)); } catch { /* non-persistent */ }
   // Nudge xterm's fit addon (ResizeObserver) so terminals re-measure at the new scale.
   window.dispatchEvent(new Event("resize"));

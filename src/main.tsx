@@ -3,7 +3,7 @@ import ReactDOM from "react-dom/client";
 import App from "./App";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { bootAppearance } from "./themes";
-import { useUI } from "./ui";
+import { useUI, applyUiScale } from "./ui";
 import { useVendors, armVendorHotReload, vendorShort } from "./vendors";
 import { runWorktreeGc } from "./worktrees";
 import { startAutosave, offerSessionRestore, crashedLastRun, armCleanExitSentinel, lastRestoreReport } from "./session";
@@ -58,10 +58,12 @@ scheduleStartupCheck();
 // first paint (dark/Ice/off are the defaults).
 bootAppearance();
 
-// Apply saved UI scale (whole-app zoom) before first paint.
+// Apply saved UI scale (whole-app zoom) before first paint. Must go through
+// applyUiScale (native webview zoom) — setting CSS zoom here would break
+// xterm's mouse hit-testing; see the comment on applyUiScale.
 try {
-  const s = localStorage.getItem("flightdeck-uiscale");
-  if (s && s !== "1") document.documentElement.style.zoom = s;
+  const s = parseFloat(localStorage.getItem("flightdeck-uiscale") ?? "1");
+  if (Number.isFinite(s) && s > 0 && s !== 1) applyUiScale(s);
 } catch { /* non-persistent */ }
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
