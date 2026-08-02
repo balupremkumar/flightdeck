@@ -1,6 +1,15 @@
 # STATE — Flightdeck
 
-Updated: 2026-08-01 late evening (0.3.0→0.5.1 update rescue RESOLVED).
+Updated: 2026-08-02 (terminal click-offset fix, ready for the next release cut).
+
+## FIXED 2026-08-02: terminal clicks landing 1-2 lines off (Balu's live report)
+Root cause: whole-app zoom was CSS `zoom` on `<html>` (ui.ts applyUiScale + main.tsx boot), and xterm hit-tests mouse events itself — (clientX − rect) ÷ measured cell size — so under any zoom ≠ 1 clicks drifted, worse toward the bottom of the terminal.
+Reproduced E2E in Playwright/xterm 6 (zoom 1.5 put a mid-terminal click 6 rows off; zoom 1 and any pure-DPR scale were exact).
+Fix: applyUiScale now uses native webview zoom (`getCurrentWebview().setZoom`, capability `core:webview:allow-set-webview-zoom` added), with CSS-zoom fallback outside Tauri (browser rigs) and stale-CSS-zoom clearing so the two never multiply.
+Selection, click-to-position in TUIs (mouse reporting) and link hover all share that math, so paste-target misses are the same bug.
+Gates: tsc + build clean, vitest 394/394, cargo check clean, cargo 107/107; fallback + Ctrl+=/0 verified E2E against the dev server.
+On main, NOT yet released — **NEXT SESSION: cut v0.5.2** (`pwsh tools/release.ps1`) so Balu's installed 0.5.1 gets it at next login; that cut is also the first true in-app 0.5.1→next updater test.
+Verify after update: Settings > UI size ≠ 100%, click a mid-terminal line — cursor/selection must land exactly under the pointer.
 
 ## UPDATE RESCUE RESOLVED (2026-08-01 ~9:24pm, verified next session)
 The one-shot Scheduled Task `Flightdeck-ApplyUpdate-0.5.1` fired when Balu closed the app (21:24:33) and the silent install SUCCEEDED: exe on disk verified FileVersion 0.5.1, app auto-relaunched by the installer at 21:24:39 and confirmed running 0.5.1. The helper script itself was killed mid-install (task result 0xC000013A, likely Task Scheduler's stop-on-battery/sleep default) so its bookkeeping never ran; the next session finished it by hand: task deleted, log closed out (`releases\apply-update-0.5.1.log`). `update-status.json` was deliberately NOT written after the fact — the outcome was verified live, and a stale success toast on a later boot would mislead. Standing lesson kept: an installed pre-0.5.0 build has the PRE-hardening updater, and a Claude session running inside a Flightdeck pane must not spawn the app (kill-on-close job object). Runsheet step 0 is DONE via this rescue path, not the in-app updater — the first true in-app update test is 0.5.1 → whatever comes next.
