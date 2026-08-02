@@ -8,7 +8,7 @@ Reproduced E2E in Playwright/xterm 6 (zoom 1.5 put a mid-terminal click 6 rows o
 Fix: applyUiScale now uses native webview zoom (`getCurrentWebview().setZoom`, capability `core:webview:allow-set-webview-zoom` added), with CSS-zoom fallback outside Tauri (browser rigs) and stale-CSS-zoom clearing so the two never multiply.
 Selection, click-to-position in TUIs (mouse reporting) and link hover all share that math, so paste-target misses are the same bug.
 Gates: tsc + build clean, vitest 394/394, cargo check clean, cargo 107/107; fallback + Ctrl+=/0 verified E2E against the dev server.
-NOT yet released — needs merge to main + a release cut (v0.5.2) so Balu's installed 0.5.1 gets it at next login; that cut is also the first true in-app 0.5.1→next updater test.
+On main, NOT yet released — **NEXT SESSION: cut v0.5.2** (`pwsh tools/release.ps1`) so Balu's installed 0.5.1 gets it at next login; that cut is also the first true in-app 0.5.1→next updater test.
 Verify after update: Settings > UI size ≠ 100%, click a mid-terminal line — cursor/selection must land exactly under the pointer.
 
 ## UPDATE RESCUE RESOLVED (2026-08-01 ~9:24pm, verified next session)
