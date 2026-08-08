@@ -1,5 +1,7 @@
 # STATE — Flightdeck
 
+Vault: [[HOME]] | [[PORTFOLIO|Portfolio]] | [[projects/active/flightdeck/BACKLOG|Backlog]]
+
 Updated: 2026-08-02 (terminal click-offset fix, ready for the next release cut).
 
 ## FIXED 2026-08-02: terminal clicks landing 1-2 lines off (Balu's live report)
