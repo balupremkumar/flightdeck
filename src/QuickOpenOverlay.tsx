@@ -55,7 +55,17 @@ async function listDir(path: string): Promise<DirEntry[]> {
 
 interface WalkCacheEntry { files: WalkedFile[]; truncated: boolean; at: number; }
 const walkCache = new Map<string, WalkCacheEntry>();
-const WALK_TTL_MS = 30_000;
+// QL-741: five seconds, not thirty. Agents write files while the cockpit sits
+// open, so anything older than a few keystrokes is a stale claim about the
+// repo. The TTL now only exists to stop a double Ctrl+P re-walking; past it
+// the overlay still shows the cached list instantly and rescans behind it.
+const WALK_TTL_MS = 5_000;
+
+/** "idle" = nothing running; "cold" = first walk for this root, results
+ *  streaming in; "refresh" = a cached list is on screen and a background walk
+ *  is about to replace it. The two scans read differently to the user, so
+ *  they get different copy rather than one "Loading…". */
+type ScanPhase = "idle" | "cold" | "refresh";
 
 function highlighted(text: string, positions: number[]): ReactNode {
   if (positions.length === 0) return text;
@@ -71,7 +81,10 @@ export function QuickOpen() {
   const [index, setIndex] = useState(0);
   const [files, setFiles] = useState<WalkedFile[] | null>(null);
   const [truncated, setTruncated] = useState(false);
-  const [walking, setWalking] = useState(false);
+  const [scan, setScan] = useState<ScanPhase>("idle");
+  // Bumped by the retry button (which also drops the cached entry) so a
+  // failed or empty scan can be re-run without closing the overlay.
+  const [rescan, setRescan] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const activeRef = useRef<HTMLDivElement>(null);
 
@@ -102,30 +115,46 @@ export function QuickOpen() {
     return () => cancelAnimationFrame(id);
   }, [open]);
 
-  // Walk the resolved root once per open (short TTL cache so re-opening
-  // Ctrl+P moments later doesn't re-walk a big repo from scratch).
+  // Walk the resolved root on open. Three paths, cheapest first (QL-741):
+  //   fresh cache  — show it, done.
+  //   stale cache  — show it instantly, rescan in the background, swap the
+  //                  result in when it lands, so a file an agent wrote
+  //                  seconds ago is findable without an empty flash.
+  //   no cache     — stream partial results in as the walk finds them rather
+  //                  than holding a spinner over a whole monorepo.
   useEffect(() => {
-    if (!open || !root) { setFiles(null); return; }
+    if (!open || !root) { setFiles(null); setTruncated(false); setScan("idle"); return; }
     const cached = walkCache.get(root);
-    if (cached && Date.now() - cached.at < WALK_TTL_MS) {
-      setFiles(cached.files);
-      setTruncated(cached.truncated);
-      return;
-    }
+    if (cached) { setFiles(cached.files); setTruncated(cached.truncated); }
+    else { setFiles(null); setTruncated(false); }
+    if (cached && Date.now() - cached.at < WALK_TTL_MS) { setScan("idle"); return; }
+
     let cancelled = false;
-    setWalking(true);
-    setFiles(null);
-    walkFiles(listDir, root)
+    setScan(cached ? "refresh" : "cold");
+    walkFiles(listDir, root, {
+      // Only stream into an empty list — repainting over a list the user is
+      // already arrowing through would move rows under the cursor.
+      onProgress: cached ? undefined : (found) => { if (!cancelled) setFiles(found); },
+      shouldCancel: () => cancelled,
+    })
       .then((res) => {
         if (cancelled) return;
         walkCache.set(root, { files: res.files, truncated: res.truncated, at: Date.now() });
         setFiles(res.files);
         setTruncated(res.truncated);
       })
-      .catch(() => { if (!cancelled) { setFiles([]); setTruncated(false); } })
-      .finally(() => { if (!cancelled) setWalking(false); });
+      // walkFiles swallows per-directory failures, so a rejection here means
+      // the whole IPC channel is down. Keep whatever already streamed in
+      // (partial beats blank), flag it as incomplete, and let the retry
+      // button below be the way out.
+      .catch(() => {
+        if (cancelled) return;
+        setFiles((cur) => cur ?? cached?.files ?? []);
+        setTruncated(true);
+      })
+      .finally(() => { if (!cancelled) setScan("idle"); });
     return () => { cancelled = true; };
-  }, [open, root]);
+  }, [open, root, rescan]);
 
   const recentPaths = useMemo(() => (root ? loadRecentFiles(root) : []), [open, root]);
 
@@ -146,6 +175,13 @@ export function QuickOpen() {
 
   useEffect(() => { setIndex(0); }, [query]);
   useEffect(() => { activeRef.current?.scrollIntoView({ block: "nearest" }); }, [index]);
+
+  // Drops the cached entry first so the effect below takes the cold path and
+  // re-walks for real instead of re-showing the same empty list.
+  const retry = () => {
+    if (root) walkCache.delete(root);
+    setRescan((n) => n + 1);
+  };
 
   const choose = (file: WalkedFile) => {
     if (root) pushRecentFile(root, file.path);
@@ -190,10 +226,21 @@ export function QuickOpen() {
         </div>
         <div className="cmdp-list">
           {!root && <div className="cmdp-empty">Open a workspace to search its files.</div>}
-          {root && files === null && <div className="cmdp-empty">{walking ? `Scanning ${label}…` : "Loading…"}</div>}
-          {root && files !== null && results.length === 0 && (
+          {root && files === null && <div className="cmdp-empty">{scan === "cold" ? `Indexing ${label}…` : "Loading…"}</div>}
+          {/* Nothing at all under the root: either an empty checkout or a scan
+              that failed outright. Say so and offer the one action, rather
+              than blaming the query for matching nothing. */}
+          {root && files !== null && files.length === 0 && scan === "idle" && (
             <div className="cmdp-empty">
-              {query.trim() ? `No files match "${query.trim()}".` : "No recent files yet — start typing to search."}
+              <div>Nothing indexed under {label}.</div>
+              <button className="ex-retry" style={{ marginTop: 8 }} onClick={retry}>Retry scan</button>
+            </div>
+          )}
+          {root && files !== null && files.length > 0 && results.length === 0 && (
+            <div className="cmdp-empty">
+              {query.trim()
+                ? (scan === "cold" ? `No matches yet — still indexing ${label}…` : `No files match "${query.trim()}".`)
+                : "No recent files yet — start typing to search."}
             </div>
           )}
           {showingRecent && <div className="cmdp-section">Recent</div>}
@@ -213,9 +260,15 @@ export function QuickOpen() {
               </div>
             );
           })}
-          {truncated && files !== null && (
-            <div className="cmdp-empty-hint" style={{ padding: "6px 10px", textAlign: "left" }}>
-              Showing the first {files.length} files found under {label} — narrow your search to reach the rest.
+          {/* One honest status line: what the index is doing, or where it
+              stopped. QL-741 — a hit cap is never silent. */}
+          {root && files !== null && (scan !== "idle" || (truncated && files.length > 0)) && (
+            <div className="cmdp-empty-hint" style={{ padding: "6px 10px", textAlign: "left" }} aria-live="polite">
+              {scan === "cold"
+                ? `Indexing ${label}… ${files.length} files so far`
+                : scan === "refresh"
+                  ? `Refreshing index for ${label}…`
+                  : `Index truncated (${files.length} files scanned) — narrow your search to reach the rest.`}
             </div>
           )}
         </div>

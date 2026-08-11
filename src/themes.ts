@@ -19,18 +19,30 @@ export interface ThemeMeta {
   mode: "dark" | "light";
   /** [bg, surface, accent] — three swatch dots for the picker tile. */
   swatch: [string, string, string];
+  /** Set when the theme owns its accent and the picker must not repaint it.
+   *  The string is the reason, shown in place of the picker in Settings.
+   *  applyAccent() honours this, so a saved accent id can't leak back in at
+   *  boot either (it used to: High Contrast's fixed #FFD400 was silently
+   *  overpainted by the persisted accent on every launch). */
+  fixedAccent?: string;
 }
 
 export const THEMES: ThemeMeta[] = [
+  // Graphite leads: it is the default (see DEFAULT_THEME_ID) and findTheme's
+  // fallback, so the list order and the default agree.
+  { id: "graphite", label: "Graphite", mode: "dark", swatch: ["#0B0D0F", "#161A1E", "#AAB4BF"], fixedAccent: "Fixed by Graphite, whose steel palette is the theme" },
   { id: "dark", label: "Deep Cove — Dark", mode: "dark", swatch: ["#070B12", "#141F31", "#43A6F5"] },
   { id: "light", label: "Deep Cove — Light", mode: "light", swatch: ["#EFF3F8", "#EDF2F8", "#1C72D0"] },
   { id: "dracula", label: "Dracula", mode: "dark", swatch: ["#282A36", "#44475A", "#BD93F9"] },
   { id: "gruvbox", label: "Gruvbox Dark", mode: "dark", swatch: ["#282828", "#3C3836", "#FE8019"] },
   { id: "nord", label: "Nord", mode: "dark", swatch: ["#2E3440", "#3B4252", "#88C0D0"] },
-  { id: "high-contrast", label: "High Contrast", mode: "dark", swatch: ["#000000", "#141414", "#FFD400"] },
+  { id: "high-contrast", label: "High Contrast", mode: "dark", swatch: ["#000000", "#141414", "#FFD400"], fixedAccent: "Fixed by High Contrast for accessibility" },
 ];
 
-export const DEFAULT_THEME_ID = "dark";
+// QL-792: Graphite is this install's default dark theme. Only reached on a
+// fresh profile, since an existing install has already persisted its choice under
+// `flightdeck-theme-id`, and that keeps winning (see currentThemeId).
+export const DEFAULT_THEME_ID = "graphite";
 
 export function findTheme(id: string): ThemeMeta {
   return THEMES.find((t) => t.id === id) ?? THEMES[0];
@@ -170,10 +182,28 @@ export function findAccent(id: string): AccentPreset {
   return ACCENTS.find((a) => a.id === id) ?? ACCENTS[0];
 }
 
+const ACCENT_PROPS = ["--ice", "--azure", "--accent", "--accent-grad", "--glow"];
+
+/** True only for a REGISTERED theme that declares fixedAccent. An imported
+ *  "custom" theme is not registered, so it keeps the accent picker. The
+ *  exact-id `some()` (not findTheme, which falls back to THEMES[0]) is what
+ *  guarantees that. */
+function activeThemeFixesAccent(): boolean {
+  const id = currentThemeId();
+  return THEMES.some((t) => t.id === id && !!t.fixedAccent);
+}
+
 export function applyAccent(accentId: string, mode: "dark" | "light") {
+  const el = document.documentElement;
+  // A theme that owns its accent must win over the picker's inline
+  // properties, so clear them rather than skip, or the previous theme's accent
+  // stays painted on <html> after the switch.
+  if (activeThemeFixesAccent()) {
+    for (const p of ACCENT_PROPS) el.style.removeProperty(p);
+    return;
+  }
   const a = findAccent(accentId);
   const v = mode === "light" ? a.light : a.dark;
-  const el = document.documentElement;
   el.style.setProperty("--ice", v.ice);
   el.style.setProperty("--azure", v.azure);
   el.style.setProperty("--accent", v.accent);

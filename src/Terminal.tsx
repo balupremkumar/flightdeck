@@ -6,6 +6,8 @@ import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon, type ISearchOptions, type ISearchResultChangeEvent } from "@xterm/addon-search";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { LigaturesAddon } from "@xterm/addon-ligatures";
+import { WebglAddon } from "@xterm/addon-webgl";
+import { Unicode11Addon } from "@xterm/addon-unicode11";
 import "@xterm/xterm/css/xterm.css";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -20,6 +22,25 @@ import { useUI } from "./ui";
 // terminal stays in sync with Settings' theme picker.
 function activeThemeId(): string {
   return document.documentElement.getAttribute("data-theme") ?? "dark";
+}
+
+/** Schemes we will hand to the OS opener from terminal output. Deliberately an
+ *  ALLOWLIST, and deliberately narrower than markdown preview's (no mailto/tel):
+ *  the only URLs a pane can produce are the regex linkifier's http/https matches
+ *  and OSC 8 hyperlinks, and an OSC 8 URI is whatever the child process chose to
+ *  print. `openUrl` is the shell, so `javascript:`, `file:`, `ms-msdt:` and
+ *  friends must never reach it — same rule as SAFE_LINK_SCHEMES in markdown.ts. */
+const SAFE_TERMINAL_URL = /^https?:\/\//i;
+
+/** The single open-a-URL path for a pane: WebLinksAddon's regex matches and
+ *  OSC 8 hyperlinks both come through here, so they can't drift apart. A
+ *  blocked scheme says so rather than making the click look broken. */
+function openTerminalUrl(uri: string): void {
+  if (!SAFE_TERMINAL_URL.test(uri)) {
+    useUI.getState().pushToast("error", "Blocked link — only http and https links open from a terminal", { detail: uri.slice(0, 300) });
+    return;
+  }
+  openUrl(uri).catch(() => { /* best-effort */ });
 }
 
 function hexToRgba(hex: string, alpha: number): string {
@@ -251,15 +272,39 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
       cursorStyle: ts.cursorStyle,
       scrollback: ts.scrollback,
       theme: themeRef.current,
+      // QL-756: OSC 8 hyperlinks — agents and modern CLIs (gh, cargo, vitest)
+      // emit them so a PR/docs URL is clickable without printing the raw link.
+      // xterm hands the URI over verbatim, so it goes through the same
+      // allowlisted opener as the regex-matched URLs below.
+      linkHandler: { activate: (_e, uri) => openTerminalUrl(uri) },
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
     const search = new SearchAddon();
     term.loadAddon(search);
-    const webLinks = new WebLinksAddon((_e, uri) => { openUrl(uri).catch(() => { /* best-effort */ }); });
+    const webLinks = new WebLinksAddon((_e, uri) => openTerminalUrl(uri));
     term.loadAddon(webLinks);
+    // QL-751: agent TUIs draw with emoji and box-drawing characters whose
+    // widths changed in Unicode 11; on xterm's default table they measure one
+    // cell short and every box in the frame tears. Registered before open() so
+    // the first paint already uses the right widths.
+    const unicode11 = new Unicode11Addon();
+    term.loadAddon(unicode11);
+    term.unicode.activeVersion = "11";
 
     term.open(el);
+    // QL-736: GPU renderer, loaded after open() because it needs the element.
+    // A pane streaming a diff repaints far cheaper on WebGL than on the DOM
+    // renderer. Activation throws where WebGL2 isn't available (software
+    // rendering, blocked driver, remote session) — not fatal, xterm just keeps
+    // the DOM renderer, so fail silently rather than warn about something the
+    // user can't act on. Context loss (driver reset, GPU sleep) is the same
+    // story: dispose and fall back, never take the pane down over a repaint.
+    try {
+      const webgl = new WebglAddon();
+      webgl.onContextLoss(() => webgl.dispose());
+      term.loadAddon(webgl);
+    } catch { /* no WebGL2 here — DOM renderer it is */ }
     termRef.current = term;
     fitRef.current = fit;
     searchAddonRef.current = search;

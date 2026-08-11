@@ -111,6 +111,119 @@ describe("walkFiles", () => {
   });
 });
 
+// QL-741: the defaults used to be 4000 files / 4000 dirs / depth 14, low
+// enough that an ordinary repo lost files with no note saying so. These
+// pin the raised ceilings and the batching that pays for them.
+describe("walkFiles ceilings and batching (QL-741)", () => {
+  /** Wraps a fake fs so a test can see how many round trips the walk cost and
+   *  how many were ever in flight at the same time. */
+  function instrumentedListDir(fs: Record<string, { name: string; dir: boolean }[]>) {
+    const stats = { calls: 0, peakInFlight: 0 };
+    let inFlight = 0;
+    const listDir = async (path: string) => {
+      stats.calls++;
+      inFlight++;
+      stats.peakInFlight = Math.max(stats.peakInFlight, inFlight);
+      await Promise.resolve(); // a round trip is never synchronous
+      inFlight--;
+      const entries = fs[path];
+      if (!entries) throw new Error("ENOENT");
+      return entries;
+    };
+    return { listDir, stats };
+  }
+
+  it("indexes a 5000-file directory whole, where the old 4000 cap truncated it", async () => {
+    const fs = { "/root": Array.from({ length: 5000 }, (_, i) => ({ name: `f${i}.ts`, dir: false })) };
+    const { files, truncated } = await walkFiles(fakeListDir(fs), "/root");
+    expect(files.length).toBe(5000);
+    expect(truncated).toBe(false);
+  });
+
+  it("reaches a file 20 levels deep, where the old depth-14 cap stopped short", async () => {
+    const fs: Record<string, { name: string; dir: boolean }[]> = {};
+    let path = "/root";
+    for (let d = 1; d <= 20; d++) {
+      fs[path] = [{ name: `d${d}`, dir: true }];
+      path = `${path}/d${d}`;
+    }
+    fs[path] = [{ name: "deep.ts", dir: false }];
+    const { files, truncated } = await walkFiles(fakeListDir(fs), "/root");
+    expect(files.map((f) => f.name)).toEqual(["deep.ts"]);
+    expect(files[0].depth).toBe(21);
+    expect(truncated).toBe(false);
+  });
+
+  it("reads directories in parallel batches instead of one round trip at a time", async () => {
+    const fs: Record<string, { name: string; dir: boolean }[]> = {
+      "/root": Array.from({ length: 10 }, (_, i) => ({ name: `d${i}`, dir: true })),
+    };
+    for (let i = 0; i < 10; i++) fs[`/root/d${i}`] = [{ name: "x.ts", dir: false }];
+    const { listDir, stats } = instrumentedListDir(fs);
+    const { files } = await walkFiles(listDir, "/root", { concurrency: 4 });
+    expect(files.length).toBe(10);
+    expect(stats.peakInFlight).toBe(4);
+    // Every directory read exactly once — batching must not double-list.
+    expect(stats.calls).toBe(11);
+  });
+
+  it("keeps breadth-first order despite the parallel batch", async () => {
+    const fs: Record<string, { name: string; dir: boolean }[]> = {
+      "/root": [{ name: "a", dir: true }, { name: "b", dir: true }, { name: "c", dir: true }],
+      "/root/a": [{ name: "x.ts", dir: false }],
+      "/root/b": [{ name: "x.ts", dir: false }],
+      "/root/c": [{ name: "x.ts", dir: false }],
+    };
+    const { files } = await walkFiles(fakeListDir(fs), "/root", { concurrency: 8 });
+    expect(files.map((f) => f.relPath)).toEqual(["a/x.ts", "b/x.ts", "c/x.ts"]);
+  });
+
+  it("concurrency: 1 keeps the old strictly-sequential behaviour", async () => {
+    const fs: Record<string, { name: string; dir: boolean }[]> = {
+      "/root": [{ name: "a", dir: true }, { name: "b", dir: true }],
+      "/root/a": [{ name: "x.ts", dir: false }],
+      "/root/b": [{ name: "y.ts", dir: false }],
+    };
+    const { listDir, stats } = instrumentedListDir(fs);
+    await walkFiles(listDir, "/root", { concurrency: 1 });
+    expect(stats.peakInFlight).toBe(1);
+  });
+
+  it("reports partial results through onProgress before the walk finishes", async () => {
+    const fs: Record<string, { name: string; dir: boolean }[]> = {
+      "/root": Array.from({ length: 6 }, (_, i) => ({ name: `d${i}`, dir: true })),
+    };
+    for (let i = 0; i < 6; i++) fs[`/root/d${i}`] = [{ name: `f${i}.ts`, dir: false }];
+    const snapshots: number[] = [];
+    const { files } = await walkFiles(fakeListDir(fs), "/root", {
+      concurrency: 2,
+      onProgress: (found) => snapshots.push(found.length),
+    });
+    expect(files.length).toBe(6);
+    expect(snapshots.length).toBeGreaterThan(0);
+    // A snapshot is a prefix of the final list, never longer than it, and
+    // arrives while there is still walking left to do.
+    expect(snapshots[0]).toBeLessThan(files.length);
+    expect(Math.max(...snapshots)).toBeLessThanOrEqual(files.length);
+  });
+
+  it("stops walking as soon as shouldCancel goes true and reports what it had", async () => {
+    const fs: Record<string, { name: string; dir: boolean }[]> = {
+      "/root": Array.from({ length: 40 }, (_, i) => ({ name: `d${i}`, dir: true })),
+    };
+    for (let i = 0; i < 40; i++) fs[`/root/d${i}`] = [{ name: `f${i}.ts`, dir: false }];
+    const { listDir, stats } = instrumentedListDir(fs);
+    let batches = 0;
+    const { files, truncated } = await walkFiles(listDir, "/root", {
+      concurrency: 4,
+      shouldCancel: () => batches++ >= 2, // root batch, one more, then bail
+    });
+    expect(stats.calls).toBeLessThanOrEqual(5);
+    expect(files.length).toBeLessThan(40);
+    expect(truncated).toBe(true); // an abandoned walk is an incomplete index
+  });
+});
+
 describe("subsequenceMatch", () => {
   it("matches an ordered subsequence and returns positions", () => {
     const m = subsequenceMatch("src/explorer.css", "exp css");

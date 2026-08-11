@@ -1104,3 +1104,138 @@ UI-650. A design-critique pass on the whole app once U1-U5 land, before calling 
 U1 first and whole (it is the named pain and the highest daily-friction fix), then U2.
 U3-U5 by dogfooding: whatever annoys Balu that week goes to the top.
 The UI batch runs alongside as small passes, EXCEPT UI-604 and UI-650 which are gates, not items.
+
+## Sellability roadmap pointer (2026-08-11)
+Phases F1-F5 (supervision-cockpit positioning, hook-driven state, cross-vendor burn gauge, checkpoint timeline, Agent Teams GUI, review-loop completion, packaging) live in [[PRODUCT-STRATEGY-2026-08-11|the product strategy]] section 1, diffed against Sections H/I/K/M above.
+Read that section before generating new Flightdeck feature ideas.
+
+## QL-701..735 daily-driver QoL batch (2026-08-11, monetisation lens dropped by Balu)
+
+Reframe ruling: Flightdeck is the daily driver replacing VS Code; F5 packaging is parked; F1-F4 strategy items are folded in here where they are daily-driver wins.
+Named pain: the viewers.
+
+### V1 Viewers (the named pain)
+- QL-701 Preview: render mermaid and diagram fences properly (offline, upgrade of UX-509 which shows them as plain code)
+- QL-702 Preview: Ctrl+F find within the rendered document, hit count + nav
+- QL-703 Preview: table-of-contents sidebar for markdown, click-to-jump, tracks scroll position
+- QL-704 Preview: follow mode - auto-refresh when the file changes on disk (pairs with fs watcher UI-213)
+- QL-705 Preview: image viewer upgrades - zoom/pan, fit/1:1 toggle, pixel dimensions, copy image
+- QL-706 Preview: structured viewers - CSV as sortable table, JSON as collapsible tree, large-file safe
+- QL-707 Preview: compare mode - diff two files or file-vs-clipboard in the existing diff renderer
+- QL-708 Preview: pinnable as a persistent split beside the terminal, not only a drawer overlay
+- QL-709 Preview: recent files + pinned favourites list in the drawer
+- QL-710 Preview: quick-edit mode for small text files (save in place, no external editor round-trip) - scope call [Balu]: bends the editor-handoff philosophy
+- QL-711 Verify/finish scrollback search UX-524/525 (claimed in the click-to-open wave, never confirmed in STATE)
+- QL-712 In-app browser pane (promotes UI-6): embedded webview, auto-detect localhost URLs in agent output, click-to-open beside the pane; pairs with port-pool management
+- QL-713 Markdown notes pane per workspace (promotes UI-8): scratchpad the operator and agents can both read
+
+### V2 Review viewer, act-on-it
+- QL-714 Per-hunk approve/reject with small inline edit before merge (extends shipped UI-168 include/exclude)
+- QL-715 Diff: collapse unchanged regions with expand-context controls
+- QL-716 Diff: image before/after view for changed binary images
+- QL-717 Pre-review pass: run the repo linter + tests in the worktree on completion, surface results on the review card
+- QL-718 Verification artifacts on the session card: test output, logs, screenshots
+- QL-719 "Changed since I last looked" marker per pane: diff-since-last-review baseline that resets on review
+
+### V3 Attention and trust (F1 items recast)
+- QL-720 Hook-driven session state via Claude Code Notification/Stop hooks, replacing terminal-text heuristics
+- QL-721 Cross-vendor burn gauge from local JSONL: per-session cost, 5-hour block burn, time-to-limit; absorbs UI-233 costPerMTok
+- QL-722 Visual checkpoint timeline per session with diff preview and /rewind restore
+- QL-723 Autonomy dial per session (interactive / plan / autopilot)
+- QL-724 Live one-line "what is this agent doing now" in the pane header, parsed from the last tool call
+
+### V4 Orchestration ergonomics (F3 items recast)
+- QL-725 Saved task recipes: prompt + repo + vendor + permission mode + verification command
+- QL-726 Board chaining: card B dispatches when card A merges
+- QL-727 Race-N-and-promote: same task in N worktrees, promote the winner
+- QL-728 Agent-reviews-agent preset over one diff
+- QL-729 GitHub issue ingest: issue to configured session
+- QL-730 Local scheduler: fire a saved session on a schedule
+- QL-731 Worktree setup config per repo (.flightdeck/worktree.json: setup commands, env)
+- QL-732 Auto-detect installed agent CLIs on first run
+
+### V5 Polish sweep
+- QL-733 Execute the untouched UI-601..650 phases in order (foundations 601-604 first, then diff typography 617-619, platform 639-645)
+- QL-734 The ~10 remaining items in handovers\2026-08-01-flightdeck-ux-resume.md
+- QL-735 Tooltip/typography policy passes UI-221/UI-224 (= UI-610/611)
+
+## Gold-plate Flightdeck as daily driver - 4-agent research fanout (2026-08-11)
+
+Angles: A terminal deep-craft (web), B Claude Code power tools (web), C codebase gap sweep (repo), D Windows-native integration (web + repo verify).
+Deduped against QL-701..735 and all prior sections.
+Stale-claim corrections found by D: UI-147 badge count is marked DONE but `setBadgeCount` is a documented no-op on Windows (use `setOverlayIcon`); OS toasts go through raw WebView2 Notification with no AUMID (tauri-plugin-notification absent); no tray exists anywhere in src-tauri. Only the taskbar flash is real.
+
+### Convergent (two agents independently, strongest signal)
+- QL-736 WebGL renderer (@xterm/addon-webgl) with fallback on context loss - the single biggest jank fix; DOM renderer confirmed in code, VS Code measured up to 900% faster [C1+A1] (S)
+- QL-737 Drag-drop files/folders onto panes inserting shell-quoted paths; folder onto grid opens workspace; mind the dragDropEnabled vs DOM-drag trap [A3+D8] (S)
+
+### Codebase defects and gaps (angle C, file:line evidence in the fanout report)
+- QL-738 Cut and ship v0.5.2 - the terminal click-offset fix is stranded on main; installed 0.5.1 still has the worst daily bug (S)
+- QL-739 Surface diff truncation in Review ("... [diff truncated]" is appended by worktree.rs but never shown) with an open-in-editor escape (S)
+- QL-740 git_status ahead/behind vs upstream + unpushed-commits indicator on every pane, not just worktree panes (M)
+- QL-741 Quick-open: raise the 4000-file/depth-14 caps, invalidate the 30s cache on fs events so agent-created files appear immediately (M)
+- QL-742 Pane memory health always-on: consume overMemoryWarn in pane header + attention queue; wire the dead memory_warn_mb setting through pane_health (M)
+- QL-743 Damp auto-title churn (header flips claude->node->pwsh during builds); debounce or prefer the root process (S)
+- QL-744 Explorer: "show more" past the 300-row folder cap (S)
+- QL-745 Preview >5MB: offer open-in-editor instead of a bare error (S)
+- QL-746 Preview image failure state (retry/reveal) + delete the stale "backend not shipped" comment (S)
+- QL-747 Explorer honest error states: denied/vanished folders say why instead of rendering empty (M)
+- QL-748 Fix --st-waiting 3.30:1 contrast on light theme (known failure, never filed) (S)
+- QL-749 Surface vendor PROXY_ENV_STRIP behaviour in Settings so Bedrock/Vertex fallback is not silent (S)
+- QL-750 [Balu posture call] Scope fs_read_text_file/fs_read_file_base64 IPC to workspace roots (carried from STATE.md:39) (M)
+
+### Terminal deep-craft (angle A)
+- QL-751 Unicode 11 width addon - fixes emoji/box-drawing frame corruption from agent TUIs, correctness not polish (S)
+- QL-752 OSC 133 shell integration via injected PowerShell prompt wrapper - the load-bearing primitive for 753/755/757/763 (M)
+- QL-753 Command marks: Ctrl+Up/Down jump between commands, exit-status gutter glyphs, scrollbar overview ruler (M, needs 752)
+- QL-754 Quick-select hints mode: keyboard labels over every path/URL/hash on screen, copy or insert without the mouse (M)
+- QL-755 Sticky scroll: pin the owning command header while scrolled back (M, needs 752)
+- QL-756 OSC 8 hyperlink support alongside the regex linkifier (S)
+- QL-757 CWD tracking via OSC 9;9 - correct file:line resolution after an agent cd, "new pane here" (S, with 752)
+- QL-758 OSC 52 clipboard write-only, opt-in per pane (WSL/remote copy) (S)
+- QL-759 Write-side pty batching + bracketed-paste chunking so large pastes do not stall ConPTY (S)
+- QL-760 Copy mode with vi keys over scrollback; semantic-zone selection once 752 lands (M)
+- QL-761 Triggers: user regex rules on output - highlight line, capture to a clickable sidebar list, set mark (M)
+- QL-762 Scrollback persistence across restart via addon-serialize (restored sessions currently come back blank) (M)
+- QL-763 Output folding: collapse a command's output to "N lines, exit 1" (Warp blocks; needs real design, no xterm primitive) (L, needs 752)
+
+### Claude Code power tools (angle B, mostly reads JSONL Flightdeck already scans)
+- QL-764 Resume/fork launcher: open a pane from any past session via --resume/--fork-session, forks nested under roots (S)
+- QL-765 Context breakdown meter: stacked system/tools/MCP/memory/messages + countdown to autocompact, expanding the ctx pill (S/M)
+- QL-766 Model/mode/thinking chip per pane read from transcript (catches silent model fallback, stuck plan mode) (S)
+- QL-767 Permission rule inspector: merged allow/ask/deny with winning source, promote-a-prompt-to-rule at chosen scope (M)
+- QL-768 MCP board: per-project server health, tool counts, token cost each contributes, enable/disable (M)
+- QL-769 Live subagent tree per pane: count, type, current tool, elapsed, tokens, per-subagent transcript (loudest unmet need in ecosystem) (M)
+- QL-770 Plan-mode panel: render ExitPlanMode plans as a document beside the pane, approve/refine/reject, archive per pane (M)
+- QL-771 Full-text search across all session transcripts, open hit as resumed/forked pane (M, pairs with 764)
+- QL-772 Session ledger: auto-titled index per repo (first prompt/summary line, branch, model, duration, outcome), editable titles (S/M)
+- QL-773 Hook manager: every hook by event/scope, last fire, exit code, stderr, duration, toggles, schema validation (hooks fail silently by design) (M)
+- QL-774 Config doctor: effective merged settings with winning source per key, JSON lint incl. the BOM trap (S/M)
+- QL-775 Memory stack viewer: resolved CLAUDE.md chain with @imports expanded, line counts, drift warning (M)
+- QL-776 Skills/commands/agents inventory across projects with drift diff (M)
+- QL-777 Compaction boundary marker on the pane timeline + handoff snapshot of what was live (M)
+- (B's diff-review-with-inline-comments = extends QL-714, not duplicated; comments feed back as the next prompt)
+
+### Windows-native integration (angle D, verified against src-tauri)
+- QL-778 Replace the dead badge with a real taskbar overlay icon carrying the needs-attention count (S/M; corrects UI-147)
+- QL-779 Monitor-aware window state persistence (tauri-plugin-window-state; no restore onto a vanished monitor; visible:false against flash) (S)
+- QL-780 Global summon hotkey: one chord surfaces Flightdeck focused on the neediest pane, same chord dismisses (user-settable) (S)
+- QL-781 Real AppUserModelID + route toasts through tauri-plugin-notification (fixes toast origin, pin-survives-update, prerequisite for jump lists) (M)
+- QL-782 Feed the already-parsed OSC 9;4 progress to the taskbar button (aggregate rule + error state) (S)
+- QL-783 Tray icon with attention state + menu (recent workspaces, summon, quit) and close-to-tray given job-object reaping (M)
+- QL-784 Follow Windows theme auto-switch (Light/Dark/Follow Windows three-state) (S)
+- QL-785 Respect Focus Assist/DND via SHQueryUserNotificationState: suppress ambient, keep blocking permission prompts; covers presentation mode during screen shares (S)
+- QL-786 Opt-in start-with-Windows minimised to tray (off by default; requires 783 + single-instance first, job-object hazard noted) (S)
+- QL-787 flightdeck:// deep links + single-instance plugin (deep link to workspace/pane; NSIS registration gap -> runtime register()) (M)
+- QL-788 Jump list of recent workspaces on taskbar right-click (COM ICustomDestinationList via windows crate; needs 781 + 787) (L)
+- QL-789 Power-aware polling: back off on battery/energy saver, pause on suspend, resync on resume (fixes stale-after-sleep too) (M)
+- QL-790 Screen-reader pass: xterm screenReaderMode as a toggle + roles/labels on grid, queue, dropdowns (M)
+- QL-791 Thumbnail toolbar buttons on taskbar preview - only as a rider once 788 pays the COM cost (L)
+
+### Ranked out by research, recorded so it stays decided
+- Frameless Mica/Acrylic title bar: forfeits working Snap Layouts/Win+arrow; Acrylic resize stutter over nine live terminals; test setEffects Mica on the decorated window instead
+- Credential locker: Flightdeck deliberately stores no tokens (BACKLOG 219)
+- MSIX/Share targets: repackaging cost for a surface nobody uses
+- Quake dropdown pane (angle A) superseded by QL-780 global summon (angle D)
+- Cursor trail/smooth caret: no xterm cursor shader hook; WebGL renderer delivers the cheap half
+- QL-792 [Balu 2026-08-11] New default dark theme "Graphite": darker charcoal base, chrome/metallic surface treatment, de-emphasise the Kove blue accent ("cove colors don't look the best on here; needs to be darker, more chrome"); keep existing themes selectable; WCAG 4.5:1 floors; absorbs QL-748

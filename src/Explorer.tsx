@@ -124,13 +124,69 @@ function sameEntries(a: Entry[], b: Entry[]): boolean {
   return true;
 }
 
-type NodeStatus = "idle" | "loading" | "loaded" | "denied";
+type NodeStatus = "idle" | "loading" | "loaded" | "error";
 
 // UI-49 / QOL 323: node_modules-scale directories put thousands of rows into
 // the DOM at once. Rather than pull in a virtualisation dependency, render a
 // generous slice and say plainly how many are hidden — the tree is for
 // navigating, and nobody scrolls 4000 sibling files.
-const MAX_ROWS = 300;
+export const MAX_ROWS = 300;
+
+// QL-744: the truncation notice used to be a dead end. It now carries an
+// action — one click reveals another slice, and a folder small enough to
+// render whole (<= SHOW_ALL_MAX) opens fully in that one click rather than
+// making you click four times to see 900 files.
+const ROW_STEP = 300;
+const SHOW_ALL_MAX = 2000;
+
+/** Cap this folder should render at after one "show more" click. */
+export function nextRowLimit(total: number, limit: number): number {
+  if (total <= SHOW_ALL_MAX) return total;
+  return Math.min(total, limit + ROW_STEP);
+}
+
+/** Label for the show-more button — honest about how much the click reveals. */
+export function showMoreLabel(total: number, limit: number): string {
+  const next = nextRowLimit(total, limit);
+  return next >= total ? `Show all ${total}` : `Show ${next - limit} more`;
+}
+
+// QL-747: a directory read that fails (denied, deleted mid-browse, backend
+// error) used to leave an empty-looking folder behind, which reads as "this
+// folder is empty" — a lie. Same shape as Preview.tsx's guessErrorMessage:
+// classify the raw backend string, say the plain-English thing, keep the
+// original text for the cases we can't name.
+export type DirErrorKind = "denied" | "missing" | "other";
+
+export function classifyDirError(err: unknown): DirErrorKind {
+  const raw = String(err);
+  if (/denied|permission|not permitted/i.test(raw)) return "denied";
+  if (/no such file|cannot find|not found|does not exist/i.test(raw)) return "missing";
+  return "other";
+}
+
+export function dirErrorMessage(err: unknown): string {
+  switch (classifyDirError(err)) {
+    case "denied": return "Access denied.";
+    case "missing": return "Folder missing.";
+    default: {
+      const raw = String(err).trim().split(/\r?\n/)[0].slice(0, 160);
+      return raw ? `Couldn’t read this folder — ${raw}` : "Couldn’t read this folder.";
+    }
+  }
+}
+
+/** UI-49 / QL-744: honest hidden-item count plus the action that reveals more. */
+function MoreRow({ total, limit, depth, onMore }: { total: number; limit: number; depth?: number; onMore: () => void }) {
+  return (
+    <div className="ex-row ex-more" style={depth != null ? { paddingLeft: rowIndent(depth) } : undefined}>
+      {total - limit} more items not shown
+      <button className="ex-retry" style={{ fontStyle: "normal" }} onClick={onMore}>
+        {showMoreLabel(total, limit)}
+      </button>
+    </div>
+  );
+}
 
 // UX-512: quick-look popover body — first slice of the raw file text, no
 // markdown rendering (that's what Enter's real preview is for). Kept tiny
@@ -199,6 +255,11 @@ function Node({
   const [expanded, setExpanded] = useState(() => isExpanded(expandKey, path));
   const [children, setChildren] = useState<Entry[] | null>(null);
   const [status, setStatus] = useState<NodeStatus>("idle");
+  // QL-747: why the last read failed, so the row can say it rather than sit
+  // there looking like an empty folder.
+  const [err, setErr] = useState<{ kind: DirErrorKind; message: string } | null>(null);
+  // QL-744: how many of this folder's children are currently rendered.
+  const [rowLimit, setRowLimit] = useState(MAX_ROWS);
   const { head, tail } = splitName(name, dir);
   const ignored = IGNORED_NAMES.has(name);
   const diff = !dir ? changed.get(path) : undefined;
@@ -220,38 +281,47 @@ function Node({
     try {
       const entries = await invoke<Entry[]>("fs_list_dir", { path });
       setChildren(entries);
+      setErr(null);
       setStatus("loaded");
       return true;
-    } catch {
-      // Permission-denied (or any other read failure) on this one subfolder —
-      // show a lock glyph inline, leave the rest of the tree untouched.
-      setStatus("denied");
-      setExpanded(false);
+    } catch (e) {
+      // QL-747: permission-denied (or any other read failure) on this one
+      // subfolder — keep the folder open and say why inline (plus the lock
+      // glyph on the row when it's a denial), leave the rest of the tree
+      // untouched. It used to collapse itself, which was indistinguishable
+      // from an empty folder.
+      setErr({ kind: classifyDirError(e), message: dirErrorMessage(e) });
+      setStatus("error");
       return false;
     }
   };
 
-  const toggle = async () => {
-    if (expanded) { setExpanded(false); rememberExpanded(expandKey, path, false); return; }
-    if (children !== null) { setExpanded(true); rememberExpanded(expandKey, path, true); return; }
-    if (await fetchChildren()) { setExpanded(true); rememberExpanded(expandKey, path, true); }
+  // Expansion is the only thing the click decides; the effect below owns the
+  // fetch, so a re-expand after a failed read retries it.
+  const toggle = () => {
+    const next = !expanded;
+    setExpanded(next);
+    rememberExpanded(expandKey, path, next);
   };
 
-  const onRowClick = () => { if (dir) void toggle(); else onPreview(path); };
+  const onRowClick = () => { if (dir) toggle(); else onPreview(path); };
   const onRowDoubleClick = () => { if (!dir) onOpenInEditor(path); };
 
   const onKey = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter") { e.preventDefault(); if (dir) void toggle(); else onPreview(path); return; }
+    if (e.key === "Enter") { e.preventDefault(); if (dir) toggle(); else onPreview(path); return; }
     if (e.key === " ") {
       e.preventDefault();
-      if (dir) { void toggle(); return; }
+      if (dir) { toggle(); return; }
       setQuickLook((v) => !v);
       return;
     }
     if (e.key === "Escape" && quickLook) { e.preventDefault(); e.stopPropagation(); setQuickLook(false); }
   };
 
-  // A folder restored as "expanded" still needs its children fetched once.
+  // Owns every first read of this folder: one restored as "expanded" needs
+  // its children fetched once, and so does one the user just opened. Deps are
+  // [dir, expanded], so a failed read isn't retried until the folder is
+  // collapsed and reopened (or Retry is pressed) — never in a loop.
   useEffect(() => {
     if (!dir || !expanded || children !== null || status === "loading") return;
     void fetchChildren();
@@ -272,7 +342,11 @@ function Node({
       .then((entries) => {
         setChildren((prev) => (prev && sameEntries(prev, entries) ? prev : entries));
       })
-      .catch(() => { /* transient read failure — leave the stale listing in place */ });
+      .catch(() => {
+        // Transient read failure — leave the stale listing in place. A folder
+        // that's really gone disappears from its PARENT's next listing, which
+        // unmounts this node, so nothing stays stale for long (QL-747).
+      });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refreshTick]);
 
@@ -308,7 +382,9 @@ function Node({
         style={{ paddingLeft: rowIndent(depth) }}
         role="button"
         tabIndex={0}
-        title={name}
+        // QL-747: the dimming is a name-list guess, not gitignore data — say
+        // so on hover rather than implying the repo really ignores this.
+        title={ignored ? `${name} — dimmed as a commonly generated/vendored folder (guessed by name, not read from .gitignore)` : name}
         data-ex-name={name}
         onClick={onRowClick}
         onDoubleClick={onRowDoubleClick}
@@ -332,7 +408,7 @@ function Node({
             title={diff.binary ? "Binary file changed" : `+${diff.added} -${diff.deleted}`}
           />
         )}
-        {status === "denied" && <LockIcon className="ex-lock" aria-label="Permission denied" />}
+        {err?.kind === "denied" && <LockIcon className="ex-lock" aria-label="Permission denied" />}
         {dir && wsId != null && (
           <button className="ex-action" title="New terminal here" onClick={newTerminalHere}>
             <IconAgent size={12} />
@@ -343,11 +419,19 @@ function Node({
         <QuickLookPopover name={name} path={path} pos={qlPos} onClose={() => setQuickLook(false)} />
       )}
       {dir && status === "loading" && <SkeletonRows depth={depth + 1} count={2} />}
-      {dir && expanded && children !== null && (
+      {/* QL-747: same message + Retry shape the panel's root error state uses,
+          indented to sit where this folder's children would have been. */}
+      {dir && expanded && status === "error" && err && (
+        <div className="ex-state" style={{ paddingLeft: rowIndent(depth + 1) }} role="status">
+          {err.message}
+          <button className="ex-retry" onClick={() => { void fetchChildren(); }}>Retry</button>
+        </div>
+      )}
+      {dir && expanded && status !== "error" && children !== null && (
         children.length === 0 ? (
           <div className="ex-row ex-empty" style={{ paddingLeft: rowIndent(depth + 1) }}>Empty</div>
         ) : (
-          children.slice(0, MAX_ROWS).map((c) => (
+          children.slice(0, rowLimit).map((c) => (
             <Node
               key={joinPath(path, c.name)}
               name={c.name}
@@ -368,10 +452,13 @@ function Node({
           ))
         )
       )}
-      {dir && expanded && children !== null && children.length > MAX_ROWS && (
-        <div className="ex-row ex-more" style={{ paddingLeft: rowIndent(depth + 1) }}>
-          {children.length - MAX_ROWS} more items not shown
-        </div>
+      {dir && expanded && status !== "error" && children !== null && children.length > rowLimit && (
+        <MoreRow
+          total={children.length}
+          limit={rowLimit}
+          depth={depth + 1}
+          onMore={() => setRowLimit((n) => nextRowLimit(children.length, n))}
+        />
       )}
     </div>
   );
@@ -443,6 +530,11 @@ export function Explorer({ root, wsId, vendor = "pwsh", paneRoot, paneLabel }: E
   const [panelOpen, setPanelOpen] = useState(true);
   const [entries, setEntries] = useState<Entry[]>([]);
   const [status, setStatus] = useState<RootStatus>(root ? "loading" : "empty-root");
+  // QL-747: what actually went wrong with the last root read (denied, gone,
+  // or the raw backend text), not just "couldn't read".
+  const [errMsg, setErrMsg] = useState("");
+  // QL-744: how many top-level entries are rendered right now.
+  const [rootRowLimit, setRootRowLimit] = useState(MAX_ROWS);
   const [git, setGit] = useState<GitInfo | null>(null);
   // UI-210: path -> DiffFile for files changed since base, keyed on the same
   // node paths the tree renders so a row can look itself up with no per-node
@@ -453,6 +545,8 @@ export function Explorer({ root, wsId, vendor = "pwsh", paneRoot, paneLabel }: E
   // children too (audit 2.3) — see Node's refreshTick effect.
   const [refreshTick, setRefreshTick] = useState(0);
   const seq = useRef(0);
+  // Consecutive failed root reads — see load()'s catch (QL-747).
+  const failStreak = useRef(0);
   // Per-pane rooting: browse the focused pane's worktree instead of the main
   // checkout. Preference persisted; falls back to workspace when the focused
   // pane isn't isolated.
@@ -574,16 +668,24 @@ export function Explorer({ root, wsId, vendor = "pwsh", paneRoot, paneLabel }: E
   const [filterFilesList, setFilterFilesList] = useState<WalkedFile[] | null>(null);
   const [filterTruncated, setFilterTruncated] = useState(false);
   const [filterLoading, setFilterLoading] = useState(false);
+  // QL-747: a failed walk used to fall back to an empty file list, which the
+  // UI then reported as "no files match" — a wrong answer, not an error.
+  const [filterError, setFilterError] = useState<string | null>(null);
 
-  useEffect(() => { setFilterFilesList(null); setFilterQuery(""); }, [effectiveRoot]);
+  useEffect(() => {
+    setFilterFilesList(null);
+    setFilterQuery("");
+    setFilterError(null);
+    setRootRowLimit(MAX_ROWS);
+  }, [effectiveRoot]);
 
   useEffect(() => {
     if (!filterQuery.trim() || !effectiveRoot || filterFilesList !== null || filterLoading) return;
     let cancelled = false;
     setFilterLoading(true);
     walkFiles((p) => invoke<Entry[]>("fs_list_dir", { path: p }), effectiveRoot)
-      .then((res) => { if (!cancelled) { setFilterFilesList(res.files); setFilterTruncated(res.truncated); } })
-      .catch(() => { if (!cancelled) setFilterFilesList([]); })
+      .then((res) => { if (!cancelled) { setFilterFilesList(res.files); setFilterTruncated(res.truncated); setFilterError(null); } })
+      .catch((e) => { if (!cancelled) { setFilterError(dirErrorMessage(e)); setFilterFilesList([]); } })
       .finally(() => { if (!cancelled) setFilterLoading(false); });
     return () => { cancelled = true; };
   }, [filterQuery, effectiveRoot, filterFilesList, filterLoading]);
@@ -630,8 +732,24 @@ export function Explorer({ root, wsId, vendor = "pwsh", paneRoot, paneLabel }: E
     if (!quiet) setStatus("loading");
     setRefreshTick((t) => t + 1);
     invoke<Entry[]>("fs_list_dir", { path: effectiveRoot })
-      .then((e) => { if (seq.current === mySeq) { setEntries(e); setStatus("loaded"); } })
-      .catch(() => { if (seq.current === mySeq && !quiet) setStatus("error"); });
+      .then((e) => {
+        if (seq.current !== mySeq) return;
+        failStreak.current = 0;
+        setEntries(e);
+        setErrMsg("");
+        setStatus("loaded");
+      })
+      .catch((e) => {
+        // QL-747: a manual/first read says why immediately. A background poll
+        // waits for a second consecutive failure before replacing a settled
+        // tree, so one transient blip can't blank the panel — but a root that
+        // really went away stops pretending it's still there.
+        if (seq.current !== mySeq) return;
+        failStreak.current += 1;
+        if (quiet && failStreak.current < 2) return;
+        setErrMsg(dirErrorMessage(e));
+        setStatus("error");
+      });
     // Shared with every PaneView on this cwd (UI-234) — one git subprocess,
     // not one per surface. Degrades silently for non-repos.
     cachedInvoke<GitInfo>("git_status", { cwd: effectiveRoot }, 15000)
@@ -764,8 +882,8 @@ export function Explorer({ root, wsId, vendor = "pwsh", paneRoot, paneLabel }: E
           {status === "empty-root" && <div className="ex-state">No folder open.</div>}
           {status === "loading" && <SkeletonRows depth={0} count={5} />}
           {status === "error" && (
-            <div className="ex-state">
-              Couldn’t read this folder.
+            <div className="ex-state" role="status">
+              {errMsg || "Couldn’t read this folder."}
               <button className="ex-retry" onClick={() => load()}>Retry</button>
             </div>
           )}
@@ -776,6 +894,11 @@ export function Explorer({ root, wsId, vendor = "pwsh", paneRoot, paneLabel }: E
           {status === "loaded" && entries.length > 0 && filterQuery.trim() && (
             filterLoading || filterFilesList === null ? (
               <SkeletonRows depth={0} count={5} />
+            ) : filterError ? (
+              <div className="ex-state" role="status">
+                {filterError}
+                <button className="ex-retry" onClick={() => { setFilterError(null); setFilterFilesList(null); }}>Retry</button>
+              </div>
             ) : filterRows.length === 0 ? (
               <div className="ex-state">No files match “{filterQuery.trim()}”.</div>
             ) : (
@@ -820,7 +943,7 @@ export function Explorer({ root, wsId, vendor = "pwsh", paneRoot, paneLabel }: E
 
           {status === "loaded" && entries.length > 0 && !filterQuery.trim() && (
             <div className="ex-tree" ref={treeRef} onKeyDown={onTreeKeyDown}>
-              {entries.slice(0, MAX_ROWS).map((e) => (
+              {entries.slice(0, rootRowLimit).map((e) => (
                 <Node
                   key={joinPath(effectiveRoot, e.name)}
                   name={e.name}
@@ -839,10 +962,12 @@ export function Explorer({ root, wsId, vendor = "pwsh", paneRoot, paneLabel }: E
                   revealSeq={revealSeq}
                 />
               ))}
-              {entries.length > MAX_ROWS && (
-                <div className="ex-row ex-more">
-                  {entries.length - MAX_ROWS} more items not shown
-                </div>
+              {entries.length > rootRowLimit && (
+                <MoreRow
+                  total={entries.length}
+                  limit={rootRowLimit}
+                  onMore={() => setRootRowLimit((n) => nextRowLimit(entries.length, n))}
+                />
               )}
             </div>
           )}

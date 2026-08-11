@@ -69,6 +69,65 @@ interface GitStatus {
   isRepo: boolean;
   branch: string | null;
   dirty: boolean;
+  /** QL-740: unpushed/unpulled commits vs the tracking branch. null = no
+      upstream to compare against (local-only branch), which is NOT "in sync". */
+  ahead: number | null;
+  behind: number | null;
+}
+
+/** QL-740: compact ahead/behind for the branch pill — "↑2 ↓1", or "" when
+ *  there's nothing to say (in sync, or no upstream at all). Kept pure and
+ *  exported so the no-upstream vs in-sync distinction is testable. */
+export function aheadBehindLabel(ahead: number | null | undefined, behind: number | null | undefined): string {
+  const parts: string[] = [];
+  if (ahead && ahead > 0) parts.push(`↑${ahead}`);
+  if (behind && behind > 0) parts.push(`↓${behind}`);
+  return parts.join(" ");
+}
+
+/** Tooltip half of the same fact, in words. "" when the pill shows no counts. */
+export function aheadBehindTitle(ahead: number | null | undefined, behind: number | null | undefined): string {
+  const parts: string[] = [];
+  if (ahead && ahead > 0) parts.push(`${ahead} unpushed commit${ahead === 1 ? "" : "s"}`);
+  if (behind && behind > 0) parts.push(`${behind} behind upstream`);
+  return parts.length ? ` — ${parts.join(", ")}` : "";
+}
+
+// QL-743: auto-title damping. A build turns one pane's foreground process into
+// a stream of transients (claude → node → pwsh → node …), and renaming on every
+// one of them makes the header flip several times a minute. Instead of taking
+// the latest name, take the name that has OWNED the pane for the longest slice
+// of a trailing window — the long-lived root wins over its short-lived children
+// — and only once it has held it for at least STABLE_MS, so a name that has
+// only just appeared never lands.
+export interface ProcSample { name: string; at: number }
+export const PROC_STABLE_MS = 4000;
+const PROC_WINDOW_MS = 30000;
+
+/** Drop samples that have fallen out of the trailing window, keeping (and
+ *  clipping) the one that was still current when the window opened so a
+ *  long-running root doesn't lose its residency. */
+export function pruneProcSamples(samples: ProcSample[], now: number, windowMs = PROC_WINDOW_MS): ProcSample[] {
+  const cutoff = now - windowMs;
+  let start = 0;
+  for (let i = 0; i < samples.length; i++) if (samples[i].at <= cutoff) start = i;
+  const kept = samples.slice(start);
+  if (kept.length && kept[0].at < cutoff) kept[0] = { name: kept[0].name, at: cutoff };
+  return kept;
+}
+
+/** The name to auto-title with, or null while nothing has earned it yet.
+ *  `samples` are (name, started-at) transitions in order, oldest first. */
+export function stableProcName(samples: ProcSample[], now: number, stableMs = PROC_STABLE_MS): string | null {
+  const lived = new Map<string, number>();
+  for (let i = 0; i < samples.length; i++) {
+    const end = i + 1 < samples.length ? samples[i + 1].at : now;
+    lived.set(samples[i].name, (lived.get(samples[i].name) ?? 0) + Math.max(0, end - samples[i].at));
+  }
+  let best: string | null = null;
+  let bestMs = 0;
+  for (const [name, ms] of lived) if (ms > bestMs) { best = name; bestMs = ms; }
+  return bestMs >= stableMs ? best : null;
 }
 
 // UI-140: per-vendor font zoom, classified as a preference in storageKeys.ts
@@ -222,12 +281,33 @@ function PaneViewInner({
   // has a title when this first runs (e.g. restored from a prior session) is
   // treated as manually named — conservative, but it means a real rename can
   // never be silently overwritten.
+  // QL-743: the raw process name churns during a build (claude → node → pwsh →
+  // node), and renaming on every change flipped the header several times a
+  // minute. Record the transitions instead, and rename only to whichever name
+  // has actually held the pane (stableProcName above) — a transient child never
+  // reaches the 4s threshold, so the header sits still. The manual-rename guard
+  // below is unchanged.
   const lastAutoTitle = useRef<string | undefined>(undefined);
+  const procSamples = useRef<ProcSample[]>([]);
   useEffect(() => {
-    if (!procName || procName === pane.title) return;
-    if (pane.title && pane.title !== lastAutoTitle.current) return; // manual rename — leave it
-    renamePane(pane.id, procName);
-    lastAutoTitle.current = procName;
+    if (!procName) return;
+    const s = procSamples.current;
+    if (s[s.length - 1]?.name !== procName) s.push({ name: procName, at: Date.now() });
+  }, [procName]);
+  useEffect(() => {
+    if (!procName) return;
+    const apply = () => {
+      const now = Date.now();
+      procSamples.current = pruneProcSamples(procSamples.current, now);
+      const next = stableProcName(procSamples.current, now);
+      if (!next || next === pane.title) return;
+      if (pane.title && pane.title !== lastAutoTitle.current) return; // manual rename — leave it
+      renamePane(pane.id, next);
+      lastAutoTitle.current = next;
+    };
+    apply(); // a name that's already been stable for a while shouldn't wait a tick
+    const id = setInterval(apply, 1000);
+    return () => clearInterval(id);
   }, [procName, pane.title, pane.id, renamePane]);
 
   useEffect(() => {
@@ -712,21 +792,31 @@ function PaneViewInner({
         {!gitStatus && gitError && (
           <span className="pgit-err" title={gitError}>git?</span>
         )}
-        {gitStatus?.isRepo && (
+        {gitStatus?.isRepo && (() => {
+          // QL-740: unpushed/unpulled work belongs next to the branch, on every
+          // repo pane (worktree or not). Silent when in sync or when there's no
+          // upstream; tinted (same grammar as the Explorer's dirty pill) the
+          // moment this branch is carrying commits nobody else has.
+          const ab = aheadBehindLabel(gitStatus.ahead, gitStatus.behind);
+          const unpushed = (gitStatus.ahead ?? 0) > 0;
+          return (
           <span
-            className="branch branch-copy"
+            className={"branch branch-copy" + (unpushed ? " branch-unpushed" : "")}
             role="button"
             tabIndex={0}
-            title={`${gitStatus.branch} — click to copy${gitStatus.dirty ? " (uncommitted changes)" : ""}`}
+            style={unpushed ? { color: "var(--accent)", borderColor: "color-mix(in srgb, var(--accent) 45%, var(--border))" } : undefined}
+            title={`${gitStatus.branch} — click to copy${gitStatus.dirty ? " (uncommitted changes)" : ""}${aheadBehindTitle(gitStatus.ahead, gitStatus.behind)}`}
             onClick={() => copyText(gitStatus.branch ?? "", "Copied branch name")}
             onKeyDown={(e) => { if (e.key === "Enter") copyText(gitStatus.branch ?? "", "Copied branch name"); }}
           >
             <IconBranch size={11} /><span className="branch-name">{gitStatus.branch}</span>
+            {ab && <span className="branch-ab" style={{ flex: "none", whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>{ab}</span>}
             {gitStatus.dirty && (
               <span aria-hidden className="dirty-dot" />
             )}
           </span>
-        )}
+          );
+        })()}
         {/* UX-573: this pane dispatched (or was dispatched from) a board
             card — click focuses it there. Read-only linkage; the board owns
             the card. */}

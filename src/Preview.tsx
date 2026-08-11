@@ -1,4 +1,4 @@
-// Preview.tsx — UX-505/506/507/508/509/510/513: read-only file preview
+// Preview.tsx — UX-505/506/507/508/509/510/513, QL-745/746: read-only file preview
 // drawer, opened by clicking a linkified path in a terminal (Terminal.tsx ->
 // useUI().openPreview). Markdown renders via markdown.ts's AST — to React
 // elements only, never dangerouslySetInnerHTML — so file content can never
@@ -9,16 +9,16 @@
 // library — package.json ships none, and this keeps the same visual
 // language as review.css instead of a second one.
 //
-// KNOWN GAP: the two Rust commands this needs (fs_read_text_file,
-// fs_read_file_base64) don't exist yet — only fs_list_dir ships today. Every
-// preview currently resolves to the error state below with an honest
-// "backend piece hasn't shipped yet" message. See HANDOFF EDITS in the
-// delivery report for the exact Rust to add; the moment it lands, this
-// component needs no changes.
+// Both Rust commands this needs ship: fs_read_text_file and
+// fs_read_file_base64 (src-tauri/src/lib.rs). Each enforces a size cap (5MB
+// for text, 10MB for images) and fails with "too large to preview (over NMB)"
+// past it. That's a refusal, not a fault, so it gets its own state rather than
+// the retry-me error line (QL-745/746).
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { openUrl, openPath } from "@tauri-apps/plugin-opener";
 import { useUI, useOverlayEsc } from "./ui";
+import { revealPath } from "./reveal";
 import type { PreviewTab } from "./ui";
 import { parseMarkdown, isExternalHref, isBlockedHref, resolveMdLink } from "./markdown";
 import type { BlockNode, InlineNode } from "./markdown";
@@ -34,6 +34,23 @@ function baseName(p: string): string {
 }
 
 const MD_RE = /\.mdx?$/i;
+
+// QL-745/746: the escape hatch offered by every dead-end state below. Same
+// hand-off Explorer's double-click uses (Explorer.tsx:482): openPath lets
+// Windows route the file to the editor that owns the extension. Failures
+// surface as a toast rather than vanishing, exactly as they do there.
+export function openInEditor(path: string) {
+  openPath(path).catch((e) =>
+    useUI.getState().pushToast("error", `Couldn’t open ${path}: ${String(e)}`)
+  );
+}
+
+/** True for the backend's size-cap refusal ("too large to preview (over 5MB)"
+ *  from fs_read_text_file, "(over 10MB)" from fs_read_file_base64). Retrying
+ *  can never help, so these route to their own state instead of the error one. */
+export function isTooLargeError(err: unknown): boolean {
+  return /too large to preview/i.test(String(err));
+}
 
 // ---------------------------------------------------------------------
 // Plain-text / code view (also used for a markdown file's "Raw" mode)
@@ -116,25 +133,44 @@ function mimeFor(path: string): string {
   return map[ext] ?? "application/octet-stream";
 }
 
-// UX-508: images load from disk relative to the .md file, never the network.
-// Same "backend piece not shipped yet" gap as the text loader — see the file
-// header — so this renders its own small broken-image placeholder for now.
+// UX-508: images load from disk relative to the .md file, never the network,
+// via fs_read_file_base64. QL-746: a failure here is usually a moved file or a
+// 10MB-plus image, so the placeholder carries the way out (retry, open it in
+// the editor, find it on disk) instead of a dead line of text.
 function ImageNode({ src, alt, mdPath }: { src: string; alt: string; mdPath: string }) {
   const resolved = useMemo(() => resolveMdLink(src, mdPath), [src, mdPath]);
   const [dataUrl, setDataUrl] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
+  const [tooBig, setTooBig] = useState(false);
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
     setDataUrl(null);
     setFailed(false);
+    setTooBig(false);
     invoke<string>("fs_read_file_base64", { path: resolved })
       .then((b64) => { if (!cancelled) setDataUrl(`data:${mimeFor(resolved)};base64,${b64}`); })
-      .catch(() => { if (!cancelled) setFailed(true); });
+      .catch((e) => { if (!cancelled) { setTooBig(isTooLargeError(e)); setFailed(true); } });
     return () => { cancelled = true; };
-  }, [resolved]);
+  }, [resolved, attempt]);
 
-  if (failed) return <span className="prv-img-broken" title={resolved}>Image unavailable: {alt || baseName(resolved)}</span>;
+  if (failed) {
+    const name = alt || baseName(resolved);
+    return (
+      <span className="prv-img-broken" title={resolved}>
+        {tooBig ? `${name} is over the 10 MB preview limit` : `Image unavailable: ${name}`}{" "}
+        {/* Retrying a size refusal can't ever succeed, so it isn't offered. */}
+        {!tooBig && (
+          <>
+            <button className="prv-copy" onClick={() => setAttempt((n) => n + 1)}>Retry</button>{" "}
+          </>
+        )}
+        <button className="prv-copy" onClick={() => openInEditor(resolved)}>Open in editor</button>{" "}
+        <button className="prv-copy" onClick={() => { void revealPath(resolved); }}>Show in folder</button>
+      </span>
+    );
+  }
   if (!dataUrl) return <span className="prv-img-loading">Loading image…</span>;
   return <img className="prv-img" src={dataUrl} alt={alt} />;
 }
@@ -270,7 +306,8 @@ function guessErrorMessage(err: unknown): string {
   }
   if (/no such file|not found|cannot find/i.test(raw)) return "This file isn’t there any more.";
   if (/denied|permission/i.test(raw)) return "Windows blocked reading this file.";
-  if (/too large/i.test(raw)) return "This file is too large to preview.";
+  // The size cap is not routed here: isTooLargeError catches it first and the
+  // body renders the dedicated too-large state (QL-745) instead.
   return "Couldn’t read this file.";
 }
 
@@ -289,6 +326,7 @@ function PreviewBody({ tab }: { tab: PreviewTab }) {
   const [state, setState] = useState<LoadState>("loading");
   const [text, setText] = useState("");
   const [errMsg, setErrMsg] = useState("");
+  const [tooLarge, setTooLarge] = useState(false);
   const [mode, setMode] = useState<"rendered" | "raw">(isMd ? "rendered" : "raw");
   const seq = useRef(0);
 
@@ -297,7 +335,13 @@ function PreviewBody({ tab }: { tab: PreviewTab }) {
     setState("loading");
     invoke<string>("fs_read_text_file", { path: tab.path })
       .then((t) => { if (seq.current === my) { setText(t); setState("loaded"); } })
-      .catch((e) => { if (seq.current === my) { setErrMsg(guessErrorMessage(e)); setState("error"); } });
+      .catch((e) => {
+        if (seq.current !== my) return;
+        const big = isTooLargeError(e);
+        setTooLarge(big);
+        setErrMsg(big ? "" : guessErrorMessage(e));
+        setState("error");
+      });
   }, [tab.path]);
 
   useEffect(() => { load(); }, [load]);
@@ -324,7 +368,17 @@ function PreviewBody({ tab }: { tab: PreviewTab }) {
       </div>
       <div className="prv-content" style={tab.fontSize ? { fontSize: `${tab.fontSize}px` } : undefined}>
         {state === "loading" && <PreviewSkeleton />}
-        {state === "error" && (
+        {/* QL-745: the 5MB cap is a refusal, not a fault, so no Retry (a second
+            read fails identically). Name the file, frame the limit, hand it to
+            the editor that can actually open it. */}
+        {state === "error" && tooLarge && (
+          <div className="prv-state prv-error">
+            <code className="prv-icode">{baseName(tab.path)}</code>
+            <span>Over the 5&nbsp;MB preview limit, so Flightdeck won’t load it here.</span>
+            <button className="prv-retry" onClick={() => openInEditor(tab.path)}>Open in editor</button>
+          </div>
+        )}
+        {state === "error" && !tooLarge && (
           <div className="prv-state prv-error">
             {errMsg}
             <button className="prv-retry" onClick={load}>Retry</button>

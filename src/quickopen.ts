@@ -53,9 +53,40 @@ export function isAncestor(dirPath: string, targetPath: string): boolean {
 export interface WalkedFile { path: string; relPath: string; name: string; depth: number; }
 export interface WalkResult { files: WalkedFile[]; truncated: boolean; }
 
-const DEFAULT_MAX_FILES = 4000;
-const DEFAULT_MAX_DIRS = 4000;
-const DEFAULT_MAX_DEPTH = 14;
+// QL-741: the old ceilings (4000/4000/depth 14) were low enough that an
+// ordinary monorepo fell off the end of the index — quick-open would simply
+// deny that a file existed, with no note saying so. Raised to something a
+// real repo fits inside. The extra ceiling is paid for below rather than in
+// wall-clock: directories are read in parallel batches (one await per batch,
+// not per directory) and partial results are handed back through onProgress
+// as they are found, so the overlay paints while the walk is still running.
+const DEFAULT_MAX_FILES = 20000;
+const DEFAULT_MAX_DIRS = 20000;
+const DEFAULT_MAX_DEPTH = 24;
+/** Directories listed per await. Each listDir is an IPC round trip, so this
+ *  walk is latency-bound, not CPU-bound: batching 12 turns a 2000-directory
+ *  repo from 2000 sequential round trips into ~167, while still leaving the
+ *  channel free for the cockpit's own polling between batches. */
+const DEFAULT_CONCURRENCY = 12;
+/** Floor between onProgress callbacks. One callback per batch would re-render
+ *  a 20k-row list dozens of times for no visible gain; the first batch always
+ *  reports so the list fills immediately. */
+const PROGRESS_INTERVAL_MS = 120;
+
+export interface WalkOptions {
+  maxFiles?: number;
+  maxDirs?: number;
+  maxDepth?: number;
+  concurrency?: number;
+  /** Called with a snapshot (a copy, safe to hold) of everything found so
+   *  far, after the first batch and then at most every PROGRESS_INTERVAL_MS.
+   *  Lets a caller render an incomplete index instead of a spinner. */
+  onProgress?: (files: WalkedFile[]) => void;
+  /** Polled once per batch; returning true abandons the walk and returns what
+   *  was found. Callers use it when nobody is waiting on the result any more
+   *  (overlay closed, newer walk started) so a big repo stops costing IPC. */
+  shouldCancel?: () => boolean;
+}
 
 /** Breadth-first recursive file listing built on the same one-level
  *  `listDir` the Explorer tree already calls (fs_list_dir) — there is no
@@ -68,39 +99,57 @@ const DEFAULT_MAX_DEPTH = 14;
 export async function walkFiles(
   listDir: (path: string) => Promise<DirEntry[]>,
   root: string,
-  opts: { maxFiles?: number; maxDirs?: number; maxDepth?: number } = {}
+  opts: WalkOptions = {}
 ): Promise<WalkResult> {
   const maxFiles = opts.maxFiles ?? DEFAULT_MAX_FILES;
   const maxDirs = opts.maxDirs ?? DEFAULT_MAX_DIRS;
   const maxDepth = opts.maxDepth ?? DEFAULT_MAX_DEPTH;
+  const concurrency = Math.max(1, opts.concurrency ?? DEFAULT_CONCURRENCY);
 
   const files: WalkedFile[] = [];
   const queue: Array<{ path: string; relPath: string; depth: number }> = [{ path: root, relPath: "", depth: 0 }];
   let dirsVisited = 0;
   let truncated = false;
+  let reported = 0;
+  let reportedAt = 0;
 
   while (queue.length > 0) {
+    if (opts.shouldCancel?.()) break;
     if (files.length >= maxFiles || dirsVisited >= maxDirs) { truncated = true; break; }
-    const dir = queue.shift()!;
-    dirsVisited++;
-    let entries: DirEntry[];
-    try {
-      entries = await listDir(dir.path);
-    } catch {
-      continue;
+    // One await per batch instead of per directory. Entries are still
+    // consumed in queue order afterwards, so the BFS ordering (and therefore
+    // the result order a caller sees) is exactly what it was before.
+    const batch = queue.splice(0, Math.min(concurrency, maxDirs - dirsVisited));
+    dirsVisited += batch.length;
+    const listings = await Promise.all(batch.map((d) => listDir(d.path).catch(() => null)));
+    let full = false;
+    for (let i = 0; i < batch.length && !full; i++) {
+      const dir = batch[i];
+      const entries = listings[i];
+      if (!entries) continue; // unreadable subtree — skip it, keep walking
+      for (const e of entries) {
+        const relPath = dir.relPath ? `${dir.relPath}/${e.name}` : e.name;
+        if (e.dir) {
+          if (IGNORED_DIR_NAMES.has(e.name)) continue; // deliberate exclusion, not a cap — doesn't count as truncated
+          if (dir.depth + 1 > maxDepth) { truncated = true; continue; }
+          queue.push({ path: joinPath(dir.path, e.name), relPath, depth: dir.depth + 1 });
+        } else {
+          files.push({ path: joinPath(dir.path, e.name), relPath, name: e.name, depth: dir.depth + 1 });
+          if (files.length >= maxFiles) { truncated = true; full = true; break; }
+        }
+      }
     }
-    for (const e of entries) {
-      const relPath = dir.relPath ? `${dir.relPath}/${e.name}` : e.name;
-      if (e.dir) {
-        if (IGNORED_DIR_NAMES.has(e.name)) continue; // deliberate exclusion, not a cap — doesn't count as truncated
-        if (dir.depth + 1 > maxDepth) { truncated = true; continue; }
-        queue.push({ path: joinPath(dir.path, e.name), relPath, depth: dir.depth + 1 });
-      } else {
-        files.push({ path: joinPath(dir.path, e.name), relPath, name: e.name, depth: dir.depth + 1 });
-        if (files.length >= maxFiles) { truncated = true; break; }
+    if (opts.onProgress && files.length > reported) {
+      const now = Date.now();
+      if (reported === 0 || now - reportedAt >= PROGRESS_INTERVAL_MS) {
+        reported = files.length;
+        reportedAt = now;
+        opts.onProgress(files.slice());
       }
     }
   }
+  // Anything still queued means a cap (or a cancel) stopped us short of the
+  // whole tree — the caller is expected to say so rather than pretend.
   if (queue.length > 0) truncated = true;
   return { files, truncated };
 }

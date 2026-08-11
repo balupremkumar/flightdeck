@@ -1063,6 +1063,10 @@ export function Settings() {
   if (!open) return null;
 
   const mode = themeId === "custom" ? "dark" : findTheme(themeId).mode;
+  // QL-792: some themes own their accent (High Contrast for accessibility,
+  // Graphite because a saturated accent undoes its whole point). Exact-id
+  // lookup, so an imported "custom" theme still gets the picker.
+  const fixedAccentNote = THEMES.find((t) => t.id === themeId)?.fixedAccent;
 
   function selectTheme(id: string) {
     if (id === "custom") return; // custom is only reached via import, not clickable directly
@@ -1330,9 +1334,10 @@ export function Settings() {
               )}
             </div>
 
-            {/* High Contrast fixes its accent deliberately for accessibility —
-                letting the picker override it silently defeats the whole theme. */}
-            {themeId !== "high-contrast" && (
+            {/* A theme that fixes its accent (High Contrast for accessibility,
+                Graphite for its steel chrome) hides the picker: letting it
+                override silently defeats the whole theme. */}
+            {!fixedAccentNote && (
               <>
                 <div className="set-row">
                   <div className="set-row-t"><span className="set-row-name">Accent colour</span><span className="set-row-sub">Auto-adjusts for dark or light</span></div>
@@ -1399,11 +1404,11 @@ export function Settings() {
                 </div>
               </>
             )}
-            {themeId === "high-contrast" && (
+            {fixedAccentNote && (
               <div className="set-row">
                 <div className="set-row-t">
                   <span className="set-row-name">Accent colour</span>
-                  <span className="set-row-sub">Fixed by High Contrast for accessibility</span>
+                  <span className="set-row-sub">{fixedAccentNote}</span>
                 </div>
               </div>
             )}

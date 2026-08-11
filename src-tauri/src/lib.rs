@@ -292,12 +292,58 @@ fn pty_spawn(
     Ok(id)
 }
 
+/// Largest single write handed to the PTY (QL-759). Interactive input is a few
+/// bytes, so it never trips this; a multi-KB paste is split into segments so a
+/// single huge WriteFile can't sit on ConPTY's input pipe and stall the pane.
+const WRITE_CHUNK_BYTES: usize = 4 * 1024;
+
+/// Split off at most one chunk, snapped back to a UTF-8 char boundary so a
+/// multi-byte character is never cut across two writes (ConPTY decodes the
+/// input pipe incrementally). A char is at most 4 bytes and the chunk size is
+/// far larger, so the boundary search always terminates above 0.
+fn split_write_chunk(s: &str) -> (&str, &str) {
+    if s.len() <= WRITE_CHUNK_BYTES {
+        return (s, "");
+    }
+    let mut end = WRITE_CHUNK_BYTES;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    s.split_at(end)
+}
+
+/// Write one payload to a pane. Small interactive writes take the exact path
+/// they always did — one `write_all` + one `flush`, no extra syscalls, no
+/// added latency. Only oversized payloads (pastes, Broadcast, Review) go
+/// through the chunk loop, which flushes once at the end; the yield between
+/// chunks gives the pane's reader/flusher threads a slot during a big paste.
+/// No sleep: whether ConPTY needs a pause between chunks can't be established
+/// without a live ConPTY run, so this stays conservative.
+fn write_to_pty(w: &mut dyn Write, data: &str) -> std::io::Result<()> {
+    if data.len() <= WRITE_CHUNK_BYTES {
+        w.write_all(data.as_bytes())?;
+        return w.flush();
+    }
+    let mut rest = data;
+    while !rest.is_empty() {
+        let (chunk, tail) = split_write_chunk(rest);
+        w.write_all(chunk.as_bytes())?;
+        rest = tail;
+        if !rest.is_empty() {
+            std::thread::yield_now();
+        }
+    }
+    w.flush()
+}
+
 #[tauri::command]
 fn pty_write(reg: State<Registry>, pane_id: u32, data: String) -> Result<(), String> {
+    // The registry mutex is held for the whole write, so concurrent callers
+    // are serialised and byte order is preserved exactly as before — a paste
+    // can't interleave with a keystroke mid-chunk.
     let mut panes = reg.panes.lock().unwrap();
     if let Some(p) = panes.get_mut(&pane_id) {
-        p.writer.write_all(data.as_bytes()).map_err(|e| e.to_string())?;
-        p.writer.flush().map_err(|e| e.to_string())?;
+        write_to_pty(p.writer.as_mut(), &data).map_err(|e| e.to_string())?;
     }
     Ok(())
 }
@@ -607,4 +653,102 @@ pub fn run() {
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Records every write/flush the PTY writer would have seen, so the tests
+    /// can assert on syscall shape without a real ConPTY.
+    #[derive(Default)]
+    struct RecordingWriter {
+        writes: Vec<Vec<u8>>,
+        flushes: usize,
+    }
+
+    impl Write for RecordingWriter {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.writes.push(buf.to_vec());
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            self.flushes += 1;
+            Ok(())
+        }
+    }
+
+    impl RecordingWriter {
+        fn joined(&self) -> Vec<u8> {
+            self.writes.concat()
+        }
+    }
+
+    /// The interactive path must stay exactly what it was: one write, one flush.
+    #[test]
+    fn small_write_is_one_write_and_one_flush() {
+        let mut w = RecordingWriter::default();
+        write_to_pty(&mut w, "a").unwrap();
+        assert_eq!(w.writes.len(), 1);
+        assert_eq!(w.flushes, 1);
+        assert_eq!(w.joined(), b"a");
+    }
+
+    #[test]
+    fn write_at_the_chunk_size_is_still_a_single_write() {
+        let data = "x".repeat(WRITE_CHUNK_BYTES);
+        let mut w = RecordingWriter::default();
+        write_to_pty(&mut w, &data).unwrap();
+        assert_eq!(w.writes.len(), 1, "the boundary case must not pay for chunking");
+        assert_eq!(w.flushes, 1);
+    }
+
+    #[test]
+    fn large_paste_is_chunked_and_flushed_once() {
+        let data = "y".repeat(100 * 1024);
+        let mut w = RecordingWriter::default();
+        write_to_pty(&mut w, &data).unwrap();
+        assert_eq!(w.writes.len(), 25, "100KB at 4KB chunks");
+        assert!(w.writes.iter().all(|c| c.len() <= WRITE_CHUNK_BYTES));
+        assert_eq!(w.flushes, 1, "one flush at the end, not one per chunk");
+        assert_eq!(w.joined(), data.as_bytes(), "bytes and order must survive chunking");
+    }
+
+    /// A paste of multi-byte text must never be cut mid-character: each chunk
+    /// has to be valid UTF-8 on its own and the concatenation lossless.
+    #[test]
+    fn chunks_never_split_a_multi_byte_char() {
+        let data = "héllo → 世界 🚀".repeat(2000);
+        assert!(data.len() > WRITE_CHUNK_BYTES * 4);
+        let mut w = RecordingWriter::default();
+        write_to_pty(&mut w, &data).unwrap();
+        assert!(w.writes.len() > 1);
+        for c in &w.writes {
+            assert!(c.len() <= WRITE_CHUNK_BYTES);
+            std::str::from_utf8(c).expect("every chunk must be valid UTF-8 on its own");
+        }
+        assert_eq!(w.joined(), data.as_bytes());
+    }
+
+    #[test]
+    fn empty_write_still_flushes_like_before() {
+        let mut w = RecordingWriter::default();
+        write_to_pty(&mut w, "").unwrap();
+        assert_eq!(w.writes.len(), 0, "write_all of an empty slice issues no write");
+        assert_eq!(w.flushes, 1);
+    }
+
+    #[test]
+    fn split_write_chunk_walks_the_whole_input() {
+        let data = "ü".repeat(WRITE_CHUNK_BYTES); // 2 bytes each, odd boundaries
+        let mut rest = data.as_str();
+        let mut seen = String::new();
+        while !rest.is_empty() {
+            let (chunk, tail) = split_write_chunk(rest);
+            assert!(!chunk.is_empty(), "split must always make progress");
+            seen.push_str(chunk);
+            rest = tail;
+        }
+        assert_eq!(seen, data);
+    }
 }

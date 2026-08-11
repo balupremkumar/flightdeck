@@ -45,6 +45,23 @@ function toAbsPath(root: string, relPath: string): string {
 // UI-167: past this many changed files a flat list stops being scannable.
 const GROUP_THRESHOLD = 15;
 
+// QL-739: the backend caps an oversized file diff and appends this exact
+// marker as its last line (src-tauri/src/worktree.rs:36,505-506). Rendered
+// raw it just looks like one more context line and the patch appears to stop
+// mid-file for no reason, so strip it out of the body and say so explicitly.
+export const DIFF_TRUNCATED_MARKER = "… [diff truncated]";
+
+/** Splits the backend's truncation marker off the end of a patch. Returns the
+ *  body to render plus whether the diff was cut short. Tolerant of trailing
+ *  blank lines; anything else at the end means the patch is complete. */
+export function splitTruncationMarker(patch: string): { body: string; truncated: boolean } {
+  const lines = patch.split("\n");
+  let end = lines.length;
+  while (end > 0 && lines[end - 1] === "") end--;
+  if (end === 0 || lines[end - 1].trim() !== DIFF_TRUNCATED_MARKER) return { body: patch, truncated: false };
+  return { body: lines.slice(0, end - 1).join("\n"), truncated: true };
+}
+
 // UI-179: a conflict lives in the pane's worktree — open the conflicted file
 // there rather than the shared cwd, in case the two ever diverge.
 function openConflictFile(pane: { worktreePath?: string | null; cwd: string }, relPath: string, onErr: () => void) {
@@ -212,7 +229,10 @@ export function Review() {
     return () => { cancelled = true; };
   }, [pane?.cwd, pane?.baseBranch, selected]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const lines = useMemo(() => patch.split("\n"), [patch]);
+  // QL-739: the marker never reaches the renderers — every view (unified,
+  // split, word diff, line numbers, hunk index) works off the real patch body.
+  const { body: patchBody, truncated } = useMemo(() => splitTruncationMarker(patch), [patch]);
+  const lines = useMemo(() => patchBody.split("\n"), [patchBody]);
   // UI-166: which tokens actually changed within each paired -/+ line.
   const wordMarks = useMemo(() => wordDiffMap(lines), [lines]);
   const splitRows = useMemo(() => (split ? toSplitRows(lines) : []), [split, lines]);
@@ -544,6 +564,12 @@ export function Review() {
     ? "Merge back"
     : `Merge ${selectedFiles.length} of ${fileCount} file${fileCount === 1 ? "" : "s"}`;
 
+  // UI-173: the file list's per-row "open" action, lifted out of renderFile so
+  // QL-739's truncation banner opens the file exactly the same way.
+  const openFileInEditor = (relPath: string) => {
+    void openPath(toAbsPath(pane.cwd, relPath)).catch(() => pushToast("error", "Couldn't open that file."));
+  };
+
   // Shared by the flat and grouped (UI-167) file lists. The checkbox and the
   // reviewed mark are siblings of the file button, not nested inside it — a
   // <button> may not contain other interactive content (its existing
@@ -582,10 +608,7 @@ export function Review() {
           role="button"
           tabIndex={-1}
           title="Open this file"
-          onClick={(e) => {
-            e.stopPropagation();
-            void openPath(toAbsPath(pane.cwd, f.path)).catch(() => pushToast("error", "Couldn't open that file."));
-          }}
+          onClick={(e) => { e.stopPropagation(); openFileInEditor(f.path); }}
         >
           open
         </span>
@@ -727,6 +750,35 @@ export function Review() {
                   <IconChevron size={15} style={{ transform: "rotate(90deg)" }} />
                 </button>
               </div>
+              {/* QL-739: the backend cut this diff short. Say so where the
+                  patch is read, not in a toast that's gone by the time you
+                  scroll to the bottom, and offer the one thing that recovers
+                  the rest — the file itself, opened the same way the file
+                  list's per-row action opens it (UI-173). Styled inline
+                  because review.css is outside this change's scope; its
+                  proper home is a .rv-truncated rule there. */}
+              {truncated && selected && (
+                <div
+                  role="status"
+                  style={{
+                    display: "flex", alignItems: "center", gap: 10,
+                    padding: "7px 10px", borderBottom: "1px solid var(--line)",
+                    background: "color-mix(in srgb, var(--st-starting) 10%, transparent)",
+                  }}
+                >
+                  <span style={{ flex: 1, minWidth: 0, fontSize: 11.5, fontWeight: 600, color: "var(--st-starting)" }}>
+                    Diff truncated — file too large to render fully
+                  </span>
+                  <button
+                    className="rv-pr"
+                    style={{ fontSize: 11.5, padding: "5px 11px" }}
+                    onClick={() => openFileInEditor(selected)}
+                    title={`Open ${selected} to read the whole file`}
+                  >
+                    Open in editor
+                  </button>
+                </div>
+              )}
               {split ? (
                 <div className="rv-split" ref={patchRef as unknown as React.RefObject<HTMLDivElement>}>
                   {splitRows.map((r, k) => {
