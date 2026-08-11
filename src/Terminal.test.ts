@@ -10,7 +10,7 @@ vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn(() => Promise.resol
 
 const { openUrl } = await import("@tauri-apps/plugin-opener");
 const { useUI } = await import("./ui");
-const { openTerminalUrl } = await import("./Terminal");
+const { openTerminalUrl, publishPaneProgress, paneProgressList } = await import("./Terminal");
 
 const toasts = () => useUI.getState().toasts;
 
@@ -72,5 +72,53 @@ describe("openTerminalUrl allowlist", () => {
     const long = `javascript:${"a".repeat(1000)}`;
     openTerminalUrl(long);
     expect(toasts()[0].detail).toHaveLength(300);
+  });
+});
+
+// QL-782: the store the OSC 9;4 parse publishes into, and Notifications reads
+// to drive the one taskbar progress bar the shell gives the app.
+describe("pane progress store (QL-782)", () => {
+  beforeEach(() => {
+    for (const p of paneProgressList()) publishPaneProgress(p.paneId, null);
+  });
+
+  it("keeps one entry per pane, last reading wins", () => {
+    publishPaneProgress(1, { state: "normal", percent: 10 });
+    publishPaneProgress(2, { state: "normal", percent: 40 });
+    publishPaneProgress(1, { state: "normal", percent: 55 });
+    expect(paneProgressList()).toEqual([
+      { paneId: 1, state: "normal", percent: 55 },
+      { paneId: 2, state: "normal", percent: 40 },
+    ]);
+  });
+
+  it("clamps a percentage the child made up", () => {
+    publishPaneProgress(1, { state: "normal", percent: 300 });
+    publishPaneProgress(2, { state: "normal", percent: -5 });
+    publishPaneProgress(3, { state: "normal", percent: Number.NaN });
+    expect(paneProgressList().map((p) => p.percent)).toEqual([100, 0, 0]);
+  });
+
+  it("null removes the pane — that's the clear, the exit and the unmount path", () => {
+    publishPaneProgress(1, { state: "normal", percent: 10 });
+    publishPaneProgress(1, null);
+    expect(paneProgressList()).toEqual([]);
+  });
+
+  // Progress can be parsed out of output that arrives before pty_spawn's id
+  // round-trips back; attributing it to pane 0 would strand an entry no exit
+  // or unmount could ever clear.
+  it("ignores a reading with no pane id yet", () => {
+    publishPaneProgress(0, { state: "normal", percent: 50 });
+    expect(paneProgressList()).toEqual([]);
+  });
+
+  it("hands back a stable identity while nothing changes, so readers don't re-render", () => {
+    publishPaneProgress(1, { state: "normal", percent: 10 });
+    const first = paneProgressList();
+    publishPaneProgress(1, { state: "normal", percent: 10 });
+    expect(paneProgressList()).toBe(first);
+    publishPaneProgress(1, { state: "normal", percent: 11 });
+    expect(paneProgressList()).not.toBe(first);
   });
 });

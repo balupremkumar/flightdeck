@@ -4,7 +4,7 @@ import { useUI, useOverlayEsc } from "./ui";
 import { IconBell, IconSettings } from "./Icons";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { getCurrentWindow, UserAttentionType } from "@tauri-apps/api/window";
+import { getCurrentWindow, ProgressBarStatus, UserAttentionType } from "@tauri-apps/api/window";
 import {
   ambientQueue,
   attentionKind,
@@ -18,6 +18,7 @@ import {
   type AttentionItem,
   type AttentionKind,
 } from "./attention";
+import { usePaneProgress, type PaneProgress } from "./Terminal";
 import { timeTitle, bytes } from "./format";
 import { vendorShort } from "./vendors";
 import { useHeavyPanes, useMemoryHealthPoll, type PaneMemory } from "./poll";
@@ -95,6 +96,54 @@ export async function setAttentionOverlay(count: number): Promise<void> {
     await invoke("set_attention_overlay", { count: Math.max(0, Math.trunc(count)) });
   } catch { /* no Tauri backend (browser preview), or no taskbar surface */ }
 }
+
+// ---------------------------------------------------------------------------
+// QL-782: the Windows taskbar progress bar.
+//
+// Panes report OSC 9;4 progress individually (Terminal.tsx), but the shell
+// gives an application ONE progress bar, so several building panes have to be
+// folded into a single reading. The rules, in order:
+//   · any pane in the error state wins — a red bar is the one thing worth
+//     interrupting for, and it carries that pane's own percentage;
+//   · otherwise the furthest-along real percentage across reporters. Max, not
+//     mean: the bar answers "is anything still going" and an average would
+//     crawl backwards every time a new pane started at 0;
+//   · otherwise indeterminate, if that's all anyone is reporting;
+//   · nobody reporting clears the bar (None), which is also the exit/unmount
+//     state — a finished build must not leave a stripe on the taskbar.
+// ---------------------------------------------------------------------------
+export interface TaskbarProgress { status: ProgressBarStatus; percent: number }
+
+export function aggregateProgress(panes: PaneProgress[]): TaskbarProgress {
+  // First error in publish order, deliberately stable: with two failing panes
+  // the bar shouldn't flip between their percentages on every update.
+  const errored = panes.find((p) => p.state === "error");
+  if (errored) return { status: ProgressBarStatus.Error, percent: errored.percent };
+  const determinate = panes.filter((p) => p.state === "normal");
+  if (determinate.length) {
+    return { status: ProgressBarStatus.Normal, percent: Math.max(...determinate.map((p) => p.percent)) };
+  }
+  if (panes.length) return { status: ProgressBarStatus.Indeterminate, percent: 0 };
+  return { status: ProgressBarStatus.None, percent: 0 };
+}
+
+/** Push one reading to the shell. Needs `core:window:allow-set-progress-bar`
+ *  (src-tauri/capabilities/default.json); like every other taskbar call here it
+ *  degrades to nothing rather than throwing where there's no taskbar. */
+export async function setTaskbarProgress(p: TaskbarProgress): Promise<void> {
+  try {
+    await getCurrentWindow().setProgressBar(
+      p.status === ProgressBarStatus.None || p.status === ProgressBarStatus.Indeterminate
+        ? { status: p.status }
+        : { status: p.status, progress: p.percent }
+    );
+  } catch { /* capability not granted, or not running under Tauri */ }
+}
+
+/** A chatty installer emits progress many times a second and each call is an
+ *  IPC round-trip plus a shell repaint. 250ms floor = at most 4 updates/sec,
+ *  which is smoother than the taskbar animates anyway. */
+export const TASKBAR_PROGRESS_MIN_MS = 250;
 
 // QL-780: emitted by the global summon chord (Ctrl+Alt+F — see
 // src-tauri/src/summon.rs) whenever it brings the window forward, never on the
@@ -319,6 +368,29 @@ export function Notifications() {
   useEffect(() => {
     void setAttentionOverlay(needsAttention.length);
   }, [needsAttention.length]);
+
+  // QL-782: the same "reach the user when Flightdeck isn't the front window"
+  // job, for progress rather than attention. Aggregation rules are above.
+  const taskbar = aggregateProgress(usePaneProgress());
+  const taskbarSig = `${taskbar.status}:${taskbar.percent}`;
+  const taskbarRef = useRef(taskbar);
+  taskbarRef.current = taskbar;
+  const taskbarSentSig = useRef("");
+  const taskbarNextAt = useRef(0);
+  useEffect(() => {
+    if (taskbarSig === taskbarSentSig.current) return;
+    // Send at the earliest allowed moment. A reading that changes again before
+    // that moment cancels this timer and re-arms, so the LAST value in a burst
+    // is the one that lands and no burst can exceed one send per window.
+    const t = setTimeout(() => {
+      taskbarSentSig.current = taskbarSig;
+      taskbarNextAt.current = Date.now() + TASKBAR_PROGRESS_MIN_MS;
+      void setTaskbarProgress(taskbarRef.current);
+    }, Math.max(0, taskbarNextAt.current - Date.now()));
+    return () => clearTimeout(t);
+  }, [taskbarSig]);
+  // Leaving the cockpit (window closing, hot reload) must not strand a bar.
+  useEffect(() => () => { void setTaskbarProgress({ status: ProgressBarStatus.None, percent: 0 }); }, []);
 
   useEffect(() => {
     if (autoQueue && approvalCount >= 3 && prevApprovals.current < 3) {

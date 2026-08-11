@@ -21,6 +21,7 @@ import { useBoardStore, useCardForPane } from "./board/boardStore";
 import { Transcript } from "./TranscriptView";
 import { extractLastCommand, redactText, scrollbackFilename, toLines } from "./transcript";
 import { SelectionToolbar, GroupsPanel, SessionSnapshots } from "./PaneOps";
+import { openSessionLauncher, modelShort, contextWindowFor, RESUME_VENDOR } from "./SessionLauncher";
 import { parseWorkspaceDef, serializeWorkspaceExport } from "./snapshots";
 const MIN_FONT = 9;
 const MAX_FONT = 22;
@@ -593,12 +594,23 @@ function PaneViewInner({
   // extra here. Clears itself when the pane drops back under or restarts.
   const memWarn = usePaneMemory(pane.id, pane.epoch);
 
-  const [usage, setUsage] = useState<{ contextTokens: number; outputTokens: number; turns: number } | null>(null);
+  // QL-765/766: the same poll now also carries the latest turn's token split
+  // and the model that produced it — both already in the transcript line the
+  // context total is read from, so the chip and its tooltip cost nothing extra.
+  interface PaneUsage {
+    contextTokens: number;
+    outputTokens: number;
+    turns: number;
+    model: string | null;
+    lastInputTokens: number;
+    lastCacheReadTokens: number;
+    lastCacheCreationTokens: number;
+    lastOutputTokens: number;
+  }
+  const [usage, setUsage] = useState<PaneUsage | null>(null);
   usePoll(async () => {
     try {
-      setUsage(await cachedInvoke<{ contextTokens: number; outputTokens: number; turns: number } | null>(
-        "pane_usage", { cwd: pane.cwd }, 7000
-      ));
+      setUsage(await cachedInvoke<PaneUsage | null>("pane_usage", { cwd: pane.cwd }, 7000));
     } catch {
       setUsage(null);
     }
@@ -863,9 +875,13 @@ function PaneViewInner({
           // UI-231: a raw token count doesn't tell you when you're in trouble.
           // Colour it against the model's context window so "compact soon" is
           // visible before the agent starts dropping context.
-          const CONTEXT_WINDOW = 200_000; // Claude's window; manifests can override later
+          // QL-765: the window is the ONE inferred number here (see
+          // contextWindowFor's comment) — everything else in the tooltip is the
+          // latest turn's own usage block, read straight off the transcript.
+          const CONTEXT_WINDOW = contextWindowFor(usage.model);
           const pct = usage.contextTokens / CONTEXT_WINDOW;
           const level = pct >= 0.9 ? "crit" : pct >= 0.7 ? "warn" : "";
+          const cached = usage.lastCacheReadTokens + usage.lastCacheCreationTokens;
           return (
             <span
               className={"ptok " + level}
@@ -873,6 +889,11 @@ function PaneViewInner({
                 `Session tokens (from the agent’s own transcript)
 ` +
                 `context now: ${num(usage.contextTokens)} (${Math.round(pct * 100)}% of a ${compact(CONTEXT_WINDOW)} window)
+` +
+                `last turn: ${num(usage.lastInputTokens)} in / ${num(usage.lastOutputTokens)} out
+` +
+                `  of which cached: ${num(usage.lastCacheReadTokens)} read, ${num(usage.lastCacheCreationTokens)} written` +
+                (usage.contextTokens > 0 ? ` (${Math.round((cached / usage.contextTokens) * 100)}% of the prompt)` : "") + `
 ` +
                 `output so far: ${num(usage.outputTokens)} across ${num(usage.turns)} turns` +
                 (level ? `
@@ -884,6 +905,15 @@ Running low — consider /compact in this pane.` : "")
             </span>
           );
         })()}
+        {/* QL-766: which model is actually answering in this pane. Same chip
+            geometry as the ctx chip it sits beside, short form only — the full
+            id (dated snapshot and all) is in the tooltip. Updates on the same
+            15s transcript poll, so a mid-session /model switch shows up. */}
+        {usage?.model && (
+          <span className="ptok pmodel" title={`Model in this session: ${usage.model}`}>
+            {modelShort(usage.model)}
+          </span>
+        )}
         {/* QL-742: over the memory ceiling. Same chip geometry and amber tone
             as the token chip's warn level — this is a resource reading worth a
             look, not an alert, so it stays out of the .pattn (pulsing,
@@ -997,6 +1027,14 @@ Running low — consider /compact in this pane.` : "")
               <div className="pmenu-sep" />
               {/* UX-564: same cwd + vendor, a fresh process. */}
               <button className="pmenu-item" onClick={doDuplicate}>Duplicate pane</button>
+              {/* QL-764: reopen one of this folder's past sessions in a new
+                  pane (--resume, or --fork-session from the launcher). Claude
+                  Code only — nothing else writes the transcripts it reads. */}
+              {pane.vendor === RESUME_VENDOR && (
+                <button className="pmenu-item" onClick={() => { setMenuOpen(false); openSessionLauncher(pane.id); }}>
+                  <IconRefresh size={13} /> Resume a past session…
+                </button>
+              )}
               {/* UX-553/554: multi-select is shift+click on any pane; groups are managed here. */}
               <button className="pmenu-item" onClick={() => { setMenuOpen(false); setGroupsOpen(true); }}>
                 Pane groups…

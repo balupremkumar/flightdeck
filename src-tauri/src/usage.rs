@@ -22,6 +22,15 @@ pub struct PaneUsage {
     pub output_tokens: u64,
     /// Assistant turns seen.
     pub turns: u64,
+    /// QL-766: model id of the most recent assistant message (`message.model`),
+    /// e.g. "claude-opus-4-1-20250805". None until one has been seen.
+    pub model: Option<String>,
+    /// QL-765: the latest turn's usage split, straight from the same block the
+    /// context total is summed from — no extra parsing, no estimates.
+    pub last_input_tokens: u64,
+    pub last_cache_read_tokens: u64,
+    pub last_cache_creation_tokens: u64,
+    pub last_output_tokens: u64,
 }
 
 /// Claude Code's project-dir slug: every non-alphanumeric byte becomes '-'
@@ -58,6 +67,16 @@ fn apply_line(line: &str, u: &mut PaneUsage) {
     u.context_tokens = context;
     u.output_tokens += n("output_tokens");
     u.turns += 1;
+    // QL-765: keep the latest turn's split for the chip's tooltip.
+    u.last_input_tokens = n("input_tokens");
+    u.last_cache_read_tokens = n("cache_read_input_tokens");
+    u.last_cache_creation_tokens = n("cache_creation_input_tokens");
+    u.last_output_tokens = n("output_tokens");
+    // QL-766: last-seen model. Only overwritten when the line carries one, so a
+    // usage block without a model can't blank an already-known value.
+    if let Some(m) = v.get("message").and_then(|m| m.get("model")).and_then(|m| m.as_str()) {
+        u.model = Some(m.to_string());
+    }
 }
 
 fn scan(path: &Path) -> Option<PaneUsage> {
@@ -107,6 +126,298 @@ pub fn pane_usage(cwd: String) -> Option<PaneUsage> {
     let home = std::env::var("USERPROFILE").ok()?;
     let root = Path::new(&home).join(".claude").join("projects");
     usage_for(&root, &cwd)
+}
+
+// ---------------------------------------------------------------------------
+// QL-764: past-session index for the resume/fork launcher.
+//
+// Same transcripts the chip above reads, listed instead of summed: one row per
+// ~/.claude/projects/<slug>/<session>.jsonl, newest first. The file stem IS the
+// session id `claude --resume <id>` wants.
+//
+// Transcripts run to tens of megabytes, and the launcher opens on a keystroke,
+// so a session is SAMPLED, never read whole: a head slice (where the title and
+// first prompt live) and a tail slice (where the newest model + branch live).
+//
+// Turn count is therefore only reported for a file small enough to be read
+// whole. Scaling the sample by bytes was tried and thrown out: a mature
+// session's lines are an order of magnitude longer than its opening ones, so a
+// 25 MB transcript with 547 turns estimated at ~3,800. The size is returned
+// instead, and the UI says "25 MB transcript" rather than inventing a number.
+// ---------------------------------------------------------------------------
+
+/// Newest N sessions listed; older ones are noise in a picker.
+const LIST_CAP: usize = 50;
+/// Sample size per end. Sized so an ordinary session (well under 1 MB) is read
+/// whole — and so gets an exact turn count — while the multi-megabyte monsters
+/// still cost two seeks. Measured at ~90 ms for a 22-session folder totalling
+/// 60 MB, which is inside a picker's opening animation.
+const HEAD_BYTES: u64 = 512 * 1024;
+const TAIL_BYTES: u64 = 512 * 1024;
+/// Prompt/summary line shown in the picker.
+const TITLE_CHARS: usize = 120;
+
+#[derive(Clone, Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionSummary {
+    /// Session id = the transcript's file stem.
+    pub id: String,
+    /// Last-written time, epoch milliseconds.
+    pub modified_ms: u64,
+    /// Row label: Claude Code's own "ai-title" for the session if it has one,
+    /// else a compaction summary, else the first real user prompt. Truncated.
+    pub title: String,
+    pub git_branch: Option<String>,
+    pub model: Option<String>,
+    /// Assistant turns, or None when the transcript was too big to read whole
+    /// (see the note above — an estimate here would be fiction).
+    pub turns: Option<u64>,
+    /// Transcript size on disk, the honest stand-in for "how long is this one".
+    pub size_bytes: u64,
+}
+
+fn read_slice(path: &Path, start: u64, len: usize) -> Option<String> {
+    let mut f = std::fs::File::open(path).ok()?;
+    f.seek(SeekFrom::Start(start)).ok()?;
+    let mut buf = vec![0u8; len];
+    let mut filled = 0usize;
+    while filled < len {
+        match f.read(&mut buf[filled..]) {
+            Ok(0) => break,
+            Ok(n) => filled += n,
+            Err(_) => break,
+        }
+    }
+    buf.truncate(filled);
+    Some(String::from_utf8_lossy(&buf).into_owned())
+}
+
+/// Text of a user turn worth showing, or None for the entries that aren't a
+/// person typing: meta/system lines, sidechain (sub-agent) turns, tool results,
+/// and the `<command-name>`/`<local-command-stdout>` wrappers slash-commands
+/// leave behind.
+fn user_prompt_text(v: &serde_json::Value) -> Option<String> {
+    if v.get("type").and_then(|t| t.as_str()) != Some("user") {
+        return None;
+    }
+    if v.get("isMeta").and_then(|b| b.as_bool()).unwrap_or(false) {
+        return None;
+    }
+    if v.get("isSidechain").and_then(|b| b.as_bool()).unwrap_or(false) {
+        return None;
+    }
+    let content = v.get("message")?.get("content")?;
+    let text = match content {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Array(items) => items
+            .iter()
+            .filter(|b| b.get("type").and_then(|t| t.as_str()) == Some("text"))
+            .filter_map(|b| b.get("text").and_then(|t| t.as_str()))
+            .collect::<Vec<_>>()
+            .join(" "),
+        _ => return None,
+    };
+    let t = text.trim();
+    if t.is_empty() || t.starts_with('<') || t.starts_with("Caveat:") {
+        return None;
+    }
+    Some(t.to_string())
+}
+
+/// One line, collapsed and clipped for a picker row.
+fn clip(s: &str, chars: usize) -> String {
+    let flat = s.split_whitespace().collect::<Vec<_>>().join(" ");
+    if flat.chars().count() <= chars {
+        return flat;
+    }
+    let cut: String = flat.chars().take(chars).collect();
+    format!("{}…", cut.trim_end())
+}
+
+fn summarise(path: &Path, modified_ms: u64) -> Option<SessionSummary> {
+    let id = path.file_stem()?.to_string_lossy().into_owned();
+    let len = std::fs::metadata(path).ok()?.len();
+    if len == 0 {
+        return None;
+    }
+    let whole = len <= HEAD_BYTES + TAIL_BYTES;
+    let head = read_slice(path, 0, HEAD_BYTES.min(len) as usize)?;
+    let tail = if whole {
+        String::new()
+    } else {
+        read_slice(path, len - TAIL_BYTES, TAIL_BYTES as usize).unwrap_or_default()
+    };
+    // Drop the partial line each slice ends/begins with, so no half-object is parsed.
+    let head_lines: Vec<&str> = if whole {
+        head.lines().collect()
+    } else {
+        head[..head.rfind('\n').map(|i| i + 1).unwrap_or(0)].lines().collect()
+    };
+    let tail_lines: Vec<&str> = match tail.find('\n') {
+        Some(i) => tail[i + 1..].lines().collect(),
+        None => Vec::new(),
+    };
+
+    let mut ai_title: Option<String> = None;
+    let mut summary: Option<String> = None;
+    let mut prompt: Option<String> = None;
+    let mut git_branch: Option<String> = None;
+    let mut model: Option<String> = None;
+    let mut assistant_lines: u64 = 0;
+
+    for (i, line) in head_lines.iter().chain(tail_lines.iter()).enumerate() {
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else { continue };
+        let kind = v.get("type").and_then(|t| t.as_str()).unwrap_or("");
+        if kind == "assistant" {
+            assistant_lines += 1;
+        }
+        // Claude Code names its own sessions as they go ("ai-title" entries,
+        // rewritten as the work moves on) — that's the title its own /resume
+        // picker shows, so it's the best row label available. Latest wins.
+        if kind == "ai-title" {
+            if let Some(t) = v.get("aiTitle").and_then(|t| t.as_str()).filter(|t| !t.is_empty()) {
+                ai_title = Some(t.to_string());
+            }
+        }
+        if summary.is_none() && kind == "summary" {
+            if let Some(s) = v.get("summary").and_then(|s| s.as_str()) {
+                summary = Some(s.to_string());
+            }
+        }
+        if prompt.is_none() && i < head_lines.len() {
+            prompt = user_prompt_text(&v);
+        }
+        if let Some(b) = v.get("gitBranch").and_then(|b| b.as_str()).filter(|b| !b.is_empty()) {
+            git_branch = Some(b.to_string()); // last one wins — the branch it's on NOW
+        }
+        if let Some(m) = v.get("message").and_then(|m| m.get("model")).and_then(|m| m.as_str()) {
+            model = Some(m.to_string());
+        }
+    }
+
+    // Title preference: the session's own AI title, else a compaction summary,
+    // else the first thing the user actually typed.
+    let title = clip(
+        ai_title.as_deref().or(summary.as_deref()).or(prompt.as_deref()).unwrap_or(""),
+        TITLE_CHARS,
+    );
+    if title.is_empty() && assistant_lines == 0 {
+        return None; // an empty/aborted session is not worth a row
+    }
+    Some(SessionSummary {
+        id,
+        modified_ms,
+        title,
+        git_branch,
+        model,
+        turns: if whole { Some(assistant_lines) } else { None },
+        size_bytes: len,
+    })
+}
+
+fn modified_ms(path: &Path) -> u64 {
+    std::fs::metadata(path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// Past sessions for `cwd`'s project dir, newest first, capped at LIST_CAP.
+/// Empty (never an error) when there's no transcript dir — the launcher shows
+/// its own "nothing here yet" state.
+pub fn list_sessions(projects_root: &Path, cwd: &str) -> Vec<SessionSummary> {
+    let dir = projects_root.join(slugify(cwd));
+    let Ok(entries) = std::fs::read_dir(&dir) else { return Vec::new() };
+    let mut files: Vec<(PathBuf, u64)> = entries
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().map(|x| x == "jsonl").unwrap_or(false))
+        .map(|p| {
+            let ms = modified_ms(&p);
+            (p, ms)
+        })
+        .collect();
+    files.sort_by(|a, b| b.1.cmp(&a.1));
+    files.truncate(LIST_CAP);
+    files.iter().filter_map(|(p, ms)| summarise(p, *ms)).collect()
+}
+
+#[tauri::command]
+pub fn list_claude_sessions(cwd: String) -> Vec<SessionSummary> {
+    let Ok(home) = std::env::var("USERPROFILE") else { return Vec::new() };
+    list_sessions(&Path::new(&home).join(".claude").join("projects"), &cwd)
+}
+
+// ---------------------------------------------------------------------------
+// QL-764: one-shot launch args for the next spawn.
+//
+// A pane's PTY is spawned by Terminal.tsx with (vendor, cwd) only — there is no
+// per-spawn argv channel through the frontend, and the launcher needs to add
+// `--resume <id>` (plus optionally `--fork-session`) to exactly one launch.
+// So the args are STAGED here immediately before the new pane is created, and
+// build_command (lib.rs) takes them for the first matching spawn.
+//
+// Deliberately narrow: matched on vendor + cwd, consumed once, and expired
+// after PENDING_TTL_MS so a staging whose pane never spawned can't attach
+// itself to an unrelated restart minutes later.
+// ---------------------------------------------------------------------------
+
+const PENDING_TTL_MS: u64 = 20_000;
+
+struct Pending {
+    vendor: String,
+    cwd: String,
+    args: Vec<String>,
+    staged_ms: u64,
+}
+
+fn pending() -> &'static Mutex<Vec<Pending>> {
+    static P: OnceLock<Mutex<Vec<Pending>>> = OnceLock::new();
+    P.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+fn stage_at(vendor: &str, cwd: &str, args: Vec<String>, now: u64) {
+    let mut p = pending().lock().unwrap();
+    // Expire stale entries, and let a fresh staging REPLACE an unclaimed one for
+    // the same pane target — two clicks in the launcher mean the second one.
+    p.retain(|x| {
+        now.saturating_sub(x.staged_ms) < PENDING_TTL_MS
+            && !(x.vendor == vendor && x.cwd.eq_ignore_ascii_case(cwd))
+    });
+    p.push(Pending { vendor: vendor.to_string(), cwd: cwd.to_string(), args, staged_ms: now });
+}
+
+fn take_at(vendor: &str, cwd: &str, now: u64) -> Vec<String> {
+    let mut p = pending().lock().unwrap();
+    p.retain(|x| now.saturating_sub(x.staged_ms) < PENDING_TTL_MS);
+    // Newest match first: a second staging supersedes an earlier unclaimed one.
+    let hit = p
+        .iter()
+        .rposition(|x| x.vendor == vendor && x.cwd.eq_ignore_ascii_case(cwd));
+    match hit {
+        Some(i) => p.remove(i).args,
+        None => Vec::new(),
+    }
+}
+
+/// Stage extra CLI args for the next spawn of `vendor` in `cwd` (QL-764).
+#[tauri::command]
+pub fn stage_launch_args(vendor: String, cwd: String, args: Vec<String>) {
+    stage_at(&vendor, &cwd, args, now_ms());
+}
+
+/// Take (and clear) any staged args for this spawn. Empty is the normal case.
+pub fn take_launch_args(vendor: &str, cwd: &str) -> Vec<String> {
+    take_at(vendor, cwd, now_ms())
 }
 
 #[cfg(test)]
@@ -169,5 +480,219 @@ mod tests {
         // No transcript dir -> None (agy/shell panes).
         assert!(usage_for(&root, "D:\\other").is_none());
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // --- QL-765/766 -------------------------------------------------------
+
+    fn asst_model(model: &str, input: u64, cache_read: u64, cache_create: u64, output: u64) -> String {
+        format!(
+            r#"{{"type":"assistant","message":{{"role":"assistant","model":"{model}","usage":{{"input_tokens":{input},"cache_read_input_tokens":{cache_read},"cache_creation_input_tokens":{cache_create},"output_tokens":{output}}}}}}}"#
+        )
+    }
+
+    #[test]
+    fn keeps_last_model_and_last_turn_split() {
+        let root = temp_root();
+        let cwd = "D:\\proj\\model";
+        let dir = root.join(slugify(cwd));
+        std::fs::create_dir_all(&dir).unwrap();
+        let lines = [
+            asst_model("claude-sonnet-4-5-20250929", 10, 1000, 500, 200),
+            asst_model("claude-opus-4-1-20250805", 7, 1700, 40, 90),
+            // A usage block with no model must not blank the known one.
+            asst(3, 1800, 0, 20),
+        ];
+        std::fs::write(dir.join("s1.jsonl"), lines.join("\n") + "\n").unwrap();
+
+        let u = usage_for(&root, cwd).unwrap();
+        assert_eq!(u.model.as_deref(), Some("claude-opus-4-1-20250805"));
+        assert_eq!(u.last_input_tokens, 3);
+        assert_eq!(u.last_cache_read_tokens, 1800);
+        assert_eq!(u.last_cache_creation_tokens, 0);
+        assert_eq!(u.last_output_tokens, 20);
+        assert_eq!(u.context_tokens, 1803);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // --- QL-764: session listing -----------------------------------------
+
+    fn user(text: &str) -> String {
+        format!(
+            r#"{{"type":"user","gitBranch":"main","message":{{"role":"user","content":"{text}"}}}}"#
+        )
+    }
+
+    #[test]
+    fn lists_sessions_with_prompt_branch_and_model() {
+        let root = temp_root();
+        let cwd = "D:\\proj\\list";
+        let dir = root.join(slugify(cwd));
+        std::fs::create_dir_all(&dir).unwrap();
+        let lines = [
+            // The wrappers a slash-command leaves behind are not the prompt.
+            r#"{"type":"user","isMeta":true,"message":{"role":"user","content":"session hook"}}"#.to_string(),
+            r#"{"type":"user","message":{"role":"user","content":"<command-name>/clear</command-name>"}}"#.to_string(),
+            user("fix the token chip"),
+            asst_model("claude-opus-4-1-20250805", 10, 100, 0, 20),
+            r#"{"type":"user","gitBranch":"feature/x","message":{"role":"user","content":"and again"}}"#.to_string(),
+        ];
+        std::fs::write(dir.join("abc-123.jsonl"), lines.join("\n") + "\n").unwrap();
+
+        let list = list_sessions(&root, cwd);
+        assert_eq!(list.len(), 1);
+        let s = &list[0];
+        assert_eq!(s.id, "abc-123", "session id is the file stem");
+        assert_eq!(s.title, "fix the token chip");
+        assert_eq!(s.git_branch.as_deref(), Some("feature/x"), "latest branch wins");
+        assert_eq!(s.model.as_deref(), Some("claude-opus-4-1-20250805"));
+        assert_eq!(s.turns, Some(1), "a small file is read whole, so the count is exact");
+        assert!(s.size_bytes > 0);
+        assert!(s.modified_ms > 0);
+
+        // A cwd with no transcript dir lists nothing rather than failing.
+        assert!(list_sessions(&root, "D:\\nope").is_empty());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn prefers_a_summary_line_over_the_first_prompt() {
+        let root = temp_root();
+        let cwd = "D:\\proj\\summary";
+        let dir = root.join(slugify(cwd));
+        std::fs::create_dir_all(&dir).unwrap();
+        let lines = [
+            r#"{"type":"summary","summary":"Wave 4: resume launcher and model chip"}"#.to_string(),
+            user("carry on"),
+            asst(5, 10, 0, 5),
+        ];
+        std::fs::write(dir.join("s.jsonl"), lines.join("\n") + "\n").unwrap();
+        assert_eq!(list_sessions(&root, cwd)[0].title, "Wave 4: resume launcher and model chip");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn prefers_claude_codes_own_session_title_and_takes_the_latest() {
+        let root = temp_root();
+        let cwd = "D:\\proj\\aititle";
+        let dir = root.join(slugify(cwd));
+        std::fs::create_dir_all(&dir).unwrap();
+        let lines = [
+            user("start something"),
+            r#"{"type":"ai-title","aiTitle":"First guess at the job"}"#.to_string(),
+            r#"{"type":"summary","summary":"a compaction summary"}"#.to_string(),
+            asst(5, 10, 0, 5),
+            r#"{"type":"ai-title","aiTitle":"What the session actually became"}"#.to_string(),
+        ];
+        std::fs::write(dir.join("s.jsonl"), lines.join("\n") + "\n").unwrap();
+        assert_eq!(list_sessions(&root, cwd)[0].title, "What the session actually became");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_sampled_transcript_reports_no_turn_count_but_still_titles_itself() {
+        let root = temp_root();
+        let cwd = "D:\\proj\\big";
+        let dir = root.join(slugify(cwd));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut s = String::new();
+        s.push_str(&(user("the very first thing I asked") + "\n"));
+        s.push_str(&(r#"{"type":"ai-title","aiTitle":"A long session"}"#.to_string() + "\n"));
+        // Padding lines, valid JSON but of no interest, until the file is well
+        // past HEAD_BYTES + TAIL_BYTES.
+        let filler = format!(r#"{{"type":"noise","pad":"{}"}}"#, "x".repeat(2000));
+        while s.len() < (HEAD_BYTES + TAIL_BYTES + 200 * 1024) as usize {
+            s.push_str(&filler);
+            s.push('\n');
+        }
+        s.push_str(&(r#"{"type":"user","gitBranch":"late-branch","message":{"role":"user","content":"latest"}}"#.to_string() + "\n"));
+        s.push_str(&(asst_model("claude-opus-5", 1, 1, 0, 1) + "\n"));
+        std::fs::write(dir.join("big.jsonl"), &s).unwrap();
+
+        let list = list_sessions(&root, cwd);
+        assert_eq!(list.len(), 1);
+        let got = &list[0];
+        assert_eq!(got.title, "A long session", "title comes out of the head slice");
+        assert_eq!(got.git_branch.as_deref(), Some("late-branch"), "branch comes out of the tail slice");
+        assert_eq!(got.model.as_deref(), Some("claude-opus-5"));
+        assert_eq!(got.turns, None, "no invented turn count for a file we didn’t read whole");
+        assert_eq!(got.size_bytes, s.len() as u64);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn clips_long_titles_and_flattens_newlines() {
+        let long = "word ".repeat(60);
+        let out = clip(&format!("first\nsecond {long}"), TITLE_CHARS);
+        assert!(out.chars().count() <= TITLE_CHARS + 1, "clipped to the cap plus the ellipsis");
+        assert!(out.starts_with("first second"), "collapsed onto one line");
+        assert!(out.ends_with('…'));
+        assert_eq!(clip("short one", TITLE_CHARS), "short one");
+    }
+
+    #[test]
+    fn caps_the_list_and_sorts_newest_first() {
+        let root = temp_root();
+        let cwd = "D:\\proj\\many";
+        let dir = root.join(slugify(cwd));
+        std::fs::create_dir_all(&dir).unwrap();
+        for i in 0..60 {
+            std::fs::write(
+                dir.join(format!("s{i:02}.jsonl")),
+                user(&format!("prompt {i}")) + "\n" + &asst(1, 1, 0, 1) + "\n",
+            )
+            .unwrap();
+        }
+        // A stray non-transcript file is ignored.
+        std::fs::write(dir.join("notes.txt"), "ignore me").unwrap();
+
+        let list = list_sessions(&root, cwd);
+        assert_eq!(list.len(), LIST_CAP);
+        for w in list.windows(2) {
+            assert!(w[0].modified_ms >= w[1].modified_ms, "newest first");
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn skips_an_empty_transcript() {
+        let root = temp_root();
+        let cwd = "D:\\proj\\empty";
+        let dir = root.join(slugify(cwd));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("blank.jsonl"), "").unwrap();
+        std::fs::write(dir.join("noise.jsonl"), "{\"type\":\"system\"}\n").unwrap();
+        assert!(list_sessions(&root, cwd).is_empty());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // --- QL-764: staged launch args --------------------------------------
+    // One test, on purpose: the pending list is process-global, and the
+    // expiry assertions below would prune a sibling test's entries if these
+    // ran in parallel with them.
+    #[test]
+    fn staged_launch_args_are_one_shot_matched_and_expiring() {
+        let t0 = now_ms();
+        let cwd = "D:\\proj\\resume";
+        stage_at("claude", cwd, vec!["--resume".into(), "abc".into()], t0);
+
+        // Another vendor / another folder never claims them.
+        assert!(take_at("agy", cwd, t0).is_empty());
+        assert!(take_at("claude", "D:\\proj\\other", t0).is_empty());
+
+        // Windows paths differ in case between call sites; the match doesn't care.
+        assert_eq!(take_at("claude", "d:\\PROJ\\resume", t0), vec!["--resume", "abc"]);
+        // Consumed — a restart of that pane does NOT resume again.
+        assert!(take_at("claude", cwd, t0).is_empty());
+
+        // A second staging supersedes an earlier unclaimed one.
+        stage_at("claude", cwd, vec!["--resume".into(), "one".into()], t0);
+        stage_at("claude", cwd, vec!["--resume".into(), "two".into(), "--fork-session".into()], t0);
+        assert_eq!(take_at("claude", cwd, t0), vec!["--resume", "two", "--fork-session"]);
+        assert!(take_at("claude", cwd, t0).is_empty());
+
+        // Staged but never spawned: it expires instead of attaching to a much
+        // later, unrelated launch in the same folder.
+        stage_at("claude", cwd, vec!["--resume".into(), "stale".into()], t0);
+        assert!(take_at("claude", cwd, t0 + PENDING_TTL_MS + 1).is_empty());
     }
 }

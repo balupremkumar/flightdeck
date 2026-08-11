@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useRef, useSyncExternalStore } from "react";
 import { useApp } from "./store";
 import { Terminal as XTerm } from "@xterm/xterm";
 import type { ILinkProvider, ILink, ITheme } from "@xterm/xterm";
@@ -11,10 +11,11 @@ import { Unicode11Addon } from "@xterm/addon-unicode11";
 import "@xterm/xterm/css/xterm.css";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { openUrl, openPath } from "@tauri-apps/plugin-opener";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { terminalThemeFor } from "./terminal-theme";
 import { getTerminalSettings } from "./Settings";
 import { linkify, resolvePath } from "./linkify";
+import { openInEditor } from "./editor";
 import { useUI } from "./ui";
 
 // Reads the app's active theme straight off the DOM — the app dispatches no
@@ -67,8 +68,8 @@ function searchDecorations(theme: ITheme) {
 // WebLinksAddon (registered alongside this in the mount effect below) — this
 // provider only emits `linkify()`'s 'path' matches, so the two never fight
 // over the same span. Plain click previews the file in-app (UX-505); Ctrl/Cmd
-// +click opens it in the OS-default editor via plugin-opener, the same
-// mechanism Explorer's "open file" already uses. Existence is checked via the
+// +click opens it in the editor configured in Settings (src/editor.ts), the
+// same helper Review's file rows use. Existence is checked via the
 // one Rust command that's actually available for it (`fs_list_dir`, reading
 // the parent directory) — a path that isn't there loses its link styling and
 // its click turns into a "not found" toast instead of a dead navigation.
@@ -122,9 +123,12 @@ function registerPathLinks(term: XTerm, cwd: string, fontSizeRef: { current: num
 
       const links: ILink[] = matches.map((m) => {
         const abs = resolvePath(m, cwd);
-        const openInEditor = () => {
-          openPath(abs).catch(() => useUI.getState().pushToast("error", `Couldn't open ${abs}`));
-        };
+        // UX-517: the editor chosen in Settings, at the line the output named
+        // (`src/App.tsx:42` jumps to 42). editor.ts owns the fallback to the OS
+        // hand-off this used to do directly, and reports its own failures.
+        // Column is parsed by linkify but has no placeholder in the command
+        // template, so it isn't passed on.
+        const openEditor = () => { void openInEditor(abs, m.line); };
         const openInPreview = () => {
           useUI.getState().openPreview(abs, { line: m.line, fontSize: fontSizeRef.current });
         };
@@ -132,7 +136,7 @@ function registerPathLinks(term: XTerm, cwd: string, fontSizeRef: { current: num
           range: { start: { x: m.start + 1, y: bufferLineNumber }, end: { x: m.end, y: bufferLineNumber } },
           text: m.text,
           decorations: { pointerCursor: true, underline: true },
-          activate: (event) => { if (event.ctrlKey || event.metaKey) openInEditor(); else openInPreview(); },
+          activate: (event) => { if (event.ctrlKey || event.metaKey) openEditor(); else openInPreview(); },
           hover: (event) => showTip(event, "Click — preview   ·   Ctrl+click — open in editor"),
           leave: hideTip,
         };
@@ -151,6 +155,75 @@ function registerPathLinks(term: XTerm, cwd: string, fontSizeRef: { current: num
   };
   const disp = term.registerLinkProvider(provider);
   return { dispose() { disp.dispose(); tip.remove(); } };
+}
+
+// ---------------------------------------------------------------------------
+// QL-782: per-pane OSC 9;4 progress, published app-wide.
+//
+// UI-136 already parsed these sequences, but the number stopped at the pane's
+// own status band — behind whatever window is in front of Flightdeck, which is
+// exactly where the user is while `npm ci` runs. The parse is unchanged; it now
+// also publishes here, and Notifications.tsx (the one always-mounted surface)
+// folds every reporting pane into the single taskbar progress bar Windows gives
+// an application. Same shape as poll.ts's heavy-pane store: a module-level map,
+// a signature check so an unchanged reading re-renders nothing, and
+// useSyncExternalStore for readers.
+// ---------------------------------------------------------------------------
+
+/** OSC 9;4 states, named. `none` is never stored — it removes the pane. */
+export type PaneProgressState = "normal" | "error" | "indeterminate";
+export interface PaneProgress {
+  paneId: number;
+  state: PaneProgressState;
+  /** 0-100. Meaningless (and 0) for `indeterminate`. */
+  percent: number;
+}
+
+const NO_PROGRESS: PaneProgress[] = [];
+const progressById = new Map<number, PaneProgress>();
+let progressList: PaneProgress[] = NO_PROGRESS;
+let progressSig = "";
+const progressListeners = new Set<() => void>();
+
+function subscribeProgress(fn: () => void): () => void {
+  progressListeners.add(fn);
+  return () => progressListeners.delete(fn);
+}
+
+function republishProgress() {
+  const next = [...progressById.values()];
+  const sig = next.map((p) => `${p.paneId}:${p.state}:${p.percent}`).join("|");
+  if (sig === progressSig) return;
+  progressSig = sig;
+  progressList = next.length ? next : NO_PROGRESS;
+  for (const fn of [...progressListeners]) fn();
+}
+
+/** Record one pane's progress. `null` means "this pane reports nothing" —
+ *  a cleared sequence (state 0), an exited process, or an unmounted pane. */
+export function publishPaneProgress(paneId: number, p: { state: PaneProgressState; percent: number } | null): void {
+  if (!paneId) return; // pre-spawn: no pane to attribute it to
+  if (p === null) {
+    if (!progressById.delete(paneId)) return;
+  } else {
+    progressById.set(paneId, {
+      paneId,
+      state: p.state,
+      percent: Math.max(0, Math.min(100, Math.round(p.percent) || 0)),
+    });
+  }
+  republishProgress();
+}
+
+/** The current snapshot, outside React. Same array the hook below serves —
+ *  identity only changes when a reading actually changes. */
+export function paneProgressList(): PaneProgress[] {
+  return progressList;
+}
+
+/** Every pane currently reporting progress, or an empty list. */
+export function usePaneProgress(): PaneProgress[] {
+  return useSyncExternalStore(subscribeProgress, paneProgressList, () => NO_PROGRESS);
 }
 
 export interface TerminalHandle {
@@ -431,11 +504,22 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
       // Windows Terminal renders on its taskbar. We're a terminal too — read it
       // and show it, rather than making the user guess how far `npm ci` is.
       //   ESC ] 9 ; 4 ; <state> ; <pct> BEL    state: 0 clear, 1 set, 2 error, 3 indeterminate
+      // QL-782: the same reading also goes to the app-wide store above, which
+      // is what reaches the Windows taskbar. `onProgress` (the pane's own
+      // status band) keeps its original null/-1/pct contract.
       for (const m of text.matchAll(/\x1b\]9;4;(\d)(?:;(\d{1,3}))?(?:\x07|\x1b\\)/g)) {
         const state = m[1];
-        if (state === "0") onProgress?.(null);
-        else if (state === "3") onProgress?.(-1);
-        else onProgress?.(Math.min(100, parseInt(m[2] ?? "0", 10)));
+        if (state === "0") {
+          onProgress?.(null);
+          publishPaneProgress(paneId, null);
+        } else if (state === "3") {
+          onProgress?.(-1);
+          publishPaneProgress(paneId, { state: "indeterminate", percent: 0 });
+        } else {
+          const pct = Math.min(100, parseInt(m[2] ?? "0", 10));
+          onProgress?.(pct);
+          publishPaneProgress(paneId, { state: state === "2" ? "error" : "normal", percent: pct });
+        }
       }
       // UI-141: keep the last meaningful line for the attention queue.
       const clean = outTail.replace(OSC_RE, "").replace(ANSI_RE, "");
@@ -483,6 +567,8 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
         if (e.payload.pane_id !== paneId) return;
         currentlyAlive = false;
         clearQuietTimer();
+        // QL-782: a finished install must not leave 87% on the taskbar forever.
+        publishPaneProgress(paneId, null);
         term.write(e.payload.crashed
           ? "\r\n\x1b[31m[process exited — crashed]\x1b[0m\r\n"
           : "\r\n\x1b[2m[process exited]\x1b[0m\r\n");
@@ -615,6 +701,7 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
       unExit?.();
       unState?.();
       unProc?.();
+      publishPaneProgress(paneId, null); // QL-782
       if (paneId) invoke("pty_kill", { paneId });
       paneIdRef.current = 0;
       term.dispose();

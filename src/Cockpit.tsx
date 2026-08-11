@@ -15,6 +15,7 @@ import { Explorer } from "./Explorer";
 import { Review } from "./Review";
 import { AttentionQueue } from "./AttentionQueue";
 import { Shortcuts } from "./Shortcuts";
+import { SessionLauncher } from "./SessionLauncher";
 import { Preview } from "./Preview";
 import { QuickOpen } from "./QuickOpenOverlay";
 import { ZoomHud } from "./ZoomHud";
@@ -384,6 +385,9 @@ export function Cockpit() {
       <Preview />
       <AttentionQueue />
       <Shortcuts />
+      {/* QL-764: resume/fork launcher. Owns its own open state and Ctrl+Shift+R
+          listener, the same way CommandPalette and Shortcuts do. */}
+      <SessionLauncher />
       <ZoomHud />
 
       <div className="cockpit">

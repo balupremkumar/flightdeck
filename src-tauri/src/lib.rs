@@ -110,11 +110,20 @@ fn vendors_dir() -> Option<String> {
 
 fn build_command(vendor: &str, cwd: &str, setup: Option<&str>) -> CommandBuilder {
     let adapter = vendors::find(vendor);
+    // QL-764: one-shot args staged by the session launcher for this exact spawn
+    // (`--resume <id>`, optionally `--fork-session`). Empty for every ordinary
+    // launch — see usage.rs for why the handoff lives there. Applied to the
+    // vendor's own command BEFORE any setup wrapper, so the args reach the
+    // agent rather than the pwsh wrapper.
+    let mut base = adapter.command(cwd);
+    for a in usage::take_launch_args(vendor, cwd) {
+        base.arg(a);
+    }
     let mut cmd = match setup.map(str::trim).filter(|s| !s.is_empty()) {
         // Worktree setup phase (Tier 0 follow-up): run e.g. `npm ci` in the
         // fresh worktree, then launch the vendor; failure never starts the agent.
-        Some(s) => vendors::wrap_with_setup(&adapter.command(cwd), s, cwd),
-        None => adapter.command(cwd),
+        Some(s) => vendors::wrap_with_setup(&base, s, cwd),
+        None => base,
     };
     for k in adapter.env_strip() {
         cmd.env_remove(k);
@@ -638,6 +647,8 @@ pub fn run() {
             worktree::git_worktree_list,
             worktree::git_update_from_base,
             usage::pane_usage,
+            usage::list_claude_sessions,
+            usage::stage_launch_args,
             persist::save_session,
             persist::load_session,
             persist::has_previous_session,

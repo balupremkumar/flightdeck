@@ -5,7 +5,7 @@
 // untracked files for isolated panes (backend D8).
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { openUrl, openPath } from "@tauri-apps/plugin-opener";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { openInEditor } from "./editor";
 import { useApp } from "./store";
 import { useUI, useOverlayEsc } from "./ui";
@@ -64,9 +64,13 @@ export function splitTruncationMarker(patch: string): { body: string; truncated:
 }
 
 // UI-179: a conflict lives in the pane's worktree — open the conflicted file
-// there rather than the shared cwd, in case the two ever diverge.
-function openConflictFile(pane: { worktreePath?: string | null; cwd: string }, relPath: string, onErr: () => void) {
-  void openPath(toAbsPath(pane.worktreePath || pane.cwd, relPath)).catch(onErr);
+// there rather than the shared cwd, in case the two ever diverge. UX-517: goes
+// through the configured editor (src/editor.ts) like every other "open this
+// file" in the drawer — resolving a conflict means editing, not previewing in
+// whatever the extension is associated with. The helper reports its own
+// failures and falls back to the OS hand-off, so there's no error callback.
+function openConflictFile(pane: { worktreePath?: string | null; cwd: string }, relPath: string) {
+  void openInEditor(toAbsPath(pane.worktreePath || pane.cwd, relPath));
 }
 
 // Local — not in Icons.tsx, matches its grid (20x20, strokeWidth 1.6, round
@@ -882,7 +886,7 @@ export function Review() {
                       role="button"
                       tabIndex={-1}
                       title="Open this file to resolve the conflict"
-                      onClick={() => openConflictFile(pane, f, () => pushToast("error", "Couldn't open that file."))}
+                      onClick={() => openConflictFile(pane, f)}
                     >
                       open
                     </span>

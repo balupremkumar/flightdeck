@@ -1239,3 +1239,9 @@ Stale-claim corrections found by D: UI-147 badge count is marked DONE but `setBa
 - Quake dropdown pane (angle A) superseded by QL-780 global summon (angle D)
 - Cursor trail/smooth caret: no xterm cursor shader hook; WebGL renderer delivers the cheap half
 - QL-792 [Balu 2026-08-11] New default dark theme "Graphite": darker charcoal base, chrome/metallic surface treatment, de-emphasise the Kove blue accent ("cove colors don't look the best on here; needs to be darker, more chrome"); keep existing themes selectable; WCAG 4.5:1 floors; absorbs QL-748
+
+## Progress 2026-08-11 (four build waves, commits d52c3d6 / a2327d9 / d74475e / wave-4)
+DONE: QL-736 738(pending: cut is Balu's) 739 740 741 742 743 744 745 746 748 751 756 759 764 765(scoped: tooltip, not full categorical split) 766 778 779 780 782 784 792.
+Also done, unnumbered: real editor-launch wiring behind the UX-517 setting (editor.rs + editor.ts, all call sites incl. Review conflict-open and Terminal Ctrl+click), addon-ligatures vite alias (Terminal.tsx now testable), URL scheme allowlist test suite, xterm vendor chunk updated.
+Balu hands-on verify list: Graphite theme look (pick it in Settings - saved theme wins over new default) + terminal palette, Ctrl+Alt+F summon, taskbar overlay badge + progress, window restore after undock, drag a >5MB file and a broken image into Preview, Ctrl+Shift+R resume picker on a claude pane, real editor spawn (double-click in Explorer with VS Code configured), paste a multi-KB block into a live pane.
+Note: summon-hidden window has no taskbar button (chord is the only way back) - design sign-off pending. Ctrl+Shift+R missing from the Settings shortcut cheat sheet - one-line follow-up.

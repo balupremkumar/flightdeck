@@ -3,15 +3,19 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const invoke = vi.fn();
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn(async () => () => {}) }));
+const setProgressBar = vi.fn(async () => {});
 vi.mock("@tauri-apps/api/window", () => ({
-  getCurrentWindow: () => ({ requestUserAttention: vi.fn() }),
+  getCurrentWindow: () => ({ requestUserAttention: vi.fn(), setProgressBar }),
   UserAttentionType: { Informational: 1, Critical: 2 },
+  // Mirrors the real string enum (@tauri-apps/api/window.d.ts) — the values
+  // are what actually reach the shell, so the tests assert on them.
+  ProgressBarStatus: { None: "none", Normal: "normal", Indeterminate: "indeterminate", Paused: "paused", Error: "error" },
 }));
 // QL-742 pulled the memory-ceiling accessor in from Settings, which brings the
 // dialog/opener plugins and localStorage with it (node has neither) — same
 // stubs CommandPalette.test.ts uses for the identical import.
 vi.mock("@tauri-apps/plugin-dialog", () => ({ save: vi.fn(), open: vi.fn() }));
-vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn(), revealItemInDir: vi.fn() }));
+vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn(), openPath: vi.fn(), revealItemInDir: vi.fn() }));
 const store = new Map<string, string>();
 vi.stubGlobal("localStorage", {
   getItem: (k: string) => store.get(k) ?? null,
@@ -20,7 +24,10 @@ vi.stubGlobal("localStorage", {
   clear: () => store.clear(),
 });
 
-const { setAttentionOverlay, summonTarget, SUMMON_EVENT, heavyPaneItems } = await import("./Notifications");
+const { setAttentionOverlay, summonTarget, SUMMON_EVENT, heavyPaneItems, aggregateProgress, setTaskbarProgress } =
+  await import("./Notifications");
+const { ProgressBarStatus } = await import("@tauri-apps/api/window");
+import type { PaneProgress } from "./Terminal";
 const { needsHumanQueue } = await import("./attention");
 import type { AttentionItem } from "./attention";
 import type { PaneState, Workspace } from "./store";
@@ -53,6 +60,74 @@ describe("setAttentionOverlay (QL-778)", () => {
   it("swallows a backend failure — the browser preview has no taskbar", async () => {
     invoke.mockRejectedValue(new Error("no such command"));
     await expect(setAttentionOverlay(1)).resolves.toBeUndefined();
+  });
+});
+
+// QL-782: several panes, one taskbar progress bar.
+describe("aggregateProgress (QL-782)", () => {
+  const p = (paneId: number, state: PaneProgress["state"], percent = 0): PaneProgress => ({ paneId, state, percent });
+
+  it("clears the bar when nobody is reporting", () => {
+    expect(aggregateProgress([])).toEqual({ status: ProgressBarStatus.None, percent: 0 });
+  });
+
+  it("shows the furthest-along pane, not an average that crawls backwards", () => {
+    expect(aggregateProgress([p(1, "normal", 20), p(2, "normal", 80), p(3, "normal", 45)])).toEqual({
+      status: ProgressBarStatus.Normal,
+      percent: 80,
+    });
+  });
+
+  it("lets an error win over healthy panes, carrying that pane's percentage", () => {
+    expect(aggregateProgress([p(1, "normal", 90), p(2, "error", 30)])).toEqual({
+      status: ProgressBarStatus.Error,
+      percent: 30,
+    });
+  });
+
+  it("stays on the first errored pane so two failures don't make the bar flicker", () => {
+    expect(aggregateProgress([p(1, "error", 30), p(2, "error", 70)]).percent).toBe(30);
+  });
+
+  it("falls back to indeterminate only when nobody reports a real number", () => {
+    expect(aggregateProgress([p(1, "indeterminate"), p(2, "indeterminate")])).toEqual({
+      status: ProgressBarStatus.Indeterminate,
+      percent: 0,
+    });
+  });
+
+  it("prefers a real percentage over a spinner when both are reported", () => {
+    expect(aggregateProgress([p(1, "indeterminate"), p(2, "normal", 12)])).toEqual({
+      status: ProgressBarStatus.Normal,
+      percent: 12,
+    });
+  });
+});
+
+describe("setTaskbarProgress (QL-782)", () => {
+  beforeEach(() => setProgressBar.mockClear());
+
+  it("omits the number for the states where it means nothing", async () => {
+    await setTaskbarProgress({ status: ProgressBarStatus.None, percent: 0 });
+    await setTaskbarProgress({ status: ProgressBarStatus.Indeterminate, percent: 0 });
+    expect(setProgressBar.mock.calls).toEqual([
+      [{ status: "none" }],
+      [{ status: "indeterminate" }],
+    ]);
+  });
+
+  it("sends the percentage for the states that render one", async () => {
+    await setTaskbarProgress({ status: ProgressBarStatus.Normal, percent: 42 });
+    await setTaskbarProgress({ status: ProgressBarStatus.Error, percent: 7 });
+    expect(setProgressBar.mock.calls).toEqual([
+      [{ status: "normal", progress: 42 }],
+      [{ status: "error", progress: 7 }],
+    ]);
+  });
+
+  it("swallows a missing capability rather than throwing into a render", async () => {
+    setProgressBar.mockRejectedValueOnce(new Error("window.set_progress_bar not allowed"));
+    await expect(setTaskbarProgress({ status: ProgressBarStatus.Normal, percent: 1 })).resolves.toBeUndefined();
   });
 });
 

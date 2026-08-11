@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useApp, type PaneState } from "./store";
 import { useUI, useOverlayEsc, setTheme } from "./ui";
 import { closePaneGuarded } from "./worktrees";
+import { openSessionLauncher } from "./SessionLauncher";
 import { checkForUpdate } from "./updater";
 import { getShortcuts, FIXED_SHORTCUTS } from "./Settings";
 import { IconWorkspace, IconAgent, IconSettings, IconClose } from "./Icons";
@@ -241,6 +242,16 @@ export function CommandPalette() {
       run: () => setExplorerOpen(!explorerOpen),
     });
     list.push({ id: "act:open-broadcast", section: "Actions", label: "Open broadcast", run: () => setBroadcastOpen(true) });
+    // QL-764: the focused pane's past sessions (--resume / --fork-session).
+    // The launcher itself does the Claude-only gate and says so if the focused
+    // pane is another vendor.
+    list.push({
+      id: "act:resume-session",
+      section: "Actions",
+      label: "Resume a past session — focused pane",
+      keywords: "resume fork session transcript claude continue",
+      run: () => openSessionLauncher(),
+    });
     // Owner feedback item 3: whole-app zoom, same store actions the
     // Ctrl+=/-/0 shortcut and Settings > UI size use.
     list.push({ id: "act:zoom-in", section: "Actions", label: "Zoom in", run: () => useUI.getState().stepUiZoom(1) });
