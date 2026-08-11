@@ -2,7 +2,23 @@
 
 Vault: [[HOME]] | [[PORTFOLIO|Portfolio]] | [[projects/active/flightdeck/BACKLOG|Backlog]]
 
-Updated: 2026-08-02 (terminal click-offset fix, ready for the next release cut).
+Updated: 2026-08-11 (v0.5.2 is BROKEN — invisible-boot bug found+fixed on main, needs a v0.5.3 cut).
+
+## CURRENT: v0.5.2 DO NOT INSTALL — boot fix on main awaits the v0.5.3 cut (2026-08-11 late)
+**v0.5.2 never shows a window.** Balu installed it (NSIS uninstalled 0.5.1, installed 0.5.2, "never booted"), then recovered by reinstalling 0.5.1 at 10:18pm — confirmed from disk: uninstall.exe rewritten 10:18:51 stamped 0.5.1, app running 0.5.1 since 10:18:53.
+Root cause (reproduced E2E by running the release exe and enumerating its windows): QL-779 creates the window hidden (`visible: false`) and the compensating `show()` sat between `build()` and `app.run()` — a show() before the event loop pumps is silently lost, so the Tauri window existed with restored geometry but stayed IsWindowVisible=false forever. No crash, no Defender involvement (the MsiInstaller "installed 0.5.2" event at 10:02:50pm is a WiX build-time artifact logged at every cut — checked against all four Aug-1 cuts).
+**Fix on main (9f5ad3e): show()/set_focus() moved into `app.run()` on `RunEvent::Ready`.** Verified: rebuilt release exe probes visible=true at 5s; cargo 179/179. Frontend untouched.
+**NEXT SESSION: cut v0.5.3** (`pwsh tools/release.ps1`) — Balu ruled 2026-08-11: cut happens at next session close. Until then the published latest.json still offers broken 0.5.2: do not install it; stay on 0.5.1.
+Then the deferred verify list: About shows 0.5.3, pick Graphite (saved theme wins over new default), click-offset check (UI size ≠ 100%), then the E2E lists in BACKLOG's two "Progress 2026-08-11" blocks.
+
+## Superseded same night: v0.5.2 cut, waiting on the in-app install (2026-08-11 late)
+Six QL waves shipped to main in one day (d52c3d6→fc92496, 19 agents, 37 QL items + editor wiring): Graphite theme, WebGL/Unicode11/OSC8 terminal, OSC 133 command marks + Ctrl+Up/Down, quick-select hints, sticky scroll, scrollback restore, resume/fork picker (Ctrl+Shift+R), subagent tree, plan panel, real editor launch, memory health, summon (Ctrl+Alt+F), taskbar badge/progress, window-state restore, config doctor, opt-in Claude hooks, plus the click-offset fix finally released.
+Final gates: tsc clean, vitest 649, cargo 179, build clean.
+**v0.5.2 CUT, VERIFIED, PUSHED** (996d2ff; latest.json + sha256 verified against the installer on disk).
+**Update status checked 2026-08-11 ~11pm: NOT installed.** Installed exe still FileVersion 0.5.1; the running app (restarted 10:18pm) is that binary; no apply-update-0.5.2 script/log, no scheduled task, no update-status.json — the updater was never triggered. Restart alone doesn't install: **Balu must click Settings > About > install and restart.** Known failure mode: Defender blocks the silent install → run `releases\Flightdeck_0.5.2_x64-setup.exe` by hand. Installing closes the app + kills all panes (job object) — don't do it from inside a Flightdeck pane session.
+After it lands: About shows 0.5.2, pick Graphite in Settings (saved theme wins over new default), click-offset check (UI size ≠ 100%, mid-terminal click lands under pointer), then the E2E lists in BACKLOG's two "Progress 2026-08-11" blocks.
+**Open bug (pinned):** redactText misses `KEY=sk-ant` tokens in scrollback exports (session.test.ts:186).
+Remaining QL headliners: copy mode, triggers, output folding, permission promote-to-rule, MCP board, Windows tail (jump list, tray, deep links).
 
 ## FIXED 2026-08-02: terminal clicks landing 1-2 lines off (Balu's live report)
 Root cause: whole-app zoom was CSS `zoom` on `<html>` (ui.ts applyUiScale + main.tsx boot), and xterm hit-tests mouse events itself — (clientX − rect) ÷ measured cell size — so under any zoom ≠ 1 clicks drifted, worse toward the bottom of the terminal.
