@@ -683,22 +683,6 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
 
-    // QL-779: the main window is created hidden (tauri.conf.json
-    // "visible": false) so the window-state plugin can move/resize it before
-    // the first paint — otherwise every launch flashes the default 1200x800
-    // centred window and then jumps to the remembered spot. Restore already
-    // happened inside build() (the plugin's on_window_ready hook), so showing
-    // here shows it in the right place.
-    //
-    // UNCONDITIONAL, and the FIRST thing after build() on purpose: whatever
-    // the saved state says and whatever the restore did, the window is always
-    // shown. A corrupt state file, a missing monitor, or a plugin error can
-    // never leave Flightdeck running invisibly with no way to get it back.
-    if let Some(win) = app.get_webview_window("main") {
-        let _ = win.show();
-        let _ = win.set_focus();
-    }
-
     // Manifest vendors (#218): point the registry at <app-data>/vendors so a
     // dropped JSON file becomes a launchable agent — no recompile.
     if let Ok(data_dir) = app.handle().path().app_data_dir() {
@@ -725,14 +709,45 @@ pub fn run() {
     vendors::spawn_manifest_watcher(app.handle().clone());
 
     app.run(|app_handle, event| {
-        // Reap every live pane's process tree when the app is asked to exit, so
-        // closing the window never leaves orphaned claude/agy/pwsh trees running.
-        if let RunEvent::ExitRequested { .. } = event {
-            let reg = app_handle.state::<Registry>();
-            let ids: Vec<u32> = reg.panes.lock().unwrap().keys().copied().collect();
-            for id in ids {
-                reap_pane(reg.inner(), id);
+        match event {
+            // QL-779: the main window is created hidden (tauri.conf.json
+            // "visible": false) so the window-state plugin can move/resize it
+            // before the first paint — otherwise every launch flashes the
+            // default 1200x800 centred window and then jumps to the remembered
+            // spot. Restore already happened inside build() (the plugin's
+            // on_window_ready hook), so showing here shows it in the right
+            // place.
+            //
+            // UNCONDITIONAL, and on RunEvent::Ready on purpose: whatever the
+            // saved state says and whatever the restore did, the window is
+            // always shown. A corrupt state file, a missing monitor, or a
+            // plugin error can never leave Flightdeck running invisibly with
+            // no way to get it back.
+            //
+            // Ready, NOT before app.run(): a show() issued between build() and
+            // run() is silently lost because the event loop isn't pumping yet,
+            // and the app runs forever with an invisible window. That was
+            // v0.5.2's "installed but never booted" bug (2026-08-11, found by
+            // running the release exe and enumerating its windows: the Tauri
+            // window existed, restored its geometry, and stayed
+            // IsWindowVisible=false indefinitely).
+            RunEvent::Ready => {
+                if let Some(win) = app_handle.get_webview_window("main") {
+                    let _ = win.show();
+                    let _ = win.set_focus();
+                }
             }
+            // Reap every live pane's process tree when the app is asked to
+            // exit, so closing the window never leaves orphaned claude/agy/pwsh
+            // trees running.
+            RunEvent::ExitRequested { .. } => {
+                let reg = app_handle.state::<Registry>();
+                let ids: Vec<u32> = reg.panes.lock().unwrap().keys().copied().collect();
+                for id in ids {
+                    reap_pane(reg.inner(), id);
+                }
+            }
+            _ => {}
         }
     });
 }
