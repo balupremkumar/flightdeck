@@ -14,6 +14,7 @@ mod overlay;
 mod persist;
 mod procname;
 mod reveal;
+mod shellmarks;
 mod summon;
 mod support;
 mod updates;
@@ -125,6 +126,12 @@ fn build_command(vendor: &str, cwd: &str, setup: Option<&str>) -> CommandBuilder
         Some(s) => vendors::wrap_with_setup(&base, s, cwd),
         None => base,
     };
+    // QL-752: shell integration (OSC 133 command marks + OSC 9;9 cwd) for an
+    // interactive PowerShell pane. shellmarks owns the whole decision — it only
+    // wraps a pwsh with NO arguments, so an agent launched through pwsh (and
+    // the setup wrapper above, which is also argv-heavy) is never touched and
+    // can never be double-marked against its own sequences.
+    shellmarks::inject(&mut cmd);
     for k in adapter.env_strip() {
         cmd.env_remove(k);
     }
@@ -649,6 +656,9 @@ pub fn run() {
             usage::pane_usage,
             usage::list_claude_sessions,
             usage::stage_launch_args,
+            usage::pane_subagents,
+            usage::pane_subagent_count,
+            usage::pane_plans,
             persist::save_session,
             persist::load_session,
             persist::has_previous_session,
@@ -685,6 +695,11 @@ pub fn run() {
     // dropped JSON file becomes a launchable agent — no recompile.
     if let Ok(data_dir) = app.handle().path().app_data_dir() {
         vendors::set_manifest_dir(data_dir.join("vendors"));
+        // QL-752: (re)write the PowerShell shell-integration preamble that
+        // interactive pwsh panes dot-source at spawn. Rewritten every launch so
+        // it can't go stale; if the write fails, panes simply launch without
+        // marks.
+        shellmarks::init(data_dir.join("shell"));
     }
 
     // QL-780: global summon chord (Ctrl+Alt+F). Registered after build, never

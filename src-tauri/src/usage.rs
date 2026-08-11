@@ -58,6 +58,13 @@ fn states() -> &'static Mutex<HashMap<PathBuf, FileState>> {
 
 fn apply_line(line: &str, u: &mut PaneUsage) {
     let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else { return };
+    apply_usage(&v, u);
+}
+
+/// The usage half of a transcript line, split out of `apply_line` so the
+/// subagent scan (QL-769) can sum tokens from a line it has already parsed
+/// instead of parsing it a second time. Behaviour is unchanged.
+fn apply_usage(v: &serde_json::Value, u: &mut PaneUsage) {
     let Some(usage) = v.get("message").and_then(|m| m.get("usage")).filter(|u| u.is_object()) else { return };
     let n = |k: &str| usage.get(k).and_then(|x| x.as_u64()).unwrap_or(0);
     let context = n("input_tokens") + n("cache_read_input_tokens") + n("cache_creation_input_tokens");
@@ -107,17 +114,25 @@ fn scan(path: &Path) -> Option<PaneUsage> {
     Some(st.usage.clone())
 }
 
-/// Usage for the pane rooted at `cwd`, from the most recently written session
-/// transcript in that cwd's project dir. None = no transcript (not a Claude
-/// pane, or no session yet).
-pub fn usage_for(projects_root: &Path, cwd: &str) -> Option<PaneUsage> {
+/// The transcript of the session this pane is (most likely) in: the most
+/// recently written *.jsonl in the cwd's project dir. Shared by the token chip,
+/// the subagent tree (QL-769) and the plan panel (QL-770) so all three always
+/// describe the same session.
+fn newest_transcript(projects_root: &Path, cwd: &str) -> Option<PathBuf> {
     let dir = projects_root.join(slugify(cwd));
-    let newest = std::fs::read_dir(&dir)
+    std::fs::read_dir(&dir)
         .ok()?
         .filter_map(|e| e.ok())
         .map(|e| e.path())
         .filter(|p| p.extension().map(|x| x == "jsonl").unwrap_or(false))
-        .max_by_key(|p| std::fs::metadata(p).and_then(|m| m.modified()).ok())?;
+        .max_by_key(|p| std::fs::metadata(p).and_then(|m| m.modified()).ok())
+}
+
+/// Usage for the pane rooted at `cwd`, from the most recently written session
+/// transcript in that cwd's project dir. None = no transcript (not a Claude
+/// pane, or no session yet).
+pub fn usage_for(projects_root: &Path, cwd: &str) -> Option<PaneUsage> {
+    let newest = newest_transcript(projects_root, cwd)?;
     scan(&newest).filter(|u| u.turns > 0)
 }
 
@@ -420,6 +435,425 @@ pub fn take_launch_args(vendor: &str, cwd: &str) -> Vec<String> {
     take_at(vendor, cwd, now_ms())
 }
 
+// ---------------------------------------------------------------------------
+// Timestamps.
+//
+// Transcript lines carry `"timestamp":"2026-07-30T02:45:29.535Z"` — UTC,
+// RFC3339, millisecond precision. There's no date crate in this build (see
+// Cargo.toml) and one isn't worth pulling in for a fixed-shape string, so it's
+// parsed here. Anything that doesn't match that exact shape returns None and
+// the caller falls back to the file's own mtime rather than inventing a time.
+// ---------------------------------------------------------------------------
+
+fn iso_ms(s: &str) -> Option<u64> {
+    let b = s.as_bytes();
+    if b.len() < 19 || b[4] != b'-' || b[7] != b'-' || b[10] != b'T' || b[13] != b':' || b[16] != b':' {
+        return None;
+    }
+    let n = |a: usize, z: usize| s.get(a..z).and_then(|x| x.parse::<i64>().ok());
+    let (y, mo, d) = (n(0, 4)?, n(5, 7)?, n(8, 10)?);
+    let (h, mi, sec) = (n(11, 13)?, n(14, 16)?, n(17, 19)?);
+    if !(1..=12).contains(&mo) || !(1..=31).contains(&d) || h > 23 || mi > 59 || sec > 60 {
+        return None;
+    }
+    // Optional fractional seconds, clipped to milliseconds.
+    let ms = if b.len() > 20 && b[19] == b'.' {
+        let digits: String = s[20..].chars().take_while(|c| c.is_ascii_digit()).take(3).collect();
+        let scaled: i64 = digits.parse().unwrap_or(0);
+        match digits.len() {
+            1 => scaled * 100,
+            2 => scaled * 10,
+            _ => scaled,
+        }
+    } else {
+        0
+    };
+    // days-from-civil (Howard Hinnant's civil_from_days inverse) — exact, no
+    // table, no leap-second fiction.
+    let y2 = y - if mo <= 2 { 1 } else { 0 };
+    let era = if y2 >= 0 { y2 } else { y2 - 399 } / 400;
+    let yoe = y2 - era * 400;
+    let doy = (153 * (mo + if mo > 2 { -3 } else { 9 }) + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146_097 + doe - 719_468;
+    let total = days * 86_400_000 + h * 3_600_000 + mi * 60_000 + sec * 1000 + ms;
+    if total < 0 { None } else { Some(total as u64) }
+}
+
+// ---------------------------------------------------------------------------
+// QL-769: live subagent tree.
+//
+// A Task/subagent turn writes its own transcript beside the parent session's:
+//   ~/.claude/projects/<slug>/<session-id>/subagents/agent-<id>.jsonl
+// with a sibling agent-<id>.meta.json holding {agentType, description,
+// toolUseId, spawnDepth}. The lines are the same shape as the parent's, with
+// isSidechain:true, so token totals come out of the same usage blocks the chip
+// already reads — and the files are read the same way (offset per file), so
+// polling a running fan-out costs only the bytes that were just appended.
+//
+// "finished" is NOT invented. These files have no result/exit line: a subagent
+// is still working while its newest assistant line carries a tool_use (or its
+// newest line is a tool result), and has handed back once its newest assistant
+// line is text only — that final text IS the report the parent receives. A row
+// that is unfinished but has gone quiet is reported as exactly that (the UI
+// calls it "possibly stuck"); it is never guessed dead here.
+// ---------------------------------------------------------------------------
+
+/// Rows in one popover. A long session accumulates finished agents; the newest
+/// spawns are the ones worth showing.
+const SUBAGENT_CAP: usize = 20;
+/// Count-probe window: a transcript written to this recently is being worked in
+/// right now. Metadata only — no file is opened for the count.
+const SUBAGENT_RECENT_MS: u64 = 120_000;
+
+#[derive(Clone, Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct SubagentInfo {
+    /// Agent id — the file stem minus its `agent-` prefix, i.e. the `agentId`
+    /// the lines themselves carry.
+    pub id: String,
+    /// From the sidecar meta file: which agent definition this is ("explore",
+    /// "backend", …). None when the meta file is missing or unreadable.
+    pub agent_type: Option<String>,
+    /// The one-line task description the parent gave it, if recorded.
+    pub description: Option<String>,
+    /// Newest tool this agent called. None until it has called one.
+    pub tool: Option<String>,
+    /// First line's timestamp (epoch ms), else the file's creation time.
+    pub started_ms: u64,
+    /// Newest line's timestamp (epoch ms), else the file's mtime.
+    pub last_activity_ms: u64,
+    /// Latest prompt size and cumulative output, same maths as the pane chip.
+    pub context_tokens: u64,
+    pub output_tokens: u64,
+    pub turns: u64,
+    /// Newest assistant line was text only — it has reported back.
+    pub finished: bool,
+}
+
+#[derive(Clone, Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct SubagentCount {
+    /// Subagent transcripts this session has, ever.
+    pub total: u64,
+    /// Of those, written to within the last SUBAGENT_RECENT_MS.
+    pub recent: u64,
+}
+
+struct SubState {
+    offset: u64,
+    carry: String,
+    usage: PaneUsage,
+    info: SubagentInfo,
+}
+
+fn sub_states() -> &'static Mutex<HashMap<PathBuf, SubState>> {
+    static S: OnceLock<Mutex<HashMap<PathBuf, SubState>>> = OnceLock::new();
+    S.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// The per-session directory that holds `subagents/` and `tool-results/`:
+/// the transcript path with its `.jsonl` extension dropped.
+fn subagents_dir(transcript: &Path) -> PathBuf {
+    transcript.with_extension("").join("subagents")
+}
+
+fn apply_sub_line(line: &str, usage: &mut PaneUsage, info: &mut SubagentInfo) {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else { return };
+    apply_usage(&v, usage);
+    if let Some(ms) = v.get("timestamp").and_then(|t| t.as_str()).and_then(iso_ms) {
+        if info.started_ms == 0 {
+            info.started_ms = ms;
+        }
+        info.last_activity_ms = ms;
+    }
+    let kind = v.get("type").and_then(|t| t.as_str()).unwrap_or("");
+    let blocks = v.get("message").and_then(|m| m.get("content")).and_then(|c| c.as_array());
+    match kind {
+        "assistant" => {
+            let mut called_a_tool = false;
+            for b in blocks.into_iter().flatten() {
+                if b.get("type").and_then(|t| t.as_str()) == Some("tool_use") {
+                    called_a_tool = true;
+                    if let Some(name) = b.get("name").and_then(|n| n.as_str()) {
+                        info.tool = Some(name.to_string());
+                    }
+                }
+            }
+            // Text-only = its closing report; a tool_use = still working.
+            info.finished = !called_a_tool;
+        }
+        // A tool result came back, so there is more to come.
+        "user" => info.finished = false,
+        // attachment/system/meta lines say nothing about progress.
+        _ => {}
+    }
+}
+
+fn scan_subagent(path: &Path, meta: (Option<String>, Option<String>)) -> Option<SubagentInfo> {
+    let fsmeta = std::fs::metadata(path).ok()?;
+    let len = fsmeta.len();
+    let mut map = sub_states().lock().unwrap();
+    let st = map.entry(path.to_path_buf()).or_insert_with(|| {
+        let id = path
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        SubState {
+            offset: 0,
+            carry: String::new(),
+            usage: PaneUsage::default(),
+            info: SubagentInfo {
+                id: id.strip_prefix("agent-").unwrap_or(&id).to_string(),
+                agent_type: meta.0,
+                description: meta.1,
+                ..SubagentInfo::default()
+            },
+        }
+    });
+    if len < st.offset {
+        st.offset = 0;
+        st.carry = String::new();
+        st.usage = PaneUsage::default();
+    }
+    if len > st.offset {
+        let mut f = std::fs::File::open(path).ok()?;
+        f.seek(SeekFrom::Start(st.offset)).ok()?;
+        let mut buf = Vec::with_capacity((len - st.offset) as usize);
+        f.read_to_end(&mut buf).ok()?;
+        st.offset = len;
+        let chunk = st.carry.clone() + &String::from_utf8_lossy(&buf);
+        let complete_up_to = chunk.rfind('\n').map(|i| i + 1).unwrap_or(0);
+        for line in chunk[..complete_up_to].lines() {
+            let (usage, info) = (&mut st.usage, &mut st.info);
+            apply_sub_line(line, usage, info);
+        }
+        st.carry = chunk[complete_up_to..].to_string();
+        st.info.context_tokens = st.usage.context_tokens;
+        st.info.output_tokens = st.usage.output_tokens;
+        st.info.turns = st.usage.turns;
+    }
+    // Timestamps missing from the lines fall back to the file's own times —
+    // never to "now", which would make a stalled agent look alive.
+    if st.info.last_activity_ms == 0 {
+        st.info.last_activity_ms = modified_ms(path);
+    }
+    if st.info.started_ms == 0 {
+        st.info.started_ms = fsmeta
+            .created()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(st.info.last_activity_ms);
+    }
+    Some(st.info.clone())
+}
+
+fn read_agent_meta(path: &Path) -> (Option<String>, Option<String>) {
+    let meta_path = path.with_extension("meta.json");
+    let Ok(text) = std::fs::read_to_string(&meta_path) else { return (None, None) };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else { return (None, None) };
+    let s = |k: &str| v.get(k).and_then(|x| x.as_str()).filter(|x| !x.is_empty()).map(|x| x.to_string());
+    (s("agentType"), s("description"))
+}
+
+fn subagent_files(projects_root: &Path, cwd: &str) -> Vec<PathBuf> {
+    let Some(transcript) = newest_transcript(projects_root, cwd) else { return Vec::new() };
+    let Ok(entries) = std::fs::read_dir(subagents_dir(&transcript)) else { return Vec::new() };
+    entries
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        // agent-<id>.meta.json also ends in .json, not .jsonl — extension alone
+        // is enough to keep the sidecars out.
+        .filter(|p| p.extension().map(|x| x == "jsonl").unwrap_or(false))
+        .collect()
+}
+
+/// Every subagent of this pane's current session: unfinished ones first (that's
+/// what the popover is for), then newest spawn first. Empty for a pane whose
+/// agent doesn't write these files at all.
+pub fn subagents_for(projects_root: &Path, cwd: &str) -> Vec<SubagentInfo> {
+    let mut files = subagent_files(projects_root, cwd);
+    // Newest-first by mtime, so the cap drops the oldest finished agents.
+    files.sort_by_key(|p| std::cmp::Reverse(modified_ms(p)));
+    files.truncate(SUBAGENT_CAP);
+    let mut rows: Vec<SubagentInfo> = files
+        .iter()
+        .filter_map(|p| scan_subagent(p, read_agent_meta(p)))
+        .collect();
+    rows.sort_by(|a, b| {
+        a.finished
+            .cmp(&b.finished)
+            .then(b.started_ms.cmp(&a.started_ms))
+    });
+    rows
+}
+
+/// The cheap probe behind the header chip's count: directory metadata only, no
+/// transcript is opened. `recent` is honestly just "written to lately" — the
+/// popover's rows are where finished/stuck is actually decided.
+pub fn subagent_count_for(projects_root: &Path, cwd: &str, now: u64) -> SubagentCount {
+    let files = subagent_files(projects_root, cwd);
+    let recent = files
+        .iter()
+        .filter(|p| now.saturating_sub(modified_ms(p)) < SUBAGENT_RECENT_MS)
+        .count() as u64;
+    SubagentCount { total: files.len() as u64, recent }
+}
+
+#[tauri::command]
+pub fn pane_subagents(cwd: String) -> Vec<SubagentInfo> {
+    let Ok(home) = std::env::var("USERPROFILE") else { return Vec::new() };
+    subagents_for(&Path::new(&home).join(".claude").join("projects"), &cwd)
+}
+
+#[tauri::command]
+pub fn pane_subagent_count(cwd: String) -> SubagentCount {
+    let Ok(home) = std::env::var("USERPROFILE") else { return SubagentCount::default() };
+    subagent_count_for(&Path::new(&home).join(".claude").join("projects"), &cwd, now_ms())
+}
+
+// ---------------------------------------------------------------------------
+// QL-770: plan-mode documents.
+//
+// Leaving plan mode is a tool call like any other: an assistant line with a
+// `tool_use` named ExitPlanMode whose `input.plan` IS the plan document
+// (markdown, verbatim). The user's answer arrives as the matching `tool_result`
+// on a later user line — "User has approved your plan…" when accepted, an
+// is_error result saying the tool use was rejected when not.
+//
+// So approval is read, not inferred: approved stays None until that result
+// line exists, and the UI shows no approval state rather than a guess.
+//
+// The parent transcript runs to tens of megabytes, so it's read incrementally
+// (offset per file, same as the token chip) and only the newest PLAN_CAP plans
+// are kept.
+// ---------------------------------------------------------------------------
+
+/// Plans kept per session — the current one plus a short archive.
+const PLAN_CAP: usize = 10;
+
+#[derive(Clone, Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanEntry {
+    /// The ExitPlanMode tool_use id — also what the answering result matches on.
+    pub id: String,
+    /// The plan document, markdown, exactly as the agent wrote it.
+    pub plan: String,
+    /// When the agent proposed it (epoch ms), 0 if the line carried no timestamp.
+    pub at_ms: u64,
+    /// true = approved, false = rejected, None = no answer recorded yet.
+    pub approved: Option<bool>,
+}
+
+struct PlanState {
+    offset: u64,
+    carry: String,
+    plans: Vec<PlanEntry>, // oldest first while accumulating
+}
+
+fn plan_states() -> &'static Mutex<HashMap<PathBuf, PlanState>> {
+    static S: OnceLock<Mutex<HashMap<PathBuf, PlanState>>> = OnceLock::new();
+    S.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// A tool_result's content is a string on some lines and a block array on
+/// others; both are flattened to text so the approval phrase can be matched.
+fn result_text(block: &serde_json::Value) -> String {
+    match block.get("content") {
+        Some(serde_json::Value::String(s)) => s.clone(),
+        Some(serde_json::Value::Array(items)) => items
+            .iter()
+            .filter_map(|b| b.get("text").and_then(|t| t.as_str()))
+            .collect::<Vec<_>>()
+            .join(" "),
+        _ => String::new(),
+    }
+}
+
+fn apply_plan_line(line: &str, plans: &mut Vec<PlanEntry>) {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else { return };
+    let Some(blocks) = v.get("message").and_then(|m| m.get("content")).and_then(|c| c.as_array()) else { return };
+    let at_ms = v.get("timestamp").and_then(|t| t.as_str()).and_then(iso_ms).unwrap_or(0);
+    for b in blocks {
+        match b.get("type").and_then(|t| t.as_str()) {
+            Some("tool_use") if b.get("name").and_then(|n| n.as_str()) == Some("ExitPlanMode") => {
+                let Some(plan) = b.get("input").and_then(|i| i.get("plan")).and_then(|p| p.as_str()) else { continue };
+                let id = b.get("id").and_then(|i| i.as_str()).unwrap_or("").to_string();
+                plans.push(PlanEntry { id, plan: plan.to_string(), at_ms, approved: None });
+                if plans.len() > PLAN_CAP {
+                    plans.remove(0);
+                }
+            }
+            Some("tool_result") => {
+                let Some(id) = b.get("tool_use_id").and_then(|i| i.as_str()) else { continue };
+                let Some(entry) = plans.iter_mut().find(|p| p.id == id) else { continue };
+                let text = result_text(b);
+                let rejected = b.get("is_error").and_then(|e| e.as_bool()).unwrap_or(false)
+                    || text.contains("doesn't want to proceed")
+                    || text.contains("The tool use was rejected");
+                entry.approved = Some(!rejected);
+            }
+            _ => {}
+        }
+    }
+}
+
+fn scan_plans(path: &Path) -> Vec<PlanEntry> {
+    let Ok(len) = std::fs::metadata(path).map(|m| m.len()) else { return Vec::new() };
+    let mut map = plan_states().lock().unwrap();
+    let st = map.entry(path.to_path_buf()).or_insert_with(|| PlanState {
+        // Same first-read cap as the token chip: an already-huge transcript is
+        // read from near its end, so only plans older than that slice are
+        // missed — and the archive is capped at ten anyway.
+        offset: if len > FIRST_READ_CAP { len - FIRST_READ_CAP } else { 0 },
+        carry: String::new(),
+        plans: Vec::new(),
+    });
+    if len < st.offset {
+        *st = PlanState { offset: 0, carry: String::new(), plans: Vec::new() };
+    }
+    if len > st.offset {
+        let Ok(mut f) = std::fs::File::open(path) else { return Vec::new() };
+        if f.seek(SeekFrom::Start(st.offset)).is_err() {
+            return Vec::new();
+        }
+        let mut buf = Vec::with_capacity((len - st.offset) as usize);
+        if f.read_to_end(&mut buf).is_err() {
+            return Vec::new();
+        }
+        st.offset = len;
+        let chunk = st.carry.clone() + &String::from_utf8_lossy(&buf);
+        let complete_up_to = chunk.rfind('\n').map(|i| i + 1).unwrap_or(0);
+        for line in chunk[..complete_up_to].lines() {
+            // Cheap pre-filter: the plan lines are a handful in a file of tens
+            // of thousands, and this keeps serde off the rest of them.
+            if line.contains("ExitPlanMode") || line.contains("tool_result") {
+                apply_plan_line(line, &mut st.plans);
+            }
+        }
+        st.carry = chunk[complete_up_to..].to_string();
+    }
+    let mut out = st.plans.clone();
+    out.reverse(); // newest first
+    out
+}
+
+/// This pane's session's plans, newest first, capped at PLAN_CAP. Empty when
+/// the session has never left plan mode (or isn't a Claude session at all).
+pub fn plans_for(projects_root: &Path, cwd: &str) -> Vec<PlanEntry> {
+    match newest_transcript(projects_root, cwd) {
+        Some(p) => scan_plans(&p),
+        None => Vec::new(),
+    }
+}
+
+#[tauri::command]
+pub fn pane_plans(cwd: String) -> Vec<PlanEntry> {
+    let Ok(home) = std::env::var("USERPROFILE") else { return Vec::new() };
+    plans_for(&Path::new(&home).join(".claude").join("projects"), &cwd)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -662,6 +1096,230 @@ mod tests {
         std::fs::write(dir.join("blank.jsonl"), "").unwrap();
         std::fs::write(dir.join("noise.jsonl"), "{\"type\":\"system\"}\n").unwrap();
         assert!(list_sessions(&root, cwd).is_empty());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // --- QL-769: subagent tree -------------------------------------------
+
+    /// Writes a session transcript plus `subagents/agent-<id>.jsonl` files, and
+    /// returns the project root the commands read from.
+    fn session_with_subagents(cwd: &str, agents: &[(&str, &str, Vec<String>)]) -> PathBuf {
+        let root = temp_root();
+        let dir = root.join(slugify(cwd));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("sess.jsonl"), asst(1, 1, 0, 1) + "\n").unwrap();
+        let subs = dir.join("sess").join("subagents");
+        std::fs::create_dir_all(&subs).unwrap();
+        for (id, agent_type, lines) in agents {
+            std::fs::write(subs.join(format!("agent-{id}.jsonl")), lines.join("\n") + "\n").unwrap();
+            std::fs::write(
+                subs.join(format!("agent-{id}.meta.json")),
+                format!(r#"{{"agentType":"{agent_type}","description":"do a thing","spawnDepth":1}}"#),
+            )
+            .unwrap();
+        }
+        root
+    }
+
+    fn sub_tool(ts: &str, tool: &str, out: u64) -> String {
+        format!(
+            r#"{{"type":"assistant","isSidechain":true,"timestamp":"{ts}","message":{{"role":"assistant","usage":{{"input_tokens":5,"cache_read_input_tokens":100,"cache_creation_input_tokens":0,"output_tokens":{out}}},"content":[{{"type":"tool_use","name":"{tool}","id":"t1","input":{{}}}}]}}}}"#
+        )
+    }
+
+    fn sub_text(ts: &str, out: u64) -> String {
+        format!(
+            r#"{{"type":"assistant","isSidechain":true,"timestamp":"{ts}","message":{{"role":"assistant","usage":{{"input_tokens":9,"cache_read_input_tokens":200,"cache_creation_input_tokens":0,"output_tokens":{out}}},"content":[{{"type":"text","text":"here is the report"}}]}}}}"#
+        )
+    }
+
+    fn sub_result(ts: &str) -> String {
+        format!(
+            r#"{{"type":"user","isSidechain":true,"timestamp":"{ts}","message":{{"role":"user","content":[{{"type":"tool_result","tool_use_id":"t1","content":"ok"}}]}}}}"#
+        )
+    }
+
+    #[test]
+    fn parses_claude_codes_timestamps() {
+        // 2026-07-30T02:45:29.535Z — checked against the epoch by hand.
+        assert_eq!(iso_ms("2026-07-30T02:45:29.535Z"), Some(1785379529535));
+        assert_eq!(iso_ms("1970-01-01T00:00:00.000Z"), Some(0));
+        assert_eq!(iso_ms("2026-07-30T02:45:29Z"), Some(1785379529000));
+        // Fractions shorter than three digits are still milliseconds.
+        assert_eq!(iso_ms("1970-01-01T00:00:00.5Z"), Some(500));
+        // Anything not of that shape is refused rather than guessed.
+        assert!(iso_ms("").is_none());
+        assert!(iso_ms("yesterday").is_none());
+        assert!(iso_ms("2026-13-01T00:00:00.000Z").is_none());
+    }
+
+    #[test]
+    fn reads_running_and_finished_subagents() {
+        let cwd = "D:\\proj\\agents";
+        let root = session_with_subagents(
+            cwd,
+            &[
+                // Still working: its newest assistant line called a tool.
+                ("aaa1".into(), "explore", vec![
+                    sub_tool("2026-08-11T01:00:00.000Z", "Glob", 10),
+                    sub_result("2026-08-11T01:00:05.000Z"),
+                    sub_tool("2026-08-11T01:00:09.000Z", "Grep", 20),
+                ]),
+                // Handed back: its newest assistant line is text only.
+                ("bbb2".into(), "backend", vec![
+                    sub_tool("2026-08-11T00:50:00.000Z", "Read", 5),
+                    sub_text("2026-08-11T00:52:00.000Z", 7),
+                ]),
+            ],
+        );
+
+        let rows = subagents_for(&root, cwd);
+        assert_eq!(rows.len(), 2);
+        // Unfinished first — that's what the popover is for.
+        let running = &rows[0];
+        assert_eq!(running.id, "aaa1", "id is the stem without its agent- prefix");
+        assert_eq!(running.agent_type.as_deref(), Some("explore"));
+        assert_eq!(running.description.as_deref(), Some("do a thing"));
+        assert_eq!(running.tool.as_deref(), Some("Grep"), "newest tool wins");
+        assert!(!running.finished);
+        assert_eq!(running.started_ms, iso_ms("2026-08-11T01:00:00.000Z").unwrap());
+        assert_eq!(running.last_activity_ms, iso_ms("2026-08-11T01:00:09.000Z").unwrap());
+        assert_eq!(running.output_tokens, 30, "cumulative across its turns");
+        assert_eq!(running.context_tokens, 105, "latest prompt incl. cache");
+        assert_eq!(running.turns, 2);
+
+        let done = &rows[1];
+        assert_eq!(done.id, "bbb2");
+        assert!(done.finished, "text-only final assistant line = reported back");
+        assert_eq!(done.tool.as_deref(), Some("Read"));
+
+        // A pane whose agent writes none of this gets an empty list, not an error.
+        assert!(subagents_for(&root, "D:\\proj\\nothing").is_empty());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_finished_subagent_that_gets_more_work_is_running_again() {
+        let cwd = "D:\\proj\\resumed-agent";
+        let root = session_with_subagents(
+            cwd,
+            &[("ccc3".into(), "reviewer", vec![sub_text("2026-08-11T02:00:00.000Z", 4)])],
+        );
+        let file = root.join(slugify(cwd)).join("sess").join("subagents").join("agent-ccc3.jsonl");
+        assert!(subagents_for(&root, cwd)[0].finished);
+
+        // Append a fresh tool call — the incremental read must flip it back.
+        let mut s = std::fs::read_to_string(&file).unwrap();
+        s.push_str(&(sub_tool("2026-08-11T02:00:30.000Z", "Bash", 6) + "\n"));
+        std::fs::write(&file, s).unwrap();
+
+        let rows = subagents_for(&root, cwd);
+        assert!(!rows[0].finished);
+        assert_eq!(rows[0].tool.as_deref(), Some("Bash"));
+        assert_eq!(rows[0].turns, 2, "the appended turn is counted once");
+        assert_eq!(rows[0].output_tokens, 10);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn counts_subagents_without_opening_them() {
+        let cwd = "D:\\proj\\count";
+        let root = session_with_subagents(
+            cwd,
+            &[
+                ("d1".into(), "explore", vec![sub_tool("2026-08-11T03:00:00.000Z", "Glob", 1)]),
+                ("d2".into(), "explore", vec![sub_text("2026-08-11T03:00:00.000Z", 1)]),
+            ],
+        );
+        // The files were just written, so "now" sees both as recent...
+        let now = now_ms();
+        let c = subagent_count_for(&root, cwd, now);
+        assert_eq!(c.total, 2);
+        assert_eq!(c.recent, 2);
+        // ...and an hour later, neither.
+        let later = subagent_count_for(&root, cwd, now + 3_600_000);
+        assert_eq!(later.total, 2);
+        assert_eq!(later.recent, 0);
+
+        let none = subagent_count_for(&root, "D:\\proj\\nothing", now);
+        assert_eq!(none.total, 0);
+        assert_eq!(none.recent, 0);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // --- QL-770: plan mode ------------------------------------------------
+
+    fn exit_plan(ts: &str, id: &str, plan: &str) -> String {
+        format!(
+            r#"{{"type":"assistant","timestamp":"{ts}","message":{{"role":"assistant","content":[{{"type":"tool_use","id":"{id}","name":"ExitPlanMode","input":{{"plan":"{plan}"}}}}]}}}}"#
+        )
+    }
+
+    fn plan_answer(ts: &str, id: &str, approved: bool) -> String {
+        let (text, err) = if approved {
+            ("User has approved your plan. You can now start coding.", "false")
+        } else {
+            ("The user doesn't want to proceed with this tool use. The tool use was rejected", "true")
+        };
+        format!(
+            r#"{{"type":"user","timestamp":"{ts}","message":{{"role":"user","content":[{{"type":"tool_result","tool_use_id":"{id}","is_error":{err},"content":"{text}"}}]}}}}"#
+        )
+    }
+
+    #[test]
+    fn reads_plans_newest_first_with_the_answer_that_was_actually_given() {
+        let root = temp_root();
+        let cwd = "D:\\proj\\plans";
+        let dir = root.join(slugify(cwd));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("s.jsonl");
+        let lines = [
+            user("plan something"),
+            exit_plan("2026-08-11T04:00:00.000Z", "toolu_1", "# First plan\\n\\nstep one"),
+            plan_answer("2026-08-11T04:05:00.000Z", "toolu_1", false),
+            exit_plan("2026-08-11T04:10:00.000Z", "toolu_2", "# Second plan\\n\\nstep two"),
+            plan_answer("2026-08-11T04:12:00.000Z", "toolu_2", true),
+            exit_plan("2026-08-11T04:20:00.000Z", "toolu_3", "# Third plan\\n\\nstep three"),
+        ];
+        std::fs::write(&file, lines.join("\n") + "\n").unwrap();
+
+        let plans = plans_for(&root, cwd);
+        assert_eq!(plans.len(), 3);
+        assert_eq!(plans[0].id, "toolu_3", "newest first");
+        assert_eq!(plans[0].plan, "# Third plan\n\nstep three", "markdown verbatim");
+        assert_eq!(plans[0].at_ms, iso_ms("2026-08-11T04:20:00.000Z").unwrap());
+        assert_eq!(plans[0].approved, None, "unanswered = no approval state at all");
+        assert_eq!(plans[1].approved, Some(true));
+        assert_eq!(plans[2].approved, Some(false), "a rejection is recorded as one");
+
+        // The answer to the pending plan arrives later — the incremental read
+        // picks it up without re-reading the file.
+        let mut s = std::fs::read_to_string(&file).unwrap();
+        s.push_str(&(plan_answer("2026-08-11T04:25:00.000Z", "toolu_3", true) + "\n"));
+        std::fs::write(&file, s).unwrap();
+        assert_eq!(plans_for(&root, cwd)[0].approved, Some(true));
+
+        // No transcript at all -> no plans, no error.
+        assert!(plans_for(&root, "D:\\proj\\nowhere").is_empty());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn keeps_only_the_newest_ten_plans() {
+        let root = temp_root();
+        let cwd = "D:\\proj\\manyplans";
+        let dir = root.join(slugify(cwd));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut s = String::new();
+        for i in 0..14 {
+            s.push_str(&(exit_plan("2026-08-11T05:00:00.000Z", &format!("toolu_{i}"), &format!("# Plan {i}")) + "\n"));
+        }
+        std::fs::write(dir.join("s.jsonl"), s).unwrap();
+
+        let plans = plans_for(&root, cwd);
+        assert_eq!(plans.len(), PLAN_CAP);
+        assert_eq!(plans[0].id, "toolu_13");
+        assert_eq!(plans[PLAN_CAP - 1].id, "toolu_4");
         let _ = std::fs::remove_dir_all(&root);
     }
 

@@ -1,7 +1,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useSyncExternalStore } from "react";
 import { useApp } from "./store";
 import { Terminal as XTerm } from "@xterm/xterm";
-import type { ILinkProvider, ILink, ITheme } from "@xterm/xterm";
+import type { ILinkProvider, ILink, ITheme, IMarker, IDecoration } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon, type ISearchOptions, type ISearchResultChangeEvent } from "@xterm/addon-search";
 import { WebLinksAddon } from "@xterm/addon-web-links";
@@ -73,7 +73,11 @@ function searchDecorations(theme: ITheme) {
 // one Rust command that's actually available for it (`fs_list_dir`, reading
 // the parent directory) — a path that isn't there loses its link styling and
 // its click turns into a "not found" toast instead of a dead navigation.
-function registerPathLinks(term: XTerm, cwd: string, fontSizeRef: { current: number }): { dispose(): void } {
+// QL-757: `cwdRef` is a ref, not a string, because the pane's folder moves —
+// the shell reports the live one via OSC 9;9 after every `cd`, and a relative
+// path in output must resolve against where the shell actually IS, not where
+// the pane was spawned.
+function registerPathLinks(term: XTerm, cwdRef: { current: string }, fontSizeRef: { current: number }): { dispose(): void } {
   const dirCache = new Map<string, Promise<Set<string>>>();
   const dirOf = (p: string): string => {
     const i = Math.max(p.lastIndexOf("\\"), p.lastIndexOf("/"));
@@ -122,7 +126,7 @@ function registerPathLinks(term: XTerm, cwd: string, fontSizeRef: { current: num
       if (!matches.length) { callback(undefined); return; }
 
       const links: ILink[] = matches.map((m) => {
-        const abs = resolvePath(m, cwd);
+        const abs = resolvePath(m, cwdRef.current);
         // UX-517: the editor chosen in Settings, at the line the output named
         // (`src/App.tsx:42` jumps to 42). editor.ts owns the fallback to the OS
         // hand-off this used to do directly, and reports its own failures.
@@ -226,6 +230,109 @@ export function usePaneProgress(): PaneProgress[] {
   return useSyncExternalStore(subscribeProgress, paneProgressList, () => NO_PROGRESS);
 }
 
+// ---------------------------------------------------------------------------
+// QL-753 / QL-757: OSC 133 command marks + OSC 9;9 cwd reports.
+//
+// The shell integration injected at spawn (src-tauri/src/shellmarks.rs) makes a
+// PowerShell pane announce where each command starts, where its output begins,
+// what it exited with, and which folder it is sitting in. Everything below is
+// the parse; the mount effect turns the events into xterm markers, gutter
+// decorations, the overview-ruler ticks and the Ctrl+Up/Down jump.
+//
+// Agent panes are NOT injected (see shellmarks.rs), but an agent that emits its
+// own 133 sequences is parsed here just the same — there is nothing to
+// double-mark, because the marks come only from the stream.
+// ---------------------------------------------------------------------------
+
+export type ShellMarkKind = "prompt" | "input" | "output" | "done" | "cwd";
+
+export interface ShellMarkEvent {
+  kind: ShellMarkKind;
+  /** `done` only: the command's exit code. Absent when the shell reported that
+   *  nothing actually ran (a bare Enter, or Ctrl+C at the prompt). */
+  exit?: number;
+  /** `cwd` only: the reported folder, already normalised. */
+  cwd?: string;
+}
+
+/** 133;A/B/C/D (with optional parameters) and 9;9;<cwd>, BEL- or ST-terminated. */
+const SHELL_MARK_RE = /\x1b\]133;([ABCD])((?:;[^\x07\x1b]*)?)(?:\x07|\x1b\\)|\x1b\]9;9;([^\x07\x1b]*)(?:\x07|\x1b\\)/g;
+const MARK_KIND: Record<string, ShellMarkKind> = { A: "prompt", B: "input", C: "output", D: "done" };
+/** Longest partial sequence worth holding onto between chunks. A cwd report is
+ *  the long one (a path); beyond this it isn't a mark we'd have parsed anyway. */
+const MARK_CARRY_CAP = 512;
+
+/** A cwd as PowerShell reports it, as a path this app can hand to Rust:
+ *  Windows Terminal's convention allows a quoted path or a file:// URL. */
+export function normalizeReportedCwd(raw: string): string {
+  let s = raw.trim();
+  if (s.length >= 2 && s.startsWith('"') && s.endsWith('"')) s = s.slice(1, -1);
+  if (/^file:\/\//i.test(s)) {
+    s = s.replace(/^file:\/\/[^/]*/i, "");
+    try { s = decodeURIComponent(s); } catch { /* malformed escape — take it raw */ }
+    if (/^\/[A-Za-z]:/.test(s)) s = s.slice(1); // /C:/repo -> C:/repo
+  }
+  // Windows paths only: a posix cwd (WSL, git-bash) must keep its slashes.
+  if (/^[A-Za-z]:[\\/]/.test(s)) s = s.replace(/\//g, "\\");
+  return s;
+}
+
+/** Pull every complete mark out of a chunk. `carry` is whatever the previous
+ *  call left unterminated — the PTY splits on byte boundaries, not sequence
+ *  boundaries, so `ESC ] 1 3 3 ; D ; 1` and its BEL routinely land in separate
+ *  events. Returns the new carry. */
+export function parseShellMarks(text: string, carry = ""): { events: ShellMarkEvent[]; carry: string } {
+  const s = carry + text;
+  const events: ShellMarkEvent[] = [];
+  let consumed = 0;
+  SHELL_MARK_RE.lastIndex = 0;
+  for (const m of s.matchAll(SHELL_MARK_RE)) {
+    consumed = (m.index ?? 0) + m[0].length;
+    if (m[3] !== undefined) {
+      const cwd = normalizeReportedCwd(m[3]);
+      if (cwd) events.push({ kind: "cwd", cwd });
+      continue;
+    }
+    const kind = MARK_KIND[m[1]];
+    if (kind !== "done") { events.push({ kind }); continue; }
+    // `133;D` = nothing ran; `133;D;<code>` = a command finished. Extra
+    // parameters (some shells append the command line) are ignored.
+    const code = parseInt((m[2] ?? "").replace(/^;/, "").split(";")[0] ?? "", 10);
+    events.push(Number.isFinite(code) ? { kind, exit: code } : { kind });
+  }
+  // Keep only a trailing, still-unterminated OSC introducer. The split can land
+  // anywhere, including between the ESC and its `]`, so a lone trailing ESC is
+  // kept too. Anything else (a CSI, plain text) is dropped — the carry feeds
+  // the parser only, never what gets written to the terminal.
+  const rest = s.slice(consumed);
+  const open = rest.lastIndexOf("\x1b");
+  let next = "";
+  if (open >= 0) {
+    const tail = rest.slice(open);
+    const plausible = tail === "\x1b" || tail.startsWith("\x1b]");
+    if (plausible && !/\x07|\x1b\\/.test(tail.slice(1)) && tail.length <= MARK_CARRY_CAP) next = tail;
+  }
+  return { events, carry: next };
+}
+
+/** Ctrl+Up / Ctrl+Down target: the nearest command mark strictly above
+ *  (`dir` -1) or below (`dir` 1) the top of the viewport. `null` = no more
+ *  marks that way, so the pane stays where it is rather than jumping to an end. */
+export function nextMarkLine(lines: number[], viewportY: number, dir: 1 | -1): number | null {
+  const sorted = [...lines].sort((a, b) => a - b);
+  if (dir === 1) return sorted.find((l) => l > viewportY) ?? null;
+  for (let i = sorted.length - 1; i >= 0; i--) if (sorted[i] < viewportY) return sorted[i];
+  return null;
+}
+
+/** Gutter/ruler colours for command marks, off the app's --st-* tokens so they
+ *  follow the theme (and the colour-blind palette) like every other status. */
+function markColours(): { ok: string; err: string } {
+  const cs = getComputedStyle(document.documentElement);
+  const pick = (name: string, fallback: string) => cs.getPropertyValue(name).trim() || fallback;
+  return { ok: pick("--st-running", "#52E08A"), err: pick("--st-error", "#FF5C6A") };
+}
+
 export interface TerminalHandle {
   findNext: (query: string, opts?: { incremental?: boolean }) => boolean;
   findPrevious: (query: string) => boolean;
@@ -243,6 +350,10 @@ export interface TerminalHandle {
   selectAll: () => void;
   copySelection: () => Promise<void>;
   paste: (text: string) => void;
+  /** QL-753: scroll to the previous (-1) / next (1) command mark. False when
+   *  there is none that way (or the shell emits no marks at all). Same action
+   *  Ctrl+Up/Ctrl+Down performs inside the pane. */
+  jumpToCommandMark: (dir: 1 | -1) => boolean;
 }
 
 interface TerminalProps {
@@ -275,6 +386,13 @@ interface TerminalProps {
   /** UI-136: ConEmu/Windows-Terminal OSC 9;4 progress. null = no progress
    *  reported; otherwise 0-100, or -1 for an indeterminate/error state. */
   onProgress?: (pct: number | null) => void;
+  /** QL-757: the shell reported its working directory (OSC 9;9), e.g. after a
+   *  `cd`. Fresher than the spawn cwd, so it's what "new pane here" should use.
+   *  Optional — this pane already re-bases its own file links internally.
+   *  CAUTION for the consumer: do NOT write this back into `PaneModel.cwd`.
+   *  The mount effect keys on `cwd`, so that would remount the terminal and
+   *  respawn the PTY on every `cd`. It needs its own store field. */
+  onCwd?: (cwd: string) => void;
 }
 
 // Cap on buffered bytes for a pane hidden behind another workspace / focus mode —
@@ -283,7 +401,7 @@ const HIDDEN_BUFFER_CAP = 262144; // 256KB
 
 // One live terminal bound to a PTY in the Rust core.
 export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Terminal(
-  { vendor, cwd, setup, onSetupConsumed, initialDraft, fontSize = 12.5, ligatures = false, quietThresholdMs = 3000, onExit, onState, onProc, onBell, onLine, onScrollAway, onProgress },
+  { vendor, cwd, setup, onSetupConsumed, initialDraft, fontSize = 12.5, ligatures = false, quietThresholdMs = 3000, onExit, onState, onProc, onBell, onLine, onScrollAway, onProgress, onCwd },
   ref
 ) {
   const elRef = useRef<HTMLDivElement>(null);
@@ -300,6 +418,9 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
   // Mirrors the effect-local paneId so imperative handle methods (paste, etc.)
   // can reach the live PTY.
   const paneIdRef = useRef(0);
+  // QL-753: set by the mount effect, which owns the mark list. Same bridge
+  // pattern as paneIdRef — the handle is built once with [] deps.
+  const jumpMarkRef = useRef<(dir: 1 | -1) => boolean>(() => false);
 
   useImperativeHandle(ref, () => ({
     findNext: (query, opts) =>
@@ -330,6 +451,7 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
       if (sel) await navigator.clipboard.writeText(sel);
     },
     paste: (text: string) => { if (paneIdRef.current) invoke("pty_write", { paneId: paneIdRef.current, data: text }); },
+    jumpToCommandMark: (dir) => jumpMarkRef.current(dir),
   }), []);
 
   useEffect(() => {
@@ -350,6 +472,13 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
       // xterm hands the URI over verbatim, so it goes through the same
       // allowlisted opener as the regex-matched URLs below.
       linkHandler: { activate: (_e, uri) => openTerminalUrl(uri) },
+      // QL-753: the slim strip down the pane's scrollbar edge. xterm's own
+      // overview ruler is used rather than a hand-positioned overlay so tick
+      // positions stay proportional through resize, reflow and scrollback
+      // eviction for free. Command marks paint into it below; the search
+      // addon's existing ruler colours (searchDecorations) only become visible
+      // now too — they were configured but had no ruler to draw on.
+      overviewRuler: { width: 8 },
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
@@ -382,8 +511,111 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
     fitRef.current = fit;
     searchAddonRef.current = search;
     try { fit.fit(); } catch { /* not measured yet */ }
+    // QL-757: starts at the spawn cwd and is replaced by every OSC 9;9 report,
+    // so a `cd` inside the pane immediately re-bases relative file links.
+    const cwdRef = { current: cwd };
     // Needs term.element, so registered only after open() above.
-    const pathLinks = registerPathLinks(term, cwd, fontSizeRef);
+    const pathLinks = registerPathLinks(term, cwdRef, fontSizeRef);
+
+    // --- QL-753: command marks ---------------------------------------------
+    // One entry per prompt the shell drew. `ran` means a command actually
+    // executed (133;C, or a 133;D that carried an exit code) — a bare Enter
+    // leaves a prompt behind and must not clutter the ruler or the jump list.
+    interface CmdMark { marker: IMarker; dec?: IDecoration; ran: boolean; exit?: number }
+    const marks: CmdMark[] = [];
+    const MARK_CAP = 500; // ~a session's worth; the oldest are dropped first
+    let markCarry = "";
+    let colours = markColours();
+
+    const paintMark = (m: CmdMark) => {
+      m.dec?.dispose();
+      m.dec = undefined;
+      if (!m.ran || m.exit === undefined) return; // status unknown yet
+      const failed = m.exit !== 0;
+      const colour = failed ? colours.err : colours.ok;
+      const dec = term.registerDecoration({
+        marker: m.marker,
+        x: 0,
+        width: 1,
+        overviewRulerOptions: { color: colour, position: "full" },
+      });
+      if (!dec) return;
+      m.dec = dec;
+      dec.onRender((el) => {
+        // A bar at the left edge of the first cell, not a filled cell: the
+        // prompt character underneath stays readable. Failures get a thicker
+        // one so the gutter reads at a glance without relying on hue alone.
+        el.style.background = `linear-gradient(to right, ${colour} 0 ${failed ? 3 : 2}px, transparent ${failed ? 3 : 2}px)`;
+        // The decoration sits over a real terminal cell — never let it eat a
+        // click meant for the pane (selection, mouse-reporting TUIs).
+        el.style.pointerEvents = "none";
+      });
+    };
+
+    const dropMark = (m: CmdMark) => {
+      const i = marks.indexOf(m);
+      if (i >= 0) marks.splice(i, 1);
+      m.dec?.dispose();
+      m.marker.dispose();
+    };
+
+    const handleMark = (ev: ShellMarkEvent) => {
+      if (ev.kind === "cwd") {
+        if (!ev.cwd || ev.cwd === cwdRef.current) return;
+        cwdRef.current = ev.cwd;
+        onCwd?.(ev.cwd);
+        return;
+      }
+      if (ev.kind === "prompt") {
+        const marker = term.registerMarker(0);
+        if (!marker) return;
+        const mark: CmdMark = { marker, ran: false };
+        // Scrollback eviction disposes the marker for us; keep the list honest.
+        marker.onDispose(() => {
+          const i = marks.indexOf(mark);
+          if (i >= 0) marks.splice(i, 1);
+          mark.dec?.dispose();
+        });
+        marks.push(mark);
+        while (marks.length > MARK_CAP) dropMark(marks[0]);
+        return;
+      }
+      const current = marks[marks.length - 1];
+      if (!current) return;
+      if (ev.kind === "output") { current.ran = true; return; }
+      // "done": the shell reports it at the NEXT prompt, so it belongs to the
+      // mark opened at the previous one.
+      if (ev.exit === undefined) {
+        // Nothing ran at that prompt (bare Enter / Ctrl+C) — drop it rather
+        // than leave an unexplained tick on the ruler.
+        if (!current.ran) dropMark(current);
+        return;
+      }
+      current.ran = true;
+      current.exit = ev.exit;
+      paintMark(current);
+    };
+
+    // Ctrl+Up / Ctrl+Down jump between command marks. Checked against the
+    // shortcut map first: Cockpit owns Ctrl+Alt+Arrows (pane focus) and
+    // Ctrl+Alt+Shift+Left/Right (pane move) — both require Alt, so plain
+    // Ctrl+Arrow is free. Returning false from the handler also stops xterm
+    // sending CSI 1;5A/B to the shell, which would otherwise reach PSReadLine.
+    const jumpMark = (dir: 1 | -1): boolean => {
+      const lines = marks.filter((m) => m.ran).map((m) => m.marker.line);
+      const target = nextMarkLine(lines, term.buffer.active.viewportY, dir);
+      if (target === null) return false;
+      term.scrollToLine(Math.max(0, target));
+      return true;
+    };
+    jumpMarkRef.current = jumpMark;
+    term.attachCustomKeyEventHandler((e) => {
+      if (e.type !== "keydown" || !e.ctrlKey || e.altKey || e.shiftKey || e.metaKey) return true;
+      if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return true;
+      e.preventDefault();
+      jumpMark(e.key === "ArrowDown" ? 1 : -1);
+      return false;
+    });
 
     let paneId = 0;
     let disposed = false;
@@ -408,17 +640,25 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
     // animation frame (still ordered, still lossless).
     let writeQueue: Uint8Array[] = [];
     let writeRaf = 0;
+    // QL-753: marks parsed out of the bytes still queued above. They're applied
+    // in term.write's parsed-callback so the cursor is already on the line the
+    // mark describes. Batch granularity: two prompts inside one 16ms flush
+    // share a line, which is only reachable by a burst of instant commands.
+    const pendingMarks: ShellMarkEvent[] = [];
+    const hiddenMarks: ShellMarkEvent[] = [];
     const flushWrites = () => {
       writeRaf = 0;
       if (writeQueue.length === 0) return;
-      if (writeQueue.length === 1) { term.write(writeQueue[0]); writeQueue = []; return; }
+      const evs = pendingMarks.splice(0);
+      const applyMarks = () => { for (const ev of evs) handleMark(ev); };
+      if (writeQueue.length === 1) { term.write(writeQueue[0], applyMarks); writeQueue = []; return; }
       let total = 0;
       for (const b of writeQueue) total += b.length;
       const merged = new Uint8Array(total);
       let off = 0;
       for (const b of writeQueue) { merged.set(b, off); off += b.length; }
       writeQueue = [];
-      term.write(merged);
+      term.write(merged, applyMarks);
     };
     const writeBytes = (bytes: Uint8Array) => {
       writeQueue.push(bytes);
@@ -446,6 +686,8 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
       if (hiddenBuf.length === 0) return;
       if (truncated) term.write("\r\n\x1b[2m[…output truncated while this pane was hidden…]\x1b[0m\r\n");
       for (const b of hiddenBuf) writeBytes(b);
+      // Marks parsed while hidden ride along with the bytes they came from.
+      pendingMarks.push(...hiddenMarks.splice(0));
       hiddenBuf = [];
       hiddenBytes = 0;
       truncated = false;
@@ -499,6 +741,17 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
       // UI-135: the agent rang the terminal bell — surface it as a visual pulse
       // (many CLIs ring on "done" or "needs input").
       if (text.includes("\x07")) onBell?.();
+      // QL-753/757: command marks and cwd reports (these are stripped out of
+      // the tail below as plain OSC, so parse first). A cwd report is
+      // position-free and applies immediately; a command mark has to wait
+      // until the bytes it arrived with are actually IN the buffer, or
+      // registerMarker records the cursor's previous line — see flushWrites.
+      const marksSeen = parseShellMarks(text, markCarry);
+      markCarry = marksSeen.carry;
+      for (const ev of marksSeen.events) {
+        if (ev.kind === "cwd") handleMark(ev);
+        else (visible ? pendingMarks : hiddenMarks).push(ev);
+      }
       outTail = (outTail + text).slice(-600);
       // UI-136: npm, winget and cargo already emit OSC 9;4 progress that
       // Windows Terminal renders on its taskbar. We're a terminal too — read it
@@ -682,6 +935,10 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
         const next = terminalThemeFor(activeThemeId());
         themeRef.current = next;
         term.options.theme = next;
+        // QL-753: command marks are painted in the app's --st-* tokens, which
+        // the theme (and colour-blind mode) just changed under them.
+        colours = markColours();
+        for (const m of marks) paintMark(m);
       });
     });
     themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
@@ -695,6 +952,8 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
       themeObserver.disconnect();
       if (themeRaf) cancelAnimationFrame(themeRaf);
       pathLinks.dispose();
+      for (const m of marks.splice(0)) { m.dec?.dispose(); m.marker.dispose(); }
+      jumpMarkRef.current = () => false;
       scrollDisp.dispose();
       writeDisp.dispose();
       unOut?.();

@@ -10,7 +10,7 @@ vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn(() => Promise.resol
 
 const { openUrl } = await import("@tauri-apps/plugin-opener");
 const { useUI } = await import("./ui");
-const { openTerminalUrl, publishPaneProgress, paneProgressList } = await import("./Terminal");
+const { openTerminalUrl, publishPaneProgress, paneProgressList, parseShellMarks, normalizeReportedCwd, nextMarkLine } = await import("./Terminal");
 
 const toasts = () => useUI.getState().toasts;
 
@@ -120,5 +120,109 @@ describe("pane progress store (QL-782)", () => {
     expect(paneProgressList()).toBe(first);
     publishPaneProgress(1, { state: "normal", percent: 11 });
     expect(paneProgressList()).not.toBe(first);
+  });
+});
+
+// QL-752/753/757: the OSC 133 / OSC 9;9 parse. The fixtures below are the
+// literal bytes a real pwsh emitted with the injected integration
+// (src-tauri/src/shellmarks.rs) dot-sourced — captured from a piped session,
+// not hand-written, so the parser is tested against what the shell actually
+// prints rather than against the spec as remembered.
+const ESC = "\x1b";
+const BEL = "\x07";
+const promptCycle = (cwd: string) => `${ESC}]133;A${BEL}${ESC}]9;9;${cwd}${BEL}PS ${cwd}> ${ESC}]133;B${BEL}${ESC}]133;C${BEL}`;
+
+describe("parseShellMarks (QL-753)", () => {
+  it("reads a whole command cycle out of one chunk", () => {
+    const chunk = `${promptCycle("C:\\repo")}"hello"\r\nhello\r\n${ESC}]133;D;0${BEL}`;
+    const { events } = parseShellMarks(chunk);
+    expect(events).toEqual([
+      { kind: "prompt" },
+      { kind: "cwd", cwd: "C:\\repo" },
+      { kind: "input" },
+      { kind: "output" },
+      { kind: "done", exit: 0 },
+    ]);
+  });
+
+  it("carries the exit code of a failed command", () => {
+    const { events } = parseShellMarks(`${ESC}]133;D;3${BEL}`);
+    expect(events).toEqual([{ kind: "done", exit: 3 }]);
+  });
+
+  // The shell reports a bare `133;D` when the user just pressed Enter (or hit
+  // Ctrl+C) — nothing ran, so there is no status to paint.
+  it("reports a finish with no exit code when nothing ran", () => {
+    const { events } = parseShellMarks(`${ESC}]133;D${BEL}`);
+    expect(events).toEqual([{ kind: "done" }]);
+  });
+
+  it("accepts ST-terminated sequences as well as BEL", () => {
+    const { events } = parseShellMarks(`${ESC}]133;A${ESC}\\${ESC}]133;D;1${ESC}\\`);
+    expect(events).toEqual([{ kind: "prompt" }, { kind: "done", exit: 1 }]);
+  });
+
+  // The PTY splits on byte counts, not sequence boundaries: an exit code
+  // routinely lands in the next event. Without the carry the mark is lost and
+  // the command never gets a status.
+  it("stitches a sequence split across chunks", () => {
+    const whole = `out\r\n${ESC}]133;D;7${BEL}${ESC}]133;A${BEL}`;
+    for (let cut = 1; cut < whole.length; cut++) {
+      const first = parseShellMarks(whole.slice(0, cut));
+      const second = parseShellMarks(whole.slice(cut), first.carry);
+      expect([...first.events, ...second.events], `split at ${cut}`).toEqual([
+        { kind: "done", exit: 7 },
+        { kind: "prompt" },
+      ]);
+      expect(second.carry).toBe("");
+    }
+  });
+
+  it("keeps no carry for ordinary output, and caps a pathological one", () => {
+    expect(parseShellMarks("just some output\r\n").carry).toBe("");
+    // An unterminated OSC longer than the cap is not a mark we'd have parsed;
+    // holding it would grow without bound on a binary-ish stream.
+    expect(parseShellMarks(`${ESC}]${"9".repeat(600)}`).carry).toBe("");
+  });
+
+  it("ignores the OSC 9;4 progress sequences that share the 9 prefix", () => {
+    const { events } = parseShellMarks(`${ESC}]9;4;1;40${BEL}${ESC}]133;A${BEL}`);
+    expect(events).toEqual([{ kind: "prompt" }]);
+  });
+});
+
+describe("normalizeReportedCwd (QL-757)", () => {
+  it("takes a plain Windows path as-is", () => {
+    expect(normalizeReportedCwd("C:\\Dev\\ai")).toBe("C:\\Dev\\ai");
+  });
+  it("unwraps Windows Terminal's quoted form", () => {
+    expect(normalizeReportedCwd('"C:\\Dev\\ai"')).toBe("C:\\Dev\\ai");
+  });
+  it("decodes the file:// form other shells emit", () => {
+    expect(normalizeReportedCwd("file://host/C:/Dev/my%20repo")).toBe("C:\\Dev\\my repo");
+  });
+  it("leaves a posix cwd alone — WSL and git-bash panes are not Windows paths", () => {
+    expect(normalizeReportedCwd("/home/balu/dev")).toBe("/home/balu/dev");
+  });
+});
+
+describe("nextMarkLine (QL-753 Ctrl+Up / Ctrl+Down)", () => {
+  const lines = [3, 40, 120];
+  it("finds the next mark below the viewport top", () => {
+    expect(nextMarkLine(lines, 3, 1)).toBe(40);
+    expect(nextMarkLine(lines, 39, 1)).toBe(40);
+  });
+  it("finds the nearest mark above it", () => {
+    expect(nextMarkLine(lines, 120, -1)).toBe(40);
+    expect(nextMarkLine(lines, 41, -1)).toBe(40);
+  });
+  // Better to stay put than to yank the pane to an end the user didn't ask for.
+  it("returns null at either end and with no marks at all", () => {
+    expect(nextMarkLine(lines, 120, 1)).toBeNull();
+    expect(nextMarkLine(lines, 3, -1)).toBeNull();
+    expect(nextMarkLine([], 10, 1)).toBeNull();
+  });
+  it("does not care what order the marks arrived in", () => {
+    expect(nextMarkLine([120, 3, 40], 10, 1)).toBe(40);
   });
 });

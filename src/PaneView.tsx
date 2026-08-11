@@ -22,6 +22,8 @@ import { Transcript } from "./TranscriptView";
 import { extractLastCommand, redactText, scrollbackFilename, toLines } from "./transcript";
 import { SelectionToolbar, GroupsPanel, SessionSnapshots } from "./PaneOps";
 import { openSessionLauncher, modelShort, contextWindowFor, RESUME_VENDOR } from "./SessionLauncher";
+import { SubagentTree, subagentChipLabel, type SubagentCount } from "./SubagentTreeView";
+import { PlanPanel, pendingPlan, planChipTitle, PLAN_APPROVE_KEYS, type PlanEntry } from "./PlanPanelView";
 import { parseWorkspaceDef, serializeWorkspaceExport } from "./snapshots";
 const MIN_FONT = 9;
 const MAX_FONT = 22;
@@ -616,6 +618,62 @@ function PaneViewInner({
     }
   }, 15000, [pane.cwd, pane.epoch], paneVisible);
 
+  // QL-769/770: subagent fan-out and plan mode, both read from the same Claude
+  // Code transcripts the chip above reads — so both are Claude-only, and a pane
+  // running anything else never calls either command.
+  const isClaude = pane.vendor === RESUME_VENDOR;
+  const [subCount, setSubCount] = useState<SubagentCount | null>(null);
+  const [subagentsOpen, setSubagentsOpen] = useState(false);
+  const [subagentPos, setSubagentPos] = useState<{ top: number; left: number } | null>(null);
+  const subChipRef = useRef<HTMLSpanElement>(null);
+  const [plans, setPlans] = useState<PlanEntry[]>([]);
+  const [planOpen, setPlanOpen] = useState(false);
+
+  // Both ride the ctx chip's cadence. pane_subagent_count is directory
+  // metadata only (no transcript is opened) and pane_plans reads incrementally,
+  // so this adds no measurable cost per pane — the popover's own faster poll
+  // (SubagentTreeView) runs only while it's open.
+  usePoll(async () => {
+    if (!isClaude) { setSubCount(null); setPlans([]); return; }
+    try {
+      setSubCount(await cachedInvoke<SubagentCount>("pane_subagent_count", { cwd: pane.cwd }, 7000));
+    } catch {
+      setSubCount(null); // command not there yet → no chip, never a broken one
+    }
+    try {
+      setPlans(await cachedInvoke<PlanEntry[]>("pane_plans", { cwd: pane.cwd }, 7000));
+    } catch {
+      setPlans([]);
+    }
+  }, 15000, [pane.cwd, pane.epoch, isClaude], paneVisible);
+
+  const openSubagents = () => {
+    const r = subChipRef.current?.getBoundingClientRect();
+    if (r) setSubagentPos({ top: r.bottom + 6, left: Math.max(8, Math.min(r.left, window.innerWidth - 372)) });
+    setSubagentsOpen(true);
+  };
+
+  // The pending plan drives the header chip; an answered one is history and
+  // only lives in the drawer's archive.
+  const waitingPlan = pendingPlan(plans);
+
+  // Approve types the prompt's own keystroke at this pane's PTY — the same
+  // thing the user would press in the terminal, sent down the same channel
+  // (Terminal's paste → pty_write). Nothing is written to the transcript here.
+  const approvePlan = () => {
+    terminalRef.current?.paste(PLAN_APPROVE_KEYS);
+    setPlanOpen(false);
+    focusPane(wsId, pane.id);
+    pushToast("info", `Sent your approval to ${displayName}.`);
+  };
+  // Refine hands the pane back instead of answering for you: focus it and put
+  // the caret in the terminal so the next keystroke is already the reply.
+  const refinePlan = () => {
+    setPlanOpen(false);
+    focusPane(wsId, pane.id);
+    paneRef.current?.querySelector<HTMLElement>("textarea.xterm-helper-textarea")?.focus();
+  };
+
   // UX-556/557: activity sparkline + idle-time, kept cheap on purpose. Output
   // arrives far more often than the header should re-render, so a ref-backed
   // ring buffer counts lines per bucket on the hot path (onLine below) and a
@@ -914,6 +972,43 @@ Running low — consider /compact in this pane.` : "")
             {modelShort(usage.model)}
           </span>
         )}
+        {/* QL-769: this session has subagents. Same chip geometry as its
+            neighbours; the count is the cheap probe's (agents written to in
+            the last couple of minutes, else the session's total). Click opens
+            the tree — nothing here pulses or rings. */}
+        {isClaude && subCount && subCount.total > 0 && (
+          <span
+            ref={subChipRef}
+            className={"ptok psub" + (subagentsOpen ? " open" : "")}
+            role="button"
+            tabIndex={0}
+            title={
+              `${subagentChipLabel(subCount)} in this session` +
+              (subCount.recent > 0
+                ? ` — ${subCount.recent} active in the last 2 minutes`
+                : ` — none active recently`) +
+              `\n${subCount.total} subagent transcript${subCount.total === 1 ? "" : "s"} in total. Click for the tree.`
+            }
+            onClick={openSubagents}
+            onKeyDown={(e) => { if (e.key === "Enter") openSubagents(); }}
+          >
+            {subagentChipLabel(subCount)}
+          </span>
+        )}
+        {/* QL-770: a plan is waiting to be read. Waiting tone, no bell, no
+            queue entry (notification ruling) — it's a "when you look" signal. */}
+        {isClaude && waitingPlan && (
+          <span
+            className="ptok pplan warn"
+            role="button"
+            tabIndex={0}
+            title={planChipTitle(waitingPlan)}
+            onClick={() => setPlanOpen(true)}
+            onKeyDown={(e) => { if (e.key === "Enter") setPlanOpen(true); }}
+          >
+            Plan ready
+          </span>
+        )}
         {/* QL-742: over the memory ceiling. Same chip geometry and amber tone
             as the token chip's warn level — this is a resource reading worth a
             look, not an alert, so it stays out of the .pattn (pulsing,
@@ -1200,6 +1295,24 @@ Running low — consider /compact in this pane.` : "")
         onClose={() => setTranscriptOpen(false)}
         paneName={displayName}
         getScrollback={getScrollback}
+      />
+      {/* QL-769/770: both are per-pane surfaces, mounted here beside the
+          transcript browser for the same reason — they describe THIS pane's
+          session and close with it. */}
+      <SubagentTree
+        open={subagentsOpen}
+        onClose={() => setSubagentsOpen(false)}
+        pos={subagentPos}
+        cwd={pane.cwd}
+        epoch={pane.epoch}
+      />
+      <PlanPanel
+        open={planOpen}
+        onClose={() => setPlanOpen(false)}
+        paneName={displayName}
+        plans={plans}
+        onApprove={approvePlan}
+        onRefine={refinePlan}
       />
       <GroupsPanel open={groupsOpen} onClose={() => setGroupsOpen(false)} />
       <SessionSnapshots open={snapshotsOpen} onClose={() => setSnapshotsOpen(false)} />

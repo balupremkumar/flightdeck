@@ -22,6 +22,7 @@ import { trustedRepos, untrustRepo } from "./trust";
 import { spawnPane } from "./worktrees";
 import { useVendors, vendorColor, vendorAccentOverrides, setVendorAccentOverride } from "./vendors";
 import { IconClose } from "./Icons";
+import { ConfigDoctorView } from "./ConfigDoctorView";
 import {
   THEMES, ACCENTS, findTheme, findAccent, CUSTOM_ACCENT_ID, customAccentHex, setCustomAccent,
   applyTheme, applyAccent, setAccent,
@@ -898,6 +899,12 @@ function DiagnosticsSection() {
         </div>
         <button className="set-btn" onClick={() => void exportBundle()}>Export…</button>
       </div>
+
+      {/* QL-774 + QL-773: read-only doctor for the Claude settings files behind
+          the focused pane, plus the hooks they declare. Lives here because it
+          answers the same class of question as the rest of Diagnostics — "why
+          is it behaving like that?" — and reuses these tables. */}
+      <ConfigDoctorView />
     </section>
   );
 }
