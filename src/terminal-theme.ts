@@ -140,7 +140,47 @@ const highContrastTerminalTheme: ITheme = {
   brightWhite: "#FFFFFF",
 };
 
+// Graphite (QL-792). Without this entry the panes inside the steel chrome fell
+// back to Deep Cove's blue-tinted ANSI, which is the one place the theme leaked.
+// Background is graphite's own --abyss, so a pane still reads deeper than the
+// chrome around it (same relationship as Deep Cove above).
+//
+// The ramp is desaturated to sit with the chrome, but red/green/yellow keep the
+// Okabe-Ito hue relationship the app's colour-blind palette uses (vermillion-
+// leaning red, BLUISH green, amber yellow) so the three stay separable for
+// deuteranopia/protanopia rather than collapsing into one muddy band. Luminance
+// separates them too: red ~0.28, yellow ~0.41, green ~0.44 (all >= 6:1 on the
+// background). Blue/cyan/magenta are lifted straight from the theme's own
+// tokens (--st-starting, --aqua, --agent-claude) so terminal output and app
+// chrome speak the same colours.
+const graphiteTerminalTheme: ITheme = {
+  background: "#07080A",              // --abyss
+  foreground: "#E8EAED",              // --text
+  cursor: "#AAB4BF",                  // --accent (steel)
+  cursorAccent: "#07080A",
+  selectionBackground: "rgba(170,182,194,0.30)",
+
+  black: "#14181B",
+  red: "#D9736A",
+  green: "#6FC29B",
+  yellow: "#D2A45F",
+  blue: "#8FA9BA",
+  magenta: "#A6A9D8",
+  cyan: "#7FBFAE",
+  white: "#9AA0A6",                   // --muted
+
+  brightBlack: "#6E767E",
+  brightRed: "#EE8F84",
+  brightGreen: "#8FD6B4",
+  brightYellow: "#E7BE81",
+  brightBlue: "#AFC4D2",
+  brightMagenta: "#C0C2E9",
+  brightCyan: "#9BD5C4",
+  brightWhite: "#E8EAED",
+};
+
 const TERMINAL_THEMES: Record<string, ITheme> = {
+  graphite: graphiteTerminalTheme,
   dark: flightdeckTerminalTheme,
   light: flightdeckTerminalTheme, // Kove rule: terminal stays dark in light mode too
   dracula: draculaTerminalTheme,

@@ -8,14 +8,28 @@ const host = process.env.TAURI_DEV_HOST;
 export default defineConfig(async () => ({
   plugins: [react()],
 
+  resolve: {
+    alias: [
+      // @xterm/addon-ligatures ships only the ESM build (lib/addon-ligatures.mjs)
+      // but its package `main` still points at lib/addon-ligatures.js, which is
+      // not in the tarball. Vite's build follows `module` so the bundle is fine,
+      // but Vitest resolves `main` and dies with "Failed to resolve entry" on any
+      // import of Terminal.tsx. Pin the specifier to the file that actually
+      // exists — same module the production bundle already picks, so this is a
+      // no-op for `vite build` and only unblocks the test resolver.
+      { find: /^@xterm\/addon-ligatures$/, replacement: "@xterm/addon-ligatures/lib/addon-ligatures.mjs" },
+    ],
+  },
+
   // UI-225: split the vendor weight out of the app chunk. xterm + its addons
   // are the bulk and change rarely, so they cache independently of app code
   // and the first paint doesn't wait on one ~930KB bundle.
   build: {
-    // xterm alone is ~560KB and is deliberately its own cached vendor chunk;
-    // the app chunk is what we keep small. Limit set above that so the warning
+    // xterm plus its addons is ~695KB (the webgl renderer added the bulk of
+    // that in QL wave 1) and is deliberately its own cached vendor chunk; the
+    // app chunk is what we keep small. Limit set just above that so the warning
     // means something again.
-    chunkSizeWarningLimit: 600,
+    chunkSizeWarningLimit: 720,
     rollupOptions: {
       output: {
         manualChunks: {
@@ -25,6 +39,8 @@ export default defineConfig(async () => ({
             "@xterm/addon-search",
             "@xterm/addon-web-links",
             "@xterm/addon-ligatures",
+            "@xterm/addon-webgl",
+            "@xterm/addon-unicode11",
           ],
           react: ["react", "react-dom", "react-dom/client"],
         },

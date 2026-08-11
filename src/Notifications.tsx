@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { useApp, type PaneState } from "./store";
 import { useUI, useOverlayEsc } from "./ui";
 import { IconBell, IconSettings } from "./Icons";
+import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow, UserAttentionType } from "@tauri-apps/api/window";
 import {
   ambientQueue,
@@ -78,6 +80,32 @@ async function flashTaskbar() {
   try {
     await getCurrentWindow().requestUserAttention(UserAttentionType.Informational);
   } catch { /* capability not granted, or not running under Tauri */ }
+}
+
+// QL-778: the count Windows will actually show. `win.setBadgeCount` used to
+// live at this call site and is a documented no-op on Windows — the platform
+// wants an overlay ICON on the taskbar button, not a number — so the count
+// never left the app. `set_attention_overlay` (src-tauri/src/overlay.rs) draws
+// it into a small red disc and hands that to the shell instead. 0 clears the
+// overlay, which is the same "nothing needs you" condition the old call had.
+export async function setAttentionOverlay(count: number): Promise<void> {
+  try {
+    await invoke("set_attention_overlay", { count: Math.max(0, Math.trunc(count)) });
+  } catch { /* no Tauri backend (browser preview), or no taskbar surface */ }
+}
+
+// QL-780: emitted by the global summon chord (Ctrl+Alt+F — see
+// src-tauri/src/summon.rs) whenever it brings the window forward, never on the
+// dismiss leg. Kept in step with SUMMON_EVENT on the Rust side.
+export const SUMMON_EVENT = "app://summon";
+
+/** QL-780: where a summon lands. `needsHumanQueue` is already ranked by
+ *  urgency in attention.ts (approvals, then errors, then questions; oldest
+ *  first within a kind), so "the neediest pane" is simply its head. Null when
+ *  nothing needs a human — summoning then leaves focus exactly where the user
+ *  left it, rather than yanking them onto a merely-quiet pane. */
+export function summonTarget(queue: AttentionItem[]): AttentionItem | null {
+  return queue[0] ?? null;
 }
 
 type Panel = "none" | "feed" | "settings";
@@ -248,19 +276,10 @@ export function Notifications() {
   // UI-147: when Flightdeck is behind other windows, the in-app bell is
   // invisible. Windows can show a count on the taskbar icon — that's the whole
   // point of the attention queue reaching you when you're not looking at it.
+  // QL-778: routed through the overlay-icon command; setBadgeCount never
+  // reached Windows at all. Same call site, same condition.
   useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const { getCurrentWindow } = await import("@tauri-apps/api/window");
-        if (cancelled) return;
-        const win = getCurrentWindow();
-        // setBadgeCount is a no-op on platforms without taskbar badges; the
-        // guard is for the browser preview, where the import itself throws.
-        await win.setBadgeCount?.(needsAttention.length || undefined);
-      } catch { /* no Tauri window, or the platform has no badge surface */ }
-    })();
-    return () => { cancelled = true; };
+    void setAttentionOverlay(needsAttention.length);
   }, [needsAttention.length]);
 
   useEffect(() => {
@@ -281,6 +300,28 @@ export function Notifications() {
     focusPane(top.w.id, top.p.id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [needsAttention, followAttention]);
+
+  // QL-780: the global summon chord (Ctrl+Alt+F) brings the window forward and
+  // emits `app://summon`. Land the user on the pane that needs them most —
+  // the same switchWorkspace + focusPane pathway the bell rows, the attention
+  // queue, and LeftPanel's open-workspace-and-focus-its-neediest-pane all use.
+  // Read through a ref so the listener is registered once and still sees the
+  // live queue; re-subscribing on every queue change would drop presses.
+  const queueRef = useRef(needsAttention);
+  queueRef.current = needsAttention;
+  useEffect(() => {
+    let stop: (() => void) | undefined;
+    let cancelled = false;
+    void listen(SUMMON_EVENT, () => {
+      const top = summonTarget(queueRef.current);
+      if (!top) return;
+      switchWorkspace(top.w.id);
+      focusPane(top.w.id, top.p.id);
+    })
+      .then((un) => { if (cancelled) un(); else stop = un; })
+      .catch(() => { /* not running under Tauri */ });
+    return () => { cancelled = true; stop?.(); };
+  }, [switchWorkspace, focusPane]);
 
   const jump = (wsId: number, paneId: number) => {
     switchWorkspace(wsId);

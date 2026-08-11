@@ -12,6 +12,11 @@ export const PREFERENCE_KEYS = [
   "flightdeck-theme",
   "flightdeck-theme-id",
   "flightdeck-theme-custom",
+  // QL-784: last-used theme per mode + the Light/Dark/Follow-Windows choice.
+  // Appearance preferences, so a settings reset clears them with the theme.
+  "flightdeck-theme-dark",
+  "flightdeck-theme-light",
+  "flightdeck-appearance-mode",
   "flightdeck-accent",
   "flightdeck-accent-custom",
   "flightdeck-vendor-accents",

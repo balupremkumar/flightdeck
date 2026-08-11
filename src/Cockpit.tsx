@@ -19,22 +19,14 @@ import { Preview } from "./Preview";
 import { QuickOpen } from "./QuickOpenOverlay";
 import { ZoomHud } from "./ZoomHud";
 import { useUI, closeTopOverlay } from "./ui";
-import { applyTheme, applyAccent, currentThemeId, currentAccentId, findTheme, applyColorBlindSafe, isColorBlindSafe } from "./themes";
+// Quick light/dark flip lives in the themes registry (toggleThemeMode): it
+// remembers the last theme used in each mode and carries the accent + CVD
+// palette across, so it stays in step with the picker in Settings.
+import { toggleThemeMode } from "./themes";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { spawnPane, closePaneGuarded, closeWorkspaceGuarded } from "./worktrees";
 import { isTypingTarget } from "./Shortcuts";
 import { attentionQueue, mostRecentOutputPane } from "./attention";
-
-// Quick light/dark flip. Goes through the themes registry (not a raw data-theme
-// write) so it stays in step with the richer theme picker in Settings, and
-// re-applies the accent so its dark/light variant follows the new mode.
-function toggleTheme() {
-  const cur = findTheme(currentThemeId());
-  const nextId = cur.mode === "light" ? "dark" : "light";
-  applyTheme(nextId);
-  applyAccent(currentAccentId(), findTheme(nextId).mode);
-  applyColorBlindSafe(isColorBlindSafe(), findTheme(nextId).mode);
-}
 
 export function Cockpit() {
   const workspaces = useApp((s) => s.workspaces);
@@ -373,7 +365,7 @@ export function Cockpit() {
         >
           <IconBroadcast size={17} />
         </button>
-        <button className="tb-ic" title="Toggle light / dark" onClick={toggleTheme}>
+        <button className="tb-ic" title="Toggle light / dark" onClick={() => toggleThemeMode()}>
           <IconTheme size={17} />
         </button>
         <button className="tb-ic" title={updateAvailable ? `Settings (Ctrl+,) — Flightdeck ${updateAvailable.version} available` : "Settings (Ctrl+,)"} onClick={() => setSettingsOpen(true)}>

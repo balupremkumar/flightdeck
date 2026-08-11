@@ -7,15 +7,39 @@ import { Settings } from "./Settings";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { ToastHost } from "./ToastHost";
 import { useUI } from "./ui";
-import { applyTheme, currentThemeId, findTheme, applyColorBlindSafe, isColorBlindSafe } from "./themes";
+import { applyThemeForMode, isFollowingSystem, toggleThemeMode } from "./themes";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import { useEffect } from "react";
 
-// Same light/dark flip as Cockpit's top bar — routed through the themes
-// registry so it stays in step with the richer theme picker in Settings.
-function toggleTheme() {
-  const cur = findTheme(currentThemeId());
-  const nextId = cur.mode === "light" ? "dark" : "light";
-  applyTheme(nextId);
-  applyColorBlindSafe(isColorBlindSafe(), findTheme(nextId).mode);
+// QL-784: "Follow Windows" (Settings > Appearance) hands the light/dark choice
+// to the OS, landing on whichever theme was last used in that mode.
+//
+// Registered here rather than in Cockpit because App is the only component
+// mounted in both states (launcher and cockpit), and registered unconditionally
+// with the follow check done AT EVENT TIME — that way switching the setting on
+// or off in Settings takes effect immediately without tearing the listener
+// down and rebuilding it.
+function useFollowSystemTheme() {
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let cancelled = false;
+    const applyIfFollowing = (theme: string | null | undefined) => {
+      if (!theme || !isFollowingSystem()) return;
+      applyThemeForMode(theme === "light" ? "light" : "dark");
+    };
+    try {
+      const win = getCurrentWindow();
+      // Boot applied the persisted theme synchronously (bootAppearance, which
+      // can't await Tauri); this catches an OS change made while Flightdeck
+      // was closed.
+      win.theme().then(applyIfFollowing).catch(() => { /* browser preview */ });
+      win
+        .onThemeChanged(({ payload }) => applyIfFollowing(payload))
+        .then((fn) => { if (!cancelled) unlisten = fn; else fn(); })
+        .catch(() => { /* browser preview */ });
+    } catch { /* browser preview */ }
+    return () => { cancelled = true; unlisten?.(); };
+  }, []);
 }
 
 // Minimal chrome for the pre-first-workspace state: no workspace rail (there's
@@ -31,7 +55,7 @@ function LauncherChrome() {
         <IconBrand size={18} className="brand-mark" />
         <span className="brand">Flightdeck</span>
         <span className="sp" />
-        <button className="tb-ic" title="Toggle light / dark" onClick={toggleTheme}>
+        <button className="tb-ic" title="Toggle light / dark" onClick={() => toggleThemeMode()}>
           <IconTheme size={17} />
         </button>
         <button className="tb-ic" title={updateAvailable ? `Settings (Ctrl+,) — Flightdeck ${updateAvailable.version} available` : "Settings (Ctrl+,)"} onClick={() => setSettingsOpen(true)}>
@@ -50,6 +74,7 @@ function LauncherChrome() {
 }
 
 export default function App() {
+  useFollowSystemTheme();
   const count = useApp((s) => s.workspaces.length);
   const creating = useApp((s) => s.creating);
   if (count === 0) return <LauncherChrome />;

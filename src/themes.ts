@@ -44,6 +44,10 @@ export const THEMES: ThemeMeta[] = [
 // `flightdeck-theme-id`, and that keeps winning (see currentThemeId).
 export const DEFAULT_THEME_ID = "graphite";
 
+// The theme the light half of the light/dark toggle lands on when nothing has
+// been remembered yet (mirror of DEFAULT_THEME_ID for the dark half).
+export const DEFAULT_LIGHT_THEME_ID = "light";
+
 export function findTheme(id: string): ThemeMeta {
   return THEMES.find((t) => t.id === id) ?? THEMES[0];
 }
@@ -267,7 +271,85 @@ export function applyTheme(themeId: string) {
   const el = document.documentElement;
   if (t.id === "dark") el.removeAttribute("data-theme");
   else el.setAttribute("data-theme", t.id);
-  try { localStorage.setItem("flightdeck-theme-id", t.id); } catch { /* non-persistent */ }
+  try {
+    localStorage.setItem("flightdeck-theme-id", t.id);
+    // QL-784: remember this as the theme for its own mode, so the light/dark
+    // toggle can come back to it instead of the hardcoded Deep Cove pair.
+    localStorage.setItem(t.mode === "light" ? LIGHT_THEME_KEY : DARK_THEME_KEY, t.id);
+  } catch { /* non-persistent */ }
+}
+
+// ---------------------------------------------------------------------
+// Light/dark memory (QL-784). The topbar toggle used to write the literal ids
+// "dark"/"light", so flipping out of Graphite (or Nord, or Dracula) and back
+// dumped you on Deep Cove Dark and quietly lost the theme you had chosen. Each
+// mode now keeps its own last-used theme id and the toggle flips between them.
+// ---------------------------------------------------------------------
+const DARK_THEME_KEY = "flightdeck-theme-dark";
+const LIGHT_THEME_KEY = "flightdeck-theme-light";
+
+/** The theme to use for `mode`: what was last used in that mode, else the
+ *  currently-active theme if it already is that mode (so an install that
+ *  predates the memory keeps its choice on the first toggle), else the
+ *  registry default for the mode. */
+export function rememberedThemeId(mode: "dark" | "light"): string {
+  const matches = (id: string | null) => !!id && THEMES.some((t) => t.id === id && t.mode === mode);
+  try {
+    const saved = localStorage.getItem(mode === "light" ? LIGHT_THEME_KEY : DARK_THEME_KEY);
+    if (matches(saved)) return saved as string;
+    const active = localStorage.getItem("flightdeck-theme-id");
+    if (matches(active)) return active as string;
+  } catch { /* non-persistent */ }
+  return mode === "light" ? DEFAULT_LIGHT_THEME_ID : DEFAULT_THEME_ID;
+}
+
+/** Switch to `mode`, landing on that mode's remembered theme, and bring the
+ *  mode-specific accent variant and CVD palette with it. The one place the
+ *  topbar toggle, the Settings appearance control and the follow-Windows
+ *  listener all go through. */
+export function applyThemeForMode(mode: "dark" | "light"): string {
+  const id = rememberedThemeId(mode);
+  applyTheme(id);
+  applyAccent(currentAccentId(), mode);
+  applyColorBlindSafe(isColorBlindSafe(), mode);
+  return id;
+}
+
+/** The topbar's light/dark flip. Returns the mode switched to. An explicit
+ *  flip also ends "follow Windows" — the OS would otherwise undo it at the
+ *  next system change, which reads as the app fighting the user. */
+export function toggleThemeMode(): "dark" | "light" {
+  const next = currentMode() === "light" ? "dark" : "light";
+  setAppearanceMode(next);
+  applyThemeForMode(next);
+  return next;
+}
+
+// ---------------------------------------------------------------------
+// Appearance mode (QL-784): Light / Dark / Follow Windows. Absent key = the
+// behaviour that shipped before this setting existed (whatever theme is saved,
+// no OS following), so no existing install changes on upgrade.
+// ---------------------------------------------------------------------
+export type AppearanceMode = "light" | "dark" | "system";
+const APPEARANCE_MODE_KEY = "flightdeck-appearance-mode";
+
+export function appearanceMode(): AppearanceMode {
+  try {
+    const v = localStorage.getItem(APPEARANCE_MODE_KEY);
+    if (v === "light" || v === "dark" || v === "system") return v;
+  } catch { /* non-persistent */ }
+  return currentMode();
+}
+
+/** Persist only — the caller applies, because "system" needs an async read of
+ *  the OS theme that this module deliberately stays out of (no Tauri imports
+ *  here: themes.ts is loaded by main.tsx before anything else). */
+export function setAppearanceMode(mode: AppearanceMode) {
+  try { localStorage.setItem(APPEARANCE_MODE_KEY, mode); } catch { /* non-persistent */ }
+}
+
+export function isFollowingSystem(): boolean {
+  try { return localStorage.getItem(APPEARANCE_MODE_KEY) === "system"; } catch { return false; }
 }
 
 export function currentThemeId(): string {

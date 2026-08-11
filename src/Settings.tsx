@@ -30,7 +30,9 @@ import {
   isReducedMotion, setReducedMotion,
   exportThemeJson, importThemeJson,
   DEFAULT_THEME_ID, DEFAULT_ACCENT_ID,
+  appearanceMode, setAppearanceMode, applyThemeForMode, type AppearanceMode,
 } from "./themes";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import "./overlays.css";
 
 // ---------------------------------------------------------------------
@@ -867,6 +869,7 @@ export function Settings() {
   const vendors = useVendors((s) => s.vendors);
 
   const [themeId, setThemeId] = useState(currentThemeId());
+  const [appearance, setAppearance] = useState<AppearanceMode>(appearanceMode());
   const [accentId, setAccentId] = useState(currentAccentId());
   const [customHex, setCustomHex] = useState(customAccentHex());
   const [cbSafe, setCbSafe] = useState(isColorBlindSafe());
@@ -1076,6 +1079,34 @@ export function Settings() {
     // The colour-blind palette is mode-specific — reapply so a light theme
     // doesn't keep the dark-tuned values (which fail contrast on a light ground).
     applyColorBlindSafe(isColorBlindSafe(), findTheme(id).mode);
+    // QL-784: keep the Light/Dark segment honest about what's on screen. While
+    // following Windows the choice stays "Follow Windows" — the pick is just
+    // remembered as this mode's theme (applyTheme does that) and the OS keeps
+    // driving which of the two is shown.
+    if (appearance !== "system") {
+      const next = findTheme(id).mode;
+      setAppearanceMode(next);
+      setAppearance(next);
+    }
+  }
+
+  // QL-784: Light / Dark / Follow Windows. Light and Dark land on the theme
+  // last used in that mode rather than a hardcoded pair; Follow Windows reads
+  // the OS theme now, and App's onThemeChanged listener keeps it in step after
+  // that. Persisted immediately, like every other row in this panel.
+  function selectAppearance(next: AppearanceMode) {
+    setAppearanceMode(next);
+    setAppearance(next);
+    if (next !== "system") {
+      setThemeId(applyThemeForMode(next));
+      return;
+    }
+    try {
+      getCurrentWindow()
+        .theme()
+        .then((t) => { if (t) setThemeId(applyThemeForMode(t === "light" ? "light" : "dark")); })
+        .catch(() => { /* browser preview — keep whatever is on screen */ });
+    } catch { /* browser preview */ }
   }
   function selectAccent(id: string) {
     setAccent(id, mode);
@@ -1195,13 +1226,20 @@ export function Settings() {
   function resetAppearanceSection() {
     resetSection(
       "Reset appearance?",
-      "Theme, accent colour, colour-blind-safe and reduced-motion go back to defaults.",
+      "Theme, appearance mode, accent colour, colour-blind-safe and reduced-motion go back to defaults.",
       () => {
         selectTheme(DEFAULT_THEME_ID);
         selectAccent(DEFAULT_ACCENT_ID);
         if (cbSafe) toggleCbSafe();
         if (reducedMotion) toggleReducedMotion();
         try { localStorage.removeItem("flightdeck-accent-custom"); } catch { /* non-persistent */ }
+        // QL-784: drop the remembered light/dark pair and stop following
+        // Windows — back to the plain "one saved theme" behaviour. After
+        // selectTheme above, so it doesn't re-seed the keys it just cleared.
+        try { localStorage.removeItem("flightdeck-theme-dark"); } catch { /* non-persistent */ }
+        try { localStorage.removeItem("flightdeck-theme-light"); } catch { /* non-persistent */ }
+        try { localStorage.removeItem("flightdeck-appearance-mode"); } catch { /* non-persistent */ }
+        setAppearance(findTheme(DEFAULT_THEME_ID).mode);
         useUI.getState().pushToast("success", "Appearance reset.");
       }
     );
@@ -1308,6 +1346,31 @@ export function Settings() {
 
           <section className="set-section">
             <SectionHead label="Appearance" onReset={resetAppearanceSection} />
+
+            {/* QL-784: mode first, then the theme within it — picking a theme
+                below also sets which mode it's remembered as. */}
+            <div className="set-row">
+              <div className="set-row-t">
+                <span className="set-row-name">Mode</span>
+                <span className="set-row-sub">
+                  {appearance === "system"
+                    ? "Following Windows — switches between your last light and dark themes"
+                    : "Each mode remembers the theme you last used in it"}
+                </span>
+              </div>
+              <div className="seg" role="group" aria-label="Appearance mode">
+                {([["light", "Light"], ["dark", "Dark"], ["system", "Follow Windows"]] as const).map(([id, label]) => (
+                  <button
+                    key={id}
+                    className={appearance === id ? "on" : ""}
+                    aria-pressed={appearance === id}
+                    onClick={() => selectAppearance(id)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
 
             <div className="theme-grid">
               {THEMES.map((t) => (

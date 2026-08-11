@@ -9,9 +9,11 @@ mod health;
 mod job;
 mod orphans;
 mod outbuf;
+mod overlay;
 mod persist;
 mod procname;
 mod reveal;
+mod summon;
 mod support;
 mod updates;
 mod usage;
@@ -585,6 +587,23 @@ pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        // QL-779: remember where the window was and how big it was. Only the
+        // geometry flags — VISIBLE is deliberately OFF, so a session that
+        // ended with the window hidden (the summon chord hides rather than
+        // minimises, see summon.rs) can never restore into an invisible app.
+        // The plugin validates a restored position against the CURRENT
+        // monitors and skips it if none intersect, so unplugging the second
+        // screen doesn't strand the window off-desktop.
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(
+                    tauri_plugin_window_state::StateFlags::SIZE
+                        | tauri_plugin_window_state::StateFlags::POSITION
+                        | tauri_plugin_window_state::StateFlags::MAXIMIZED
+                        | tauri_plugin_window_state::StateFlags::FULLSCREEN,
+                )
+                .build(),
+        )
         .manage(Registry::default())
         .invoke_handler(tauri::generate_handler![
             pty_spawn,
@@ -628,15 +647,36 @@ pub fn run() {
             updates::check_update,
             updates::install_update,
             updates::take_update_status,
+            overlay::set_attention_overlay,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
+
+    // QL-779: the main window is created hidden (tauri.conf.json
+    // "visible": false) so the window-state plugin can move/resize it before
+    // the first paint — otherwise every launch flashes the default 1200x800
+    // centred window and then jumps to the remembered spot. Restore already
+    // happened inside build() (the plugin's on_window_ready hook), so showing
+    // here shows it in the right place.
+    //
+    // UNCONDITIONAL, and the FIRST thing after build() on purpose: whatever
+    // the saved state says and whatever the restore did, the window is always
+    // shown. A corrupt state file, a missing monitor, or a plugin error can
+    // never leave Flightdeck running invisibly with no way to get it back.
+    if let Some(win) = app.get_webview_window("main") {
+        let _ = win.show();
+        let _ = win.set_focus();
+    }
 
     // Manifest vendors (#218): point the registry at <app-data>/vendors so a
     // dropped JSON file becomes a launchable agent — no recompile.
     if let Ok(data_dir) = app.handle().path().app_data_dir() {
         vendors::set_manifest_dir(data_dir.join("vendors"));
     }
+
+    // QL-780: global summon chord (Ctrl+Alt+F). Registered after build, never
+    // fatal — see summon.rs.
+    summon::init(app.handle());
 
     spawn_proc_sampler(app.handle().clone());
     // UX-586: hot-reload the vendor list when a manifest file changes on disk.

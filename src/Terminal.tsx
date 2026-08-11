@@ -35,7 +35,7 @@ const SAFE_TERMINAL_URL = /^https?:\/\//i;
 /** The single open-a-URL path for a pane: WebLinksAddon's regex matches and
  *  OSC 8 hyperlinks both come through here, so they can't drift apart. A
  *  blocked scheme says so rather than making the click look broken. */
-function openTerminalUrl(uri: string): void {
+export function openTerminalUrl(uri: string): void {
   if (!SAFE_TERMINAL_URL.test(uri)) {
     useUI.getState().pushToast("error", "Blocked link — only http and https links open from a terminal", { detail: uri.slice(0, 300) });
     return;
