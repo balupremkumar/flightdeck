@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl, openPath } from "@tauri-apps/plugin-opener";
+import { openInEditor } from "./editor";
 import { useApp } from "./store";
 import { useUI, useOverlayEsc } from "./ui";
 import { vendorShort } from "./vendors";
@@ -565,9 +566,11 @@ export function Review() {
     : `Merge ${selectedFiles.length} of ${fileCount} file${fileCount === 1 ? "" : "s"}`;
 
   // UI-173: the file list's per-row "open" action, lifted out of renderFile so
-  // QL-739's truncation banner opens the file exactly the same way.
+  // QL-739's truncation banner opens the file exactly the same way. UX-517: it
+  // launches the editor chosen in Settings (src/editor.ts), which falls back to
+  // the OS hand-off this used to do directly.
   const openFileInEditor = (relPath: string) => {
-    void openPath(toAbsPath(pane.cwd, relPath)).catch(() => pushToast("error", "Couldn't open that file."));
+    void openInEditor(toAbsPath(pane.cwd, relPath));
   };
 
   // Shared by the flat and grouped (UI-167) file lists. The checkbox and the

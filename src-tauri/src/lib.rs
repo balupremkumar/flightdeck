@@ -4,6 +4,7 @@
 // VS Code terminal), and strips only cross-vendor API keys so auth stays on the
 // subscription. No API keys, no headless mode.
 
+mod editor;
 mod gitstatus;
 mod health;
 mod job;
@@ -620,6 +621,7 @@ pub fn run() {
             recover_orphans,
             kill_orphans,
             export_support_bundle,
+            editor::launch_editor,
             reveal::reveal_in_explorer,
             gitstatus::git_status,
             worktree::git_repo_toplevel,

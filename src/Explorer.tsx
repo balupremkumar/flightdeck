@@ -5,7 +5,7 @@
 // a missing/erroring command degrades silently, never crashes the tree).
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type SVGProps } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { openPath } from "@tauri-apps/plugin-opener";
+import { openInEditor } from "./editor";
 import { IconFolder, IconFile, IconChevron, IconBranch, IconAgent, IconRefresh, IconClose } from "./Icons";
 import { spawnPane } from "./worktrees";
 import type { DiffFile, DiffSummary } from "./worktrees";
@@ -236,7 +236,7 @@ function Node({
   wsId?: number; vendor: string;
   /** UX-511/512: single click / Enter — read-only preview drawer. */
   onPreview: (path: string) => void;
-  /** UX-511: double click — hands off to the OS/editor (openPath). */
+  /** UX-511/517: double click — opens the file in the configured editor. */
   onOpenInEditor: (path: string) => void;
   onContext: (x: number, y: number, path: string, dir: boolean) => void;
   expandKey: string;
@@ -570,13 +570,14 @@ export function Explorer({ root, wsId, vendor = "pwsh", paneRoot, paneLabel }: E
     if (effectiveRoot) pushRecentFile(effectiveRoot, p);
     openPreview(p);
   }, [effectiveRoot, openPreview]);
-  // UX-511: double click hands off to the OS/editor via the opener plugin —
-  // Windows file associations already route most source files to whatever
-  // editor owns them; see the delivery report for the real-editor-launch gap.
+  // UX-511/517: double click opens the file in the editor chosen in Settings.
+  // That gap ("hands off to the OS and hopes the file association points at an
+  // editor") is closed by src/editor.ts, which still falls back to the OS
+  // hand-off when no editor is configured or the launch fails.
   const handleOpenInEditor = useCallback((p: string) => {
     if (effectiveRoot) pushRecentFile(effectiveRoot, p);
-    openPath(p).catch((e) => pushToast("error", `Couldn’t open ${p}: ${String(e)}`));
-  }, [effectiveRoot, pushToast]);
+    void openInEditor(p);
+  }, [effectiveRoot]);
 
   const [width, setWidth] = useState(loadWidth);
   const [resizing, setResizing] = useState(false);

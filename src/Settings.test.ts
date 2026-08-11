@@ -1,11 +1,29 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ save: vi.fn(), open: vi.fn() }));
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn() }));
 
-const { resolveEditorCommand, shouldShowWhatsNew, EDITOR_PRESETS, cpuLevelClass, memoryLevelClass } =
-  await import("./Settings");
+// The suite runs in node: no localStorage and no window. Same minimal stubs
+// CommandPalette.test.ts uses, plus a dispatchEvent recorder so the live-apply
+// broadcast can be asserted (QL-742).
+const store = new Map<string, string>();
+vi.stubGlobal("localStorage", {
+  getItem: (k: string) => store.get(k) ?? null,
+  setItem: (k: string, v: string) => void store.set(k, v),
+  removeItem: (k: string) => void store.delete(k),
+  clear: () => store.clear(),
+});
+const dispatched: Array<{ type: string; detail: unknown }> = [];
+vi.stubGlobal("window", {
+  dispatchEvent: (e: CustomEvent) => { dispatched.push({ type: e.type, detail: e.detail }); return true; },
+});
+
+const {
+  resolveEditorCommand, shouldShowWhatsNew, EDITOR_PRESETS, cpuLevelClass, memoryLevelClass,
+  clampMemoryCeiling, getMemoryCeilingMb, setMemoryCeilingMb,
+  DEFAULT_MEMORY_CEILING_MB, MIN_MEMORY_CEILING_MB, MAX_MEMORY_CEILING_MB, MEMORY_CEILING_EVENT,
+} = await import("./Settings");
 
 describe("resolveEditorCommand (UX-517)", () => {
   it("fills {file} and {line}", () => {
@@ -89,5 +107,48 @@ describe("pane-health threshold colours (UI-633)", () => {
 
   it("stays flat when the backend sent no threshold at all", () => {
     expect(memoryLevelClass({ memoryMb: 99_999 })).toBe("");
+  });
+});
+
+// UX-596/QL-742: the ceiling was a backend argument nobody ever passed. These
+// pin the two things that made it inert — a value that survives, and a clamp
+// that agrees with health.rs so Settings can't show a number the backend
+// would silently replace.
+describe("memory ceiling setting (UX-596 / QL-742)", () => {
+  beforeEach(() => { store.clear(); dispatched.length = 0; });
+
+  it("defaults to the same 1024 MB the backend falls back to", () => {
+    expect(getMemoryCeilingMb()).toBe(DEFAULT_MEMORY_CEILING_MB);
+    expect(DEFAULT_MEMORY_CEILING_MB).toBe(1024);
+  });
+
+  it("round-trips a configured ceiling", () => {
+    expect(setMemoryCeilingMb(2048)).toBe(2048);
+    expect(getMemoryCeilingMb()).toBe(2048);
+  });
+
+  it("clamps to health.rs's own bounds rather than offering a value it would reject", () => {
+    expect(clampMemoryCeiling(1)).toBe(MIN_MEMORY_CEILING_MB);
+    expect(clampMemoryCeiling(1_000_000)).toBe(MAX_MEMORY_CEILING_MB);
+    expect(clampMemoryCeiling(1024.6)).toBe(1025);
+  });
+
+  it("never resolves to 0 or NaN — a 0 ceiling would flag every pane forever", () => {
+    expect(clampMemoryCeiling(NaN)).toBe(DEFAULT_MEMORY_CEILING_MB);
+    expect(clampMemoryCeiling(0)).toBe(DEFAULT_MEMORY_CEILING_MB);
+    expect(clampMemoryCeiling(-512)).toBe(DEFAULT_MEMORY_CEILING_MB);
+    expect(clampMemoryCeiling(Infinity)).toBe(DEFAULT_MEMORY_CEILING_MB);
+  });
+
+  it("repairs a corrupt stored value instead of trusting it", () => {
+    store.set("flightdeck-memory-ceiling", "not-a-number");
+    expect(getMemoryCeilingMb()).toBe(DEFAULT_MEMORY_CEILING_MB);
+    store.set("flightdeck-memory-ceiling", "9999999");
+    expect(getMemoryCeilingMb()).toBe(MAX_MEMORY_CEILING_MB);
+  });
+
+  it("broadcasts the clamped value so the always-on poll re-samples at once", () => {
+    setMemoryCeilingMb(4);
+    expect(dispatched).toEqual([{ type: MEMORY_CEILING_EVENT, detail: MIN_MEMORY_CEILING_MB }]);
   });
 });

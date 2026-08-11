@@ -9,7 +9,7 @@ import {
   IconMaximizePane, IconMinimize, IconFolder, IconChevron, IconDiff, IconBoard, IconFile,
 } from "./Icons";
 import type { DiffSummary } from "./worktrees";
-import { cachedInvoke, usePoll, useVisible } from "./poll";
+import { cachedInvoke, usePoll, useVisible, usePaneMemory } from "./poll";
 import { compact, num, duration, bytes, relTime, tailEllipsis } from "./format";
 import { stateSince, lastLine, isOpenQuestion, STATE_LABEL as STATE_TITLE } from "./attention";
 import "./panes.css";
@@ -587,6 +587,12 @@ function PaneViewInner({
     return () => clearTimeout(t);
   }, [pane.state, pane.epoch]);
 
+  // QL-742: this pane's memory, but only while it's over the ceiling set in
+  // Settings › Diagnostics. Read-only — the reading comes from the app-wide
+  // 30s health cycle (poll.ts), not a per-pane poll, so six panes cost nothing
+  // extra here. Clears itself when the pane drops back under or restarts.
+  const memWarn = usePaneMemory(pane.id, pane.epoch);
+
   const [usage, setUsage] = useState<{ contextTokens: number; outputTokens: number; turns: number } | null>(null);
   usePoll(async () => {
     try {
@@ -878,6 +884,24 @@ Running low — consider /compact in this pane.` : "")
             </span>
           );
         })()}
+        {/* QL-742: over the memory ceiling. Same chip geometry and amber tone
+            as the token chip's warn level — this is a resource reading worth a
+            look, not an alert, so it stays out of the .pattn (pulsing,
+            needs-you) grammar and never rings the bell. */}
+        {memWarn && (
+          <span
+            className="ptok pmem warn"
+            title={
+              `Memory: ${bytes(memWarn.memoryMb * 1024 * 1024)}
+` +
+              `over the ${num(Math.round(memWarn.memoryWarnMb))} MB ceiling (Settings › Diagnostics)
+` +
+              `Checked every 30s. Restarting this pane clears it.`
+            }
+          >
+            {bytes(memWarn.memoryMb * 1024 * 1024)} mem
+          </span>
+        )}
         {diffStat && diffStat.files > 0 && (
           <button
             className={"pdiff" + (diffPulse ? " pulsing" : "")}

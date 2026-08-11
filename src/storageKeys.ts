@@ -28,6 +28,10 @@ export const PREFERENCE_KEYS = [
   "flightdeck-shortcuts",
   "flightdeck-agent-settings",
   "flightdeck-startup",
+  // UX-596/QL-742: per-pane memory warning ceiling (MB) + the live-apply event
+  // name that travels with it, same pairing as the terminal settings above.
+  "flightdeck-memory-ceiling",
+  "flightdeck-memory-ceiling-changed",
   "flightdeck-notify-settings",
   "flightdeck-auto-queue",
   "flightdeck-follow-attention",

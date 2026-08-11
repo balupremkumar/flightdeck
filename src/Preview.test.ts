@@ -3,9 +3,9 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn(), openPath: vi.fn() }));
 
-const { isTooLargeError, openInEditor } = await import("./Preview");
-const { openPath } = await import("@tauri-apps/plugin-opener");
-const { useUI } = await import("./ui");
+// UX-517: openInEditor moved out of this file and into src/editor.ts, which is
+// now the one canonical launcher — its own suite is editor.test.ts.
+const { isTooLargeError } = await import("./Preview");
 
 describe("isTooLargeError (QL-745/746)", () => {
   it("matches the text reader's refusal verbatim", () => {
@@ -26,25 +26,5 @@ describe("isTooLargeError (QL-745/746)", () => {
     for (const e of ["The system cannot find the file specified. (os error 2)", "Access is denied. (os error 5)", null, undefined]) {
       expect(isTooLargeError(e)).toBe(false);
     }
-  });
-});
-
-describe("openInEditor (QL-745/746)", () => {
-  it("hands the path to the opener", async () => {
-    vi.mocked(openPath).mockResolvedValueOnce(undefined);
-    openInEditor("D:\\repo\\huge.log");
-    expect(openPath).toHaveBeenCalledWith("D:\\repo\\huge.log");
-  });
-
-  it("surfaces a failure as a toast instead of an unhandled rejection", async () => {
-    vi.mocked(openPath).mockRejectedValueOnce(new Error("no handler"));
-    openInEditor("D:\\repo\\huge.log");
-    await Promise.resolve();
-    await Promise.resolve();
-    // .at() is ES2022; this project targets ES2020 (see tsconfig.json).
-    const toasts = useUI.getState().toasts;
-    const last = toasts[toasts.length - 1];
-    expect(last?.kind).toBe("error");
-    expect(last?.text).toContain("D:\\repo\\huge.log");
   });
 });

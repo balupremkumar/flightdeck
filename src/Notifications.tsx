@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useApp, type PaneState } from "./store";
+import { useApp, type PaneModel, type PaneState, type Workspace } from "./store";
 import { useUI, useOverlayEsc } from "./ui";
 import { IconBell, IconSettings } from "./Icons";
 import { invoke } from "@tauri-apps/api/core";
@@ -18,8 +18,10 @@ import {
   type AttentionItem,
   type AttentionKind,
 } from "./attention";
-import { timeTitle } from "./format";
+import { timeTitle, bytes } from "./format";
 import { vendorShort } from "./vendors";
+import { useHeavyPanes, useMemoryHealthPoll, type PaneMemory } from "./poll";
+import { getMemoryCeilingMb, MEMORY_CEILING_EVENT } from "./Settings";
 import "./Notifications.css";
 
 // All configurable states, approval/waiting/error first since those are the
@@ -106,6 +108,27 @@ export const SUMMON_EVENT = "app://summon";
  *  left it, rather than yanking them onto a merely-quiet pane. */
 export function summonTarget(queue: AttentionItem[]): AttentionItem | null {
   return queue[0] ?? null;
+}
+
+/** QL-742: a pane over the memory ceiling, resolved back to where it lives.
+ *  AMBIENT by the 2026-08-01 ruling — a heavy pane is a fact worth seeing, not
+ *  an approval, an error or a question, so it is listed here and on the pane
+ *  header and touches nothing that rings: no pulse, no chime, no OS toast, no
+ *  taskbar count. attention.ts's own ambient tier is derived from pane STATE
+ *  (a quiet `waiting` pane) and a heavy pane is usually `running`, so this is
+ *  kept as its own list rather than forced through a model it doesn't fit.
+ *  Biggest offender first — that's the one to look at. */
+export interface HeavyPaneItem { w: Workspace; p: PaneModel; mem: PaneMemory }
+export function heavyPaneItems(workspaces: Workspace[], heavy: PaneMemory[]): HeavyPaneItem[] {
+  const items: HeavyPaneItem[] = [];
+  for (const mem of heavy) {
+    for (const w of workspaces) {
+      const p = w.panes.find((x) => x.id === mem.paneId);
+      // A pane that has closed since the last sample simply drops out.
+      if (p) { items.push({ w, p, mem }); break; }
+    }
+  }
+  return items.sort((a, b) => b.mem.memoryMb - a.mem.memoryMb);
 }
 
 type Panel = "none" | "feed" | "settings";
@@ -266,6 +289,21 @@ export function Notifications() {
   // has merely gone quiet is in `ambient` instead and never touches the bell.
   const needsAttention = needsHumanQueue(workspaces, snoozedMap);
   const ambient = ambientQueue(workspaces, snoozedMap);
+
+  // QL-742: the cockpit's only always-mounted surface, so the app-wide health
+  // cycle is driven from here — one pane_health invoke every 30s, none while
+  // there are no panes or the window is hidden (poll.ts). The ceiling is read
+  // live: Settings broadcasts on change, which re-samples immediately instead
+  // of leaving a stale reading for up to 30s.
+  const paneCount = workspaces.reduce((n, w) => n + w.panes.length, 0);
+  const [memCeiling, setMemCeiling] = useState(getMemoryCeilingMb);
+  useEffect(() => {
+    const onCeiling = (e: Event) => setMemCeiling((e as CustomEvent<number>).detail);
+    window.addEventListener(MEMORY_CEILING_EVENT, onCeiling);
+    return () => window.removeEventListener(MEMORY_CEILING_EVENT, onCeiling);
+  }, []);
+  useMemoryHealthPoll(paneCount, memCeiling);
+  const heavy = heavyPaneItems(workspaces, useHeavyPanes());
   const approvalCount = needsAttention.filter((x) => x.kind === "permission").length;
   const errCount = needsAttention.filter((x) => x.kind === "error").length;
   const questionCount = needsAttention.filter((x) => x.kind === "question").length;
@@ -332,12 +370,22 @@ export function Notifications() {
   // UX-601: at rest the bell says "all calm" and nothing else — no colour, no
   // badge, no motion. The tooltip carries the same sentence a screen reader
   // hears, so hovering answers "do I need to look?" without opening anything.
+  // QL-742: a heavy pane is ambient context in the tooltip too — stated AFTER
+  // "nothing needs you", never instead of it, so the bell keeps meaning
+  // "someone is blocked" and nothing else.
+  const heavyNote = heavy.length > 0
+    ? `${heavy.length} pane${heavy.length === 1 ? "" : "s"} over the memory ceiling`
+    : "";
   const restTitle = notify.dnd
     ? "Notifications — Do Not Disturb"
     : needsAttention.length === 0
-      ? ambient.length > 0
-        ? `Nothing needs you · ${ambient.length} pane${ambient.length === 1 ? "" : "s"} quiet`
-        : "Nothing needs you"
+      ? [
+          "Nothing needs you",
+          ambient.length > 0 && `${ambient.length} pane${ambient.length === 1 ? "" : "s"} quiet`,
+          heavyNote,
+        ]
+          .filter(Boolean)
+          .join(" · ")
       : [
           approvalCount > 0 && `${approvalCount} waiting on your approval`,
           errCount > 0 && `${errCount} errored`,
@@ -429,6 +477,31 @@ export function Notifications() {
               })
             )}
           </div>
+
+          {/* QL-742: ambient tier — visible in the queue, silent everywhere
+              else. No badge, no chime, no toast; the note says so out loud so
+              nobody later "fixes" it into an alert. */}
+          {heavy.length > 0 && (
+            <div className="ntf-section">
+              <div className="ntf-label-row">
+                <span className="ntf-label">Heavy on memory</span>
+              </div>
+              <div className="ntf-note">Nothing to do — worth a look, so it never rings the bell.</div>
+              {heavy.map(({ w, p, mem }) => (
+                <div
+                  className="ntf-item"
+                  key={p.id}
+                  onClick={() => jump(w.id, p.id)}
+                  title={`${bytes(mem.memoryMb * 1024 * 1024)} — over the ${Math.round(mem.memoryWarnMb)} MB ceiling (Settings › Diagnostics). Restarting the pane clears it.`}
+                >
+                  <span className="ntf-dot waiting" />
+                  <span className="ntf-ws">{w.name}</span>
+                  <span className="ntf-ag">{p.title || vendorShort(p.vendor)}</span>
+                  <span className="ntf-state">{bytes(mem.memoryMb * 1024 * 1024)}</span>
+                </div>
+              ))}
+            </div>
+          )}
 
           <div className="ntf-section">
             <div className="ntf-label-row">

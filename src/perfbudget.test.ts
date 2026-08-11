@@ -18,7 +18,7 @@ import { fileURLToPath } from "node:url";
 const invokeMock = vi.fn();
 vi.mock("@tauri-apps/api/core", () => ({ invoke: (...a: unknown[]) => invokeMock(...a) }));
 
-const { cachedInvoke, invalidateCwd } = await import("./poll");
+const { cachedInvoke, invalidateCwd, refreshMemoryHealth, MEMORY_POLL_MS } = await import("./poll");
 
 // ---------------------------------------------------------------------------
 // Steady state
@@ -34,6 +34,24 @@ const PANE_POLLS: [string, number][] = [
 const PANE_COUNT = 6;
 /** The budget: one round trip per distinct question, however many panes ask. */
 const IDLE_INVOKES_PER_CYCLE = PANE_POLLS.length;
+
+/** QL-742 raised the budget deliberately, and this is the whole of the raise.
+ *
+ *  Pane memory health used to be sampled only while Settings > Diagnostics was
+ *  open, which meant a runaway child process was invisible from the cockpit.
+ *  It is now always on — but on a SECOND, SLOWER cycle, not the 15s one above:
+ *
+ *    fast cycle (15s, per repo):   3 invokes   ← unchanged by QL-742
+ *    slow cycle (30s, app-wide):   1 invoke    ← new
+ *
+ *  The slow cycle is flat, not per pane and not per repo: `pane_health` returns
+ *  every pane in one call and is driven once for the whole app (poll.ts's
+ *  useMemoryHealthPoll, mounted in Notifications.tsx), so a 6-pane workspace
+ *  and a 60-pane one cost the same. It is skipped entirely when there are no
+ *  panes, and stands down with everything else while the window is hidden.
+ *  Net steady-state cost of always-on memory health: 2 invokes per minute. */
+const SLOW_INVOKES_PER_CYCLE = 1;
+const MEMORY_CEILING_MB = 1024;
 
 function pollCycle(cwd: string) {
   // Every pane in the workspace asks at once — the storm this is guarding.
@@ -75,6 +93,31 @@ describe("steady-state IPC budget (UX-595)", () => {
     vi.setSystemTime(Date.now() + 30_000); // past every TTL above
     await pollCycle("D:/repo");
     expect(invokeMock).toHaveBeenCalledTimes(IDLE_INVOKES_PER_CYCLE * 2);
+  });
+
+  it(`the slow memory cycle adds ${SLOW_INVOKES_PER_CYCLE} invoke, flat — ${PANE_COUNT} panes don't make it ${PANE_COUNT} (QL-742)`, async () => {
+    // Whoever is interested, one sample serves them all: the command answers
+    // for every pane at once and the driver is app-wide.
+    await Promise.all(Array.from({ length: PANE_COUNT }, () => refreshMemoryHealth(MEMORY_CEILING_MB)));
+    expect(invokeMock).toHaveBeenCalledTimes(SLOW_INVOKES_PER_CYCLE);
+    expect(invokeMock).toHaveBeenCalledWith("pane_health", { memoryWarnMb: MEMORY_CEILING_MB });
+  });
+
+  it("the fast cycle is untouched by it: a full cycle plus a memory sample is 3 + 1 (QL-742)", async () => {
+    await pollCycle("D:/repo");
+    expect(invokeMock).toHaveBeenCalledTimes(IDLE_INVOKES_PER_CYCLE);
+    await refreshMemoryHealth(MEMORY_CEILING_MB);
+    expect(invokeMock).toHaveBeenCalledTimes(IDLE_INVOKES_PER_CYCLE + SLOW_INVOKES_PER_CYCLE);
+  });
+
+  it("the memory sample is genuinely slow: a second one inside the interval is free, past it costs 1 (QL-742)", async () => {
+    await refreshMemoryHealth(MEMORY_CEILING_MB);
+    vi.setSystemTime(Date.now() + MEMORY_POLL_MS / 2);
+    await refreshMemoryHealth(MEMORY_CEILING_MB);
+    expect(invokeMock).toHaveBeenCalledTimes(1);
+    vi.setSystemTime(Date.now() + MEMORY_POLL_MS);
+    await refreshMemoryHealth(MEMORY_CEILING_MB);
+    expect(invokeMock).toHaveBeenCalledTimes(2);
   });
 
   it("isolated panes are the honest worst case: separate worktrees can't share a cache key", async () => {

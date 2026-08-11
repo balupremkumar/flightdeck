@@ -16,7 +16,8 @@
 // the retry-me error line (QL-745/746).
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { openUrl, openPath } from "@tauri-apps/plugin-opener";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import { openInEditor } from "./editor";
 import { useUI, useOverlayEsc } from "./ui";
 import { revealPath } from "./reveal";
 import type { PreviewTab } from "./ui";
@@ -35,15 +36,10 @@ function baseName(p: string): string {
 
 const MD_RE = /\.mdx?$/i;
 
-// QL-745/746: the escape hatch offered by every dead-end state below. Same
-// hand-off Explorer's double-click uses (Explorer.tsx:482): openPath lets
-// Windows route the file to the editor that owns the extension. Failures
-// surface as a toast rather than vanishing, exactly as they do there.
-export function openInEditor(path: string) {
-  openPath(path).catch((e) =>
-    useUI.getState().pushToast("error", `Couldn’t open ${path}: ${String(e)}`)
-  );
-}
+// QL-745/746: the escape hatch offered by every dead-end state below. UX-517:
+// it now launches the editor picked in Settings (src/editor.ts), falling back
+// to the OS hand-off this used to do on its own. Failures still surface as a
+// toast rather than vanishing.
 
 /** True for the backend's size-cap refusal ("too large to preview (over 5MB)"
  *  from fs_read_text_file, "(over 10MB)" from fs_read_file_base64). Retrying
@@ -166,7 +162,7 @@ function ImageNode({ src, alt, mdPath }: { src: string; alt: string; mdPath: str
             <button className="prv-copy" onClick={() => setAttempt((n) => n + 1)}>Retry</button>{" "}
           </>
         )}
-        <button className="prv-copy" onClick={() => openInEditor(resolved)}>Open in editor</button>{" "}
+        <button className="prv-copy" onClick={() => { void openInEditor(resolved); }}>Open in editor</button>{" "}
         <button className="prv-copy" onClick={() => { void revealPath(resolved); }}>Show in folder</button>
       </span>
     );
@@ -375,7 +371,10 @@ function PreviewBody({ tab }: { tab: PreviewTab }) {
           <div className="prv-state prv-error">
             <code className="prv-icode">{baseName(tab.path)}</code>
             <span>Over the 5&nbsp;MB preview limit, so Flightdeck won’t load it here.</span>
-            <button className="prv-retry" onClick={() => openInEditor(tab.path)}>Open in editor</button>
+            {/* UX-517/519: the preview knows which line brought the user here
+                (Terminal's file:line links, Review's line click), so the editor
+                opens there rather than at the top of a huge file. */}
+            <button className="prv-retry" onClick={() => { void openInEditor(tab.path, tab.line); }}>Open in editor</button>
           </div>
         )}
         {state === "error" && !tooLarge && (

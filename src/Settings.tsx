@@ -251,6 +251,47 @@ const CHANGELOG: Array<{ date: string; text: string }> = [
 ];
 
 // ---------------------------------------------------------------------
+// Memory ceiling (UX-596, wired by QL-742). health.rs has always accepted a
+// per-call `memory_warn_mb` and clamped it; the user-facing half was never
+// built, so every pane_health call fell through to the backend's 1024MB
+// default and the "configurable" ceiling was inert. This is that half.
+//
+// Persisted key: flightdeck-memory-ceiling (a plain number of MB). Instant
+// apply: the setter dispatches flightdeck-memory-ceiling-changed, which the
+// always-on health poll (Notifications.tsx → poll.ts) listens for, so a new
+// ceiling re-samples every pane at once rather than at the next 30s tick.
+// Bounds mirror health.rs's own clamp, so the UI can never offer a value the
+// backend would quietly reject.
+// ---------------------------------------------------------------------
+export const DEFAULT_MEMORY_CEILING_MB = 1024;
+export const MIN_MEMORY_CEILING_MB = 64;
+export const MAX_MEMORY_CEILING_MB = 65536;
+const MEMORY_CEILING_KEY = "flightdeck-memory-ceiling";
+export const MEMORY_CEILING_EVENT = "flightdeck-memory-ceiling-changed";
+
+/** Same clamp health.rs applies, so what Settings shows is what the backend
+ *  will use. Anything unparseable falls back to the default rather than 0 —
+ *  a ceiling of 0 would flag every pane forever. */
+export function clampMemoryCeiling(mb: number): number {
+  if (!Number.isFinite(mb) || mb <= 0) return DEFAULT_MEMORY_CEILING_MB;
+  return Math.min(MAX_MEMORY_CEILING_MB, Math.max(MIN_MEMORY_CEILING_MB, Math.round(mb)));
+}
+export function getMemoryCeilingMb(): number {
+  try {
+    const raw = localStorage.getItem(MEMORY_CEILING_KEY);
+    if (raw != null) return clampMemoryCeiling(Number(raw));
+  } catch { /* non-persistent */ }
+  return DEFAULT_MEMORY_CEILING_MB;
+}
+/** Persists and broadcasts; returns the value actually stored (clamped). */
+export function setMemoryCeilingMb(mb: number): number {
+  const next = clampMemoryCeiling(mb);
+  try { localStorage.setItem(MEMORY_CEILING_KEY, String(next)); } catch { /* non-persistent */ }
+  window.dispatchEvent(new CustomEvent(MEMORY_CEILING_EVENT, { detail: next }));
+  return next;
+}
+
+// ---------------------------------------------------------------------
 // Diagnostics (UI-4 / QOL 375-377): surfaces three backend capabilities that
 // were built + tested but had zero UI — per-pane health, stray-process
 // recovery, and the redacted support bundle.
@@ -656,12 +697,26 @@ function DiagnosticsSection() {
   const [orphans, setOrphans] = useState<OrphanRow[] | null>(null);
   const [scanning, setScanning] = useState(false);
 
+  // UX-596/QL-742: the ceiling this table (and the cockpit's always-on poll)
+  // judges memory against. Local draft so a half-typed "2" doesn't snap to the
+  // 64MB floor mid-keystroke; only a value the backend would accept as-is
+  // applies live, the rest is clamped on blur.
+  const [ceiling, setCeiling] = useState(getMemoryCeilingMb);
+  const [ceilingDraft, setCeilingDraft] = useState(() => String(getMemoryCeilingMb()));
+  const commitCeiling = (mb: number) => {
+    const next = setMemoryCeilingMb(mb);
+    setCeiling(next);
+    setCeilingDraft(String(next));
+  };
+
   // Poll health while the section is on screen. First sample reads 0% CPU by
   // design (delta-based); ticks refine it.
   useEffect(() => {
     let cancelled = false;
     const poll = () => {
-      invoke<PaneHealthRow[]>("pane_health")
+      // UX-596: pass the configured ceiling — omitting it is what made the
+      // setting inert, since the backend then resolved its own default.
+      invoke<PaneHealthRow[]>("pane_health", { memoryWarnMb: ceiling })
         .then((rows) => {
           if (cancelled) return;
           setHealth(rows);
@@ -680,7 +735,7 @@ function DiagnosticsSection() {
     poll();
     const id = setInterval(poll, 3000);
     return () => { cancelled = true; clearInterval(id); };
-  }, []);
+  }, [ceiling]);
 
   const scanOrphans = () => {
     setScanning(true);
@@ -755,6 +810,33 @@ function DiagnosticsSection() {
       ) : (
         <div className="diag-empty">{health === null ? "Health data unavailable in this environment." : "No live panes to sample."}</div>
       )}
+
+      {/* UX-596/QL-742: the one memory threshold in the app. It colours the
+          table above, and the cockpit flags any pane over it in the pane
+          header without Settings being open. */}
+      <div className="set-row">
+        <div className="set-row-t">
+          <span className="set-row-name">Memory ceiling</span>
+          <span className="set-row-sub">
+            Flag a pane using more than this many MB. Checked every 30s in the background; the pane header shows a chip.
+          </span>
+        </div>
+        <input
+          className="set-input set-input-num" type="number"
+          min={MIN_MEMORY_CEILING_MB} max={MAX_MEMORY_CEILING_MB} step={64}
+          aria-label={`Memory ceiling in MB (${MIN_MEMORY_CEILING_MB}–${MAX_MEMORY_CEILING_MB})`}
+          value={ceilingDraft}
+          onChange={(e) => {
+            setCeilingDraft(e.target.value);
+            const mb = Number(e.target.value);
+            if (Number.isFinite(mb) && mb >= MIN_MEMORY_CEILING_MB && mb <= MAX_MEMORY_CEILING_MB) {
+              setCeiling(setMemoryCeilingMb(mb));
+            }
+          }}
+          onBlur={() => commitCeiling(Number(ceilingDraft))}
+          onKeyDown={(e) => { if (e.key === "Enter") commitCeiling(Number(ceilingDraft)); }}
+        />
+      </div>
 
       <div className="set-row">
         <div className="set-row-t">
