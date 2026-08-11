@@ -24,8 +24,12 @@ vi.stubGlobal("localStorage", {
   clear: () => store.clear(),
 });
 
-const { setAttentionOverlay, summonTarget, SUMMON_EVENT, heavyPaneItems, aggregateProgress, setTaskbarProgress } =
-  await import("./Notifications");
+const {
+  setAttentionOverlay, summonTarget, SUMMON_EVENT, heavyPaneItems, aggregateProgress, setTaskbarProgress,
+  // QL-720
+  HOOK_EVENT, HOOK_PANE_STATE, HOOK_STALE_GRACE_MS, classifyHookEvent, hookOverrideState, hookTargetPane, normaliseCwd,
+} = await import("./Notifications");
+import type { HookEventPayload, HookRecord } from "./Notifications";
 const { ProgressBarStatus } = await import("@tauri-apps/api/window");
 import type { PaneProgress } from "./Terminal";
 const { needsHumanQueue } = await import("./attention");
@@ -207,5 +211,126 @@ describe("summon event name", () => {
   // SUMMON_EVENT). Drift here means the hotkey silently stops jumping.
   it("matches the backend constant", () => {
     expect(SUMMON_EVENT).toBe("app://summon");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// QL-720: hook-driven session state. The wiring (listen → setPaneState) is a
+// three-line effect; everything that can actually be WRONG is in these pure
+// functions, so that's what's pinned here.
+// ---------------------------------------------------------------------------
+describe("classifyHookEvent (QL-720)", () => {
+  const ev = (event: string, message?: string, extra: Record<string, unknown> = {}): HookEventPayload => ({
+    event,
+    ts: 1,
+    payload: { cwd: String.raw`C:\repo`, session_id: "s1", message, ...extra },
+  });
+
+  it("reads Claude's two Notification shapes", () => {
+    expect(classifyHookEvent(ev("Notification", "Claude needs your permission to use Bash"))).toBe("permission");
+    expect(classifyHookEvent(ev("Notification", "Claude is waiting for your input"))).toBe("idle");
+  });
+
+  it("treats an unrecognised Notification as idle, never as an approval", () => {
+    // An unknown message must not be able to invent a chime out of nothing.
+    expect(classifyHookEvent(ev("Notification", "something new in a future release"))).toBe("idle");
+    expect(classifyHookEvent(ev("Notification"))).toBe("idle");
+  });
+
+  it("maps Stop to stop and ignores every hook we don't install", () => {
+    expect(classifyHookEvent(ev("Stop"))).toBe("stop");
+    for (const other of ["SubagentStop", "PreToolUse", "PostToolUse", "SessionStart", ""]) {
+      expect(classifyHookEvent(ev(other))).toBeNull();
+    }
+    expect(classifyHookEvent(null)).toBeNull();
+    expect(classifyHookEvent(undefined)).toBeNull();
+  });
+
+  it("falls back to the payload's own event name if the relay's arg went missing", () => {
+    expect(classifyHookEvent({ payload: { hook_event_name: "Stop" } })).toBe("stop");
+  });
+
+  it("lands each kind on an EXISTING pane state, so it flows through attentionKind", () => {
+    // permission rings, waiting is ambient-unless-a-question, idle is "nothing
+    // needs you" — no new state was invented for hooks.
+    expect(HOOK_PANE_STATE).toEqual({ permission: "permission", idle: "waiting", stop: "idle" });
+  });
+});
+
+describe("hookTargetPane (QL-720)", () => {
+  const p = (id: number, vendor: string, cwd: string) =>
+    ({ id, vendor, cwd, state: "running", title: `pane ${id}` }) as unknown as Workspace["panes"][number];
+  const w = (id: number, panes: Workspace["panes"]) =>
+    ({ id, name: `ws${id}`, panes, focused: null }) as unknown as Workspace;
+
+  it("matches a pane's cwd across casing and slash differences", () => {
+    expect(normaliseCwd("C:\\Dev\\Repo\\")).toBe("c:/dev/repo");
+    const spaces = [w(1, [p(10, "claude", "C:\\Dev\\Repo")])];
+    expect(hookTargetPane(spaces, "c:/dev/repo/")?.p.id).toBe(10);
+  });
+
+  it("ignores panes that aren't Claude — nothing else emits these hooks", () => {
+    const spaces = [w(1, [p(10, "pwsh", String.raw`C:\repo`), p(11, "claude", String.raw`C:\other`)])];
+    expect(hookTargetPane(spaces, String.raw`C:\repo`)).toBeNull();
+  });
+
+  it("refuses to guess between two Claude panes on the same folder", () => {
+    // Nothing in the pane model carries Claude's session_id, so marking one of
+    // them blocked would be a coin flip. Both keep the terminal heuristic.
+    const spaces = [w(1, [p(10, "claude", String.raw`C:\repo`), p(11, "claude", String.raw`C:\repo`)])];
+    expect(hookTargetPane(spaces, String.raw`C:\repo`)).toBeNull();
+  });
+
+  it("finds the pane across workspaces, and nothing for an unknown or empty cwd", () => {
+    const spaces = [w(1, [p(10, "claude", String.raw`C:\a`)]), w(2, [p(20, "claude", String.raw`C:\b`)])];
+    expect(hookTargetPane(spaces, String.raw`C:\b`)?.w.id).toBe(2);
+    expect(hookTargetPane(spaces, String.raw`C:\nowhere`)).toBeNull();
+    expect(hookTargetPane(spaces, "")).toBeNull();
+    expect(hookTargetPane(spaces, undefined)).toBeNull();
+  });
+});
+
+describe("hookOverrideState (QL-720)", () => {
+  const rec = (kind: HookRecord["kind"]): HookRecord => ({ kind, at: 1000 });
+
+  it("silences a terminal guess that Claude has already finished with", () => {
+    // The whole point: the tail said "Do you want to..." (a code block, say)
+    // while Claude has actually stopped.
+    expect(hookOverrideState("permission", rec("stop"))).toBe("idle");
+    expect(hookOverrideState("waiting", rec("stop"))).toBe("idle");
+  });
+
+  it("downgrades a false approval to merely idle when the hook says so", () => {
+    expect(hookOverrideState("permission", rec("idle"))).toBe("waiting");
+  });
+
+  it("never re-raises an alarm, only ever lowers one", () => {
+    // A stale record must be able to cost a missed alert, never invent one.
+    expect(hookOverrideState("running", rec("permission"))).toBeNull();
+    expect(hookOverrideState("idle", rec("permission"))).toBeNull();
+    expect(hookOverrideState("waiting", rec("permission"))).toBeNull();
+    expect(hookOverrideState("running", rec("stop"))).toBeNull();
+    expect(hookOverrideState("error", rec("stop"))).toBeNull();
+  });
+
+  it("leaves a pane alone when no hook has ever spoken for it", () => {
+    expect(hookOverrideState("permission", undefined)).toBeNull();
+    expect(hookOverrideState("waiting", undefined)).toBeNull();
+  });
+
+  it("keeps an error visible — hooks say nothing about a crashed pane", () => {
+    expect(hookOverrideState("error", rec("idle"))).toBeNull();
+  });
+});
+
+describe("hook event name and grace window (QL-720)", () => {
+  it("matches the backend constant (src-tauri/src/hooks.rs HOOK_EVENT)", () => {
+    expect(HOOK_EVENT).toBe("hook://event");
+  });
+
+  it("keeps the stale-record grace short enough that a new turn always retires it", () => {
+    // Trailing bytes around a Stop are milliseconds away; a user typing the
+    // next prompt is seconds away. 1s sits between the two.
+    expect(HOOK_STALE_GRACE_MS).toBe(1000);
   });
 });

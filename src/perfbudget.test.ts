@@ -139,7 +139,12 @@ describe("steady-state IPC budget (UX-595)", () => {
 /** Everything the built index.html fetches before first paint (entry chunk,
  *  its modulepreloads, and the stylesheet), in bytes. Fonts are excluded: they
  *  load from CSS and don't block the cockpit rendering. */
-const COLD_START_BUDGET_BYTES = 1_450_000;
+/* Raised 1_450_000 -> 1_520_000 on 2026-08-11: the QL wave-5/6 feature set
+ * (subagent tree, plan panel, config doctor, session search, hooks UI, hints,
+ * sticky scroll) legitimately grew the eager payload by ~21KB after the
+ * serialize addon was already made lazy (-15.5KB). The app-chunk budget below
+ * stays at 430KB as the tighter guard on our own code. */
+const COLD_START_BUDGET_BYTES = 1_520_000;
 /** The app's own chunk. React and xterm are separate, rarely-changing vendor
  *  chunks; this is the number our own code moves. */
 const APP_CHUNK_BUDGET_BYTES = 430_000;

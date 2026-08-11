@@ -667,3 +667,95 @@
 .transcript-line { padding: 0 10px; white-space: pre-wrap; word-break: break-word; color: var(--muted); }
 .transcript-line.hit { background: color-mix(in srgb, var(--st-waiting) 18%, transparent); color: var(--text); }
 .transcript-line.current { background: color-mix(in srgb, var(--ice) 26%, transparent); color: var(--text); }
+
+/* ---------------------------------------------------------------------------
+   QL-754 quick-select hints / QL-755 sticky command line.
+
+   Both are plain DOM built by Terminal.tsx and appended inside term.element,
+   not React: they are positioned in terminal CELLS, and the only place that
+   knows the live cell size is the mount effect that owns the xterm instance.
+   Styling lives here so they follow the app's theme tokens like everything
+   else in a pane, instead of hard-coding colours next to the measurement code.
+   --------------------------------------------------------------------------- */
+
+/* The hint layer never takes a click: it's a keyboard mode, and a stray click
+   must reach the terminal underneath (selection, mouse-reporting TUIs). */
+.xterm-hints { position: absolute; inset: 0; z-index: 7; pointer-events: none; }
+.xterm-hint {
+  position: absolute;
+  transform: translateX(-1px);
+  padding: 0 3px;
+  border-radius: 3px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-family: var(--font-mono);
+  font-weight: 700;
+  line-height: 1.35;
+  letter-spacing: .04em;
+  text-transform: lowercase;
+  white-space: nowrap;
+  box-shadow: 0 1px 5px rgba(0, 0, 0, .5);
+}
+/* The part already typed recedes so what's left to press stays the loud thing
+   on a screen that may be carrying twenty labels. */
+.xterm-hint em { font-style: normal; opacity: .45; }
+
+.xterm-hintbar {
+  position: absolute;
+  left: 50%;
+  bottom: 10px;
+  transform: translateX(-50%);
+  z-index: 7;
+  pointer-events: none;
+  max-width: calc(100% - 24px);
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  background: var(--elevated);
+  color: var(--muted);
+  font: 11px var(--font-sans);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  box-shadow: var(--shadow-2, 0 10px 30px -12px rgba(0, 0, 0, .6));
+}
+
+/* Pinned prompt line — only rendered while the pane is scrolled off its live
+   tail, so it can afford to sit ON the top row: the row it's covering is the
+   one it's naming. */
+.xterm-sticky {
+  position: absolute;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-sizing: border-box;
+  padding: 0 8px 0 4px;
+  background: color-mix(in srgb, var(--elevated) 94%, transparent);
+  border-bottom: 1px solid var(--line-strong);
+  color: var(--muted);
+  font-family: var(--font-mono);
+  line-height: 1;
+  cursor: pointer;
+  user-select: none;
+  overflow: hidden;
+  box-shadow: 0 4px 10px -6px rgba(0, 0, 0, .8);
+  transition: background-color var(--t-fast, 120ms) var(--ease-standard, ease);
+}
+.xterm-sticky:hover { background: var(--elevated); color: var(--text); }
+.xterm-sticky-text { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.xterm-sticky-jump {
+  flex: none;
+  font-family: var(--font-sans);
+  font-size: 10px;
+  color: var(--faint);
+  opacity: 0;
+  transition: opacity var(--t-fast, 120ms) var(--ease-standard, ease);
+}
+.xterm-sticky:hover .xterm-sticky-jump { opacity: 1; }
+@media (prefers-reduced-motion: reduce) {
+  .xterm-sticky, .xterm-sticky-jump { transition: none; }
+}
+
+/* Shortcut hint on a pane-menu row (QL-754). */
+.pmenu-key { margin-left: auto; font-size: 10.5px; color: var(--faint); white-space: nowrap; }

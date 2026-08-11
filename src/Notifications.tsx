@@ -22,7 +22,12 @@ import { usePaneProgress, type PaneProgress } from "./Terminal";
 import { timeTitle, bytes } from "./format";
 import { vendorShort } from "./vendors";
 import { useHeavyPanes, useMemoryHealthPoll, type PaneMemory } from "./poll";
-import { getMemoryCeilingMb, MEMORY_CEILING_EVENT } from "./Settings";
+import {
+  getMemoryCeilingMb,
+  MEMORY_CEILING_EVENT,
+  HOOKS_CHANGED_EVENT,
+  hooksInstalled,
+} from "./Settings";
 import "./Notifications.css";
 
 // All configurable states, approval/waiting/error first since those are the
@@ -180,6 +185,147 @@ export function heavyPaneItems(workspaces: Workspace[], heavy: PaneMemory[]): He
   return items.sort((a, b) => b.mem.memoryMb - a.mem.memoryMb);
 }
 
+// ---------------------------------------------------------------------------
+// QL-720: hook-driven session state.
+//
+// Every pane state in Flightdeck is GUESSED from terminal text — a 3s quiet
+// timer plus regexes over the last line. Claude Code will simply tell us
+// instead, through its own hooks: `Notification` when it needs the user,
+// `Stop` when it has finished responding. src-tauri/src/hooks.rs relays those
+// to the frontend as `hook://event`; everything below turns one of those into
+// a pane state change.
+//
+// THREE RULES, in order of how easy they are to get wrong:
+//
+//  1. SAME PATHWAY, NO PARALLEL QUEUE. A hook event ends as a `setPaneState`
+//     call and nothing else. It therefore reaches attentionKind() →
+//     needsHumanQueue() → the bell exactly like a terminal-derived state does,
+//     so there is one ranking, one badge, one feed, and no second notion of
+//     "needs you" to keep in sync.
+//
+//  2. HOOKS WIN, BUT ONLY DOWNWARDS. Where the hook and the terminal heuristic
+//     disagree about a Claude pane while hooks are installed, the hook wins:
+//     that is the entire point. Re-assertion is deliberately limited to
+//     SILENCING a guess (a pane the terminal thinks is asking for approval,
+//     which Claude has actually finished with) — never to re-raising one. A
+//     stale record can then only ever cost a missed alert, never invent one.
+//     Any output after the grace window retires the record entirely and hands
+//     the pane back to the heuristic.
+//
+//  3. IDLE AND STOP NEVER RING (notification ruling, 2026-08-01). A permission
+//     hook is a genuine approval and may chime/toast; "Claude is waiting for
+//     your input" and "Claude has stopped" are facts, so they update state and
+//     the feed and touch nothing that makes a noise.
+// ---------------------------------------------------------------------------
+
+/** Emitted by src-tauri/src/hooks.rs for each line the relay appends. Kept in
+ *  step with HOOK_EVENT on the Rust side. */
+export const HOOK_EVENT = "hook://event";
+
+/** One relayed hook fire. `payload` is Claude Code's own hook stdin JSON,
+ *  which is why the field names inside it are snake_case. */
+export interface HookEventPayload {
+  event?: string;
+  ts?: number;
+  payload?: {
+    cwd?: string;
+    session_id?: string;
+    message?: string;
+    hook_event_name?: string;
+  } | null;
+}
+
+/** What a hook fire means for the pane it belongs to. */
+export type HookKind = "permission" | "idle" | "stop";
+
+/** Where each kind lands in the EXISTING pane-state model (store.ts), which is
+ *  what attentionKind() reads:
+ *    permission → `permission`, the one kind allowed to ring;
+ *    idle       → `waiting`, i.e. ambient unless its last line reads as a
+ *                 genuine question — exactly how a quiet pane is treated today;
+ *    stop       → `idle`, which attentionKind() scores as null: nothing needs
+ *                 you, which is precisely what "Claude finished" means. */
+export const HOOK_PANE_STATE: Record<HookKind, PaneState> = {
+  permission: "permission",
+  idle: "waiting",
+  stop: "idle",
+};
+
+/** Claude Code sends two shapes of Notification: "Claude needs your permission
+ *  to use X" and "Claude is waiting for your input". Anything unrecognised is
+ *  treated as idle rather than permission — an unknown notification must not be
+ *  able to invent an approval prompt (and so a chime) out of nothing. */
+export function classifyHookEvent(e: HookEventPayload | null | undefined): HookKind | null {
+  const name = e?.event || e?.payload?.hook_event_name || "";
+  if (name === "Stop") return "stop";
+  if (name !== "Notification") return null; // SubagentStop, PreToolUse, … aren't ours
+  const msg = (e?.payload?.message ?? "").toLowerCase();
+  return /permission|approve|approval|allow/.test(msg) ? "permission" : "idle";
+}
+
+/** Windows path comparison: case-insensitive, slash-agnostic, no trailing
+ *  separator. Claude reports its cwd with the same drive/segments the pane was
+ *  spawned with, but not necessarily the same casing or slashes. */
+export function normaliseCwd(p: string | undefined | null): string {
+  return (p ?? "").replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+}
+
+function isClaudePane(p: PaneModel): boolean {
+  return p.vendor.toLowerCase().includes("claude");
+}
+
+/** Resolve a hook's cwd to the ONE Claude pane it can only be.
+ *
+ *  Ambiguity is answered with null, not a guess: two Claude panes open on the
+ *  same folder can't be told apart from the payload (nothing in the pane model
+ *  carries Claude's session_id), and marking the wrong one blocked is worse
+ *  than falling back to the terminal heuristic for both. */
+export function hookTargetPane(
+  workspaces: Workspace[],
+  cwd: string | undefined | null
+): { w: Workspace; p: PaneModel } | null {
+  const want = normaliseCwd(cwd);
+  if (!want) return null;
+  const hits: { w: Workspace; p: PaneModel }[] = [];
+  for (const w of workspaces) {
+    for (const p of w.panes) {
+      if (isClaudePane(p) && normaliseCwd(p.cwd) === want) hits.push({ w, p });
+    }
+  }
+  return hits.length === 1 ? hits[0] : null;
+}
+
+export interface HookRecord { kind: HookKind; at: number }
+
+/** How long after a hook fire trailing output is still assumed to belong to
+ *  that same turn. Claude prints its last few bytes around the Stop hook, and
+ *  that must not count as "the pane started working again". A real new turn is
+ *  a user typing, which is seconds away, never inside this window. */
+export const HOOK_STALE_GRACE_MS = 1000;
+
+/** Rule 2 above. Given what the terminal heuristic currently claims and the
+ *  last thing the hooks said, what should the pane actually be?
+ *
+ *  `null` = leave it alone. Only the two silencing moves are ever returned:
+ *  Claude has stopped, so a "waiting"/"permission" guess is wrong; or Claude
+ *  said it is merely idle, so a "permission" guess is wrong. Raising a pane TO
+ *  permission happens once, when the hook arrives, and is never re-asserted. */
+export function hookOverrideState(state: PaneState, rec: HookRecord | undefined): PaneState | null {
+  if (!rec) return null;
+  if (rec.kind === "stop" && (state === "permission" || state === "waiting")) return "idle";
+  if (rec.kind === "idle" && state === "permission") return "waiting";
+  return null;
+}
+
+/** Last hook fire per pane, retired as soon as the pane genuinely works again.
+ *  Module-level for the same reason `stateSince` is: Notifications is the one
+ *  always-mounted surface, so it owns the bookkeeping. */
+const hookState = new Map<number, HookRecord>();
+/** Panes whose CURRENT state was put there by a non-ringing hook (idle/Stop).
+ *  Rule 3: the transition still reaches the feed and the queue, but skips the
+ *  pulse/chime/toast block. */
+const hookSilent = new Map<number, PaneState>();
+
 type Panel = "none" | "feed" | "settings";
 
 /** UX-601: one row of the "needs you" list. The old row read
@@ -223,6 +369,7 @@ export function Notifications() {
   const workspaces = useApp((s) => s.workspaces);
   const switchWorkspace = useApp((s) => s.switchWorkspace);
   const focusPane = useApp((s) => s.focusPane);
+  const setPaneState = useApp((s) => s.setPaneState);
 
   const notify = useUI((s) => s.notify);
   const setNotifyOn = useUI((s) => s.setNotifyOn);
@@ -279,6 +426,47 @@ export function Notifications() {
     return () => window.removeEventListener("mousedown", close);
   }, [panel]);
 
+  // QL-720: are Claude's hooks installed? The cached answer is what the last
+  // install/uninstall left behind, so the first frame after a restart already
+  // behaves correctly; the backend then confirms it (and catches a settings.json
+  // the user edited by hand outside Flightdeck). Settings broadcasts on change.
+  const [hooksOn, setHooksOn] = useState(hooksInstalled);
+  useEffect(() => {
+    invoke<{ settingsInstalled: boolean }>("hook_events_status")
+      .then((s) => setHooksOn(!!s.settingsInstalled))
+      .catch(() => { /* no Tauri backend (browser preview) — keep the cache */ });
+    const onChange = (e: Event) => setHooksOn(!!(e as CustomEvent<boolean>).detail);
+    window.addEventListener(HOOKS_CHANGED_EVENT, onChange);
+    return () => window.removeEventListener(HOOKS_CHANGED_EVENT, onChange);
+  }, []);
+
+  // QL-720: the relay's events, turned into pane state. Read the workspaces
+  // through a ref so this subscribes once and still resolves cwds against the
+  // live list — re-subscribing on every pane change would drop events.
+  const hookWsRef = useRef(workspaces);
+  hookWsRef.current = workspaces;
+  useEffect(() => {
+    if (!hooksOn) return;
+    let stop: (() => void) | undefined;
+    let cancelled = false;
+    void listen<HookEventPayload>(HOOK_EVENT, (ev) => {
+      const kind = classifyHookEvent(ev.payload);
+      if (!kind) return;
+      const target = hookTargetPane(hookWsRef.current, ev.payload?.payload?.cwd);
+      if (!target) return; // unknown or ambiguous folder — heuristic keeps the pane
+      const next = HOOK_PANE_STATE[kind];
+      hookState.set(target.p.id, { kind, at: Date.now() });
+      // Rule 3: idle/Stop update the state silently; a permission hook is
+      // allowed to ring, so it must NOT be marked silent.
+      if (kind === "permission") hookSilent.delete(target.p.id);
+      else hookSilent.set(target.p.id, next);
+      if (target.p.state !== next) setPaneState(target.p.id, next);
+    })
+      .then((un) => { if (cancelled) un(); else stop = un; })
+      .catch(() => { /* not running under Tauri */ });
+    return () => { cancelled = true; stop?.(); };
+  }, [hooksOn, setPaneState]);
+
   // Watch every pane for a state transition into a configured "notify" state.
   useEffect(() => {
     for (const w of workspaces) {
@@ -289,6 +477,28 @@ export function Notifications() {
         stateSince.set(p.id, Date.now()); // shared with AttentionQueue (attention.ts)
         // Skip the first observation of a pane (mount) — only real transitions notify.
         if (prev === undefined) continue;
+
+        // QL-720 rule 2: the terminal heuristic has just moved this pane. If the
+        // hooks know better, correct it here — a `setPaneState` that arrives as
+        // its own transition on the next pass, so nothing downstream needs to
+        // know a hook was involved.
+        const rec = hookState.get(p.id);
+        if (rec) {
+          if (p.state === "running" && Date.now() - rec.at > HOOK_STALE_GRACE_MS) {
+            // Real output after the grace window: the turn moved on, so the
+            // record is stale and the heuristic is in charge again.
+            hookState.delete(p.id);
+            hookSilent.delete(p.id);
+          } else if (hooksOn) {
+            const override = hookOverrideState(p.state, rec);
+            if (override) {
+              hookSilent.set(p.id, override);
+              setPaneState(p.id, override);
+              continue;
+            }
+          }
+        }
+
         if (!notify.notifyOn[p.state]) continue;
 
         pushNotifyEvent({ wsId: w.id, wsName: w.name, paneId: p.id, vendor: p.vendor, title: p.title, state: p.state });
@@ -299,6 +509,11 @@ export function Notifications() {
         // needed, so a pane that merely stopped printing stays silent.
         const kind = attentionKind(p);
         if (!kind) continue;
+        // QL-720 rule 3: this state came from an idle/Stop hook, which by the
+        // notification ruling is a fact rather than an alert. It has already
+        // been recorded in the feed above and it still ranks in the queue; it
+        // just never pulses, chimes or toasts.
+        if (hookSilent.get(p.id) === p.state) continue;
 
         // One-shot pulse on arrival — see the `pulse` state comment above.
         setPulse(true);
@@ -324,7 +539,11 @@ export function Notifications() {
     const live = new Set(workspaces.flatMap((w) => w.panes.map((p) => p.id)));
     for (const id of prevStates.current.keys()) if (!live.has(id)) prevStates.current.delete(id);
     for (const id of stateSince.keys()) if (!live.has(id)) stateSince.delete(id);
-  }, [workspaces, notify, pushNotifyEvent]);
+    // QL-720: pane ids are never reused, but a closed pane's hook record would
+    // otherwise sit in memory for the rest of the session.
+    for (const id of hookState.keys()) if (!live.has(id)) hookState.delete(id);
+    for (const id of hookSilent.keys()) if (!live.has(id)) hookSilent.delete(id);
+  }, [workspaces, notify, pushNotifyEvent, hooksOn, setPaneState]);
 
   // UI-146: when several agents are blocked at once, triage beats one-at-a-time
   // — open the queue. Opt-in, and only on the rising edge so dismissing it

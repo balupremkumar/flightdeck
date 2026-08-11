@@ -23,7 +23,9 @@ const {
   resolveEditorCommand, shouldShowWhatsNew, EDITOR_PRESETS, cpuLevelClass, memoryLevelClass,
   clampMemoryCeiling, getMemoryCeilingMb, setMemoryCeilingMb,
   DEFAULT_MEMORY_CEILING_MB, MIN_MEMORY_CEILING_MB, MAX_MEMORY_CEILING_MB, MEMORY_CEILING_EVENT,
+  hookStatusLine, hooksInstalled, setHooksInstalled, HOOKS_CHANGED_EVENT,
 } = await import("./Settings");
+import type { HookStatus } from "./Settings";
 
 describe("resolveEditorCommand (UX-517)", () => {
   it("fills {file} and {line}", () => {
@@ -150,5 +152,52 @@ describe("memory ceiling setting (UX-596 / QL-742)", () => {
   it("broadcasts the clamped value so the always-on poll re-samples at once", () => {
     setMemoryCeilingMb(4);
     expect(dispatched).toEqual([{ type: MEMORY_CEILING_EVENT, detail: MIN_MEMORY_CEILING_MB }]);
+  });
+});
+
+describe("Claude Code hooks row (QL-720)", () => {
+  const base: HookStatus = {
+    relayInstalled: true,
+    hooksDir: String.raw`C:\data\hooks`,
+    settingsPath: String.raw`C:\Users\Me\.claude\settings.json`,
+    settingsInstalled: false,
+    settingsError: null,
+    lastEventAgeMs: null,
+  };
+
+  beforeEach(() => { store.clear(); dispatched.length = 0; });
+
+  it("says what is actually true, not what should be", () => {
+    expect(hookStatusLine(null)).toBe("Checking…");
+    expect(hookStatusLine(base)).toContain("Not installed");
+    expect(hookStatusLine({ ...base, settingsInstalled: true })).toContain("waiting for the first hook");
+    expect(hookStatusLine({ ...base, settingsInstalled: true, lastEventAgeMs: 120_000 }, 1_000_000)).toBe(
+      "Installed — last hook 2m ago."
+    );
+  });
+
+  // A settings.json we refuse to touch (BOM, bad JSON) must SAY so — the whole
+  // point of refusing is that the user can go and fix it.
+  it("surfaces the backend's refusal reason ahead of everything else", () => {
+    const s = { ...base, settingsInstalled: true, settingsError: "settings.json starts with a byte-order mark." };
+    expect(hookStatusLine(s)).toBe("settings.json starts with a byte-order mark.");
+  });
+
+  // "Installed" with no relay on disk is a real state (app data wiped) and it
+  // must not read as working.
+  it("calls out a missing relay before claiming anything about the settings file", () => {
+    expect(hookStatusLine({ ...base, relayInstalled: false, settingsInstalled: true })).toContain("relay script is missing");
+  });
+
+  it("caches the installed flag and broadcasts every change", () => {
+    expect(hooksInstalled()).toBe(false);
+    setHooksInstalled(true);
+    expect(hooksInstalled()).toBe(true);
+    setHooksInstalled(false);
+    expect(hooksInstalled()).toBe(false);
+    expect(dispatched).toEqual([
+      { type: HOOKS_CHANGED_EVENT, detail: true },
+      { type: HOOKS_CHANGED_EVENT, detail: false },
+    ]);
   });
 });

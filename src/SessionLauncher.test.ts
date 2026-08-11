@@ -6,11 +6,12 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn(), emit: vi.fn() }));
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn(), openPath: vi.fn(), revealItemInDir: vi.fn() }));
 
-import type { ClaudeSession } from "./SessionLauncher";
+import type { ClaudeSession, SessionSearchHit } from "./SessionLauncher";
 
 const {
   resumeArgs, modelShort, contextWindowFor, filterSessions, sessionWeight,
-  DEFAULT_CONTEXT_WINDOW, RESUME_VENDOR,
+  groupHits, highlightParts,
+  DEFAULT_CONTEXT_WINDOW, RESUME_VENDOR, MIN_SEARCH_CHARS, SEARCH_DEBOUNCE_MS,
 } = await import("./SessionLauncher");
 
 const session = (over: Partial<ClaudeSession> = {}): ClaudeSession => ({
@@ -111,5 +112,77 @@ describe("filterSessions (QL-764)", () => {
 
   it("says nothing matched rather than falling back to everything", () => {
     expect(filterSessions(list, "zzz")).toEqual([]);
+  });
+});
+
+describe("groupHits (QL-771)", () => {
+  const hit = (over: Partial<SessionSearchHit> = {}): SessionSearchHit => ({
+    sessionId: "aaa",
+    timestampMs: 1_700_000_000_000,
+    role: "user",
+    snippet: "…the kraken chip…",
+    sessionHits: 1,
+    ...over,
+  });
+
+  it("groups consecutive hits per session, keeping the backend's order", () => {
+    const groups = groupHits([
+      hit({ sessionId: "new", sessionHits: 2 }),
+      hit({ sessionId: "new", sessionHits: 2, role: "assistant" }),
+      hit({ sessionId: "old", sessionHits: 1 }),
+    ]);
+    expect(groups.map((g) => g.sessionId)).toEqual(["new", "old"]);
+    expect(groups[0].hits).toHaveLength(2);
+    expect(groups[1].hits).toHaveLength(1);
+  });
+
+  it("reports the session's own hit count, which can exceed the rows shown", () => {
+    // The backend early-exits per file, so count is the session's total as far
+    // as it read — never just the length of what came back after the overall cap.
+    const groups = groupHits([hit({ sessionId: "big", sessionHits: 20 })]);
+    expect(groups[0].count).toBe(20);
+    expect(groups[0].hits).toHaveLength(1);
+  });
+
+  it("has nothing to group when nothing matched", () => {
+    expect(groupHits([])).toEqual([]);
+  });
+});
+
+describe("highlightParts (QL-771)", () => {
+  it("splits the snippet into matched and unmatched runs, case-insensitively", () => {
+    expect(highlightParts("The KRAKEN chip", "kraken")).toEqual([
+      { text: "The ", hit: false },
+      { text: "KRAKEN", hit: true },
+      { text: " chip", hit: false },
+    ]);
+  });
+
+  it("marks every occurrence", () => {
+    expect(highlightParts("ab ab", "ab").filter((p) => p.hit)).toHaveLength(2);
+  });
+
+  it("keeps the original text exactly — the snippet is never rewritten", () => {
+    const s = "…mixed CASE and more case…";
+    expect(highlightParts(s, "case").map((p) => p.text).join("")).toBe(s);
+    expect(highlightParts(s, "").map((p) => p.text).join("")).toBe(s);
+    expect(highlightParts(s, "   ")).toEqual([{ text: s, hit: false }]);
+  });
+
+  it("gives up on highlighting rather than misaligning odd Unicode", () => {
+    // "İ".toLowerCase() is two code units, so offsets from the lowercased copy
+    // would point at the wrong characters in the original.
+    const s = "İstanbul kraken";
+    expect(highlightParts(s, "kraken")).toEqual([{ text: s, hit: false }]);
+  });
+});
+
+describe("search knobs (QL-771)", () => {
+  it("won't fire a folder-wide read for one character", () => {
+    expect(MIN_SEARCH_CHARS).toBe(2);
+  });
+
+  it("debounces typing", () => {
+    expect(SEARCH_DEBOUNCE_MS).toBe(300);
   });
 });

@@ -25,6 +25,7 @@ import { openSessionLauncher, modelShort, contextWindowFor, RESUME_VENDOR } from
 import { SubagentTree, subagentChipLabel, type SubagentCount } from "./SubagentTreeView";
 import { PlanPanel, pendingPlan, planChipTitle, PLAN_APPROVE_KEYS, type PlanEntry } from "./PlanPanelView";
 import { parseWorkspaceDef, serializeWorkspaceExport } from "./snapshots";
+import { registerScrollbackSource, unregisterScrollbackSource, restoredScrollbackFor } from "./session";
 const MIN_FONT = 9;
 const MAX_FONT = 22;
 const DEFAULT_FONT = 13;
@@ -245,6 +246,15 @@ function PaneViewInner({
     });
   };
   const [ligatures, setLigatures] = useState(false);
+  // QL-758: OSC 52 clipboard writes from the child, off until this pane is
+  // told otherwise. Per pane and per session on purpose — it is a "I trust
+  // what this one agent is about to do" switch, not a preference.
+  const [osc52, setOsc52] = useState(false);
+  // QL-762: this pane's buffer from the last session, if the restore staged
+  // one. Read once per PaneView (not per Terminal mount) and only handed over
+  // on the pane's FIRST spawn: a deliberate Restart bumps the epoch and should
+  // give you a clean pane, not last week's output replayed at you.
+  const [restoredScrollback] = useState(() => restoredScrollbackFor(pane.id));
   // UI-237: start from THIS vendor's own threshold (agy idles longer than
   // claude; a shell is idle at once) — UX-560: or the user's saved override
   // for that vendor, if they've set one from any pane's menu. The per-pane
@@ -582,6 +592,24 @@ function PaneViewInner({
     pushToast("info", "Cleared this pane’s scrollback.");
   };
 
+  // QL-754: the hint mode is a terminal mode, so the menu has to hand focus
+  // back before raising it — otherwise the first label keystroke goes to the
+  // button that opened it. Degrades quietly on a Terminal without the method.
+  const showQuickHints = () => {
+    setCtxMenu(null);
+    setMenuOpen(false);
+    focusPane(wsId, pane.id);
+    paneRef.current?.querySelector<HTMLElement>("textarea.xterm-helper-textarea")?.focus();
+    const handle = terminalRef.current as (TerminalHandle & { showQuickHints?: () => boolean }) | null;
+    if (typeof handle?.showQuickHints !== "function") {
+      pushToast("info", "Link hints aren’t available in this pane.");
+      return;
+    }
+    // Focus lands in the terminal's textarea on the next frame; raising the
+    // hints after it keeps the blur-dismiss from closing them instantly.
+    requestAnimationFrame(() => { handle.showQuickHints!(); });
+  };
+
   // UI-126: escalate the "starting" copy once the wait stops looking normal.
   const [slowStart, setSlowStart] = useState(false);
   useEffect(() => {
@@ -727,6 +755,18 @@ function PaneViewInner({
   useEffect(() => {
     registerPaneSend(pane.id, (text) => terminalRef.current?.paste(text));
     return () => unregisterPaneSend(pane.id);
+  }, [pane.id]);
+
+  // QL-762: offer this pane's buffer to the session save. session.ts pulls it
+  // on an idle callback (never on the save path itself) and caps what it keeps
+  // — see its scrollback comment block. Degrades to "" on a Terminal that
+  // predates the handle method rather than throwing mid-save.
+  useEffect(() => {
+    registerScrollbackSource(pane.id, () => {
+      const handle = terminalRef.current as (TerminalHandle & { serializeScrollback?: () => string }) | null;
+      return typeof handle?.serializeScrollback === "function" ? handle.serializeScrollback() : "";
+    });
+    return () => unregisterScrollbackSource(pane.id);
   }, [pane.id]);
 
   // UX-553: shift+click toggles this pane in/out of the cross-workspace
@@ -1112,6 +1152,13 @@ Running low — consider /compact in this pane.` : "")
                 <IconFolder size={13} /> Worktree inventory
               </button>
               <div className="pmenu-sep" />
+              {/* QL-754: the hint mode is invisible until you know the key —
+                  name it here so it's discoverable from where people already
+                  look for pane actions. */}
+              <button className="pmenu-item" onClick={showQuickHints}>
+                Pick a path or link…<span className="pmenu-key">Ctrl+Shift+Space</span>
+              </button>
+              <div className="pmenu-sep" />
               {/* UX-546/547/549: transcript browser + scrollback export + last-command copy. */}
               <button className="pmenu-item" onClick={() => { setMenuOpen(false); setTranscriptOpen(true); }}>
                 <IconFile size={13} /> View transcript…
@@ -1157,6 +1204,21 @@ Running low — consider /compact in this pane.` : "")
                   aria-checked={ligatures}
                   onClick={() => setLigatures((v) => !v)}
                   title="Toggle code ligatures for this pane"
+                >
+                  <span />
+                </button>
+              </div>
+              {/* QL-758: OSC 52 — let this pane's process write the clipboard.
+                  Off by default, per pane, and write-only: a read request is
+                  never answered, whatever this is set to. */}
+              <div className="pmenu-row">
+                <span>Allow clipboard writes</span>
+                <button
+                  className={"toggle" + (osc52 ? " on" : "")}
+                  role="switch"
+                  aria-checked={osc52}
+                  onClick={() => setOsc52((v) => !v)}
+                  title="Let this pane's process copy to the clipboard (OSC 52). Reading the clipboard is never allowed."
                 >
                   <span />
                 </button>
@@ -1255,6 +1317,8 @@ Running low — consider /compact in this pane.` : "")
           vendor={pane.vendor}
           cwd={pane.cwd}
           initialDraft={pane.draft}
+          restoredScrollback={pane.epoch === 0 ? restoredScrollback : undefined}
+          osc52={osc52}
           setup={pane.needsSetup ? setupCmd : undefined}
           onSetupConsumed={() => clearNeedsSetup(pane.id)}
           fontSize={fontSize}

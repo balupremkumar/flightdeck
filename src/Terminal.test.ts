@@ -10,7 +10,10 @@ vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn(() => Promise.resol
 
 const { openUrl } = await import("@tauri-apps/plugin-opener");
 const { useUI } = await import("./ui");
-const { openTerminalUrl, publishPaneProgress, paneProgressList, parseShellMarks, normalizeReportedCwd, nextMarkLine } = await import("./Terminal");
+const {
+  openTerminalUrl, publishPaneProgress, paneProgressList, parseShellMarks, normalizeReportedCwd, nextMarkLine,
+  hintLabels, hintTargets, hintCopyText, stickyMarkLine,
+} = await import("./Terminal");
 
 const toasts = () => useUI.getState().toasts;
 
@@ -224,5 +227,94 @@ describe("nextMarkLine (QL-753 Ctrl+Up / Ctrl+Down)", () => {
   });
   it("does not care what order the marks arrived in", () => {
     expect(nextMarkLine([120, 3, 40], 10, 1)).toBe(40);
+  });
+});
+
+// QL-755: what gets pinned at the top of a scrolled-back pane.
+describe("stickyMarkLine (QL-755)", () => {
+  const lines = [3, 40, 120];
+  it("pins the nearest command mark above the viewport top", () => {
+    expect(stickyMarkLine(lines, 60)).toBe(40);
+    expect(stickyMarkLine(lines, 121)).toBe(120);
+  });
+  // The prompt IS the top visible row — pinning a duplicate of a line already
+  // on screen reads as a rendering fault, not a feature.
+  it("pins nothing when the owning prompt is the top visible row", () => {
+    expect(stickyMarkLine(lines, 40)).toBe(3);
+    expect(stickyMarkLine([40], 40)).toBeNull();
+  });
+  it("pins nothing above the first mark, or with no marks at all", () => {
+    expect(stickyMarkLine(lines, 3)).toBeNull();
+    expect(stickyMarkLine(lines, 0)).toBeNull();
+    expect(stickyMarkLine([], 500)).toBeNull();
+  });
+});
+
+// QL-754: the labelling half of quick-select hints. The overlay itself needs a
+// live xterm; everything that decides WHAT a keystroke means is here.
+describe("hintLabels (QL-754)", () => {
+  it("uses one home-row letter while there are few enough targets", () => {
+    expect(hintLabels(3)).toEqual(["a", "s", "d"]);
+  });
+
+  // The whole reason labels are fixed-width: no label may be a prefix of
+  // another, or typing "a" would have to wait to find out if "as" was coming.
+  it("never lets one label prefix another", () => {
+    for (const n of [1, 9, 26, 27, 200]) {
+      const labels = hintLabels(n);
+      expect(new Set(labels.map((l) => l.length)).size).toBe(1);
+      expect(new Set(labels).size).toBe(labels.length);
+    }
+  });
+
+  it("switches the whole set to two characters once one row isn't enough", () => {
+    const labels = hintLabels(30);
+    expect(labels).toHaveLength(30);
+    expect(labels[0]).toBe("aa");
+    expect(labels.every((l) => l.length === 2)).toBe(true);
+  });
+
+  it("stops rather than inventing a third character on an absurd screen", () => {
+    expect(hintLabels(5000)).toHaveLength(26 * 26);
+  });
+});
+
+describe("hintTargets (QL-754)", () => {
+  it("labels every linkifier match, top-to-bottom then left-to-right", () => {
+    const targets = hintTargets([
+      "see src/App.tsx:42 and https://example.com/docs",
+      "",
+      "  D:\\repo\\notes.md",
+    ]);
+    expect(targets.map((t) => [t.label, t.row, t.match.raw])).toEqual([
+      ["a", 0, "src/App.tsx"],
+      ["s", 0, "https://example.com/docs"],
+      ["d", 2, "D:\\repo\\notes.md"],
+    ]);
+  });
+
+  it("carries the column so a chip can be placed on the character it labels", () => {
+    const [first] = hintTargets(["error in src/store.ts:9"]);
+    expect(first.match.start).toBe("error in ".length);
+    expect(first.match.line).toBe(9);
+  });
+
+  it("finds nothing in ordinary prose — the empty state is a real one", () => {
+    expect(hintTargets(["building 12 of 30, took 1.4s", "", "all good"])).toEqual([]);
+  });
+});
+
+describe("hintCopyText (QL-754)", () => {
+  it("keeps a path's :line suffix — that's what makes it worth pasting", () => {
+    const [t] = hintTargets(["at src/App.tsx:42 here"]);
+    expect(hintCopyText(t.match)).toBe("src/App.tsx:42");
+  });
+  it("drops the quotes the output happened to wrap a path in", () => {
+    const [t] = hintTargets([`opening "D:\\my repo\\a.txt" now`]);
+    expect(hintCopyText(t.match)).toBe("D:\\my repo\\a.txt");
+  });
+  it("copies a URL verbatim", () => {
+    const [t] = hintTargets(["docs at https://example.com/a?b=1"]);
+    expect(hintCopyText(t.match)).toBe("https://example.com/a?b=1");
   });
 });

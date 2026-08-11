@@ -854,6 +854,315 @@ pub fn pane_plans(cwd: String) -> Vec<PlanEntry> {
     plans_for(&Path::new(&home).join(".claude").join("projects"), &cwd)
 }
 
+// ---------------------------------------------------------------------------
+// QL-771: full-text search across a project's transcripts.
+//
+// The listing above indexes what a session IS; this searches what was SAID in
+// it. Same files, same newest-first order, but every line is looked at, so the
+// rules are all about not paying for the 25 MB monsters:
+//
+//   - streamed line by line (BufReader::read_until), never read whole;
+//   - a raw byte-level, case-insensitive pre-filter on each line, so serde only
+//     ever sees a line that could match — that's the difference between a scan
+//     of ~110 MB in a couple of seconds and one in a couple of minutes;
+//   - only the TEXT of user/assistant messages counts as a hit. tool_use inputs
+//     and tool_result payloads (file contents, diffs, command output) are the
+//     bulk of a transcript and are noise in a "what did we talk about" search;
+//   - sidechain (sub-agent) lines are skipped for the same reason;
+//   - SEARCH_FILE_CAP hits per file and SEARCH_CAP overall, both reported back
+//     as `truncated` rather than silently trimming.
+//
+// Results are cached per (file, query) and invalidated by mtime+size, so
+// retyping the same query, or searching again after only the live session grew,
+// re-reads just the files that actually changed.
+//
+// Case-insensitivity is ASCII-folded (the same fold `contains` on a lowercased
+// ASCII string would give). A non-ASCII query still matches its exact bytes.
+// ---------------------------------------------------------------------------
+
+/// Hits returned across all sessions in one search.
+const SEARCH_CAP: usize = 200;
+/// Hits taken from any one transcript before moving on — twenty rows of one
+/// session is already more than a picker can show.
+const SEARCH_FILE_CAP: usize = 20;
+/// Characters of context each side of the match in a snippet.
+const SNIPPET_RADIUS: usize = 120;
+/// Below this a query matches nearly every line, which is a folder-wide read
+/// for no signal. The UI asks for more characters instead.
+const MIN_QUERY_CHARS: usize = 2;
+/// (file, query) results kept warm. Twenty-odd sessions times a few queries.
+const SEARCH_CACHE_CAP: usize = 128;
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchHit {
+    /// Session id = the transcript's file stem, so a hit resumes exactly the
+    /// way a row from `list_claude_sessions` does.
+    pub session_id: String,
+    /// The line's own timestamp, epoch ms; 0 when the line carried none.
+    pub timestamp_ms: u64,
+    /// "user" or "assistant".
+    pub role: String,
+    /// ±SNIPPET_RADIUS characters around the match, whitespace collapsed, with
+    /// an ellipsis on whichever end was cut.
+    pub snippet: String,
+    /// Matching lines found in this session — never more than SEARCH_FILE_CAP,
+    /// which is what `truncated` warns about.
+    pub session_hits: u64,
+}
+
+#[derive(Clone, Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchResults {
+    pub hits: Vec<SearchHit>,
+    /// A cap stopped the scan — the UI says "first N" rather than implying this
+    /// is everything.
+    pub truncated: bool,
+    /// Transcripts actually opened (or served from cache) for this query.
+    pub sessions_searched: u64,
+}
+
+struct SearchEntry {
+    modified_ms: u64,
+    len: u64,
+    hits: Vec<SearchHit>,
+    /// Monotonic stamp for the LRU eviction below.
+    used: u64,
+}
+
+fn search_cache() -> &'static Mutex<HashMap<(PathBuf, String), SearchEntry>> {
+    static S: OnceLock<Mutex<HashMap<(PathBuf, String), SearchEntry>>> = OnceLock::new();
+    S.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn search_tick() -> u64 {
+    static T: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    T.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Byte offset of `needle` (already ASCII-lowercased) in `hay`, ASCII-folded.
+/// Deliberately allocation-free: it runs on every line of every transcript.
+fn find_ci(hay: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() || needle.len() > hay.len() {
+        return None;
+    }
+    // Skipping ahead on the first byte with `position` (rather than testing
+    // every offset) is what keeps a 110 MB folder scan sub-second.
+    let (lo, up) = (needle[0], needle[0].to_ascii_uppercase());
+    let last = hay.len() - needle.len();
+    let mut i = 0usize;
+    while i <= last {
+        let Some(off) = hay[i..=last].iter().position(|&b| b == lo || b == up) else { return None };
+        i += off;
+        if hay[i..i + needle.len()]
+            .iter()
+            .zip(needle)
+            .all(|(a, b)| a.to_ascii_lowercase() == *b)
+        {
+            return Some(i);
+        }
+        i += 1;
+    }
+    None
+}
+
+fn floor_boundary(s: &str, mut i: usize) -> usize {
+    while i > 0 && !s.is_char_boundary(i) {
+        i -= 1;
+    }
+    i
+}
+
+fn ceil_boundary(s: &str, mut i: usize) -> usize {
+    while i < s.len() && !s.is_char_boundary(i) {
+        i += 1;
+    }
+    i
+}
+
+/// The spoken text of a user/assistant line, with its role — None for anything
+/// that isn't a person or the agent talking (tool blocks, sidechains, meta
+/// lines, the `<command-name>` wrappers slash-commands leave behind).
+fn message_text(v: &serde_json::Value) -> Option<(String, String)> {
+    let kind = v.get("type").and_then(|t| t.as_str())?;
+    if kind != "user" && kind != "assistant" {
+        return None;
+    }
+    if v.get("isMeta").and_then(|b| b.as_bool()).unwrap_or(false)
+        || v.get("isSidechain").and_then(|b| b.as_bool()).unwrap_or(false)
+    {
+        return None;
+    }
+    let content = v.get("message")?.get("content")?;
+    let text = match content {
+        serde_json::Value::String(s) => s.clone(),
+        // Only `text` blocks: tool_use inputs and tool_result payloads are
+        // skipped here, which is what keeps the results readable.
+        serde_json::Value::Array(items) => items
+            .iter()
+            .filter(|b| b.get("type").and_then(|t| t.as_str()) == Some("text"))
+            .filter_map(|b| b.get("text").and_then(|t| t.as_str()))
+            .collect::<Vec<_>>()
+            .join(" "),
+        _ => return None,
+    };
+    let t = text.trim();
+    if t.is_empty() || t.starts_with('<') || t.starts_with("Caveat:") {
+        return None;
+    }
+    Some((kind.to_string(), t.to_string()))
+}
+
+/// The match with SNIPPET_RADIUS characters of context each side, whitespace
+/// collapsed to single spaces so a multi-line message still reads as one row.
+fn snippet_around(text: &str, at: usize, needle_len: usize) -> String {
+    let at = floor_boundary(text, at.min(text.len()));
+    let after = ceil_boundary(text, (at + needle_len).min(text.len()));
+    let start = text[..at]
+        .char_indices()
+        .rev()
+        .nth(SNIPPET_RADIUS - 1)
+        .map(|(i, _)| i)
+        .unwrap_or(0);
+    let end = text[after..]
+        .char_indices()
+        .nth(SNIPPET_RADIUS)
+        .map(|(i, _)| after + i)
+        .unwrap_or(text.len());
+    let flat = text[start..end].split_whitespace().collect::<Vec<_>>().join(" ");
+    format!(
+        "{}{}{}",
+        if start > 0 { "…" } else { "" },
+        flat,
+        if end < text.len() { "…" } else { "" }
+    )
+}
+
+/// One transcript, streamed. `needle` is ASCII-lowercased by the caller.
+fn scan_file_for(path: &Path, needle: &str) -> Vec<SearchHit> {
+    let Ok(f) = std::fs::File::open(path) else { return Vec::new() };
+    let session_id = path
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let mut reader = std::io::BufReader::with_capacity(256 * 1024, f);
+    let mut buf: Vec<u8> = Vec::new();
+    let mut hits: Vec<SearchHit> = Vec::new();
+    loop {
+        buf.clear();
+        match std::io::BufRead::read_until(&mut reader, b'\n', &mut buf) {
+            Ok(0) => break,
+            Ok(_) => {}
+            Err(_) => break,
+        }
+        // Pre-filter on the raw line: no match in the bytes means no match in
+        // any field, so serde never runs. (A query containing characters JSON
+        // escapes — a quote, a backslash, a newline — won't match; that's the
+        // price of not parsing 110 MB.)
+        if find_ci(&buf, needle.as_bytes()).is_none() {
+            continue;
+        }
+        let line = String::from_utf8_lossy(&buf);
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(line.trim()) else { continue };
+        let Some((role, text)) = message_text(&v) else { continue };
+        // The raw line matched, but maybe only inside a tool payload.
+        let Some(at) = find_ci(text.as_bytes(), needle.as_bytes()) else { continue };
+        hits.push(SearchHit {
+            session_id: session_id.clone(),
+            timestamp_ms: v.get("timestamp").and_then(|t| t.as_str()).and_then(iso_ms).unwrap_or(0),
+            role,
+            snippet: snippet_around(&text, at, needle.len()),
+            session_hits: 0, // filled in below, once the file's total is known
+        });
+        if hits.len() >= SEARCH_FILE_CAP {
+            break;
+        }
+    }
+    // One hit per matching line, however many times the term appears on it.
+    let n = hits.len() as u64;
+    for h in &mut hits {
+        h.session_hits = n;
+    }
+    hits
+}
+
+/// `scan_file_for` behind the mtime+size cache. The scan itself runs outside
+/// the lock so a slow file can't block another pane's search.
+fn search_file(path: &Path, needle: &str) -> Vec<SearchHit> {
+    let Ok(meta) = std::fs::metadata(path) else { return Vec::new() };
+    let (len, mtime) = (meta.len(), modified_ms(path));
+    let key = (path.to_path_buf(), needle.to_string());
+    {
+        let mut cache = search_cache().lock().unwrap();
+        if let Some(e) = cache.get_mut(&key) {
+            if e.modified_ms == mtime && e.len == len {
+                e.used = search_tick();
+                return e.hits.clone();
+            }
+        }
+    }
+    let hits = scan_file_for(path, needle);
+    let mut cache = search_cache().lock().unwrap();
+    if cache.len() >= SEARCH_CACHE_CAP && !cache.contains_key(&key) {
+        if let Some(oldest) = cache.iter().min_by_key(|(_, e)| e.used).map(|(k, _)| k.clone()) {
+            cache.remove(&oldest);
+        }
+    }
+    cache.insert(key, SearchEntry { modified_ms: mtime, len, hits: hits.clone(), used: search_tick() });
+    hits
+}
+
+/// Every session in `cwd`'s project dir searched for `query`, newest session
+/// first. Empty (never an error) for no transcript dir, or for a query too
+/// short to mean anything.
+pub fn search_sessions(projects_root: &Path, cwd: &str, query: &str) -> SearchResults {
+    let needle = query.trim().to_ascii_lowercase();
+    if needle.chars().count() < MIN_QUERY_CHARS {
+        return SearchResults::default();
+    }
+    let dir = projects_root.join(slugify(cwd));
+    let Ok(entries) = std::fs::read_dir(&dir) else { return SearchResults::default() };
+    let mut files: Vec<(PathBuf, u64)> = entries
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().map(|x| x == "jsonl").unwrap_or(false))
+        .map(|p| {
+            let ms = modified_ms(&p);
+            (p, ms)
+        })
+        .collect();
+    // Same order and same window as the picker's list, so every hit belongs to
+    // a session the launcher can also show a row for.
+    files.sort_by(|a, b| b.1.cmp(&a.1));
+    files.truncate(LIST_CAP);
+
+    let mut out = SearchResults::default();
+    for (p, _) in &files {
+        if out.hits.len() >= SEARCH_CAP {
+            out.truncated = true;
+            break;
+        }
+        out.sessions_searched += 1;
+        let mut hits = search_file(p, &needle);
+        if hits.len() >= SEARCH_FILE_CAP {
+            out.truncated = true;
+        }
+        let room = SEARCH_CAP - out.hits.len();
+        if hits.len() > room {
+            hits.truncate(room);
+            out.truncated = true;
+        }
+        out.hits.append(&mut hits);
+    }
+    out
+}
+
+#[tauri::command]
+pub fn search_claude_sessions(cwd: String, query: String) -> SearchResults {
+    let Ok(home) = std::env::var("USERPROFILE") else { return SearchResults::default() };
+    search_sessions(&Path::new(&home).join(".claude").join("projects"), &cwd, &query)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1352,5 +1661,175 @@ mod tests {
         // later, unrelated launch in the same folder.
         stage_at("claude", cwd, vec!["--resume".into(), "stale".into()], t0);
         assert!(take_at("claude", cwd, t0 + PENDING_TTL_MS + 1).is_empty());
+    }
+
+    // --- QL-771: full-text search ----------------------------------------
+
+    fn user_at(ts: &str, text: &str) -> String {
+        format!(
+            r#"{{"type":"user","timestamp":"{ts}","message":{{"role":"user","content":"{text}"}}}}"#
+        )
+    }
+
+    fn asst_text(ts: &str, text: &str) -> String {
+        format!(
+            r#"{{"type":"assistant","timestamp":"{ts}","message":{{"role":"assistant","content":[{{"type":"text","text":"{text}"}}]}}}}"#
+        )
+    }
+
+    #[test]
+    fn searches_what_was_said_and_ignores_tool_traffic() {
+        let root = temp_root();
+        let cwd = "D:\\proj\\search";
+        let dir = root.join(slugify(cwd));
+        std::fs::create_dir_all(&dir).unwrap();
+        let lines = [
+            user_at("2026-08-11T01:00:00.000Z", "please fix the kraken chip"),
+            asst_text("2026-08-11T01:01:00.000Z", "The KRAKEN chip is wired now."),
+            // Tool traffic mentioning the term is not a conversation hit.
+            r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","name":"Read","input":{"file_path":"kraken.rs"}}]}}"#.to_string(),
+            r#"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","content":"kraken kraken kraken"}]}}"#.to_string(),
+            // A sub-agent's turn is skipped too.
+            r#"{"type":"user","isSidechain":true,"message":{"role":"user","content":"kraken from a sidechain"}}"#.to_string(),
+            // And a slash-command wrapper.
+            r#"{"type":"user","message":{"role":"user","content":"<command-name>/kraken</command-name>"}}"#.to_string(),
+        ];
+        std::fs::write(dir.join("s1.jsonl"), lines.join("\n") + "\n").unwrap();
+
+        let res = search_sessions(&root, cwd, "KrAkEn");
+        assert_eq!(res.hits.len(), 2, "one user line, one assistant line, nothing else");
+        assert!(!res.truncated);
+        assert_eq!(res.sessions_searched, 1);
+        assert_eq!(res.hits[0].session_id, "s1");
+        assert_eq!(res.hits[0].role, "user");
+        assert_eq!(res.hits[0].snippet, "please fix the kraken chip");
+        assert_eq!(res.hits[0].timestamp_ms, iso_ms("2026-08-11T01:00:00.000Z").unwrap());
+        assert_eq!(res.hits[1].role, "assistant");
+        assert_eq!(res.hits[1].snippet, "The KRAKEN chip is wired now.");
+        assert!(res.hits.iter().all(|h| h.session_hits == 2), "per-session count on every hit");
+
+        // Too short to be a search, and a folder with no transcripts at all.
+        assert!(search_sessions(&root, cwd, "k").hits.is_empty());
+        assert!(search_sessions(&root, cwd, "   ").hits.is_empty());
+        assert!(search_sessions(&root, "D:\\nope", "kraken").hits.is_empty());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn snippets_are_windowed_around_the_match() {
+        let root = temp_root();
+        let cwd = "D:\\proj\\snippet";
+        let dir = root.join(slugify(cwd));
+        std::fs::create_dir_all(&dir).unwrap();
+        // The term sits well inside a long message, with newlines around it.
+        let filler = "padding ".repeat(80);
+        std::fs::write(
+            dir.join("s.jsonl"),
+            user_at("2026-08-11T02:00:00.000Z", &format!("{filler}\\nneedle here\\n{filler}")) + "\n",
+        )
+        .unwrap();
+
+        let hits = search_sessions(&root, cwd, "needle").hits;
+        assert_eq!(hits.len(), 1);
+        let s = &hits[0].snippet;
+        assert!(s.contains("needle here"), "the match itself is in the snippet: {s}");
+        assert!(s.starts_with('…') && s.ends_with('…'), "both ends were cut: {s}");
+        assert!(!s.contains('\n'), "newlines collapsed for a one-line row");
+        // ±120 chars of context plus the term, plus the two ellipses.
+        assert!(s.chars().count() <= 2 * SNIPPET_RADIUS + 32, "snippet stays row-sized: {}", s.chars().count());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn caps_hits_per_file_and_overall_and_says_so() {
+        let root = temp_root();
+        let cwd = "D:\\proj\\caps";
+        let dir = root.join(slugify(cwd));
+        std::fs::create_dir_all(&dir).unwrap();
+        // Two sessions, each with far more matches than the per-file cap.
+        for name in ["a", "b"] {
+            let mut s = String::new();
+            for i in 0..(SEARCH_FILE_CAP + 15) {
+                s.push_str(&(user_at("2026-08-11T03:00:00.000Z", &format!("hit number {i} of many")) + "\n"));
+            }
+            std::fs::write(dir.join(format!("{name}.jsonl")), s).unwrap();
+        }
+
+        let res = search_sessions(&root, cwd, "hit number");
+        assert_eq!(res.hits.len(), 2 * SEARCH_FILE_CAP, "early exit at the per-file cap");
+        assert!(res.truncated, "the UI is told the list is not everything");
+        assert!(res.hits.iter().all(|h| h.session_hits == SEARCH_FILE_CAP as u64));
+        assert!(res.hits.len() <= SEARCH_CAP);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn newest_session_first_and_the_cache_follows_the_file() {
+        let root = temp_root();
+        let cwd = "D:\\proj\\order";
+        let dir = root.join(slugify(cwd));
+        std::fs::create_dir_all(&dir).unwrap();
+        let old = dir.join("old.jsonl");
+        let new = dir.join("new.jsonl");
+        std::fs::write(&old, user_at("2026-08-11T01:00:00.000Z", "widget in the old session") + "\n").unwrap();
+        std::fs::write(&new, user_at("2026-08-11T09:00:00.000Z", "widget in the new session") + "\n").unwrap();
+        // mtimes are what the order is built from; make them unambiguous
+        // (set_modified needs the handle opened for writing).
+        let now = std::time::SystemTime::now();
+        let touch = |p: &PathBuf, t: std::time::SystemTime| {
+            std::fs::OpenOptions::new().write(true).open(p).unwrap().set_modified(t).unwrap();
+        };
+        touch(&old, now - std::time::Duration::from_secs(3600));
+        touch(&new, now);
+
+        let first = search_sessions(&root, cwd, "widget");
+        assert_eq!(
+            first.hits.iter().map(|h| h.session_id.as_str()).collect::<Vec<_>>(),
+            vec!["new", "old"],
+            "newest session first"
+        );
+
+        // Repeat query, nothing changed: same answer (served from the cache).
+        let again = search_sessions(&root, cwd, "widget");
+        assert_eq!(again.hits.len(), first.hits.len());
+        assert_eq!(again.hits[0].snippet, first.hits[0].snippet);
+
+        // The live session grows: the cache is keyed on mtime+size, so the new
+        // line shows up rather than the stale answer.
+        let mut s = std::fs::read_to_string(&new).unwrap();
+        s.push_str(&(user_at("2026-08-11T09:05:00.000Z", "another widget line") + "\n"));
+        std::fs::write(&new, s).unwrap();
+        let after = search_sessions(&root, cwd, "widget");
+        assert_eq!(after.hits.len(), 3);
+        assert_eq!(after.hits[0].session_hits, 2, "the grown session now has two");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Timing against the real transcript folder on this machine. Ignored by
+    /// default (it depends on ~/.claude having content):
+    /// `cargo test search_real_profile_timing -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn search_real_profile_timing() {
+        let home = std::env::var("USERPROFILE").expect("USERPROFILE");
+        let root = Path::new(&home).join(".claude").join("projects");
+        let cwd = std::env::var("FD_SEARCH_CWD").unwrap_or_else(|_| "D:\\Dev\\ai".to_string());
+        let cwd = cwd.as_str();
+        // Set FD_SEARCH_QUERY to a term that matches nothing for the worst
+        // case: no per-file early exit, so every byte is scanned.
+        let q = std::env::var("FD_SEARCH_QUERY").unwrap_or_else(|_| "flightdeck".to_string());
+        let t0 = std::time::Instant::now();
+        let cold = search_sessions(&root, cwd, &q);
+        let cold_ms = t0.elapsed().as_millis();
+        let t1 = std::time::Instant::now();
+        let warm = search_sessions(&root, cwd, &q);
+        let warm_ms = t1.elapsed().as_millis();
+        println!(
+            "cold {cold_ms} ms / warm {warm_ms} ms — {} hits over {} sessions (truncated={})",
+            cold.hits.len(),
+            cold.sessions_searched,
+            cold.truncated
+        );
+        assert_eq!(cold.hits.len(), warm.hits.len());
     }
 }

@@ -19,6 +19,7 @@ import { useBoardStore, getBoardState, setBoardState } from "./board/boardStore"
 import type { BoardCards } from "./board/types";
 import { getStartupBehavior } from "./Settings";
 import { lastLine } from "./attention";
+import { redactText } from "./transcript";
 
 // UX-581: `draft` (the pane's unsent input line) isn't on persist.ts's
 // PersistedPane type yet — that file belongs to the persist.rs wiring, not
@@ -57,6 +58,115 @@ function summarize(workspaces: Workspace[]): PaneSummaryEntry[] {
   );
 }
 
+// ---------------------------------------------------------------------------
+// QL-762: scrollback persistence.
+//
+// A restored pane used to come back as a blank screen: the process relaunches,
+// but everything it had said was gone. Each live pane registers a serialiser
+// (Terminal.tsx's SerializeAddon, via PaneView) and the last snapshot of each
+// rides in the session doc's `uiPrefs` blob — NOT on PersistedPane, because
+// persist.rs's struct is fixed and would silently drop an unknown pane field,
+// whereas uiPrefs is `serde_json::Value` end to end (see toDraft's comment).
+//
+// Cost is the whole design constraint here. persist.rs rewrites session.json
+// AND writes a pruned snapshot on every save, so scrollback is:
+//   - capped per pane in Terminal.tsx (2000 lines, ~1MB),
+//   - capped again per document here (SCROLLBACK_DOC_BUDGET),
+//   - re-serialised at most every SCROLLBACK_REFRESH_MS, on an idle callback,
+//     so a chatty pane can't turn autosave into a serialise-per-keystroke loop.
+// Between refreshes the cache is what toDraft reads, which keeps the save path
+// synchronous and cheap exactly as it was before.
+// ---------------------------------------------------------------------------
+
+const SCROLLBACK_REFRESH_MS = 20000;
+/** Everything the doc may carry, across all panes. ~3MB of JSON is already a
+ *  large session file to rewrite; panes past the budget simply save none. */
+const SCROLLBACK_DOC_BUDGET = 3_000_000;
+
+type ScrollbackSource = () => string;
+const scrollbackSources = new Map<number, ScrollbackSource>();
+let scrollbackCache: Record<number, string> = {};
+let scrollbackRefreshedAt = 0;
+let scrollbackRefreshQueued = false;
+/** Set by startAutosave so a finished refresh can push the newly-serialised
+ *  scrollback into the next save instead of waiting for an unrelated store
+ *  change to happen along. */
+let onScrollbackRefreshed: (() => void) | undefined;
+
+/** A live pane offering its buffer for the session doc. Keyed by the STORE
+ *  pane id (the one persist.rs round-trips), not the PTY id. */
+export function registerScrollbackSource(paneId: number, read: ScrollbackSource): void {
+  scrollbackSources.set(paneId, read);
+}
+export function unregisterScrollbackSource(paneId: number): void {
+  scrollbackSources.delete(paneId);
+  delete scrollbackCache[paneId];
+}
+
+/** Re-serialise every registered pane. Synchronous and not cheap — only ever
+ *  called from an idle callback or the way out (see scheduleScrollbackRefresh
+ *  and startAutosave's flush handlers). */
+export function refreshScrollbackCache(): void {
+  scrollbackRefreshQueued = false;
+  scrollbackRefreshedAt = Date.now();
+  const next: Record<number, string> = {};
+  let budget = SCROLLBACK_DOC_BUDGET;
+  for (const [paneId, read] of scrollbackSources) {
+    if (budget <= 0) break;
+    let text = "";
+    try { text = read(); } catch { text = ""; }
+    if (!text || text.length > budget) continue;
+    // Best-effort redaction, same heuristic as the "Save scrollback (redacted)"
+    // export (UX-547): a session doc is a plain file on disk, so an API key a
+    // tool echoed should not be sitting in it. Known limit — this is a
+    // token-level pass over serialised ANSI, so a secret wrapped in colour
+    // codes can still slip through. It reduces exposure, it doesn't guarantee.
+    next[paneId] = redactText(text);
+    budget -= text.length;
+  }
+  scrollbackCache = next;
+  onScrollbackRefreshed?.();
+}
+
+function scheduleScrollbackRefresh(): void {
+  if (scrollbackRefreshQueued || scrollbackSources.size === 0) return;
+  if (Date.now() - scrollbackRefreshedAt < SCROLLBACK_REFRESH_MS) return;
+  scrollbackRefreshQueued = true;
+  const idle = (globalThis as { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => void }).requestIdleCallback;
+  if (idle) idle(() => refreshScrollbackCache(), { timeout: 2000 });
+  else setTimeout(refreshScrollbackCache, 0);
+}
+
+/** The serialised scrollback currently staged for the next save, by store pane
+ *  id. Read-only view — the save path builds the doc from it via toDraft. */
+export function paneScrollbackCache(): Record<number, string> {
+  return scrollbackCache;
+}
+
+/** Only panes that are actually open — a closed pane's cache entry must never
+ *  come back next launch. */
+function scrollbackFor(workspaces: Workspace[]): Record<number, string> {
+  const out: Record<number, string> = {};
+  for (const w of workspaces) {
+    for (const p of w.panes) {
+      const text = scrollbackCache[p.id];
+      if (text) out[p.id] = text;
+    }
+  }
+  return out;
+}
+
+/** What the doc on disk had for each pane, keyed by store pane id. Populated
+ *  by offerSessionRestore before it hydrates; read (non-destructively) by
+ *  PaneView so a remount — switching workspaces, say — still paints it. */
+let restoredScrollback: Record<number, string> = {};
+export function setRestoredScrollback(map: Record<number, string>): void {
+  restoredScrollback = map;
+}
+export function restoredScrollbackFor(paneId: number): string | undefined {
+  return restoredScrollback[paneId];
+}
+
 function toDraft(workspaces: Workspace[], activeId: number | null): SessionDraft {
   return {
     activeWorkspaceId: activeId,
@@ -84,7 +194,12 @@ function toDraft(workspaces: Workspace[], activeId: number | null): SessionDraft
     // needs no Rust/persist.ts change and is automatically backward
     // compatible: an old doc simply has these keys absent, and every reader
     // below treats absence as "none" rather than throwing.
-    uiPrefs: { board: getBoardState(), groups: useApp.getState().groups, summary: summarize(workspaces) },
+    uiPrefs: {
+      board: getBoardState(),
+      groups: useApp.getState().groups,
+      summary: summarize(workspaces),
+      scrollback: scrollbackFor(workspaces), // QL-762
+    },
   };
 }
 
@@ -109,14 +224,28 @@ export async function lastSessionSummary(): Promise<PaneSummaryEntry[]> {
  *  with an empty groups list and summary. Exported standalone (not inlined
  *  into offerSessionRestore) so this exact compatibility contract is unit
  *  testable without needing to drive the whole restore-prompt flow. */
-export function parseUiPrefs(uiPrefs: unknown): { board?: BoardCards; groups: PaneGroup[]; summary: PaneSummaryEntry[] } {
+export function parseUiPrefs(uiPrefs: unknown): {
+  board?: BoardCards; groups: PaneGroup[]; summary: PaneSummaryEntry[]; scrollback: Record<number, string>;
+} {
   const p = (uiPrefs && typeof uiPrefs === "object" ? uiPrefs : {}) as {
-    board?: BoardCards; groups?: unknown; summary?: unknown;
+    board?: BoardCards; groups?: unknown; summary?: unknown; scrollback?: unknown;
   };
+  // QL-762: a doc written by hand, by an older build, or by a version that
+  // capped differently is all the same case — take only numeric keys with
+  // string values, and re-apply the per-pane cap on the way IN as well as out.
+  const scrollback: Record<number, string> = {};
+  if (p.scrollback && typeof p.scrollback === "object") {
+    for (const [key, value] of Object.entries(p.scrollback as Record<string, unknown>)) {
+      const id = Number(key);
+      if (!Number.isFinite(id) || typeof value !== "string" || !value) continue;
+      scrollback[id] = value.length > 1_000_000 ? value.slice(-1_000_000) : value;
+    }
+  }
   return {
     board: p.board && typeof p.board === "object" ? p.board : undefined,
     groups: Array.isArray(p.groups) ? (p.groups as PaneGroup[]) : [],
     summary: Array.isArray(p.summary) ? (p.summary as PaneSummaryEntry[]) : [],
+    scrollback,
   };
 }
 
@@ -142,14 +271,26 @@ export function startAutosave() {
     lastSavedJson = json;
     saver.schedule(draft);
     lastSavedAt = Date.now();
+    // QL-762: fills the cache for the NEXT save, on an idle callback and at
+    // most every 20s — never in the path of this one.
+    scheduleScrollbackRefresh();
   };
   useApp.subscribe(scheduleIfChanged);
   useBoardStore.subscribe(scheduleIfChanged); // card edits persist too (229)
+  onScrollbackRefreshed = scheduleIfChanged;
   // Best-effort last write on the way out; the 800ms debounce means almost
   // everything is already on disk, this just narrows the window.
-  window.addEventListener("beforeunload", () => saver.flush());
+  // QL-762: the exit is the one place serialisation runs synchronously — the
+  // scrollback you most want back is the one from the moment you quit, and
+  // there is no idle callback left to wait for.
+  const finalSave = () => {
+    refreshScrollbackCache();
+    scheduleIfChanged();
+    saver.flush();
+  };
+  window.addEventListener("beforeunload", finalSave);
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "hidden") saver.flush();
+    if (document.visibilityState === "hidden") finalSave();
   });
 }
 
@@ -314,6 +455,10 @@ export async function offerSessionRestore() {
     const prefs = parseUiPrefs(doc.uiPrefs);
     if (prefs.board) setBoardState(prefs.board);
     if (prefs.groups.length) useApp.getState().hydrateGroups(prefs.groups);
+    // QL-762: staged before either hydrate path below, so the panes those
+    // create find their scrollback already waiting. Declining the restore
+    // prompt leaves it staged but unused — nothing gets created to read it.
+    setRestoredScrollback(prefs.scrollback);
     if (doc.workspaces.length === 0) return;
     if (useApp.getState().workspaces.length > 0) return; // user already moving
     // Settings > Startup (91) — persisted-but-inert until now. "Reopen last

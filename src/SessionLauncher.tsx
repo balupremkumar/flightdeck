@@ -101,6 +101,85 @@ export function filterSessions(list: ClaudeSession[], query: string): ClaudeSess
   );
 }
 
+// QL-771 — deep search.
+//
+// The filter box above is a title filter: it can only find a session by what
+// its row already says. Deep search asks the backend
+// (usage.rs::search_claude_sessions) to read what was actually SAID in every
+// transcript for this folder, and lists the matching lines grouped by session.
+// Resuming from a hit is the same path as resuming from a row — a hit is just a
+// session you found by its content.
+
+/** One matching message line. */
+export interface SessionSearchHit {
+  sessionId: string;
+  /** Epoch ms of the line, 0 when the transcript line carried no timestamp. */
+  timestampMs: number;
+  role: string;
+  snippet: string;
+  /** Matching lines in that session (capped backend-side). */
+  sessionHits: number;
+}
+
+export interface SessionSearchResults {
+  hits: SessionSearchHit[];
+  /** A cap stopped the scan — the footer says so rather than implying totality. */
+  truncated: boolean;
+  sessionsSearched: number;
+}
+
+/** Shorter than this isn't a search, it's a folder-wide read for no signal —
+ *  the same floor the backend enforces. */
+export const MIN_SEARCH_CHARS = 2;
+/** Typing pause before a search is sent. Long enough that a typed word costs
+ *  one scan, short enough to feel like it's keeping up. */
+export const SEARCH_DEBOUNCE_MS = 300;
+
+export interface HitGroup {
+  sessionId: string;
+  hits: SessionSearchHit[];
+  /** Total in that session, which can exceed hits.length when capped. */
+  count: number;
+}
+
+/** Hits into one group per session. The backend already returns them
+ *  contiguous and newest-session-first, so this only walks the list — the
+ *  order the user sees is the order the backend chose. */
+export function groupHits(hits: SessionSearchHit[]): HitGroup[] {
+  const out: HitGroup[] = [];
+  for (const h of hits) {
+    const last = out[out.length - 1];
+    if (last && last.sessionId === h.sessionId) {
+      last.hits.push(h);
+      continue;
+    }
+    out.push({ sessionId: h.sessionId, hits: [h], count: h.sessionHits });
+  }
+  return out;
+}
+
+/** A snippet split into matched/unmatched runs for highlighting,
+ *  case-insensitively. Bails out to a single unmatched run when lowercasing
+ *  changes the string's length (a handful of Unicode cases do), since the
+ *  offsets would no longer line up with the original text. */
+export function highlightParts(text: string, query: string): { text: string; hit: boolean }[] {
+  const q = query.trim();
+  const hay = text.toLowerCase();
+  const needle = q.toLowerCase();
+  if (!needle || hay.length !== text.length) return [{ text, hit: false }];
+  const out: { text: string; hit: boolean }[] = [];
+  let i = 0;
+  for (;;) {
+    const at = hay.indexOf(needle, i);
+    if (at === -1) break;
+    if (at > i) out.push({ text: text.slice(i, at), hit: false });
+    out.push({ text: text.slice(at, at + needle.length), hit: true });
+    i = at + needle.length;
+  }
+  if (i < text.length) out.push({ text: text.slice(i), hit: false });
+  return out;
+}
+
 /** Stage the resume args for the next spawn in this folder, then create the
  *  pane that will consume them (usage.rs holds the staging; build_command in
  *  lib.rs applies it). Returns false when the backend refused the staging —
@@ -137,6 +216,12 @@ export function SessionLauncher() {
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [index, setIndex] = useState(0);
+  // QL-771: deep (full-text) mode and its own request state. Kept separate from
+  // the list's, so flipping back to titles never re-reads the folder.
+  const [deep, setDeep] = useState(false);
+  const [search, setSearch] = useState<SessionSearchResults | null>(null);
+  const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const activeRef = useRef<HTMLDivElement>(null);
 
@@ -208,6 +293,9 @@ export function SessionLauncher() {
     setError(null);
     setQuery("");
     setIndex(0);
+    setDeep(false);
+    setSearch(null);
+    setSearchError(null);
     invoke<ClaudeSession[]>("list_claude_sessions", { cwd: pane.cwd })
       .then((list) => { if (!cancelled) setSessions(list); })
       .catch((e) => { if (!cancelled) { setSessions([]); setError(String(e)); } });
@@ -216,18 +304,61 @@ export function SessionLauncher() {
   }, [open, pane?.cwd, reloadTick]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const results = useMemo(() => filterSessions(sessions ?? [], query), [sessions, query]);
-  useEffect(() => { setIndex(0); }, [query]);
+  useEffect(() => { setIndex(0); }, [query, deep]);
   useEffect(() => { activeRef.current?.scrollIntoView({ block: "nearest" }); }, [index]);
 
+  // QL-771: the deep search itself. Debounced, cancelled on every keystroke, and
+  // it degrades silently: if the backend command isn't there, the overlay says
+  // content search is unavailable and the title filter carries on working.
+  const trimmed = query.trim();
+  useEffect(() => {
+    if (!open || !pane || !deep) return;
+    if (trimmed.length < MIN_SEARCH_CHARS) {
+      setSearch(null);
+      setSearchError(null);
+      setSearching(false);
+      return;
+    }
+    let cancelled = false;
+    setSearching(true);
+    const t = setTimeout(() => {
+      invoke<SessionSearchResults>("search_claude_sessions", { cwd: pane.cwd, query: trimmed })
+        .then((r) => {
+          if (cancelled) return;
+          setSearch(r);
+          setSearchError(null);
+          setSearching(false);
+        })
+        .catch((e) => {
+          if (cancelled) return;
+          setSearch({ hits: [], truncated: false, sessionsSearched: 0 });
+          setSearchError(String(e));
+          setSearching(false);
+        });
+    }, SEARCH_DEBOUNCE_MS);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [open, pane?.cwd, deep, trimmed, reloadTick]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const hits = deep ? search?.hits ?? [] : [];
+  const groups = useMemo(() => groupHits(hits), [hits]);
+  /** Flat row index of each group's first hit — keyboard nav runs over the flat
+   *  hit list, the rows are drawn grouped. */
+  const groupStart = useMemo(() => {
+    let n = 0;
+    return groups.map((g) => { const s = n; n += g.hits.length; return s; });
+  }, [groups]);
+  const byId = useMemo(() => new Map((sessions ?? []).map((s) => [s.id, s])), [sessions]);
+  const rowCount = deep ? hits.length : results.length;
+
   const run = useCallback(
-    async (s: ClaudeSession, fork: boolean) => {
+    async (sessionId: string, fork: boolean) => {
       if (!pane || !target) return;
       close();
-      const ok = await launchResume(target.wsId, pane, s.id, fork);
+      const ok = await launchResume(target.wsId, pane, sessionId, fork);
       if (!ok) { pushToast("error", "Couldn’t stage the resume — no pane was opened."); return; }
       pushToast(
         "success",
-        `${fork ? "Forking" : "Resuming"} session ${s.id.slice(0, 8)} in a new pane.`
+        `${fork ? "Forking" : "Resuming"} session ${sessionId.slice(0, 8)} in a new pane.`
       );
     },
     [pane, target, close, pushToast]
@@ -236,17 +367,23 @@ export function SessionLauncher() {
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "ArrowDown") { e.preventDefault(); setIndex((i) => Math.min(i + 1, results.length - 1)); }
+      if (e.key === "ArrowDown") { e.preventDefault(); setIndex((i) => Math.min(i + 1, rowCount - 1)); }
       else if (e.key === "ArrowUp") { e.preventDefault(); setIndex((i) => Math.max(i - 1, 0)); }
+      else if (e.key === "Tab" && !e.shiftKey && !e.ctrlKey && !e.altKey) {
+        // Plain Tab flips title filter <-> content search. Shift+Tab is left
+        // alone so the row of buttons is still reachable by keyboard.
+        e.preventDefault();
+        setDeep((d) => !d);
+      }
       else if (e.key === "Enter") {
         e.preventDefault();
-        const s = results[index];
-        if (s) void run(s, e.shiftKey);
+        const id = deep ? hits[index]?.sessionId : results[index]?.id;
+        if (id) void run(id, e.shiftKey);
       }
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [open, results, index, run]);
+  }, [open, results, hits, deep, index, rowCount, run]);
 
   if (!open || !pane) return null;
 
@@ -257,19 +394,147 @@ export function SessionLauncher() {
           <input
             ref={inputRef}
             className="cmdp-input"
-            placeholder={`Resume a past ${vendorShort(pane.vendor)} session in ${pane.cwd}…`}
+            placeholder={
+              deep
+                ? `Search what was said in ${pane.cwd}…`
+                : `Resume a past ${vendorShort(pane.vendor)} session in ${pane.cwd}…`
+            }
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             spellCheck={false}
           />
+          <button
+            className={"agent-chip" + (deep ? " ok" : "")}
+            aria-pressed={deep}
+            onClick={() => setDeep((d) => !d)}
+            title={
+              deep
+                ? "Searching message text across every transcript in this folder (Tab for titles)"
+                : "Search inside the transcripts, not just the session titles (Tab)"
+            }
+          >
+            Search content
+          </button>
           <button className="ov-x" onClick={() => setReloadTick((t) => t + 1)} title="Re-read the transcripts">
             <IconRefresh size={15} />
           </button>
           <button className="ov-x" onClick={close} title="Close"><IconClose size={16} /></button>
         </div>
         <div className="cmdp-list">
-          {sessions === null && <div className="cmdp-empty">Reading this folder’s transcripts…</div>}
-          {sessions !== null && results.length === 0 && (
+          {/* QL-771 — content search. Its own states: too short to search,
+              searching, unavailable (backend command missing — the title
+              filter is untouched), nothing said matches. */}
+          {deep && trimmed.length < MIN_SEARCH_CHARS && (
+            <div className="cmdp-empty">
+              Search what was said in this folder’s sessions.
+              <span className="cmdp-empty-hint">
+                Type at least {MIN_SEARCH_CHARS} characters. Prompts and replies are searched; tool
+                output and sub-agent turns are not.
+              </span>
+            </div>
+          )}
+          {deep && trimmed.length >= MIN_SEARCH_CHARS && searching && hits.length === 0 && (
+            <div className="cmdp-empty">Reading this folder’s transcripts…</div>
+          )}
+          {deep && trimmed.length >= MIN_SEARCH_CHARS && !searching && searchError && (
+            <div className="cmdp-empty">
+              Content search is unavailable.
+              <span className="cmdp-empty-hint">
+                {searchError}
+                <br />
+                Press <kbd>Tab</kbd> to go back to filtering session titles.
+              </span>
+            </div>
+          )}
+          {deep && trimmed.length >= MIN_SEARCH_CHARS && !searching && !searchError && hits.length === 0 && search !== null && (
+            <div className="cmdp-empty">
+              Nothing said in this folder matches "{trimmed}".
+              <span className="cmdp-empty-hint">
+                {search.sessionsSearched} transcript{search.sessionsSearched === 1 ? "" : "s"} searched.
+                Tool output, file contents and sub-agent turns are deliberately left out.
+              </span>
+            </div>
+          )}
+          {deep &&
+            groups.map((g, gi) => {
+              const s = byId.get(g.sessionId);
+              return (
+                <div key={g.sessionId}>
+                  <div className="cmdp-section" style={{ display: "flex", gap: 8, alignItems: "baseline" }}>
+                    <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {s?.title || g.sessionId.slice(0, 8)}
+                    </span>
+                    <span style={{ flex: "none", textTransform: "none", letterSpacing: 0 }}>
+                      {g.count} hit{g.count === 1 ? "" : "s"}
+                      {s ? ` · ${relTime(s.modifiedMs)}` : ""}
+                    </span>
+                  </div>
+                  {g.hits.map((h, hi) => {
+                    const i = groupStart[gi] + hi;
+                    const isActive = i === index;
+                    return (
+                      <div
+                        key={`${h.sessionId}:${i}`}
+                        ref={isActive ? activeRef : undefined}
+                        className={"cmdp-item" + (isActive ? " active" : "")}
+                        style={{ alignItems: "flex-start" }}
+                        onMouseEnter={() => setIndex(i)}
+                        onClick={(e) => void run(h.sessionId, e.shiftKey)}
+                        title={`${s?.title || h.sessionId}\n${h.sessionId}\nClick to resume, Shift+click to fork`}
+                      >
+                        <span
+                          className="cmdp-hint"
+                          style={{ width: 46, textAlign: "left", paddingTop: 1 }}
+                          title={h.timestampMs ? timeTitle(h.timestampMs) : undefined}
+                        >
+                          {h.role === "user" ? "you" : "agent"}
+                        </span>
+                        <span
+                          className="cmdp-label"
+                          style={{
+                            whiteSpace: "normal",
+                            display: "-webkit-box",
+                            WebkitLineClamp: 2,
+                            WebkitBoxOrient: "vertical",
+                            overflow: "hidden",
+                            lineHeight: 1.45,
+                          }}
+                        >
+                          {highlightParts(h.snippet, trimmed).map((p, pi) =>
+                            p.hit ? (
+                              <mark
+                                key={pi}
+                                style={{
+                                  background: "color-mix(in srgb, var(--accent) 34%, transparent)",
+                                  color: "inherit",
+                                  borderRadius: 3,
+                                  padding: "0 1px",
+                                }}
+                              >
+                                {p.text}
+                              </mark>
+                            ) : (
+                              <span key={pi}>{p.text}</span>
+                            )
+                          )}
+                        </span>
+                        {h.timestampMs > 0 && (
+                          <span className="cmdp-hint" title={timeTitle(h.timestampMs)}>{relTime(h.timestampMs)}</span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })}
+          {deep && search?.truncated && hits.length > 0 && (
+            <div className="cmdp-empty" style={{ padding: "10px" }}>
+              Showing the first {hits.length} hits — narrow the search to see the rest.
+            </div>
+          )}
+
+          {!deep && sessions === null && <div className="cmdp-empty">Reading this folder’s transcripts…</div>}
+          {!deep && sessions !== null && results.length === 0 && (
             <div className="cmdp-empty">
               {error
                 ? "Couldn’t read the session transcripts for this folder."
@@ -283,7 +548,7 @@ export function SessionLauncher() {
               </span>
             </div>
           )}
-          {results.map((s, i) => {
+          {!deep && results.map((s, i) => {
             const isActive = i === index;
             return (
               <div
@@ -291,7 +556,7 @@ export function SessionLauncher() {
                 ref={isActive ? activeRef : undefined}
                 className={"cmdp-item" + (isActive ? " active" : "")}
                 onMouseEnter={() => setIndex(i)}
-                onClick={(e) => void run(s, e.shiftKey)}
+                onClick={(e) => void run(s.id, e.shiftKey)}
                 title={`${s.title || s.id}\n${s.id}\n${sessionWeight(s)}${s.model ? ` · ${s.model}` : ""}\nClick to resume, Shift+click to fork`}
               >
                 <span className="cmdp-label">{s.title || <em>(no prompt recorded)</em>}</span>
@@ -309,7 +574,7 @@ export function SessionLauncher() {
                 <button
                   className="cmdp-shortcut"
                   style={{ background: "none", border: 0, cursor: "pointer", color: "inherit", font: "inherit" }}
-                  onClick={(e) => { e.stopPropagation(); void run(s, true); }}
+                  onClick={(e) => { e.stopPropagation(); void run(s.id, true); }}
                   title="Fork this session — resumes a copy, leaving the original untouched"
                 >
                   <kbd>Fork</kbd>
@@ -322,6 +587,7 @@ export function SessionLauncher() {
           <span><kbd>↑</kbd><kbd>↓</kbd> navigate</span>
           <span><kbd>Enter</kbd> resume</span>
           <span><kbd>Shift</kbd>+<kbd>Enter</kbd> fork</span>
+          <span><kbd>Tab</kbd> {deep ? "session titles" : "search content"}</span>
           <span><kbd>Esc</kbd> close</span>
         </div>
       </div>

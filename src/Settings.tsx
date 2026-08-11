@@ -293,6 +293,53 @@ export function setMemoryCeilingMb(mb: number): number {
 }
 
 // ---------------------------------------------------------------------
+// QL-720: whether Claude Code's hooks are installed.
+//
+// The authority is ~/.claude/settings.json, which only the backend can read, so
+// this is a CACHE of an external fact rather than a preference — which is why
+// it lives in SESSION_KEYS (storageKeys.ts) and a settings reset leaves it
+// alone. Its job is the first frame: Notifications can subscribe to hook events
+// immediately on launch instead of waiting for an IPC round-trip, and the
+// backend's answer then confirms or corrects it.
+// ---------------------------------------------------------------------
+const HOOKS_INSTALLED_KEY = "flightdeck-hooks-installed";
+export const HOOKS_CHANGED_EVENT = "flightdeck-hooks-changed";
+
+export function hooksInstalled(): boolean {
+  try { return localStorage.getItem(HOOKS_INSTALLED_KEY) === "1"; } catch { return false; }
+}
+/** Persists and broadcasts, same pairing as the memory ceiling above. */
+export function setHooksInstalled(on: boolean): void {
+  try {
+    if (on) localStorage.setItem(HOOKS_INSTALLED_KEY, "1");
+    else localStorage.removeItem(HOOKS_INSTALLED_KEY);
+  } catch { /* non-persistent */ }
+  window.dispatchEvent(new CustomEvent(HOOKS_CHANGED_EVENT, { detail: on }));
+}
+
+export interface HookStatus {
+  relayInstalled: boolean;
+  hooksDir: string;
+  settingsPath: string;
+  settingsInstalled: boolean;
+  settingsError: string | null;
+  lastEventAgeMs: number | null;
+}
+
+/** The one status sentence the row shows. Deliberately says what is true right
+ *  now rather than what should be true: "installed, but Flightdeck's relay is
+ *  missing" is a real state (app data wiped, or the folder was cleaned) and it
+ *  needs its own line, because reinstalling is the fix and nothing else is. */
+export function hookStatusLine(s: HookStatus | null, now: number = Date.now()): string {
+  if (!s) return "Checking…";
+  if (s.settingsError) return s.settingsError;
+  if (!s.relayInstalled) return "Flightdeck's relay script is missing — restart Flightdeck, then install.";
+  if (!s.settingsInstalled) return "Not installed — Flightdeck is guessing pane state from terminal output.";
+  if (s.lastEventAgeMs == null) return "Installed — waiting for the first hook to fire.";
+  return `Installed — last hook ${relTime(now - s.lastEventAgeMs, now)}.`;
+}
+
+// ---------------------------------------------------------------------
 // Diagnostics (UI-4 / QOL 375-377): surfaces three backend capabilities that
 // were built + tested but had zero UI — per-pane health, stray-process
 // recovery, and the redacted support bundle.
@@ -753,6 +800,73 @@ function DiagnosticsSection() {
       .catch(() => pushToast("error", "Couldn’t end the stray processes."));
   };
 
+  // QL-720: Claude Code hooks. Opt-in and reversible, and never installed
+  // automatically — this row is the only way our entries reach the user's
+  // ~/.claude/settings.json, and the confirm below names the exact file.
+  const [hookStatus, setHookStatus] = useState<HookStatus | null>(null);
+  const [hookBusy, setHookBusy] = useState(false);
+  const refreshHooks = () =>
+    invoke<HookStatus>("hook_events_status")
+      .then((s) => { setHookStatus(s); setHooksInstalled(s.settingsInstalled); })
+      .catch(() => setHookStatus(null));
+  useEffect(() => { void refreshHooks(); }, []);
+
+  const installHooks = () => {
+    if (!hookStatus) return;
+    useUI.getState().requestConfirm({
+      title: "Let Claude Code tell Flightdeck when it needs you?",
+      // Says exactly what is edited, what is added, and where the backup goes.
+      // No summary-of-a-summary: this is someone's hand-edited config.
+      body:
+        `Flightdeck will add two hooks (Notification and Stop) to ${hookStatus.settingsPath}. ` +
+        `They run one small script from ${hookStatus.hooksDir}, which only appends the event to a log Flightdeck reads. ` +
+        `A timestamped .bak copy of settings.json is written next to it first, and your own hooks and settings are left exactly as they are. ` +
+        `Uninstall removes only Flightdeck's two entries.`,
+      confirmLabel: "Install hooks",
+      onConfirm: async () => {
+        setHookBusy(true);
+        try {
+          const r = await invoke<{ changed: boolean; backupPath: string | null }>("install_claude_hooks");
+          await refreshHooks();
+          pushToast(
+            "success",
+            r.changed
+              ? `Hooks installed. Backup: ${r.backupPath ?? "none needed (new file)"}. Restart your Claude panes to pick them up.`
+              : "Hooks were already installed — nothing changed."
+          );
+        } catch (e) {
+          pushToast("error", `Couldn’t install the hooks: ${String(e)}`);
+        } finally {
+          setHookBusy(false);
+        }
+      },
+    });
+  };
+
+  const uninstallHooks = () => {
+    if (!hookStatus) return;
+    useUI.getState().requestConfirm({
+      title: "Remove Flightdeck's Claude Code hooks?",
+      body:
+        `Only the two entries pointing at ${hookStatus.hooksDir} are removed from ${hookStatus.settingsPath}; ` +
+        `everything else in the file stays, and a .bak copy is written first. ` +
+        `Pane state goes back to being guessed from terminal output.`,
+      confirmLabel: "Remove",
+      onConfirm: async () => {
+        setHookBusy(true);
+        try {
+          const r = await invoke<{ changed: boolean; backupPath: string | null }>("uninstall_claude_hooks");
+          await refreshHooks();
+          pushToast("success", r.changed ? `Hooks removed. Backup: ${r.backupPath ?? "none"}.` : "No Flightdeck hooks were installed.");
+        } catch (e) {
+          pushToast("error", `Couldn’t remove the hooks: ${String(e)}`);
+        } finally {
+          setHookBusy(false);
+        }
+      },
+    });
+  };
+
   const exportBundle = async () => {
     try {
       const dest = await save({ defaultPath: "flightdeck-support.json", filters: [{ name: "JSON", extensions: ["json"] }] });
@@ -891,6 +1005,23 @@ function DiagnosticsSection() {
           ))}
         </div>
       )}
+
+      {/* QL-720: opt-in, reversible, and off until pressed. */}
+      <div className="set-row">
+        <div className="set-row-t">
+          <span className="set-row-name">Claude Code hooks</span>
+          <span className="set-row-sub" title={hookStatus?.settingsPath || undefined}>
+            {hookStatusLine(hookStatus)}
+          </span>
+        </div>
+        {hookStatus?.settingsInstalled ? (
+          <button className="set-btn" onClick={uninstallHooks} disabled={hookBusy}>Remove</button>
+        ) : (
+          <button className="set-btn" onClick={installHooks} disabled={hookBusy || !hookStatus?.relayInstalled}>
+            Install…
+          </button>
+        )}
+      </div>
 
       <div className="set-row">
         <div className="set-row-t">

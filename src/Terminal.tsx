@@ -8,13 +8,20 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import { LigaturesAddon } from "@xterm/addon-ligatures";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
+// QL-762: TYPE-only. The addon itself is ~32KB of vendor code that is not
+// needed to paint a pane — only to snapshot one for the session doc, which
+// first happens ~20s in — so it is dynamically imported below and deliberately
+// NOT added to vite.config.ts's `xterm` manualChunk (that chunk is eagerly
+// loaded; listing it there would put it straight back in the boot payload and
+// blow perfbudget.test.ts's cold-start budget).
+import type { SerializeAddon } from "@xterm/addon-serialize";
 import "@xterm/xterm/css/xterm.css";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { terminalThemeFor } from "./terminal-theme";
 import { getTerminalSettings } from "./Settings";
-import { linkify, resolvePath } from "./linkify";
+import { linkify, resolvePath, type LinkMatch } from "./linkify";
 import { openInEditor } from "./editor";
 import { useUI } from "./ui";
 
@@ -325,6 +332,75 @@ export function nextMarkLine(lines: number[], viewportY: number, dir: 1 | -1): n
   return null;
 }
 
+/** QL-755: the command mark that OWNS the top row of the viewport — the
+ *  nearest `ran` mark strictly above it. null means there's nothing to pin:
+ *  either the viewport sits above every mark, or the owning prompt IS the top
+ *  visible row, and pinning a copy of a line the user can already see reads as
+ *  a rendering fault rather than a feature. */
+export function stickyMarkLine(lines: number[], viewportY: number): number | null {
+  let best: number | null = null;
+  for (const l of lines) if (l < viewportY && (best === null || l > best)) best = l;
+  return best;
+}
+
+// ---------------------------------------------------------------------------
+// QL-754: quick-select hints.
+//
+// Ctrl+Shift+Space labels every path/URL the linkifier can see on screen and
+// turns the pane into a one-keystroke mode: type the label to copy the match,
+// Shift+label to open it (editor for a path, browser for a URL). It reuses
+// linkify() — the exact same matcher the click-to-open link provider above
+// runs — so a thing that is clickable is always hintable, and vice versa.
+// ---------------------------------------------------------------------------
+
+/** Home row first, then the row above, then the row below: the keys a touch
+ *  typist reaches without looking, in the order they should be spent. Letters
+ *  only — punctuation keys move between layouts. */
+const HINT_ALPHABET = "asdfghjklqwertyuiopzxcvbnm";
+
+/** `count` labels, all the same width. Fixed width is the point: no label can
+ *  be a prefix of another, so a typed label is never ambiguous and the mode
+ *  never has to wait on a timeout to decide what the user meant. */
+export function hintLabels(count: number): string[] {
+  const a = HINT_ALPHABET;
+  const out: string[] = [];
+  if (count <= a.length) {
+    for (let i = 0; i < count; i++) out.push(a[i]);
+    return out;
+  }
+  for (let i = 0; i < Math.min(count, a.length * a.length); i++) {
+    out.push(a[Math.floor(i / a.length)] + a[i % a.length]);
+  }
+  return out;
+}
+
+export interface HintTarget {
+  /** Row within the viewport — 0 is the top row on screen, not a buffer line. */
+  row: number;
+  match: LinkMatch;
+  label: string;
+}
+
+/** Every linkifier match across the given viewport rows, labelled top-to-
+ *  bottom then left-to-right (the order the eye scans, so the labels read in
+ *  alphabet order down the screen). Pure, so labelling and ordering are
+ *  testable without a live terminal. */
+export function hintTargets(rows: string[]): HintTarget[] {
+  const found: { row: number; match: LinkMatch }[] = [];
+  rows.forEach((text, row) => {
+    for (const match of linkify(text)) found.push({ row, match });
+  });
+  const labels = hintLabels(found.length);
+  return found.slice(0, labels.length).map((f, i) => ({ ...f, label: labels[i] }));
+}
+
+/** What typing a label copies. URLs go over verbatim; a path keeps its
+ *  `:line` suffix (that's what makes it useful to paste back at an editor)
+ *  but loses the quotes the output happened to wrap it in. */
+export function hintCopyText(m: LinkMatch): string {
+  return m.kind === "url" ? m.raw : m.text.replace(/^["']|["']$/g, "");
+}
+
 /** Gutter/ruler colours for command marks, off the app's --st-* tokens so they
  *  follow the theme (and the colour-blind palette) like every other status. */
 function markColours(): { ok: string; err: string } {
@@ -354,7 +430,27 @@ export interface TerminalHandle {
    *  there is none that way (or the shell emits no marks at all). Same action
    *  Ctrl+Up/Ctrl+Down performs inside the pane. */
   jumpToCommandMark: (dir: 1 | -1) => boolean;
+  /** QL-754: raise the quick-select hint overlay. False when there was nothing
+   *  on screen to label. Same action Ctrl+Shift+Space performs inside the pane;
+   *  exposed so the pane menu can show people the feature exists. */
+  showQuickHints: () => boolean;
+  /** QL-762: this pane's buffer as a replayable ANSI string, capped (see
+   *  SCROLLBACK_SAVE_STEPS). "" when the addon isn't up yet or the buffer
+   *  can't be squeezed under the cap. Synchronous and not cheap — call it off
+   *  the hot path (session.ts serialises on an idle callback). */
+  serializeScrollback: () => string;
 }
+
+/** QL-762: line counts to try when serialising for the session doc, largest
+ *  first. A pane painting full-width colour can produce a megabyte from far
+ *  fewer than 2000 lines, so the byte cap — not the line cap — is what
+ *  actually bounds the document; stepping down keeps SOME history rather than
+ *  dropping the pane's scrollback entirely. */
+const SCROLLBACK_SAVE_STEPS = [2000, 800, 300, 100];
+/** ~1MB of serialised ANSI per pane. The session doc is rewritten AND
+ *  snapshotted on every save (persist.rs), so this is a disk-write budget as
+ *  much as a memory one. */
+const SCROLLBACK_SAVE_MAX_CHARS = 1_000_000;
 
 interface TerminalProps {
   vendor: string;
@@ -367,6 +463,14 @@ interface TerminalProps {
   /** UX-581: the pane's unsent input line from the previous run, re-typed on
    *  spawn so a restart doesn't silently discard it. */
   initialDraft?: string;
+  /** QL-762: last session's serialised buffer for this pane, painted before
+   *  the PTY attaches so the pane comes back with its history rather than a
+   *  blank screen. Read once at mount (a restart deliberately passes nothing).  */
+  restoredScrollback?: string;
+  /** QL-758: honour OSC 52 clipboard WRITES from the child process. Off by
+   *  default and per pane — an agent silently taking the clipboard is not
+   *  something to opt everyone into. Reads are never answered, at any setting. */
+  osc52?: boolean;
   fontSize?: number;
   ligatures?: boolean;
   /** How long the pane must be quiet before it's marked "waiting" — computed
@@ -401,14 +505,23 @@ const HIDDEN_BUFFER_CAP = 262144; // 256KB
 
 // One live terminal bound to a PTY in the Rust core.
 export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Terminal(
-  { vendor, cwd, setup, onSetupConsumed, initialDraft, fontSize = 12.5, ligatures = false, quietThresholdMs = 3000, onExit, onState, onProc, onBell, onLine, onScrollAway, onProgress, onCwd },
+  { vendor, cwd, setup, onSetupConsumed, initialDraft, restoredScrollback, osc52 = false, fontSize = 12.5, ligatures = false, quietThresholdMs = 3000, onExit, onState, onProc, onBell, onLine, onScrollAway, onProgress, onCwd },
   ref
 ) {
   const elRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<XTerm | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
   const searchAddonRef = useRef<SearchAddon | null>(null);
+  const serializeAddonRef = useRef<SerializeAddon | null>(null);
   const ligAddonRef = useRef<LigaturesAddon | null>(null);
+  // QL-762: mount-time value only. The mount effect keys on [vendor, cwd], so
+  // reading the prop directly inside it would be a stale-closure trap; a ref
+  // initialised once says "the scrollback this pane was born with" exactly.
+  const restoredRef = useRef(restoredScrollback);
+  // QL-758: read inside the OSC handler, so flipping the pane menu's toggle
+  // takes effect immediately without remounting the terminal (and respawning
+  // the agent, which is what a prop in the mount deps would cost).
+  const osc52Ref = useRef(osc52);
   const quietThresholdRef = useRef(quietThresholdMs);
   // UX-510: the preview drawer reads this at open-time so it starts at the
   // same zoom as the pane the click came from, without forcing a re-register
@@ -421,6 +534,11 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
   // QL-753: set by the mount effect, which owns the mark list. Same bridge
   // pattern as paneIdRef — the handle is built once with [] deps.
   const jumpMarkRef = useRef<(dir: 1 | -1) => boolean>(() => false);
+  // QL-754: ditto for the hint overlay, which the mount effect owns.
+  const showHintsRef = useRef<() => boolean>(() => false);
+  // QL-754/755: both overlays are positioned in pixels off the cell size, so a
+  // font-size change has to re-measure them. Same bridge pattern again.
+  const remeasureOverlaysRef = useRef<() => void>(() => {});
 
   useImperativeHandle(ref, () => ({
     findNext: (query, opts) =>
@@ -452,6 +570,27 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
     },
     paste: (text: string) => { if (paneIdRef.current) invoke("pty_write", { paneId: paneIdRef.current, data: text }); },
     jumpToCommandMark: (dir) => jumpMarkRef.current(dir),
+    showQuickHints: () => showHintsRef.current(),
+    // QL-762: try the biggest window first and step down until the result fits
+    // the per-pane byte cap — a pane whose output is mostly colour codes still
+    // gets SOME history back rather than none.
+    serializeScrollback: () => {
+      const addon = serializeAddonRef.current;
+      if (!addon) return "";
+      for (const scrollback of SCROLLBACK_SAVE_STEPS) {
+        try {
+          // Modes and the alt buffer are deliberately excluded: this string is
+          // replayed into a fresh terminal BEFORE its shell attaches, and
+          // restoring (say) an alt-buffer or bracketed-paste mode the new shell
+          // knows nothing about would leave the pane in a state it can't undo.
+          const out = addon.serialize({ scrollback, excludeModes: true, excludeAltBuffer: true });
+          if (out.length <= SCROLLBACK_SAVE_MAX_CHARS) return out;
+        } catch {
+          return ""; // buffer mid-teardown — no history is better than a throw
+        }
+      }
+      return "";
+    },
   }), []);
 
   useEffect(() => {
@@ -516,6 +655,169 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
     const cwdRef = { current: cwd };
     // Needs term.element, so registered only after open() above.
     const pathLinks = registerPathLinks(term, cwdRef, fontSizeRef);
+
+    // QL-762: the serializer turns this pane's buffer back into the bytes that
+    // drew it, so a restored pane comes back with its history instead of a
+    // blank screen. Fetched off the cold-start path on purpose — nothing asks
+    // for a snapshot until session.ts's first idle refresh, ~20s in, so paying
+    // 32KB of parse before the cockpit has painted buys nothing. A failed
+    // fetch (offline dev server, torn-down window) costs only this pane's
+    // scrollback persistence, never the pane.
+    let serializeIdle = 0;
+    const loadSerializer = () => {
+      serializeIdle = 0;
+      if (disposed || serializeAddonRef.current) return;
+      import("@xterm/addon-serialize")
+        .then(({ SerializeAddon }) => {
+          if (disposed || serializeAddonRef.current) return;
+          const addon = new SerializeAddon();
+          term.loadAddon(addon);
+          serializeAddonRef.current = addon;
+        })
+        .catch(() => { /* no snapshotting for this pane — never fatal */ });
+    };
+    serializeIdle = window.setTimeout(loadSerializer, 5000);
+
+    // QL-758: OSC 52 clipboard, WRITE ONLY. Registered unconditionally but
+    // inert unless this pane opted in — and it always returns handled, so an
+    // opted-out pane swallows the sequence rather than printing its base64 as
+    // garbage. A read request (`?`) is swallowed and never answered at any
+    // setting: replying would let any process that can print to a pane
+    // exfiltrate whatever the user last copied.
+    term.parser.registerOscHandler(52, (data) => {
+      if (!osc52Ref.current) return true;
+      const semi = data.indexOf(";");
+      const payload = semi >= 0 ? data.slice(semi + 1) : "";
+      if (!payload || payload === "?") return true;
+      let text = "";
+      try {
+        const bin = atob(payload);
+        const bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        text = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+      } catch {
+        return true; // malformed base64 — nothing to copy, nothing to report
+      }
+      if (!text) return true;
+      // Said out loud on purpose: the clipboard changing under you with no
+      // explanation is the thing that makes OSC 52 feel like a hijack.
+      navigator.clipboard.writeText(text).then(
+        () => useUI.getState().pushToast("info", `This pane copied ${text.length} character${text.length === 1 ? "" : "s"} to the clipboard.`),
+        () => { /* clipboard denied by the webview — nothing the user can act on */ }
+      );
+      return true;
+    });
+
+    // --- QL-754: quick-select hints ----------------------------------------
+    // A mode, not an overlay: focus stays in the terminal and the keys are
+    // handled locally (attachCustomKeyEventHandler below), the same way the
+    // find box handles its own Escape. Nothing goes on ui.ts's overlay stack —
+    // see CLAUDE.md's overlay note for why that's the right side of the line.
+    const hintLayer = document.createElement("div");
+    hintLayer.className = "xterm-hints";
+    hintLayer.style.display = "none";
+    hintLayer.setAttribute("aria-hidden", "true");
+    const hintBar = document.createElement("div");
+    hintBar.className = "xterm-hintbar";
+    hintBar.setAttribute("role", "status");
+    hintBar.style.display = "none";
+    term.element?.append(hintLayer, hintBar);
+
+    let hints: HintTarget[] = [];
+    let hintTyped = "";
+
+    /** Pixel size of one cell, plus where the character grid starts inside
+     *  term.element. Measured rather than assumed: font size, ligatures and
+     *  the app zoom all move it, and the hint chips have to land on the exact
+     *  character they label. */
+    const cellMetrics = (): { w: number; h: number; x: number; y: number } | null => {
+      const host = term.element;
+      const screen = host?.querySelector(".xterm-screen") as HTMLElement | null;
+      if (!host || !screen || !term.cols || !term.rows) return null;
+      const hostRect = host.getBoundingClientRect();
+      const rect = screen.getBoundingClientRect();
+      if (!rect.width || !rect.height) return null;
+      return { w: rect.width / term.cols, h: rect.height / term.rows, x: rect.left - hostRect.left, y: rect.top - hostRect.top };
+    };
+
+    const renderHints = () => {
+      const metrics = cellMetrics();
+      hintLayer.textContent = "";
+      if (!hints.length || !metrics) { hintLayer.style.display = "none"; hintBar.style.display = "none"; return; }
+      const shown = hints.filter((h) => h.label.startsWith(hintTyped));
+      for (const h of shown) {
+        const chip = document.createElement("span");
+        chip.className = "xterm-hint";
+        chip.style.left = `${metrics.x + h.match.start * metrics.w}px`;
+        chip.style.top = `${metrics.y + h.row * metrics.h}px`;
+        chip.style.fontSize = `${Math.max(9, Math.round((term.options.fontSize ?? 12) * 0.82))}px`;
+        if (hintTyped) {
+          // The part already typed stays visible but recedes, so what's left
+          // to press is the loud thing on a screen full of labels.
+          const done = document.createElement("em");
+          done.textContent = hintTyped;
+          chip.appendChild(done);
+        }
+        chip.appendChild(document.createTextNode(h.label.slice(hintTyped.length)));
+        hintLayer.appendChild(chip);
+      }
+      hintLayer.style.display = "block";
+      hintBar.textContent =
+        `${shown.length} link${shown.length === 1 ? "" : "s"} — type a label to copy · Shift+label to open · Esc to dismiss`;
+      hintBar.style.display = "block";
+    };
+
+    const closeHints = () => {
+      if (!hints.length) return;
+      hints = [];
+      hintTyped = "";
+      hintLayer.textContent = "";
+      hintLayer.style.display = "none";
+      hintBar.style.display = "none";
+    };
+
+    const activateHint = (h: HintTarget, open: boolean) => {
+      const m = h.match;
+      closeHints();
+      if (open) {
+        // Deliberately the SAME two destinations the click path uses: the
+        // allowlisted opener for URLs (openTerminalUrl), the editor configured
+        // in Settings for paths (editor.ts, which owns its own fallback).
+        if (m.kind === "url") openTerminalUrl(m.raw);
+        else void openInEditor(resolvePath(m, cwdRef.current), m.line);
+        return;
+      }
+      const text = hintCopyText(m);
+      navigator.clipboard.writeText(text).then(
+        () => useUI.getState().pushToast("success", `Copied ${text.length > 60 ? `…${text.slice(-57)}` : text}`),
+        () => useUI.getState().pushToast("error", "Couldn’t copy — clipboard unavailable.")
+      );
+    };
+
+    const openHints = (): boolean => {
+      closeHints();
+      const buf = term.buffer.active;
+      const rows: string[] = [];
+      for (let r = 0; r < term.rows; r++) rows.push(buf.getLine(buf.viewportY + r)?.translateToString(true) ?? "");
+      hints = hintTargets(rows);
+      if (!hints.length) {
+        // The empty state is a real state: silence here reads as a broken
+        // shortcut rather than "there was nothing to label".
+        useUI.getState().pushToast("info", "No file paths or links on screen to pick.");
+        return false;
+      }
+      renderHints();
+      return true;
+    };
+    showHintsRef.current = openHints;
+    // Any of these invalidate the coordinates the chips were placed at, and a
+    // chip pointing at the wrong text is worse than no chip.
+    const hintBlur = () => closeHints();
+    // Set fully once the sticky strip below exists; both overlays re-measure
+    // through it when the pane's font size changes.
+    remeasureOverlaysRef.current = closeHints;
+    term.textarea?.addEventListener("blur", hintBlur);
+    el.addEventListener("mousedown", hintBlur);
 
     // --- QL-753: command marks ---------------------------------------------
     // One entry per prompt the shell drew. `ran` means a command actually
@@ -609,8 +911,107 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
       return true;
     };
     jumpMarkRef.current = jumpMark;
+
+    // --- QL-755: sticky command line ---------------------------------------
+    // Scrolled back through a long build, the one thing you can't see is which
+    // command produced what you're reading. Pin the owning prompt to the top
+    // of the pane (VS Code's pattern) while, and only while, the pane is off
+    // its live tail and the shell is actually emitting 133 marks.
+    const sticky = document.createElement("div");
+    sticky.className = "xterm-sticky";
+    sticky.style.display = "none";
+    sticky.setAttribute("role", "button");
+    sticky.tabIndex = -1;
+    const stickyText = document.createElement("span");
+    stickyText.className = "xterm-sticky-text";
+    const stickyJump = document.createElement("span");
+    stickyJump.className = "xterm-sticky-jump";
+    stickyJump.textContent = "↑ jump";
+    sticky.append(stickyText, stickyJump);
+    term.element?.appendChild(sticky);
+
+    let stickyLine: number | null = null;
+    let stickyShown = "";
+    let stickyRaf = 0;
+    const updateSticky = () => {
+      stickyRaf = 0;
+      const buf = term.buffer.active;
+      const metrics = cellMetrics();
+      const scrolledBack = buf.viewportY < buf.baseY;
+      const target = scrolledBack && metrics
+        ? stickyMarkLine(marks.filter((m) => m.ran).map((m) => m.marker.line), buf.viewportY)
+        : null;
+      const text = target === null ? "" : (buf.getLine(target)?.translateToString(true).trim() ?? "");
+      if (!text || !metrics) {
+        if (stickyLine !== null) { stickyLine = null; stickyShown = ""; sticky.style.display = "none"; }
+        return;
+      }
+      stickyLine = target;
+      if (text !== stickyShown) {
+        stickyShown = text;
+        stickyText.textContent = text;
+        sticky.title = `${text} — click to scroll back to this command`;
+      }
+      sticky.style.display = "flex";
+      sticky.style.left = `${metrics.x}px`;
+      sticky.style.top = `${metrics.y}px`;
+      sticky.style.width = `${metrics.w * term.cols}px`;
+      sticky.style.height = `${Math.max(16, metrics.h)}px`;
+      sticky.style.fontSize = `${term.options.fontSize ?? 12}px`;
+    };
+    // Coalesced: onWriteParsed fires per flush on a chatty pane, and this reads
+    // layout. One update per frame is plenty for a one-line label.
+    const scheduleSticky = () => { if (!stickyRaf) stickyRaf = requestAnimationFrame(updateSticky); };
+    remeasureOverlaysRef.current = () => { closeHints(); scheduleSticky(); };
+    // mousedown is swallowed so clicking the strip never steals the caret out
+    // of the terminal; the click itself scrolls and hands focus straight back.
+    sticky.addEventListener("mousedown", (e) => { e.preventDefault(); e.stopPropagation(); });
+    sticky.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (stickyLine === null) return;
+      term.scrollToLine(Math.max(0, stickyLine));
+      term.focus();
+    });
+
     term.attachCustomKeyEventHandler((e) => {
-      if (e.type !== "keydown" || !e.ctrlKey || e.altKey || e.shiftKey || e.metaKey) return true;
+      if (e.type !== "keydown") return true;
+      // QL-754: while the hints are up this pane is in a mode — every key
+      // belongs to the mode and none of them reach the shell.
+      if (hints.length) {
+        // Ctrl/Meta combos are the app's, not the mode's — Cockpit's global
+        // handler runs in the capture phase and has already seen them, so
+        // swallowing one here would fire the app action AND pick a hint. Step
+        // out of the mode and let it be what it was.
+        if (e.ctrlKey || e.metaKey) { closeHints(); return true; }
+        e.preventDefault();
+        e.stopPropagation();
+        if (e.key === "Escape") { closeHints(); return false; }
+        if (e.key === "Backspace") {
+          if (hintTyped) { hintTyped = hintTyped.slice(0, -1); renderHints(); } else closeHints();
+          return false;
+        }
+        const ch = e.key.length === 1 ? e.key.toLowerCase() : "";
+        if (!ch || !HINT_ALPHABET.includes(ch)) { closeHints(); return false; }
+        const next = hintTyped + ch;
+        const exact = hints.find((h) => h.label === next);
+        // Shift is the open modifier: the labels are lowercase letters, so a
+        // capital one is unambiguous and needs no extra keystroke.
+        if (exact) { activateHint(exact, e.shiftKey || e.altKey); return false; }
+        if (!hints.some((h) => h.label.startsWith(next))) { closeHints(); return false; }
+        hintTyped = next;
+        renderHints();
+        return false;
+      }
+      // Checked against the shortcut map (Settings.tsx FIXED_SHORTCUTS + the
+      // Cockpit global handler): nothing binds Ctrl+Shift+Space anywhere.
+      if (e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey && (e.key === " " || e.code === "Space")) {
+        e.preventDefault();
+        e.stopPropagation();
+        openHints();
+        return false;
+      }
+      if (!e.ctrlKey || e.altKey || e.shiftKey || e.metaKey) return true;
       if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return true;
       e.preventDefault();
       jumpMark(e.key === "ArrowDown" ? 1 : -1);
@@ -698,9 +1099,14 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
     let linesBehind = 0;
     const atBottom = () => term.buffer.active.viewportY >= term.buffer.active.baseY - 1;
     const scrollDisp = term.onScroll(() => {
+      // QL-754: the chips were placed against the rows that were on screen when
+      // the mode opened — once those move, every one of them lies.
+      closeHints();
+      scheduleSticky(); // QL-755
       if (atBottom()) { linesBehind = 0; onScrollAway?.(0); }
     });
     const writeDisp = term.onWriteParsed(() => {
+      scheduleSticky(); // QL-755: a new mark (or reflow) can change the owner
       if (atBottom()) { if (linesBehind !== 0) { linesBehind = 0; onScrollAway?.(0); } return; }
       linesBehind++;
       onScrollAway?.(linesBehind);
@@ -806,6 +1212,19 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
       if (localWaiting) { localWaiting = false; onState?.("running"); }
       armQuietTimer();
     };
+
+    // QL-762: last session's buffer, painted before the PTY attaches (the
+    // serialize addon's own recommendation — a restored frame that renders
+    // once beats one that renders as it streams). Written straight through
+    // rather than via writeBytes: it is not PTY output, so it must not be
+    // parsed for marks, progress or the permission-prompt tail. The separator
+    // is the honesty bit — without it there is no way to tell last week's
+    // output from this second's.
+    if (restoredRef.current) {
+      const text = restoredRef.current;
+      term.write(text.endsWith("\n") ? text : `${text}\r\n`);
+      term.write("\x1b[2m— restored scrollback ends here —\x1b[0m\r\n");
+    }
 
     (async () => {
       unOut = await listen<{ pane_id: number; b64: string }>("pty://output", (e) => {
@@ -916,7 +1335,11 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
       if (!visible) return;
       const r = el.getBoundingClientRect();
       if (r.width < 24 || r.height < 24) return;
+      // Reflow moves every hint chip off its character; the sticky strip just
+      // needs re-measuring against the new cell size.
+      closeHints();
       try { fit.fit(); } catch { /* mid-teardown */ }
+      scheduleSticky();
     });
     ro.observe(el);
 
@@ -952,8 +1375,20 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
       themeObserver.disconnect();
       if (themeRaf) cancelAnimationFrame(themeRaf);
       pathLinks.dispose();
+      // QL-754/755: overlays live in term.element, which term.dispose() takes
+      // with it — removed explicitly anyway so nothing survives a partial
+      // teardown, and their listeners go with them.
+      if (stickyRaf) cancelAnimationFrame(stickyRaf);
+      if (serializeIdle) clearTimeout(serializeIdle); // QL-762
+      term.textarea?.removeEventListener("blur", hintBlur);
+      el.removeEventListener("mousedown", hintBlur);
+      hintLayer.remove();
+      hintBar.remove();
+      sticky.remove();
       for (const m of marks.splice(0)) { m.dec?.dispose(); m.marker.dispose(); }
       jumpMarkRef.current = () => false;
+      showHintsRef.current = () => false;
+      remeasureOverlaysRef.current = () => {};
       scrollDisp.dispose();
       writeDisp.dispose();
       unOut?.();
@@ -967,6 +1402,7 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
       termRef.current = null;
       fitRef.current = null;
       searchAddonRef.current = null;
+      serializeAddonRef.current = null;
     };
     // fontSize/ligatures/quietThresholdMs deliberately excluded — none of them
     // should remount/respawn the PTY, they're applied live by the effects below.
@@ -980,6 +1416,7 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
     if (!term) return;
     term.options.fontSize = fontSize;
     try { fitRef.current?.fit(); } catch { /* mid-teardown */ }
+    remeasureOverlaysRef.current(); // QL-754/755: cell size just moved
   }, [fontSize]);
 
   // Ligatures toggle: load/dispose the addon in place.
@@ -999,6 +1436,11 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
   useEffect(() => {
     quietThresholdRef.current = quietThresholdMs;
   }, [quietThresholdMs]);
+
+  // QL-758: the pane menu's OSC 52 toggle, live — no remount, no respawn.
+  useEffect(() => {
+    osc52Ref.current = osc52;
+  }, [osc52]);
 
   return <div ref={elRef} style={{ width: "100%", height: "100%" }} />;
 });

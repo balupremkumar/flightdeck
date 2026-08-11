@@ -7,6 +7,7 @@
 mod editor;
 mod gitstatus;
 mod health;
+mod hooks;
 mod job;
 mod orphans;
 mod outbuf;
@@ -655,6 +656,7 @@ pub fn run() {
             worktree::git_update_from_base,
             usage::pane_usage,
             usage::list_claude_sessions,
+            usage::search_claude_sessions,
             usage::stage_launch_args,
             usage::pane_subagents,
             usage::pane_subagent_count,
@@ -671,6 +673,12 @@ pub fn run() {
             updates::install_update,
             updates::take_update_status,
             overlay::set_attention_overlay,
+            // QL-720: hook-driven session state. install/uninstall are the only
+            // things in Flightdeck that write to ~/.claude/settings.json, and
+            // both are reachable only from the Settings row's confirm dialog.
+            hooks::hook_events_status,
+            hooks::install_claude_hooks,
+            hooks::uninstall_claude_hooks,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
@@ -705,6 +713,12 @@ pub fn run() {
     // QL-780: global summon chord (Ctrl+Alt+F). Registered after build, never
     // fatal — see summon.rs.
     summon::init(app.handle());
+
+    // QL-720: write the hook relay into <app-data>/hooks and start tailing its
+    // event log. This only prepares the machinery and reads our OWN folder —
+    // the user's ~/.claude/settings.json is untouched until they press Install
+    // in Settings › Diagnostics.
+    hooks::init(app.handle());
 
     spawn_proc_sampler(app.handle().clone());
     // UX-586: hot-reload the vendor list when a manifest file changes on disk.

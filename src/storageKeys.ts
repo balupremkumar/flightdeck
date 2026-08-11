@@ -89,6 +89,12 @@ export const SESSION_KEYS = [
   // files list are both "what you were doing", not appearance/behaviour.
   "flightdeck-explorer-scroll",
   "flightdeck-quickopen-recent",
+  // QL-720: a CACHE of an external fact — whether Flightdeck's hooks are in
+  // ~/.claude/settings.json — plus the live-apply event name that travels with
+  // it. Emphatically not a preference: a settings reset must not claim the
+  // user's Claude config changed, and the backend is the authority anyway.
+  "flightdeck-hooks-installed",
+  "flightdeck-hooks-changed",
 ] as const;
 
 /**
