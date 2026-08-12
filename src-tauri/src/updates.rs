@@ -49,6 +49,7 @@ use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, State};
 
+use crate::canary;
 use crate::{live_pane_ids, reap_pane, Registry};
 
 /// Balu's single-machine setup: build output and the running install share
@@ -316,8 +317,23 @@ fn preflight_installer(installer: &Path, expected_version: Option<&str>) -> Resu
     Ok(())
 }
 
+/// True for the Canary flavour (tauri.canary.conf.json). Canary never
+/// self-updates: its whole job is to be the disposable side-by-side trial, and
+/// the only installer latest.json ever names is the STABLE one — offering it
+/// here would overwrite the user's working stable install from inside canary.
+fn is_canary(app: &AppHandle) -> bool {
+    canary::is_canary_identifier(&app.config().identifier)
+}
+
 #[tauri::command]
-pub fn check_update(releases_dir: Option<String>) -> UpdateCheckResult {
+pub fn check_update(app: AppHandle, releases_dir: Option<String>) -> UpdateCheckResult {
+    if is_canary(&app) {
+        return UpdateCheckResult::none();
+    }
+    check_update_inner(releases_dir)
+}
+
+pub(crate) fn check_update_inner(releases_dir: Option<String>) -> UpdateCheckResult {
     let dir = releases_path(releases_dir.as_deref());
     let manifest_path = dir.join("latest.json");
     let raw = match std::fs::read_to_string(&manifest_path) {
@@ -360,6 +376,65 @@ pub fn check_update(releases_dir: Option<String>) -> UpdateCheckResult {
         error_kind: None,
         manual_path: None,
     }
+}
+
+// ---------------------------------------------------------------------------
+// Rollback (deployment rework, phase 3). Every release cut leaves its
+// installer in the releases dir, which makes "go back to the version that
+// worked" a first-class action instead of the uninstall/hunt/reinstall loop
+// the v0.5.3 failure forced. Installing an older NSIS build over a newer one
+// is the same watcher path as an upgrade; evaluate_status already judges
+// success by "running version == attempted version", which holds for a
+// downgrade too.
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct RollbackCandidate {
+    pub version: String,
+    pub installer_path: String,
+}
+
+#[tauri::command]
+pub fn list_rollback_candidates(app: AppHandle, releases_dir: Option<String>) -> Vec<RollbackCandidate> {
+    if is_canary(&app) {
+        return Vec::new(); // canary never installs anything (see is_canary)
+    }
+    list_rollback_candidates_inner(releases_dir)
+}
+
+/// Every STABLE installer in the releases dir strictly older than the running
+/// version, newest first, pre-flighted so the UI never offers a corrupt file.
+/// Canary artifacts don't parse as `Flightdeck_<ver>_` and drop out naturally.
+pub(crate) fn list_rollback_candidates_inner(releases_dir: Option<String>) -> Vec<RollbackCandidate> {
+    let dir = releases_path(releases_dir.as_deref());
+    let current = env!("CARGO_PKG_VERSION");
+    let mut out: Vec<RollbackCandidate> = Vec::new();
+    let Ok(entries) = std::fs::read_dir(&dir) else { return out };
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let Some(ver) = version_from_installer_name(&name) else { continue };
+        if !version_gt(current, ver) {
+            continue; // running version or newer — not a rollback
+        }
+        if preflight_installer(&entry.path(), Some(ver)).is_err() {
+            continue;
+        }
+        out.push(RollbackCandidate {
+            version: ver.to_string(),
+            installer_path: entry.path().to_string_lossy().into_owned(),
+        });
+    }
+    out.sort_by(|a, b| {
+        if version_gt(&a.version, &b.version) {
+            std::cmp::Ordering::Less
+        } else if version_gt(&b.version, &a.version) {
+            std::cmp::Ordering::Greater
+        } else {
+            std::cmp::Ordering::Equal
+        }
+    });
+    out
 }
 
 /// D11-style guard (mirrors worktree.rs's ensure_under): only ever launch an
@@ -678,6 +753,12 @@ pub fn install_update(
     installer_path: String,
     releases_dir: Option<String>,
 ) -> Result<(), UpdateError> {
+    if is_canary(&app) {
+        return Err(UpdateError::new(
+            "canary-channel",
+            "This is the Canary build — it never self-updates. When this version proves out, install the stable Flightdeck build of it; your stable install is untouched until then.",
+        ));
+    }
     let dir = releases_path(releases_dir.as_deref());
     let installer = ensure_under_releases_dir(&dir, Path::new(&installer_path)).map_err(|e| {
         UpdateError::new("installer-outside-releases", format!("Refusing to run this installer: {e}."))
@@ -790,8 +871,30 @@ mod tests {
     }
 
     #[test]
+    fn rollback_candidates_are_older_valid_stable_installers_newest_first() {
+        let dir = std::env::temp_dir().join("flightdeck-rollback-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let real = |name: &str| {
+            // Passes pre-flight: MZ header + past the 512KB floor.
+            let mut bytes = vec![0x4D, 0x5A];
+            bytes.resize(600 * 1024, 0);
+            std::fs::write(dir.join(name), bytes).unwrap();
+        };
+        real("Flightdeck_0.1.0_x64-setup.exe");
+        real("Flightdeck_0.4.0_x64-setup.exe");
+        real("Flightdeck_9.9.9_x64-setup.exe"); // newer than running — excluded
+        real("Flightdeck Canary_0.1.0_x64-setup.exe"); // canary name — excluded
+        std::fs::write(dir.join("Flightdeck_0.2.0_x64-setup.exe"), b"not an exe").unwrap(); // fails pre-flight
+
+        let got = list_rollback_candidates_inner(Some(dir.to_string_lossy().into_owned()));
+        let versions: Vec<&str> = got.iter().map(|c| c.version.as_str()).collect();
+        assert_eq!(versions, vec!["0.4.0", "0.1.0"]);
+    }
+
+    #[test]
     fn check_update_missing_manifest_errs_cleanly() {
-        let res = check_update(Some("D:\\this-dir-should-not-exist-flightdeck-test".to_string()));
+        let res = check_update_inner(Some("D:\\this-dir-should-not-exist-flightdeck-test".to_string()));
         assert!(!res.available);
         assert!(res.error.is_some());
         assert_eq!(res.error_kind.as_deref(), Some("manifest-unreadable"));

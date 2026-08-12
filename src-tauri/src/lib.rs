@@ -5,6 +5,7 @@
 // subscription. No API keys, no headless mode.
 
 mod applog;
+mod canary;
 mod editor;
 mod gitstatus;
 mod health;
@@ -607,6 +608,12 @@ fn spawn_proc_sampler(app: AppHandle) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let context = tauri::generate_context!();
+    // Canary first boot: clone stable's state BEFORE the builder runs — build()
+    // creates the webview and locks the EBWebView profile dir, after which the
+    // localStorage half of the clone is impossible. No-op on stable. The
+    // summary is logged once applog is up (below).
+    let canary_note = canary::prepare(&context.config().identifier);
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -679,6 +686,7 @@ pub fn run() {
             updates::check_update,
             updates::install_update,
             updates::take_update_status,
+            updates::list_rollback_candidates,
             overlay::set_attention_overlay,
             // QL-720: hook-driven session state. install/uninstall are the only
             // things in Flightdeck that write to ~/.claude/settings.json, and
@@ -687,7 +695,7 @@ pub fn run() {
             hooks::install_claude_hooks,
             hooks::uninstall_claude_hooks,
         ])
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("error while building tauri application");
 
     // Manifest vendors (#218): point the registry at <app-data>/vendors so a
@@ -696,6 +704,9 @@ pub fn run() {
         // Flight recorder first, so everything after this line — including a
         // panic in any later setup step or command — leaves a durable trace.
         applog::init(data_dir.join("logs"), &app.package_info().version.to_string());
+        if let Some(note) = &canary_note {
+            applog::log("info", "canary", note);
+        }
         vendors::set_manifest_dir(data_dir.join("vendors"));
         // QL-752: (re)write the PowerShell shell-integration preamble that
         // interactive pwsh panes dot-source at spawn. Rewritten every launch so

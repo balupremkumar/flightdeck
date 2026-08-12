@@ -1,0 +1,17 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Flightdeck Canary",
+  "identifier": "ai.flightdeck.canary",
+  "app": {
+    "windows": [
+      {
+        "title": "Flightdeck Canary",
+        "width": 1200,
+        "height": 800,
+        "minWidth": 940,
+        "minHeight": 620,
+        "visible": false
+      }
+    ]
+  }
+}

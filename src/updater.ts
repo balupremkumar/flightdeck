@@ -176,6 +176,18 @@ export async function installUpdate(installerPath: string): Promise<void> {
   }
 }
 
+// Rollback (deployment rework, phase 3): older stable installers still in the
+// releases folder, newest first, already pre-flighted on the Rust side.
+export interface RollbackCandidate { version: string; installerPath: string }
+export async function listRollbackCandidates(): Promise<RollbackCandidate[]> {
+  const releasesDir = getReleasesDir();
+  try {
+    return await invoke<RollbackCandidate[]>("list_rollback_candidates", releasesDir ? { releasesDir } : {});
+  } catch {
+    return []; // browser rig / no bridge — the row simply doesn't render
+  }
+}
+
 // ---------------------------------------------------------------------------
 // UPD-1: what happened to the LAST update attempt
 // ---------------------------------------------------------------------------

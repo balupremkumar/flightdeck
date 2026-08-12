@@ -16,6 +16,7 @@ import {
   getAutoUpdateCheck, setAutoUpdateCheck, DEFAULT_RELEASES_DIR,
   getPendingReleaseNotes, clearPendingReleaseNotes, type UpdateCheckResult,
   getUpdateFailure, clearUpdateFailure,
+  listRollbackCandidates, type RollbackCandidate,
 } from "./updater";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { trustedRepos, untrustRepo } from "./trust";
@@ -34,6 +35,7 @@ import {
   appearanceMode, setAppearanceMode, applyThemeForMode, type AppearanceMode,
 } from "./themes";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { getName } from "@tauri-apps/api/app";
 import "./overlays.css";
 
 // ---------------------------------------------------------------------
@@ -568,18 +570,18 @@ function UpdatesBlock() {
     if (res.error) setCheckError(res.error);
   };
 
-  const doInstall = async () => {
-    if (!updateAvailable) return;
+  const doInstallPath = async (installerPath: string) => {
     setInstalling(true);
     setInstallError(null);
     try {
-      await installUpdate(updateAvailable.installerPath);
+      await installUpdate(installerPath);
       // On success the app exits itself (updates.rs) — nothing else to do.
     } catch (e) {
       setInstalling(false);
       setInstallError(String(e));
     }
   };
+  const doInstall = () => updateAvailable && void doInstallPath(updateAvailable.installerPath);
 
   const confirmInstall = () => {
     if (!updateAvailable) return;
@@ -600,6 +602,35 @@ function UpdatesBlock() {
     });
   };
 
+  // Rollback (deployment rework, phase 3): every cut leaves its installer in
+  // the releases folder, so "go back to the version that worked" is a button
+  // here instead of an uninstall/hunt/reinstall loop.
+  const [rollbacks, setRollbacks] = useState<RollbackCandidate[]>([]);
+  const [rollbackTo, setRollbackTo] = useState("");
+  useEffect(() => {
+    void listRollbackCandidates().then((c) => {
+      setRollbacks(c);
+      if (c.length > 0) setRollbackTo(c[0].version);
+    });
+  }, []);
+  const confirmRollback = () => {
+    const cand = rollbacks.find((c) => c.version === rollbackTo);
+    if (!cand) return;
+    const live = useApp.getState().workspaces
+      .flatMap((w) => w.panes)
+      .filter((p) => p.state === "running" || p.state === "starting" || p.state === "waiting" || p.state === "permission");
+    const liveNote = live.length > 0
+      ? ` ${live.length} pane${live.length === 1 ? "" : "s"} still live — closing ends ${live.length === 1 ? "its session" : "their sessions"}.`
+      : "";
+    useUI.getState().requestConfirm({
+      title: `Roll back to Flightdeck ${cand.version}?`,
+      body: `Installs ${cand.version} over ${APP_VERSION} and relaunches. Sessions and settings are kept, though features added since ${cand.version} won’t understand their newer data.${liveNote}`,
+      confirmLabel: "Roll back & restart",
+      danger: true,
+      onConfirm: () => void doInstallPath(cand.installerPath),
+    });
+  };
+
   const toggleAutoCheck = () => {
     const next = !autoCheck;
     setAutoCheckState(next);
@@ -610,6 +641,28 @@ function UpdatesBlock() {
     setReleasesDirState(v);
     setReleasesDir(v);
   };
+
+  // Canary flavour (deployment rework): a side-by-side trial install that
+  // never self-updates — updates.rs returns none/rejects for it, so the whole
+  // check/install UI would only mislead. Say what this build is instead.
+  const [isCanary, setIsCanary] = useState(false);
+  useEffect(() => {
+    getName().then((n) => setIsCanary(n.includes("Canary"))).catch(() => {});
+  }, []);
+  if (isCanary) {
+    return (
+      <div className="set-row">
+        <div className="set-row-t">
+          <span className="set-row-name">Updates — Canary channel</span>
+          <span className="set-row-sub">
+            This is the side-by-side trial build with its own copy of your data. It never
+            self-updates and never touches the stable install. Happy with it? Install the stable
+            build of this version. Broken? Uninstall it — stable is exactly as you left it.
+          </span>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <>
@@ -682,6 +735,24 @@ function UpdatesBlock() {
         </div>
         <button className={"toggle" + (autoCheck ? " on" : "")} role="switch" aria-checked={autoCheck} onClick={toggleAutoCheck}><span /></button>
       </div>
+      {rollbacks.length > 0 && (
+        <div className="set-row">
+          <div className="set-row-t">
+            <span className="set-row-name">Roll back</span>
+            <span className="set-row-sub">Reinstall an earlier version from the releases folder</span>
+          </div>
+          <select
+            className="set-select"
+            aria-label="Version to roll back to"
+            value={rollbackTo}
+            onChange={(e) => setRollbackTo(e.target.value)}
+            disabled={installing}
+          >
+            {rollbacks.map((c) => <option key={c.version} value={c.version}>v{c.version}</option>)}
+          </select>
+          <button className="set-btn" onClick={confirmRollback} disabled={installing}>Roll back…</button>
+        </div>
+      )}
       <div className="set-row">
         <div className="set-row-t">
           <span className="set-row-name">Releases folder</span>

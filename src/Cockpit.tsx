@@ -25,6 +25,7 @@ import { useUI, closeTopOverlay } from "./ui";
 // palette across, so it stays in step with the picker in Settings.
 import { toggleThemeMode } from "./themes";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { getName } from "@tauri-apps/api/app";
 import { spawnPane, closePaneGuarded, closeWorkspaceGuarded } from "./worktrees";
 import { isTypingTarget } from "./Shortcuts";
 import { attentionQueue, mostRecentOutputPane } from "./attention";
@@ -301,13 +302,20 @@ export function Cockpit() {
   const waitingCount = workspaces.reduce((n, w) => n + w.panes.filter((p) => p.state === "waiting").length, 0);
   const permissionCount = workspaces.reduce((n, w) => n + w.panes.filter((p) => p.state === "permission").length, 0);
   const errorCount = workspaces.reduce((n, w) => n + w.panes.filter((p) => p.state === "error").length, 0);
+  // Canary keeps its product name in the title, or the two side-by-side
+  // installs become indistinguishable in the taskbar (getName resolves
+  // "Flightdeck" / "Flightdeck Canary" from the flavour's config).
+  const [appName, setAppName] = useState("Flightdeck");
   useEffect(() => {
-    const bits = ["Flightdeck"];
+    getName().then((n) => setAppName(n)).catch(() => { /* browser preview */ });
+  }, []);
+  useEffect(() => {
+    const bits = [appName];
     if (permissionCount > 0) bits.push(`${permissionCount} need${permissionCount === 1 ? "s" : ""} approval`);
     if (waitingCount > 0) bits.push(`${waitingCount} waiting`);
     if (errorCount > 0) bits.push(`${errorCount} error${errorCount === 1 ? "" : "s"}`);
     try { void getCurrentWindow().setTitle(bits.join(" — ")); } catch { /* browser preview */ }
-  }, [waitingCount, permissionCount, errorCount]);
+  }, [appName, waitingCount, permissionCount, errorCount]);
 
   return (
     <div className="cockpit-root">

@@ -222,13 +222,53 @@ Step "Verify release output" {
     }
 }
 
+# ---------------------------------------------------------------------------
+# 6. Canary flavour (deployment rework, phase 2): same code, different
+#    identity ("Flightdeck Canary" / ai.flightdeck.canary), so it installs
+#    SIDE BY SIDE with stable instead of overwriting it. This is the build
+#    that gets trialled first; stable is only installed once canary proves
+#    out. latest.json never references it (canary never self-updates).
+# ---------------------------------------------------------------------------
+Step "npm run tauri build (canary)" { npm run tauri build -- --config src-tauri/tauri.canary.conf.json }
+
+Step "Publish + verify canary installer" {
+    $nsisDir       = Join-Path $root "src-tauri\target\release\bundle\nsis"
+    $canaryName    = "Flightdeck Canary_${Version}_x64-setup.exe"
+    $canarySrc     = Join-Path $nsisDir $canaryName
+    if (-not (Test-Path -LiteralPath $canarySrc)) {
+        throw "Expected canary installer not found: $canarySrc (check $nsisDir for what the build named it)"
+    }
+    $releasesDir = Join-Path $root "releases"
+    Copy-Item -LiteralPath $canarySrc -Destination $releasesDir -Force
+    $published = Join-Path $releasesDir $canaryName
+
+    if ((Get-Item -LiteralPath $published).Length -lt 512KB) { throw "canary installer is implausibly small" }
+    $head = Get-Content -LiteralPath $published -AsByteStream -TotalCount 2
+    if ($head[0] -ne 0x4D -or $head[1] -ne 0x5A) { throw "canary installer does not start with the MZ header" }
+    $ver = (Get-Item -LiteralPath $published).VersionInfo.FileVersion
+    if ($ver -and $ver.Trim() -notlike "$Version*") { throw "canary installer version resource is '$ver', expected $Version" }
+    Write-Host "  $canaryName -> $releasesDir"
+}
+
+# ---------------------------------------------------------------------------
+# 7. Boot gate: the canary binary must boot AGAINST A CLONE OF REAL STATE and
+#    prove a healthy UI mount via the flight recorder. This is the check that
+#    would have caught the v0.5.3 launch failure before it shipped. Runs on
+#    the canary flavour by construction (its own identifier), so the user's
+#    stable app data is never touched.
+# ---------------------------------------------------------------------------
+Step "Boot gate (canary vs cloned real state)" { & (Join-Path $root "tools\boot-gate.ps1") }
+
 Write-Host ""
 Write-Host "== Release v$Version ready ==" -ForegroundColor Green
-Write-Host "  releases\Flightdeck_${Version}_x64-setup.exe"
+Write-Host "  releases\Flightdeck_${Version}_x64-setup.exe          (stable - the promotion artifact)"
+Write-Host "  releases\Flightdeck Canary_${Version}_x64-setup.exe   (canary - install THIS first)"
 Write-Host "  releases\latest.json"
 Write-Host ""
 Write-Host "Manual next steps:" -ForegroundColor Yellow
-Write-Host "  1. Smoke-test the installer (it upgrades in place over the currently installed copy)."
-Write-Host "  2. Commit the version bump (package.json, Cargo.toml, Cargo.lock, tauri.conf.json, Settings.tsx, version.ts) if this repo is under git."
-Write-Host "  3. Any other running Flightdeck install on this machine will offer v$Version next time it checks (startup or Settings > About)."
-Write-Host "  4. If the in-app update fails, the installer is sitting in releases\ and can be run by hand - that is the documented fallback (docs/SIGNING.md)."
+Write-Host "  1. Install the CANARY installer - it lands beside the stable install, never over it,"
+Write-Host "     and on first boot clones a copy of stable's state (worktrees excluded by design)."
+Write-Host "  2. Trial canary. Broken? Delete it; stable was never touched. Good? Promote:"
+Write-Host "     install stable v$Version by hand, or let the running stable offer it (Settings > About)."
+Write-Host "  3. Commit the version bump (package.json, Cargo.toml, Cargo.lock, tauri.conf.json, Settings.tsx, version.ts)."
+Write-Host "  4. If a stable in-app update fails, the installer is in releases\ and runs by hand (docs/SIGNING.md)."

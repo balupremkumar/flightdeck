@@ -10,6 +10,7 @@ import { useUI } from "./ui";
 import { applyThemeForMode, isFollowingSystem, toggleThemeMode } from "./themes";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useEffect } from "react";
+import { logEvent } from "./applog";
 
 // QL-784: "Follow Windows" (Settings > Appearance) hands the light/dark choice
 // to the OS, landing on whichever theme was last used in that mode.
@@ -75,6 +76,13 @@ function LauncherChrome() {
 
 export default function App() {
   useFollowSystemTheme();
+  // Boot beacon for the release gate (tools/boot-gate.ps1). App is the one
+  // component mounted in BOTH boot states (launcher and cockpit), so this line
+  // in the flight recorder means "the UI provably reached a usable screen". A
+  // render throw anywhere in the initial tree unwinds to the ErrorBoundary
+  // before effects run, so a broken boot never writes it — the gate fails on
+  // its absence. StrictMode double-mount writes it twice; harmless.
+  useEffect(() => { logEvent("info", "boot-ok", "app mounted"); }, []);
   const count = useApp((s) => s.workspaces.length);
   const creating = useApp((s) => s.creating);
   if (count === 0) return <LauncherChrome />;

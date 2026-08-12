@@ -147,7 +147,10 @@ describe("steady-state IPC budget (UX-595)", () => {
 const COLD_START_BUDGET_BYTES = 1_520_000;
 /** The app's own chunk. React and xterm are separate, rarely-changing vendor
  *  chunks; this is the number our own code moves. */
-const APP_CHUNK_BUDGET_BYTES = 430_000;
+/* Raised 430_000 -> 436_000 on 2026-08-12: the deployment rework (flight
+ * recorder client, global error handlers, rollback UI, canary About/title)
+ * grew the chunk ~1.2KB past the old line. Kept tight — ~5KB headroom. */
+const APP_CHUNK_BUDGET_BYTES = 436_000;
 
 const distDir = fileURLToPath(new URL("../dist/", import.meta.url));
 const builtIndex = distDir + "index.html";

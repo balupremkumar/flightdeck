@@ -2,9 +2,23 @@
 
 Vault: [[HOME]] | [[PORTFOLIO|Portfolio]] | [[projects/active/flightdeck/BACKLOG|Backlog]]
 
-Updated: 2026-08-12 session close (v0.5.3 CUT + E2E-VERIFIED, ready for Balu's manual install; release bump committed+pushed c0d3407, vault PORTFOLIO row updated c093219).
+Updated: 2026-08-12 evening (deployment rework in flight, phases 1-3).
 
-## CURRENT: v0.5.3 cut, verified, ready to install (2026-08-12)
+## CURRENT: v0.5.3 FAILED ON INSTALL — deployment rework underway (2026-08-12 evening)
+Balu installed 0.5.3 (~5:13pm): app launched into a UI error loop ("something went wrong", terminal wouldn't open), reverted to 0.5.1 at 6:19pm.
+No root cause provable — the app had ZERO persisted error reporting (no log, no panic hook, no componentDidCatch/onerror; event log + crash dumps clean, so it was a frontend crash, almost certainly the ErrorBoundary screen).
+Balu's screenshot never arrived in chat; still wanted for phase 4.
+Rework (approved plan, 4 phases):
+**P1 DONE (fe09007): flight recorder.** applog.rs rotating redacted log in <app-data>/logs; panic hook, ErrorBoundary componentDidCatch, window.onerror, unhandledrejection, error toasts all feed it; support bundle embeds tail; Settings > Diagnostics "Open error log"; crash screen gained the same button.
+**P2 CODE DONE, verified by real build: canary channel.** tauri.canary.conf.json ("Flightdeck Canary" / ai.flightdeck.canary) installs SIDE BY SIDE with stable; canary.rs clones stable state on first boot (worktree fields STRIPPED from the cloned session doc and cwd remapped to repo root via sidecar meta — canary must never touch stable's worktrees); canary never self-updates (updates.rs guards); release.ps1 builds+publishes both flavours; About explains the channel; window title carries the flavour name.
+**P3 CODE DONE, gate not yet run E2E: rollback + boot gate.** list_rollback_candidates + Settings > About "Roll back" row (older stable installers in releases\, pre-flighted); tools/boot-gate.ps1 boots the canary binary against cloned real state and requires the Cockpit "boot-ok" flight-recorder beacon + zero error entries; wired as release.ps1 step 7.
+Gates so far: tsc clean, vitest 657/657, cargo 195/195, build clean.
+First gate run FAILED CORRECTLY (no beacon): beacon was on Cockpit mount, but a fresh boot with a pending restore prompt shows the launcher, so Cockpit never mounts — beacon moved to App (App.tsx), the one component mounted in both boot states.
+Canary rebuild with the moved beacon running; gate rerun + P2/P3 commit pending.
+**P4 OPEN: root-cause 0.5.3** via the gate (which now reproduces "boot against real migrated state") or Balu's screenshot.
+NOTE: gate run with stable app running can't clone localStorage (WebView2 profile locked) — full-fidelity clone needs stable closed.
+
+## Superseded: v0.5.3 cut, verified, ready to install (2026-08-12)
 Full gate green: tsc clean, vitest 649/649, cargo check clean, cargo 180 tests, build clean; release script verified the artifact (version resource 0.5.3, latest.json + sha256 b59081f4..., unsigned as usual).
 **E2E boot probe PASSED**: ran the exact release binary the installer deploys, Win32 EnumWindows at 8s shows a VISIBLE titled "Flightdeck" window, FileVersion 0.5.3 — the 0.5.2 invisible-boot bug is dead. Probe instance killed cleanly.
 **Install: run `releases\Flightdeck_0.5.3_x64-setup.exe` by hand** (or Settings > About in the running 0.5.1). Installing closes the app + kills all panes (job object) — run it from OUTSIDE a Flightdeck pane. Machine was on 0.5.1 (running since 5:09pm 2026-08-12).
