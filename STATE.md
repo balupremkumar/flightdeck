@@ -2,7 +2,7 @@
 
 Vault: [[HOME]] | [[PORTFOLIO|Portfolio]] | [[projects/active/flightdeck/BACKLOG|Backlog]]
 
-Updated: 2026-08-12 (v0.5.3 CUT + E2E-VERIFIED, ready for Balu's manual install).
+Updated: 2026-08-12 session close (v0.5.3 CUT + E2E-VERIFIED, ready for Balu's manual install; release bump committed+pushed c0d3407, vault PORTFOLIO row updated c093219).
 
 ## CURRENT: v0.5.3 cut, verified, ready to install (2026-08-12)
 Full gate green: tsc clean, vitest 649/649, cargo check clean, cargo 180 tests, build clean; release script verified the artifact (version resource 0.5.3, latest.json + sha256 b59081f4..., unsigned as usual).
