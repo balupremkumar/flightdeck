@@ -15,7 +15,13 @@ Rework (approved plan, 4 phases):
 **P1-P3 ALL COMMITTED (fe09007, 5c81323) AND E2E-VERIFIED**: final gates tsc clean, vitest 657/657, cargo 195/195; **boot gate PASSED live** — canary binary booted beside the running stable install against a clone of the real session, wrote the boot-ok beacon, zero error entries.
 (First gate run failed correctly: beacon was on Cockpit mount, which a fresh boot with a pending restore prompt never mounts — moved to App.tsx. App chunk budget 430→436KB, dated note in perfbudget.test.ts.)
 **P4 OPEN: root-cause 0.5.3.** Blocked on: Balu's screenshot (never arrived in chat), OR a full-fidelity gate run with stable CLOSED (WebView2 profile locked while it runs, so localStorage doesn't clone), OR simply his next canary trial — any recurrence now lands in the flight recorder with a stack.
-**Next release cut (0.5.4) produces BOTH installers via tools/release.ps1 and runs the boot gate automatically. Balu installs the CANARY one first**; stable stays untouched until canary proves out. Roll back lives in Settings > About.
+**NEXT SESSION STARTS HERE (2026-08-13): cut v0.5.4 and trial the fixes.**
+1. `pwsh tools/release.ps1 -Version 0.5.4 -Notes "..."` — now builds stable AND canary installers and runs the boot gate automatically (run from OUTSIDE a Flightdeck pane).
+2. Balu installs `releases\Flightdeck Canary_0.5.4_x64-setup.exe` — lands BESIDE the running 0.5.1, clones its state on first boot, cannot touch it. Best clone fidelity: close stable Flightdeck first (its WebView2 profile is locked while running, so localStorage doesn't clone otherwise).
+3. Trial canary. If the 0.5.3-style crash recurs it is now CAPTURED: Settings > Diagnostics > Open error log (or the crash screen's own button) has the stack — that closes P4.
+4. Clean? Install stable 0.5.4 (in-app from 0.5.1, or run the stable installer). Broken? Uninstall canary, stable untouched; error log tells us why.
+Rollback safety net: Settings > About > Roll back (older installers in releases\, one confirm).
+Balu's 0.5.3 screenshot is still wanted for P4 if the crash does NOT recur in canary.
 
 ## Superseded: v0.5.3 cut, verified, ready to install (2026-08-12)
 Full gate green: tsc clean, vitest 649/649, cargo check clean, cargo 180 tests, build clean; release script verified the artifact (version resource 0.5.3, latest.json + sha256 b59081f4..., unsigned as usual).
