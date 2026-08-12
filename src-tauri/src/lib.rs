@@ -4,6 +4,7 @@
 // VS Code terminal), and strips only cross-vendor API keys so auth stays on the
 // subscription. No API keys, no headless mode.
 
+mod applog;
 mod editor;
 mod gitstatus;
 mod health;
@@ -549,7 +550,11 @@ fn export_support_bundle(app: AppHandle, reg: State<Registry>, dest_path: String
             })
             .collect()
     };
-    let json = support::build_bundle(&app.package_info().version.to_string(), panes)?;
+    let json = support::build_bundle(
+        &app.package_info().version.to_string(),
+        panes,
+        applog::tail(64 * 1024),
+    )?;
     std::fs::write(&dest_path, json).map_err(|e| e.to_string())
 }
 
@@ -638,6 +643,8 @@ pub fn run() {
             recover_orphans,
             kill_orphans,
             export_support_bundle,
+            applog::log_event,
+            applog::log_file_path,
             editor::launch_editor,
             reveal::reveal_in_explorer,
             gitstatus::git_status,
@@ -686,6 +693,9 @@ pub fn run() {
     // Manifest vendors (#218): point the registry at <app-data>/vendors so a
     // dropped JSON file becomes a launchable agent — no recompile.
     if let Ok(data_dir) = app.handle().path().app_data_dir() {
+        // Flight recorder first, so everything after this line — including a
+        // panic in any later setup step or command — leaves a durable trace.
+        applog::init(data_dir.join("logs"), &app.package_info().version.to_string());
         vendors::set_manifest_dir(data_dir.join("vendors"));
         // QL-752: (re)write the PowerShell shell-integration preamble that
         // interactive pwsh panes dot-source at spawn. Rewritten every launch so

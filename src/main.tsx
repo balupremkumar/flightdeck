@@ -8,6 +8,11 @@ import { useVendors, armVendorHotReload, vendorShort } from "./vendors";
 import { runWorktreeGc } from "./worktrees";
 import { startAutosave, offerSessionRestore, crashedLastRun, armCleanExitSentinel, lastRestoreReport } from "./session";
 import { scheduleStartupCheck } from "./updater";
+import { armGlobalErrorLog } from "./applog";
+
+// Flight recorder catch-alls FIRST: a throw or rejection anywhere in the boot
+// sequence below must reach the on-disk log (the v0.5.3 failure didn't).
+armGlobalErrorLog();
 
 // Load the vendor registry from the Rust side once at boot. Everything that
 // renders an agent name/colour reads from this (BACKLOG 216).
@@ -46,7 +51,7 @@ void offerSessionRestore().then(() => {
 if (didCrash) {
   useUI.getState().pushToast(
     "info",
-    "Flightdeck didn't shut down cleanly last time. If that keeps happening, export a support bundle from Settings > Diagnostics."
+    "Flightdeck didn't shut down cleanly last time. The error log may say why — Settings > Diagnostics > Open error log, or export a support bundle (the log rides in it)."
   );
 }
 

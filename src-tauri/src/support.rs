@@ -105,6 +105,11 @@ struct SupportBundle {
     arch: String,
     vendors: Vec<vendors::VendorInfo>,
     panes: Vec<SupportPane>,
+    /// Tail of the flight-recorder log (applog.rs) — the error history that
+    /// used to be missing from this bundle entirely. Absent when logging never
+    /// initialised or nothing has been written.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    log_tail: Option<String>,
 }
 
 fn now_ms() -> u64 {
@@ -115,7 +120,11 @@ fn now_ms() -> u64 {
 /// Builds the redacted support bundle as pretty JSON. Every string that could
 /// carry a leaked secret (vendor probe detail, pane cwd/vendor) is passed
 /// through `redact` before serialization.
-pub fn build_bundle(app_version: &str, panes: Vec<SupportPaneInput>) -> Result<String, String> {
+pub fn build_bundle(
+    app_version: &str,
+    panes: Vec<SupportPaneInput>,
+    log_tail: Option<String>,
+) -> Result<String, String> {
     // Reuse the registry's own descriptor rather than rebuilding one, so new
     // adapter fields can never go missing here. Probe detail can contain a
     // filesystem path, so it still goes through redact().
@@ -144,9 +153,33 @@ pub fn build_bundle(app_version: &str, panes: Vec<SupportPaneInput>) -> Result<S
         arch: std::env::consts::ARCH.to_string(),
         vendors: vendor_infos,
         panes,
+        // applog already redacts at write time; the second pass here is cheap
+        // and keeps this module's "every string is redacted" contract local.
+        log_tail: log_tail.map(|t| redact(&t)),
     };
 
     serde_json::to_string_pretty(&bundle).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod bundle_tests {
+    use super::*;
+
+    #[test]
+    fn bundle_embeds_redacted_log_tail() {
+        let secret = "sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789";
+        let out = build_bundle("0.0.0", vec![], Some(format!("boot ok\nerror with {secret}")))
+            .unwrap();
+        assert!(out.contains("logTail"));
+        assert!(out.contains("boot ok"));
+        assert!(!out.contains(secret));
+    }
+
+    #[test]
+    fn bundle_omits_log_tail_when_absent() {
+        let out = build_bundle("0.0.0", vec![], None).unwrap();
+        assert!(!out.contains("logTail"));
+    }
 }
 
 #[cfg(test)]

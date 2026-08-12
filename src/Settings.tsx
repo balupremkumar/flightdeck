@@ -867,6 +867,19 @@ function DiagnosticsSection() {
     });
   };
 
+  const openErrorLog = async () => {
+    try {
+      const p = await invoke<string | null>("log_file_path");
+      if (!p) {
+        pushToast("info", "No error log yet — nothing has been recorded this install.");
+        return;
+      }
+      await revealPath(p);
+    } catch (e) {
+      pushToast("error", `Couldn’t open the error log: ${String(e)}`);
+    }
+  };
+
   const exportBundle = async () => {
     try {
       const dest = await save({ defaultPath: "flightdeck-support.json", filters: [{ name: "JSON", extensions: ["json"] }] });
@@ -1026,9 +1039,19 @@ function DiagnosticsSection() {
       <div className="set-row">
         <div className="set-row-t">
           <span className="set-row-name">Support bundle</span>
-          <span className="set-row-sub">Redacted app + pane snapshot for bug reports</span>
+          <span className="set-row-sub">Redacted app + pane snapshot + error-log tail for bug reports</span>
         </div>
         <button className="set-btn" onClick={() => void exportBundle()}>Export…</button>
+      </div>
+
+      {/* Flight recorder (post-0.5.3): panics, render crashes and unhandled
+          rejections all land in one on-disk log. This reveals it. */}
+      <div className="set-row">
+        <div className="set-row-t">
+          <span className="set-row-name">Error log</span>
+          <span className="set-row-sub">Crashes and errors from this and previous runs, secrets redacted</span>
+        </div>
+        <button className="set-btn" onClick={() => void openErrorLog()}>Open…</button>
       </div>
 
       {/* QL-774 + QL-773: read-only doctor for the Claude settings files behind

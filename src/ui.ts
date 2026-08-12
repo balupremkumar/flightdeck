@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { useEffect, useRef } from "react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { logEvent } from "./applog";
 import type { PaneState } from "./store";
 
 // Lightweight UI-only store (kept separate from the app/domain store): confirm
@@ -263,8 +264,13 @@ export const useUI = create<UIState>((set, get) => ({
   dismissConfirm: () => set({ confirm: null }),
 
   toasts: [],
-  pushToast: (kind, text, opts) =>
-    set((s) => ({ toasts: [...s.toasts, { id: ++tseq, kind, text, url: opts?.url, detail: opts?.detail }] })),
+  pushToast: (kind, text, opts) => {
+    // Flight recorder: an error toast is the app telling the user something
+    // failed — that exact text must survive the session (the 0.5.3 failure
+    // loop was toast-shaped and left no trace). Info/success stay off-log.
+    if (kind === "error") logEvent("error", "toast", opts?.detail ? `${text}\n${opts.detail}` : text);
+    set((s) => ({ toasts: [...s.toasts, { id: ++tseq, kind, text, url: opts?.url, detail: opts?.detail }] }));
+  },
   dismissToast: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
 
   updateAvailable: null,
