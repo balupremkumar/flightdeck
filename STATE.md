@@ -12,11 +12,10 @@ Rework (approved plan, 4 phases):
 **P1 DONE (fe09007): flight recorder.** applog.rs rotating redacted log in <app-data>/logs; panic hook, ErrorBoundary componentDidCatch, window.onerror, unhandledrejection, error toasts all feed it; support bundle embeds tail; Settings > Diagnostics "Open error log"; crash screen gained the same button.
 **P2 CODE DONE, verified by real build: canary channel.** tauri.canary.conf.json ("Flightdeck Canary" / ai.flightdeck.canary) installs SIDE BY SIDE with stable; canary.rs clones stable state on first boot (worktree fields STRIPPED from the cloned session doc and cwd remapped to repo root via sidecar meta — canary must never touch stable's worktrees); canary never self-updates (updates.rs guards); release.ps1 builds+publishes both flavours; About explains the channel; window title carries the flavour name.
 **P3 CODE DONE, gate not yet run E2E: rollback + boot gate.** list_rollback_candidates + Settings > About "Roll back" row (older stable installers in releases\, pre-flighted); tools/boot-gate.ps1 boots the canary binary against cloned real state and requires the Cockpit "boot-ok" flight-recorder beacon + zero error entries; wired as release.ps1 step 7.
-Gates so far: tsc clean, vitest 657/657, cargo 195/195, build clean.
-First gate run FAILED CORRECTLY (no beacon): beacon was on Cockpit mount, but a fresh boot with a pending restore prompt shows the launcher, so Cockpit never mounts — beacon moved to App (App.tsx), the one component mounted in both boot states.
-Canary rebuild with the moved beacon running; gate rerun + P2/P3 commit pending.
-**P4 OPEN: root-cause 0.5.3** via the gate (which now reproduces "boot against real migrated state") or Balu's screenshot.
-NOTE: gate run with stable app running can't clone localStorage (WebView2 profile locked) — full-fidelity clone needs stable closed.
+**P1-P3 ALL COMMITTED (fe09007, 5c81323) AND E2E-VERIFIED**: final gates tsc clean, vitest 657/657, cargo 195/195; **boot gate PASSED live** — canary binary booted beside the running stable install against a clone of the real session, wrote the boot-ok beacon, zero error entries.
+(First gate run failed correctly: beacon was on Cockpit mount, which a fresh boot with a pending restore prompt never mounts — moved to App.tsx. App chunk budget 430→436KB, dated note in perfbudget.test.ts.)
+**P4 OPEN: root-cause 0.5.3.** Blocked on: Balu's screenshot (never arrived in chat), OR a full-fidelity gate run with stable CLOSED (WebView2 profile locked while it runs, so localStorage doesn't clone), OR simply his next canary trial — any recurrence now lands in the flight recorder with a stack.
+**Next release cut (0.5.4) produces BOTH installers via tools/release.ps1 and runs the boot gate automatically. Balu installs the CANARY one first**; stable stays untouched until canary proves out. Roll back lives in Settings > About.
 
 ## Superseded: v0.5.3 cut, verified, ready to install (2026-08-12)
 Full gate green: tsc clean, vitest 649/649, cargo check clean, cargo 180 tests, build clean; release script verified the artifact (version resource 0.5.3, latest.json + sha256 b59081f4..., unsigned as usual).
