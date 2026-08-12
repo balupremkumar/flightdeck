@@ -2,9 +2,15 @@
 
 Vault: [[HOME]] | [[PORTFOLIO|Portfolio]] | [[projects/active/flightdeck/BACKLOG|Backlog]]
 
-Updated: 2026-08-11 (v0.5.2 is BROKEN — invisible-boot bug found+fixed on main, needs a v0.5.3 cut).
+Updated: 2026-08-12 (v0.5.3 CUT + E2E-VERIFIED, ready for Balu's manual install).
 
-## CURRENT: v0.5.2 DO NOT INSTALL — boot fix on main awaits the v0.5.3 cut (2026-08-11 late)
+## CURRENT: v0.5.3 cut, verified, ready to install (2026-08-12)
+Full gate green: tsc clean, vitest 649/649, cargo check clean, cargo 180 tests, build clean; release script verified the artifact (version resource 0.5.3, latest.json + sha256 b59081f4..., unsigned as usual).
+**E2E boot probe PASSED**: ran the exact release binary the installer deploys, Win32 EnumWindows at 8s shows a VISIBLE titled "Flightdeck" window, FileVersion 0.5.3 — the 0.5.2 invisible-boot bug is dead. Probe instance killed cleanly.
+**Install: run `releases\Flightdeck_0.5.3_x64-setup.exe` by hand** (or Settings > About in the running 0.5.1). Installing closes the app + kills all panes (job object) — run it from OUTSIDE a Flightdeck pane. Machine was on 0.5.1 (running since 5:09pm 2026-08-12).
+After install, the deferred verify list: About shows 0.5.3, pick Graphite (saved theme wins over new default), click-offset check (UI size ≠ 100%), then the E2E lists in BACKLOG's two "Progress 2026-08-11" blocks.
+
+## Superseded: v0.5.2 DO NOT INSTALL — boot fix on main awaited the v0.5.3 cut (2026-08-11 late)
 **v0.5.2 never shows a window.** Balu installed it (NSIS uninstalled 0.5.1, installed 0.5.2, "never booted"), then recovered by reinstalling 0.5.1 at 10:18pm — confirmed from disk: uninstall.exe rewritten 10:18:51 stamped 0.5.1, app running 0.5.1 since 10:18:53.
 Root cause (reproduced E2E by running the release exe and enumerating its windows): QL-779 creates the window hidden (`visible: false`) and the compensating `show()` sat between `build()` and `app.run()` — a show() before the event loop pumps is silently lost, so the Tauri window existed with restored geometry but stayed IsWindowVisible=false forever. No crash, no Defender involvement (the MsiInstaller "installed 0.5.2" event at 10:02:50pm is a WiX build-time artifact logged at every cut — checked against all four Aug-1 cuts).
 **Fix on main (9f5ad3e): show()/set_focus() moved into `app.run()` on `RunEvent::Ready`.** Verified: rebuilt release exe probes visible=true at 5s; cargo 179/179. Frontend untouched.
