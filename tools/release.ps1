@@ -132,7 +132,29 @@ Step "cargo test --lib" { cargo test --manifest-path src-tauri/Cargo.toml --lib 
 Step "npm run tauri build" { npm run tauri build }
 
 # ---------------------------------------------------------------------------
-# 4. Locate the NSIS installer, drop it + latest.json in releases\
+# 4. Canary flavour (deployment rework, phase 2): same code, different
+#    identity ("Flightdeck Canary" / ai.flightdeck.canary), so it installs
+#    SIDE BY SIDE with stable instead of overwriting it. This is the build
+#    that gets trialled first; stable is only installed once canary proves
+#    out. latest.json never references it (canary never self-updates).
+# ---------------------------------------------------------------------------
+Step "npm run tauri build (canary)" { npm run tauri build -- --config src-tauri/tauri.canary.conf.json }
+
+# ---------------------------------------------------------------------------
+# 5. Boot gate: the canary binary must boot AGAINST A CLONE OF REAL STATE and
+#    prove a healthy UI mount via the flight recorder. This is the check that
+#    would have caught the v0.5.3 launch failure before it shipped. Runs on
+#    the canary flavour by construction (its own identifier), so the user's
+#    stable app data is never touched.
+#
+#    Ordered BEFORE any publish on purpose (the v0.5.4 first-cut lesson): a
+#    gate failure must leave releases\latest.json untouched, or the running
+#    stable app gets offered a build that failed the gate.
+# ---------------------------------------------------------------------------
+Step "Boot gate (canary vs cloned real state)" { & (Join-Path $root "tools\boot-gate.ps1") }
+
+# ---------------------------------------------------------------------------
+# 6. Locate the NSIS installer, drop it + latest.json in releases\
 # ---------------------------------------------------------------------------
 Step "Publish to releases\" {
     $nsisDir = Join-Path $root "src-tauri\target\release\bundle\nsis"
@@ -169,7 +191,7 @@ Step "Publish to releases\" {
 }
 
 # ---------------------------------------------------------------------------
-# 5. Verify what was actually published
+# 7. Verify what was actually published
 #
 # A release that is broken in any of these ways would otherwise be discovered
 # by the in-app updater, on the user's machine, mid-install. The app's own
@@ -251,14 +273,8 @@ Step "Verify release output" {
 }
 
 # ---------------------------------------------------------------------------
-# 6. Canary flavour (deployment rework, phase 2): same code, different
-#    identity ("Flightdeck Canary" / ai.flightdeck.canary), so it installs
-#    SIDE BY SIDE with stable instead of overwriting it. This is the build
-#    that gets trialled first; stable is only installed once canary proves
-#    out. latest.json never references it (canary never self-updates).
+# 8. Publish + verify the canary installer (never referenced by latest.json)
 # ---------------------------------------------------------------------------
-Step "npm run tauri build (canary)" { npm run tauri build -- --config src-tauri/tauri.canary.conf.json }
-
 Step "Publish + verify canary installer" {
     $nsisDir       = Join-Path $root "src-tauri\target\release\bundle\nsis"
     $canaryName    = "Flightdeck Canary_${Version}_x64-setup.exe"
@@ -277,15 +293,6 @@ Step "Publish + verify canary installer" {
     if ($ver -and $ver.Trim() -notlike "$Version*") { throw "canary installer version resource is '$ver', expected $Version" }
     Write-Host "  $canaryName -> $releasesDir"
 }
-
-# ---------------------------------------------------------------------------
-# 7. Boot gate: the canary binary must boot AGAINST A CLONE OF REAL STATE and
-#    prove a healthy UI mount via the flight recorder. This is the check that
-#    would have caught the v0.5.3 launch failure before it shipped. Runs on
-#    the canary flavour by construction (its own identifier), so the user's
-#    stable app data is never touched.
-# ---------------------------------------------------------------------------
-Step "Boot gate (canary vs cloned real state)" { & (Join-Path $root "tools\boot-gate.ps1") }
 
 Write-Host ""
 Write-Host "== Release v$Version ready ==" -ForegroundColor Green

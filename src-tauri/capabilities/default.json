@@ -11,6 +11,7 @@
     "dialog:allow-save",
     "core:window:allow-request-user-attention",
     "core:window:allow-set-progress-bar",
+    "core:window:allow-set-title",
     "core:window:allow-destroy",
     "core:webview:allow-set-webview-zoom"
   ]
