@@ -13,10 +13,11 @@ Why every gate missed it: vitest MOCKS xterm; the boot gate stalls on the restor
 Gates: tsc clean, vitest 657/657, pane smoke PASS. Machine is back on 0.5.1.
 Balu's first cut attempt died at the pane-smoke step: `Start-Process npm` can't spawn the npm.cmd shim on Windows. **Fixed (6cffee7)**: launches via cmd.exe; cold branch verified for real.
 Second attempt got all the way to the boot gate, which FAILED on a real latent bug it was built to catch: Cockpit.tsx:317 sets the dynamic window title via `getCurrentWindow().setTitle()` but `core:window:allow-set-title` was never granted — every release build has silently rejected it (async, invisible until the flight recorder). **Fixed (ddef616)**: capability granted. Same commit reorders release.ps1: builds + boot gate now run BEFORE publish (the failed cut had already rewritten latest.json, offering the running 0.5.1 a gate-failed 0.5.4 — do not install from About until the rerun passes; the rerun overwrites it).
-Version bumps to 0.5.4 sit uncommitted in the tree (idempotent, re-applied by the rerun; commit with the successful cut).
-**NEXT: Balu RERUNS the cut from a terminal OUTSIDE Flightdeck** (this session ran inside a pane — verified via process ancestry — so the cut wasn't run from here):
-1. `pwsh tools/release.ps1 -Version 0.5.4 -Notes "Fixes the 0.5.3 boot crash (xterm allowProposedApi)"` — builds stable + canary, runs pane smoke + boot gate.
-2. Install `releases\Flightdeck Canary_0.5.4_x64-setup.exe` (close stable first for localStorage clone fidelity), trial it, then install stable 0.5.4 when clean.
+**v0.5.4 CUT CLEAN on the third run (2026-08-13 ~4:20pm): ALL GATES PASSED including pane smoke and boot gate.** Both installers in releases\, latest.json sha256 101b18a2..., version bump committed (7b0a3bc).
+**NEXT: Balu trials the canary.**
+1. Close stable Flightdeck (localStorage clone fidelity), install `releases\Flightdeck Canary_0.5.4_x64-setup.exe` — lands beside stable, clones its state, cannot touch it.
+2. Trial. Crash recurs? Settings > Diagnostics > Open error log has the stack. Clean? Install stable 0.5.4 (in-app from 0.5.1 via About, or run the installer by hand).
+3. After stable 0.5.4: verify the dynamic window title now updates ("Flightdeck — N waiting"), pick Graphite, click-offset check, then BACKLOG's two "Progress 2026-08-11" E2E lists.
 
 ## Superseded: v0.5.3 FAILED ON INSTALL — deployment rework underway (2026-08-12 evening)
 Balu installed 0.5.3 (~5:13pm): app launched into a UI error loop ("something went wrong", terminal wouldn't open), reverted to 0.5.1 at 6:19pm.
