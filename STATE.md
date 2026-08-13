@@ -11,7 +11,8 @@ Why every gate missed it: vitest MOCKS xterm; the boot gate stalls on the restor
 **Fixed (864ccf8):** `allowProposedApi: true` in the constructor. Reproduced E2E first (Playwright vs real frontend on :1420 — exact crash screen), re-ran after fix: 4 terminals mount, no crash.
 **New hard gate (same commit): `demo/pane-smoke.mjs`** — real Chromium boots the real frontend, creates a workspace, requires a mounted `.xterm` and no ErrorBoundary; wired into release.ps1 between vitest and cargo (reuses a :1420 dev server or manages its own). This exact bug can't pass the ritual again.
 Gates: tsc clean, vitest 657/657, pane smoke PASS. Machine is back on 0.5.1.
-**NEXT: Balu cuts v0.5.4 HIMSELF from a terminal OUTSIDE Flightdeck** (this session ran inside a pane — verified via process ancestry — so the cut wasn't run from here):
+Balu's first cut attempt died at the pane-smoke step: `Start-Process npm` can't spawn the npm.cmd shim on Windows (the cold-start branch was untested — my dev server was up, so my run took the reuse path). **Fixed (6cffee7)**: launches via cmd.exe; cold branch verified for real (port free → server up → smoke PASS → tree reaped). That aborted run already bumped the five version sites to 0.5.4 (uncommitted, idempotent — the rerun re-applies them harmlessly).
+**NEXT: Balu RERUNS the cut from a terminal OUTSIDE Flightdeck** (this session ran inside a pane — verified via process ancestry — so the cut wasn't run from here):
 1. `pwsh tools/release.ps1 -Version 0.5.4 -Notes "Fixes the 0.5.3 boot crash (xterm allowProposedApi)"` — builds stable + canary, runs pane smoke + boot gate.
 2. Install `releases\Flightdeck Canary_0.5.4_x64-setup.exe` (close stable first for localStorage clone fidelity), trial it, then install stable 0.5.4 when clean.
 
