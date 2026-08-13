@@ -2,9 +2,16 @@
 
 Vault: [[HOME]] | [[PORTFOLIO|Portfolio]] | [[projects/active/flightdeck/BACKLOG|Backlog]]
 
-Updated: 2026-08-13 (P4 CLOSED — root cause found and fixed; v0.5.4 cut pending, Balu runs it).
+Updated: 2026-08-13 evening (0.5.4 installed by hand; in-app updater root-caused and fixed, 51fd1d6).
 
-## CURRENT: P4 CLOSED — 0.5.3 boot loop root-caused and fixed (2026-08-13, commit 864ccf8)
+## CURRENT: machine is ON stable 0.5.4; the in-app updater has NEVER worked — root cause found and fixed (2026-08-13, 51fd1d6)
+Balu's in-app 0.5.1→0.5.4 install failed ("update never got started"); the manual installer landed 0.5.4, but its first boot then showed "0.5.4 didn't install / not the right version" while About said 0.5.4. Two real bugs, both fixed:
+1. **The watcher powershell dies under DETACHED_PROCESS — 100% reproduced E2E** (trivial one-line -EncodedCommand dies too; CreateProcess ignores CREATE_NO_WINDOW when DETACHED_PROCESS is present). So the background updater has never once run on this machine; every in-app install froze at stage "started". Fix in updates.rs: CREATE_NO_WINDOW + CREATE_BREAKAWAY_FROM_JOB (fallback plain CREATE_NO_WINDOW); job.rs pane job now sets BREAKAWAY_OK. New cargo E2E test (`watcher_script_really_runs_end_to_end`) runs the REAL watcher script through the REAL spawn path and fails under the old flags.
+2. **Stale failure reported as truth**: the leftover "started" status record was consumed by the manually installed 0.5.4's first boot; evaluate_status ignored that current==attempted for that stage, reported failure, and the frontend persisted the banner. Fix: running the attempted version is success regardless of recorded stage (updates.rs), and updater.ts clears a stale stored banner once the running version proves the update landed. Balu can dismiss the current banner in Settings > About, or it auto-clears on the next release's boot.
+Gates: cargo 197/197 (incl. new watcher E2E), tsc clean, vitest 661/661. Committed 51fd1d6, not yet released — **the next cut (0.5.5) will be the FIRST real test of a working in-app update**.
+NEXT: (a) the deferred 0.5.4 verify list below (window title "N waiting", Graphite, click-offset, BACKLOG's two "Progress 2026-08-11" E2E lists); (b) at next session close, cut 0.5.5 and have Balu update IN-APP from About — that's the E2E for this fix.
+
+## Superseded: P4 CLOSED — 0.5.3 boot loop root-caused and fixed (2026-08-13, commit 864ccf8)
 Balu retried the 0.5.3 installer (0.5.4 was never cut; latest.json still offered 0.5.3), hit the same crash loop, and this time the screenshot arrived: **"You must set the allowProposedApi option to true to use proposed API"**.
 Root cause: the QL terminal wave added Unicode11Addon (Terminal.tsx:632), registerDecoration command marks (:838) and an OSC 52 handler (:687) — all xterm PROPOSED API — but `new XTerm({...})` (:602) never set `allowProposedApi: true`. Every pane mount threw, ErrorBoundary caught it, reload remounted into the same throw; the "reopen last session" prompt fed the loop.
 Why every gate missed it: vitest MOCKS xterm; the boot gate stalls on the restore prompt so Cockpit never mounts a pane. Nothing ever constructed a real terminal until Balu did.
@@ -14,7 +21,7 @@ Gates: tsc clean, vitest 657/657, pane smoke PASS. Machine is back on 0.5.1.
 Balu's first cut attempt died at the pane-smoke step: `Start-Process npm` can't spawn the npm.cmd shim on Windows. **Fixed (6cffee7)**: launches via cmd.exe; cold branch verified for real.
 Second attempt got all the way to the boot gate, which FAILED on a real latent bug it was built to catch: Cockpit.tsx:317 sets the dynamic window title via `getCurrentWindow().setTitle()` but `core:window:allow-set-title` was never granted — every release build has silently rejected it (async, invisible until the flight recorder). **Fixed (ddef616)**: capability granted. Same commit reorders release.ps1: builds + boot gate now run BEFORE publish (the failed cut had already rewritten latest.json, offering the running 0.5.1 a gate-failed 0.5.4 — do not install from About until the rerun passes; the rerun overwrites it).
 **v0.5.4 CUT CLEAN on the third run (2026-08-13 ~4:20pm): ALL GATES PASSED including pane smoke and boot gate.** Both installers in releases\, latest.json sha256 101b18a2..., version bump committed (7b0a3bc).
-**NEXT: Balu trials the canary.**
+**CANARY TRIAL IN PROGRESS (2026-08-13): Balu installed canary 0.5.4, it launched clean. Trialling now; no issues reported yet.**
 1. Close stable Flightdeck (localStorage clone fidelity), install `releases\Flightdeck Canary_0.5.4_x64-setup.exe` — lands beside stable, clones its state, cannot touch it.
 2. Trial. Crash recurs? Settings > Diagnostics > Open error log has the stack. Clean? Install stable 0.5.4 (in-app from 0.5.1 via About, or run the installer by hand).
 3. After stable 0.5.4: verify the dynamic window title now updates ("Flightdeck — N waiting"), pick Graphite, click-offset check, then BACKLOG's two "Progress 2026-08-11" E2E lists.
