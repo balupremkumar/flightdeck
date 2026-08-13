@@ -9,6 +9,7 @@
 // invoke without the special sync-throw guard `getCurrentWebview()` needs.
 import { invoke } from "@tauri-apps/api/core";
 import { useUI, type UpdateInfo } from "./ui";
+import { APP_VERSION } from "./version";
 
 export const DEFAULT_RELEASES_DIR = String.raw`D:\Dev\ai\projects\active\flightdeck\releases`;
 
@@ -237,12 +238,44 @@ export async function takeUpdateStatus(): Promise<UpdateOutcome | null> {
   } catch { return null; }
 }
 
+// X.Y.Z compare mirroring updates.rs's version_gt: unparsable parts read as 0.
+function versionGte(a: string, b: string): boolean {
+  const parts = (s: string) => s.trim().split(".").map((p) => Number.parseInt(p, 10) || 0);
+  const pa = parts(a);
+  const pb = parts(b);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const x = pa[i] ?? 0;
+    const y = pb[i] ?? 0;
+    if (x !== y) return x > y;
+  }
+  return true;
+}
+
+/** The stored failure banner can outlive the failure it reports: after the
+ *  background updater died, the user runs the installer by hand, and the app
+ *  comes back AS the version the banner says "didn't install" (the real
+ *  v0.5.4 install, 2026-08-13). Running that version, or anything newer, is
+ *  proof the update landed — clear the banner instead of contradicting the
+ *  About row right above it. Exact match gets the success toast the update
+ *  path never had a chance to show. */
+export function reconcileStaleUpdateFailure(currentVersion: string = APP_VERSION): void {
+  const failure = getUpdateFailure();
+  if (!failure || !versionGte(currentVersion, failure.version)) return;
+  clearUpdateFailure();
+  if (failure.version === currentVersion) {
+    useUI.getState().pushToast("success", `Flightdeck updated to ${failure.version}.`);
+  }
+}
+
 /** Boot-time hand-back. A failed update is loud twice over: an error toast
  *  now, and a stored record Settings can keep showing. A successful one gets
  *  a quiet confirmation so "install & restart" always ends in an answer. */
 export async function reportLastUpdate(): Promise<UpdateOutcome | null> {
   const outcome = await takeUpdateStatus();
-  if (!outcome) return null;
+  if (!outcome) {
+    reconcileStaleUpdateFailure();
+    return null;
+  }
   if (outcome.ok) {
     clearUpdateFailure();
     useUI.getState().pushToast("success", outcome.message);

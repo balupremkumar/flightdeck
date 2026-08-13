@@ -20,7 +20,7 @@ mod imp {
     use windows_sys::Win32::System::JobObjects::{
         AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
         SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        JOB_OBJECT_LIMIT_BREAKAWAY_OK, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
     };
     use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_SET_QUOTA, PROCESS_TERMINATE};
 
@@ -38,7 +38,14 @@ mod imp {
             let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
             if !job.is_null() {
                 let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
-                info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+                // BREAKAWAY_OK does not weaken the kill-on-close net: a child
+                // stays in the job unless it explicitly spawns with
+                // CREATE_BREAKAWAY_FROM_JOB. It exists for exactly one case —
+                // a Flightdeck launched inside another Flightdeck's pane must
+                // still be able to break its update watcher (updates.rs) out
+                // of this job, or the watcher dies with the app it's updating.
+                info.BasicLimitInformation.LimitFlags =
+                    JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_BREAKAWAY_OK;
                 SetInformationJobObject(
                     job,
                     JobObjectExtendedLimitInformation,

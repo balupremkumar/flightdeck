@@ -572,12 +572,30 @@ fn spawn_relaunch_watcher(script: &str) -> std::io::Result<()> {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
+        // NEVER add DETACHED_PROCESS here. powershell.exe dies on startup under
+        // it, before executing a single statement — reproduced 100% on the real
+        // machine (v0.5.4, 2026-08-13), even for a trivial one-line
+        // -EncodedCommand, and CreateProcess documents that CREATE_NO_WINDOW is
+        // IGNORED when combined with DETACHED_PROCESS, so the old
+        // CREATE_NO_WINDOW | DETACHED_PROCESS combo always ran the deadly
+        // variant: every in-app update ended at stage "started" with no watcher.
+        // CREATE_NO_WINDOW alone gives the watcher a hidden console and works.
+        //
+        // CREATE_BREAKAWAY_FROM_JOB: if this process is inside a job object
+        // with KILL_ON_JOB_CLOSE (e.g. Flightdeck launched from another
+        // Flightdeck's pane), the watcher would die the moment we exit — the
+        // exact window it exists to cover. Breakaway needs the job's
+        // permission, so a refusal (ERROR_ACCESS_DENIED) falls back to a plain
+        // spawn rather than failing the update.
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        const DETACHED_PROCESS: u32 = 0x0000_0008;
-        std::process::Command::new("powershell.exe")
-            .args(["-NoProfile", "-WindowStyle", "Hidden", "-EncodedCommand", &encoded])
-            .creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS)
-            .spawn()?;
+        const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
+        let spawn = |flags: u32| {
+            std::process::Command::new("powershell.exe")
+                .args(["-NoProfile", "-WindowStyle", "Hidden", "-EncodedCommand", &encoded])
+                .creation_flags(flags)
+                .spawn()
+        };
+        spawn(CREATE_NO_WINDOW | CREATE_BREAKAWAY_FROM_JOB).or_else(|_| spawn(CREATE_NO_WINDOW))?;
     }
     #[cfg(not(windows))]
     {
@@ -631,10 +649,37 @@ fn evaluate_status(rec: &StatusRecord, current_version: &str) -> UpdateOutcome {
     };
     let v = &rec.version;
 
-    let (ok, message) = match rec.stage.as_str() {
-        // The installer said it worked AND we came back as the new version.
-        "installed" if installed => (true, format!("Flightdeck updated to {v}.")),
+    // Running the attempted version IS the update having happened, no matter
+    // what the watcher managed to record on the way. The record can be stale:
+    // a watcher that died at stage "started" leaves that record behind, the
+    // user runs the installer by hand, and the NEW version's first boot is
+    // what reads it — reporting "0.5.4 never got started" from inside a
+    // working 0.5.4 (the real v0.5.4 install, 2026-08-13). The version check
+    // is the only claim that can't lie, in both directions.
+    if installed {
+        let message = match rec.stage.as_str() {
+            "installed" => format!("Flightdeck updated to {v}."),
+            "relaunch-failed" => format!("Flightdeck updated to {v}, but it had to be restarted by hand."),
+            // Any failure stage while running the attempted version means the
+            // user finished the job themselves (typically the manual installer
+            // after the background updater died).
+            _ => format!("Flightdeck updated to {v} (the background updater failed, but the update was completed by hand)."),
+        };
+        return UpdateOutcome {
+            ok: true,
+            stage: rec.stage.clone(),
+            attempted_version: rec.version.clone(),
+            current_version: current_version.to_string(),
+            exit_code: rec.exit_code,
+            message,
+            detail: rec.message.clone().filter(|m| !m.trim().is_empty()),
+            manual_path: None,
+        };
+    }
 
+    let (ok, message) = match rec.stage.as_str() {
+
+        // Past the early return, the running version is NOT the attempted one.
         // The loudest case there is: exit code 0, nothing actually changed.
         // A quarantine part-way through a silent install looks exactly like
         // this, which is why the version is checked and not the exit code.
@@ -658,11 +703,6 @@ fn evaluate_status(rec: &StatusRecord, current_version: &str) -> UpdateOutcome {
             format!(
                 "Windows would not start the Flightdeck {v} installer, so nothing was installed. This is what antivirus or SmartScreen blocking an unsigned installer looks like.{manual_line}"
             ),
-        ),
-
-        "relaunch-failed" if installed => (
-            true,
-            format!("Flightdeck updated to {v}, but it had to be restarted by hand."),
         ),
 
         "relaunch-failed" => (
@@ -689,7 +729,7 @@ fn evaluate_status(rec: &StatusRecord, current_version: &str) -> UpdateOutcome {
         ),
 
         other => (
-            installed,
+            false,
             format!("Flightdeck {v} update finished in an unexpected state ({other}); this is {current_version}.{manual_line}"),
         ),
     };
@@ -1079,6 +1119,21 @@ mod tests {
         assert!(o.ok);
     }
 
+    // The real v0.5.4 install (2026-08-13): the watcher died at "started", the
+    // user ran the installer by hand, and the NEW version's first boot read the
+    // stale record — and told a working 0.5.4 that 0.5.4 never got started.
+    // Running the attempted version is success no matter what stage the record
+    // froze at.
+    #[test]
+    fn outcome_stale_failure_record_read_by_the_attempted_version_is_success() {
+        for stage in ["started", "launch-failed", "installer-failed", "app-exit-timeout", "installed"] {
+            let o = evaluate_status(&rec(stage, "9.9.9", None), "9.9.9");
+            assert!(o.ok, "stage {stage} with matching version must be success");
+            assert!(o.message.contains("updated to 9.9.9"), "stage {stage}: {}", o.message);
+            assert!(o.manual_path.is_none(), "stage {stage} must not offer a manual path");
+        }
+    }
+
     #[test]
     fn outcome_carries_the_watcher_detail_when_there_is_one() {
         let mut r = rec("launch-failed", "9.9.9", None);
@@ -1127,6 +1182,61 @@ mod tests {
             "1.0.0",
         );
         assert!(s.contains("C:\\it''s here\\update-status.json"));
+    }
+
+    // The gate for the v0.5.4 failure: the watcher powershell must ACTUALLY
+    // RUN when spawned through the real spawn_relaunch_watcher (same binary,
+    // same flags, same -EncodedCommand hand-off), not just be spawnable. Under
+    // the old CREATE_NO_WINDOW | DETACHED_PROCESS flags, powershell.exe
+    // spawned fine and then died before executing a single statement — every
+    // release with that combo had a background updater that could never work,
+    // and nothing short of running the real thing catches it. The script here
+    // is the REAL WATCHER_SCRIPT (parse errors included in the coverage), with
+    // where.exe standing in for the installer (exits fast and nonzero, so the
+    // recorded stage is "installer-failed") and for the relaunch target (so
+    // Show-Box never fires — a MessageBox would hang the test).
+    #[cfg(windows)]
+    #[test]
+    fn watcher_script_really_runs_end_to_end() {
+        let dir = std::env::temp_dir().join("flightdeck-watcher-e2e");
+        std::fs::create_dir_all(&dir).unwrap();
+        let status = dir.join("status.json");
+        let _ = std::fs::remove_file(&status);
+
+        // A pid that is already gone, so the wait loop falls through at once.
+        let dead = std::process::Command::new("cmd")
+            .args(["/C", "exit"])
+            .spawn()
+            .and_then(|mut c| {
+                let pid = c.id();
+                c.wait().map(|_| pid)
+            })
+            .expect("spawning cmd /C exit");
+
+        let where_exe = r"C:\Windows\System32\where.exe";
+        let script = build_watcher_script(&status, Path::new(where_exe), Path::new(where_exe), dead, "9.9.9");
+        spawn_relaunch_watcher(&script).expect("watcher spawn");
+
+        // Cold-starting Windows PowerShell takes seconds; give it a generous
+        // window and fail with the diagnosis this test exists to give.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        let raw = loop {
+            if let Ok(raw) = std::fs::read_to_string(&status) {
+                if !raw.trim().is_empty() {
+                    break raw;
+                }
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "watcher never wrote a status record — powershell died before executing the script \
+                 (this is what DETACHED_PROCESS in the spawn flags looks like)"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(250));
+        };
+        let rec = parse_status(&raw).expect("status record parses");
+        assert_eq!(rec.stage, "installer-failed", "where.exe /S exits nonzero");
+        assert_eq!(rec.version, "9.9.9");
+        let _ = std::fs::remove_file(&status);
     }
 
     #[test]

@@ -15,8 +15,9 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 const {
   getPendingReleaseNotes, clearPendingReleaseNotes,
   asUpdateError, reportLastUpdate, takeUpdateStatus, installUpdate,
-  getUpdateFailure, clearUpdateFailure,
+  getUpdateFailure, clearUpdateFailure, reconcileStaleUpdateFailure,
 } = await import("./updater");
+const { APP_VERSION } = await import("./version");
 const { useUI } = await import("./ui");
 const { invoke } = await import("@tauri-apps/api/core");
 const invokeMock = invoke as unknown as ReturnType<typeof vi.fn>;
@@ -151,5 +152,48 @@ describe("update failure reporting (UPD-1)", () => {
     expect(getUpdateFailure()).toBeNull();
     localStorage.setItem("flightdeck-update-failure", JSON.stringify({ nope: 1 }));
     expect(getUpdateFailure()).toBeNull();
+  });
+});
+
+// The v0.5.4 lesson: the watcher died, the user ran the installer by hand,
+// and the stored "0.5.4 didn't install" banner kept showing inside a working
+// 0.5.4. Running the failed version (or newer) is proof the update landed.
+describe("stale failure reconciliation", () => {
+  beforeEach(() => {
+    invokeMock.mockReset();
+    clearUpdateFailure();
+    useUI.setState({ toasts: [] });
+  });
+
+  it("running the exact failed version clears the banner and confirms the update", () => {
+    localStorage.setItem("flightdeck-update-failure", JSON.stringify({ version: "0.5.4", message: "never got started" }));
+    reconcileStaleUpdateFailure("0.5.4");
+    expect(getUpdateFailure()).toBeNull();
+    const toasts = useUI.getState().toasts;
+    expect(toasts).toHaveLength(1);
+    expect(toasts[0].kind).toBe("success");
+    expect(toasts[0].text).toContain("0.5.4");
+  });
+
+  it("running something newer clears the banner silently", () => {
+    localStorage.setItem("flightdeck-update-failure", JSON.stringify({ version: "0.5.4", message: "never got started" }));
+    reconcileStaleUpdateFailure("0.5.5");
+    expect(getUpdateFailure()).toBeNull();
+    expect(useUI.getState().toasts).toHaveLength(0);
+  });
+
+  it("keeps the banner while the failed version is still ahead of the running one", () => {
+    localStorage.setItem("flightdeck-update-failure", JSON.stringify({ version: "0.5.5", message: "never got started" }));
+    reconcileStaleUpdateFailure("0.5.3");
+    expect(getUpdateFailure()?.version).toBe("0.5.5");
+    expect(useUI.getState().toasts).toHaveLength(0);
+  });
+
+  it("reportLastUpdate reconciles on the boot after a hand-finished update", async () => {
+    localStorage.setItem("flightdeck-update-failure", JSON.stringify({ version: APP_VERSION, message: "never got started" }));
+    invokeMock.mockResolvedValueOnce(null); // no fresh attempt since last boot
+    expect(await reportLastUpdate()).toBeNull();
+    expect(getUpdateFailure()).toBeNull();
+    expect(useUI.getState().toasts[0]?.kind).toBe("success");
   });
 });
