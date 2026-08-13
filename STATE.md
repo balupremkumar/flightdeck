@@ -2,9 +2,20 @@
 
 Vault: [[HOME]] | [[PORTFOLIO|Portfolio]] | [[projects/active/flightdeck/BACKLOG|Backlog]]
 
-Updated: 2026-08-12 evening (deployment rework in flight, phases 1-3).
+Updated: 2026-08-13 (P4 CLOSED — root cause found and fixed; v0.5.4 cut pending, Balu runs it).
 
-## CURRENT: v0.5.3 FAILED ON INSTALL — deployment rework underway (2026-08-12 evening)
+## CURRENT: P4 CLOSED — 0.5.3 boot loop root-caused and fixed (2026-08-13, commit 864ccf8)
+Balu retried the 0.5.3 installer (0.5.4 was never cut; latest.json still offered 0.5.3), hit the same crash loop, and this time the screenshot arrived: **"You must set the allowProposedApi option to true to use proposed API"**.
+Root cause: the QL terminal wave added Unicode11Addon (Terminal.tsx:632), registerDecoration command marks (:838) and an OSC 52 handler (:687) — all xterm PROPOSED API — but `new XTerm({...})` (:602) never set `allowProposedApi: true`. Every pane mount threw, ErrorBoundary caught it, reload remounted into the same throw; the "reopen last session" prompt fed the loop.
+Why every gate missed it: vitest MOCKS xterm; the boot gate stalls on the restore prompt so Cockpit never mounts a pane. Nothing ever constructed a real terminal until Balu did.
+**Fixed (864ccf8):** `allowProposedApi: true` in the constructor. Reproduced E2E first (Playwright vs real frontend on :1420 — exact crash screen), re-ran after fix: 4 terminals mount, no crash.
+**New hard gate (same commit): `demo/pane-smoke.mjs`** — real Chromium boots the real frontend, creates a workspace, requires a mounted `.xterm` and no ErrorBoundary; wired into release.ps1 between vitest and cargo (reuses a :1420 dev server or manages its own). This exact bug can't pass the ritual again.
+Gates: tsc clean, vitest 657/657, pane smoke PASS. Machine is back on 0.5.1.
+**NEXT: Balu cuts v0.5.4 HIMSELF from a terminal OUTSIDE Flightdeck** (this session ran inside a pane — verified via process ancestry — so the cut wasn't run from here):
+1. `pwsh tools/release.ps1 -Version 0.5.4 -Notes "Fixes the 0.5.3 boot crash (xterm allowProposedApi)"` — builds stable + canary, runs pane smoke + boot gate.
+2. Install `releases\Flightdeck Canary_0.5.4_x64-setup.exe` (close stable first for localStorage clone fidelity), trial it, then install stable 0.5.4 when clean.
+
+## Superseded: v0.5.3 FAILED ON INSTALL — deployment rework underway (2026-08-12 evening)
 Balu installed 0.5.3 (~5:13pm): app launched into a UI error loop ("something went wrong", terminal wouldn't open), reverted to 0.5.1 at 6:19pm.
 No root cause provable — the app had ZERO persisted error reporting (no log, no panic hook, no componentDidCatch/onerror; event log + crash dumps clean, so it was a frontend crash, almost certainly the ErrorBoundary screen).
 Balu's screenshot never arrived in chat; still wanted for phase 4.
