@@ -600,6 +600,11 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
     // but never read). fontSize stays a per-pane prop (zoom control).
     const ts = getTerminalSettings();
     const term = new XTerm({
+      // The Unicode11 addon (QL-751), registerDecoration for command marks
+      // (QL-753) and parser.registerOscHandler (OSC 52) are all xterm
+      // "proposed API": without this flag the first pane mount throws and the
+      // ErrorBoundary takes down the whole cockpit (the 0.5.3 boot loop).
+      allowProposedApi: true,
       fontFamily: `'${ts.fontFamily}','JetBrains Mono','Cascadia Code',Consolas,monospace`,
       fontSize,
       cursorBlink: true,

@@ -94,6 +94,32 @@ Step "Bump versions" {
 Step "tsc --noEmit" { npx tsc --noEmit }
 Step "vitest" { npx vitest run }
 
+# Pane-mount smoke (the 0.5.3 lesson): vitest mocks xterm and the boot gate
+# stalls on the restore prompt before any pane mounts, so neither exercises a
+# real terminal construct. This does, in a real browser. Reuses an already
+# running dev server on :1420; otherwise starts one and kills its whole tree.
+Step "Pane-mount smoke" {
+    $ownServer = $null
+    $portUp = { (Test-NetConnection -ComputerName localhost -Port 1420 -InformationLevel Quiet -WarningAction SilentlyContinue) }
+    if (-not (& $portUp)) {
+        $ownServer = Start-Process npm -ArgumentList "run", "dev" -WorkingDirectory $root -WindowStyle Hidden -PassThru
+        $deadline = (Get-Date).AddSeconds(60)
+        while (-not (& $portUp)) {
+            if ((Get-Date) -gt $deadline) { Write-Host "dev server never came up on :1420" -ForegroundColor Red; exit 1 }
+            Start-Sleep -Milliseconds 500
+        }
+    }
+    try {
+        Push-Location (Join-Path $root "demo")
+        node pane-smoke.mjs
+        $smokeExit = $LASTEXITCODE
+        Pop-Location
+    } finally {
+        if ($ownServer) { taskkill /T /F /PID $ownServer.Id | Out-Null }
+    }
+    if ($smokeExit -ne 0) { exit 1 }
+}
+
 $env:PATH = "$env:USERPROFILE\.cargo\bin;$env:PATH"
 Step "cargo check" { cargo check --manifest-path src-tauri/Cargo.toml }
 Step "cargo test --lib" { cargo test --manifest-path src-tauri/Cargo.toml --lib }
