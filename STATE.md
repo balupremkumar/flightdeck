@@ -2,7 +2,12 @@
 
 Vault: [[HOME]] | [[PORTFOLIO|Portfolio]] | [[projects/active/flightdeck/BACKLOG|Backlog]]
 
-Updated: 2026-08-13 evening (0.5.4 installed by hand; in-app updater root-caused and fixed, 51fd1d6).
+Updated: 2026-08-14 (Docker container panel fully planned, parked to BACKLOG DK-1 by Balu; no code changes this session).
+
+## PARKED 2026-08-14: Docker container panel (DK-1) — planned, not built
+Balu asked for VS Code Docker-extension-style container management; scoped, explored, and a full implementation plan written, then parked by his call for a future enhancement wave.
+Everything needed to build it is in BACKLOG.md section "Docker container panel (DK-1)"; the full plan is checked in at `docs/plans/docker-panel-dk1.md`.
+Working-tree changes this session: BACKLOG.md, docs/plans/docker-panel-dk1.md, this file, new LOG.md.
 
 ## CURRENT: machine is ON stable 0.5.4; the in-app updater has NEVER worked — root cause found and fixed (2026-08-13, 51fd1d6)
 Balu's in-app 0.5.1→0.5.4 install failed ("update never got started"); the manual installer landed 0.5.4, but its first boot then showed "0.5.4 didn't install / not the right version" while About said 0.5.4. Two real bugs, both fixed:
