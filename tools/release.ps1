@@ -102,7 +102,9 @@ Step "Pane-mount smoke" {
     $ownServer = $null
     $portUp = { (Test-NetConnection -ComputerName localhost -Port 1420 -InformationLevel Quiet -WarningAction SilentlyContinue) }
     if (-not (& $portUp)) {
-        $ownServer = Start-Process npm -ArgumentList "run", "dev" -WorkingDirectory $root -WindowStyle Hidden -PassThru
+        # npm is npm.cmd on Windows — Start-Process can't spawn a .cmd shim
+        # directly, so go through cmd.exe; taskkill /T below kills the tree.
+        $ownServer = Start-Process cmd.exe -ArgumentList "/d", "/c", "npm run dev" -WorkingDirectory $root -WindowStyle Hidden -PassThru
         $deadline = (Get-Date).AddSeconds(60)
         while (-not (& $portUp)) {
             if ((Get-Date) -gt $deadline) { Write-Host "dev server never came up on :1420" -ForegroundColor Red; exit 1 }
