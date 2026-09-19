@@ -47,7 +47,14 @@ fn parse_ahead_behind(out: &str) -> Option<(u32, u32)> {
     Some((ahead, behind))
 }
 
-#[tauri::command]
+// `(async)`: a plain `#[tauri::command]` runs on the main thread — the same
+// thread that pumps window messages, delivers every `invoke` (keystrokes) and
+// forwards every `pty://output` event. Anything that shells out or reads a
+// transcript therefore froze input and output for EVERY pane for as long as
+// it took (2026-09-19: an 11s `git diff` in one pane's folder, every 30s).
+// Read-only pollers run on tauri's thread pool instead; pty_* stay sync so
+// writes keep their order.
+#[tauri::command(async)]
 pub fn git_status(cwd: String) -> GitStatus {
     let branch = run_git(&cwd, &["rev-parse", "--abbrev-ref", "HEAD"]);
     let Some(branch) = branch else {

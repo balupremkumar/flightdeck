@@ -48,6 +48,20 @@ describe("cachedInvoke", () => {
     expect(invokeMock).toHaveBeenCalledTimes(2);
   });
 
+  it("keeps a slow call cached for a multiple of its own duration", async () => {
+    // 60ms call with a 0ms TTL: the stretched TTL (60ms x 20) must serve the
+    // second call from cache — a 2s git diff must not re-run every 15s.
+    invokeMock.mockImplementation(() => new Promise((r) => setTimeout(() => r("slow"), 60)));
+    await cachedInvoke("git_diff_summary", { cwd: "D:/media" }, 0);
+    await cachedInvoke("git_diff_summary", { cwd: "D:/media" }, 0);
+    expect(invokeMock).toHaveBeenCalledTimes(1);
+    // A quick call keeps the caller's TTL exactly (the existing TTL-0 test).
+    invokeMock.mockImplementation(() => Promise.resolve("fast"));
+    await cachedInvoke("git_status", { cwd: "D:/media" }, 0);
+    await cachedInvoke("git_status", { cwd: "D:/media" }, 0);
+    expect(invokeMock).toHaveBeenCalledTimes(3);
+  });
+
   it("invalidateCwd forces the next call to refetch", async () => {
     invokeMock.mockResolvedValue("a");
     await cachedInvoke("git_status", { cwd: "D:/merge-me" }, 10_000);
