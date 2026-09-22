@@ -136,7 +136,7 @@ pub fn usage_for(projects_root: &Path, cwd: &str) -> Option<PaneUsage> {
     scan(&newest).filter(|u| u.turns > 0)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn pane_usage(cwd: String) -> Option<PaneUsage> {
     let home = std::env::var("USERPROFILE").ok()?;
     let root = Path::new(&home).join(".claude").join("projects");
@@ -359,7 +359,7 @@ pub fn list_sessions(projects_root: &Path, cwd: &str) -> Vec<SessionSummary> {
     files.iter().filter_map(|(p, ms)| summarise(p, *ms)).collect()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_claude_sessions(cwd: String) -> Vec<SessionSummary> {
     let Ok(home) = std::env::var("USERPROFILE") else { return Vec::new() };
     list_sessions(&Path::new(&home).join(".claude").join("projects"), &cwd)
@@ -701,13 +701,13 @@ pub fn subagent_count_for(projects_root: &Path, cwd: &str, now: u64) -> Subagent
     SubagentCount { total: files.len() as u64, recent }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn pane_subagents(cwd: String) -> Vec<SubagentInfo> {
     let Ok(home) = std::env::var("USERPROFILE") else { return Vec::new() };
     subagents_for(&Path::new(&home).join(".claude").join("projects"), &cwd)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn pane_subagent_count(cwd: String) -> SubagentCount {
     let Ok(home) = std::env::var("USERPROFILE") else { return SubagentCount::default() };
     subagent_count_for(&Path::new(&home).join(".claude").join("projects"), &cwd, now_ms())
@@ -848,7 +848,7 @@ pub fn plans_for(projects_root: &Path, cwd: &str) -> Vec<PlanEntry> {
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn pane_plans(cwd: String) -> Vec<PlanEntry> {
     let Ok(home) = std::env::var("USERPROFILE") else { return Vec::new() };
     plans_for(&Path::new(&home).join(".claude").join("projects"), &cwd)
@@ -1157,7 +1157,7 @@ pub fn search_sessions(projects_root: &Path, cwd: &str, query: &str) -> SearchRe
     out
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn search_claude_sessions(cwd: String, query: String) -> SearchResults {
     let Ok(home) = std::env::var("USERPROFILE") else { return SearchResults::default() };
     search_sessions(&Path::new(&home).join(".claude").join("projects"), &cwd, &query)

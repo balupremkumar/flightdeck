@@ -13,7 +13,18 @@ interface Entry<T> {
   at: number;
   value: T;
   inflight?: Promise<T>;
+  /** TTL this entry was stored with — stretched for a slow call, see below. */
+  ttl?: number;
 }
+
+/** A call that took this long (or longer) stays cached for `SLOW_CALL_TTL_FACTOR`
+ *  times its own duration, capped at `SLOW_CALL_TTL_MAX_MS`. A git diff over a
+ *  folder full of media can take seconds; re-running it on the normal cadence
+ *  keeps a core and the disk busy for nothing the user can act on any faster.
+ *  A quick call is untouched — the factor only matters once it exceeds the
+ *  caller's own TTL. */
+export const SLOW_CALL_TTL_FACTOR = 20;
+export const SLOW_CALL_TTL_MAX_MS = 5 * 60_000;
 
 const cache = new Map<string, Entry<unknown>>();
 
@@ -26,11 +37,13 @@ export async function cachedInvoke<T>(cmd: string, args: Record<string, unknown>
   const hit = cache.get(key) as Entry<T> | undefined;
   if (hit) {
     if (hit.inflight) return hit.inflight;
-    if (now - hit.at < ttlMs) return hit.value;
+    if (now - hit.at < Math.max(ttlMs, hit.ttl ?? 0)) return hit.value;
   }
   const p = invoke<T>(cmd, args)
     .then((value) => {
-      cache.set(key, { at: Date.now(), value });
+      const done = Date.now();
+      const ttl = Math.min((done - now) * SLOW_CALL_TTL_FACTOR, SLOW_CALL_TTL_MAX_MS);
+      cache.set(key, { at: done, value, ttl });
       return value;
     })
     .catch((e) => {

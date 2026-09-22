@@ -1260,3 +1260,59 @@ Five UI states required: no CLI / daemon not running (very common on Windows, au
 No new Tauri plugin or capability needed (CSP already forces everything through Rust IPC).
 Note: the v1 spec's "no Docker" ruling (flightdeck-build-plan.md:221) rejected containers as an agent SANDBOX; this is a container MANAGER panel, a different feature — ruling not reversed.
 Out of scope for DK-1, candidates for DK-2+: compose orchestration UI, volumes/networks tabs, image actions (run/pull/rm/prune), container stats, Windows-container shells (needs platform inspect to pick cmd over sh), "Start Docker Desktop" button (needs Desktop 4.37+ CLI gate), single-sidebar view switcher shared with Explorer, in-pane log filtering beyond xterm find.
+
+## N. Roadmap 2026-09-19 (performance review + Idea Ledger sweep)
+
+Sources: this session's responsiveness review, the daily AI Pulse Idea Ledger (Flightdeck-tagged open and retired entries, https://claude.ai/code/artifact/158867cb-f855-4bbc-9fac-fe2003ef5da2), sections A/I2/I3/I6, DK-1, and the Intelligent Terminal competitor signal.
+Order is by daily-driver value for one user running three or four agent panes in worktrees on Windows. Nothing here starts unless Balu picks it.
+
+### N0. Ship what is on the branch (this session)
+- [ ] N0.1 Commit the lag fix (19 commands async, bounded diff summary, adaptive poll TTL) and cut v0.5.5. Doubles as the first real in-app update test.
+
+### N1. Responsiveness hardening (finish the job the fix started)
+- [ ] N1.1 Mutating git commands off the main thread: worktree add/remove/gc, merge back, update from base, PR handoff. Wrap in the existing per-repo serialisation (D4) so a poll's `add -N` cannot collide with a merge on index.lock.
+- [ ] N1.2 `pty_spawn` async: ConPTY creation, process spawn and the agy trust-file rewrite block the main thread for 100-300 ms per pane at restore.
+- [ ] N1.3 Flusher threads idle at 60 wakeups/s per pane forever (lib.rs FLUSH_MS loop). Drive them from a condvar or park them when the coalescer is empty.
+- [ ] N1.4 Transcript polling consolidation: pane_usage + pane_subagent_count + pane_plans are three file scans per Claude pane every 15 s. One backend directory watcher (ReadDirectoryChangesW on ~/.claude/projects) pushing events replaces all three.
+- [ ] N1.5 `stage_intent` rewrites the worktree index every 30 s. Skip `git add -N .` when `git status --porcelain` lists no untracked files.
+- [ ] N1.6 Slow-command flight-recorder line: log any command over 1 s with its cwd, and show the last one in Settings > Diagnostics, so the next pathological repo is visible without a debugger.
+- [ ] N1.7 Guard test: a cargo test that fails if a command in the poll set is declared without `(async)` (grep the source), so the main-thread regression cannot come back.
+- [ ] N1.8 Session save: `JSON.stringify` of the whole draft (up to 3 MB with scrollback) runs on every store change; compare a cheap hash of the structural draft instead, and make `save_session` async once ordering is handled (sequence number).
+- [ ] N1.9 Pane header CPU/IO chip: pane_health already samples CPU%; surface a "heavy" chip for CPU like UX-596 does for memory, so a pane like today's agy run (10-50% of a core, 3.5 MB/s reads) is visible without opening Diagnostics.
+- [ ] N1.10 Worktree hygiene warning: when a pane's repo has more than N MB of untracked binaries, say so in the header with an "add to .gitignore" action. The Tappy raw/ folder (8.5 GB) is what made today's diff cost 11 s.
+
+### N2. Truthful agent state (the biggest UX lever, replaces the quiet-timer heuristic)
+- [ ] N2.1 Claude Code hook-driven state: extend hooks.rs (already tails hook events for attention) to Stop/Notification/idle hooks so "waiting" and "permission" are exact for Claude panes instead of a 3 s silence guess. Ledger 3 Sep: notify_when_idle hook.
+- [ ] N2.2 Agent Client Protocol study: Microsoft's Intelligent Terminal v0.2.2572 docks an ACP agent pane (Claude Code, Codex CLI, Gemini CLI). Evaluate ACP as the structured vendor contract (state, permissions, plan) behind the existing VendorAdapter, starting with agy. Ledger 16 Sep.
+- [ ] N2.3 Subagent tree from the Remote Control / SDK tool-call stream instead of transcript polling; surface cache hit-ratio per session on the ctx chip. Ledger 1 Sep, 2 Sep.
+- [ ] N2.4 MCP disconnect notice as a pane health signal (Claude Code 2.1.273), plus gateway per-tool timings when a gateway is in play. Ledger 17 Sep.
+- [ ] N2.5 Reconnect and liveness reference: Claude Code's stale-working-directory recovery flow and heartbeat glyphs as the model for pane reconnect on Windows. Ledger 1 Sep.
+
+### N3. Vendor breadth through the config-drop manifest (#218 already exists)
+- [ ] N3.1 GitHub Copilot CLI manifest: model fallback events, MCP session persistence and Windows sandbox-block logs piped into the pane's activity feed as a security signal. Ledger 6 Sep, 10 Sep.
+- [ ] N3.2 Codex CLI manifest, and reconnoitre its agents dashboard against the pane header. Ledger 21 Aug.
+- [ ] N3.3 Per-pane launch dials in the session launcher: model, effort (Claude Code maxEffortLevel, 2.1.267), subagent model force. Ledger 10 Sep, 2 Sep.
+- [ ] N3.4 MCP server manager: extend Config Doctor to list, add, remove and test each vendor's MCP servers (Claude Code 2.1.261 pattern). Ledger 5 Sep.
+- [ ] N3.5 AGENTS.md bridge for panes whose repo has no CLAUDE.md. Ledger 21 Aug.
+
+### N4. Persistence and scale
+- [ ] N4.1 SQLite persistence (R4/231/232): session, layout, scrollback and restore points in one DB; ends the 3 MB JSON rewrite per save.
+- [ ] N4.2 Virtualise the notification feed, board columns and Explorer tree (276).
+- [ ] N4.3 Second window / detached pane (238).
+- [ ] N4.4 MAX_PATH: worktrees under %LOCALAPPDATA% with deep node_modules (K0b); the long-path failure hit this session when deleting a scratch worktree.
+- [ ] N4.5 Cold-start and 6-pane steady-state budget as a gate (279), extending perfbudget.test.ts with the main-thread probe used today.
+
+### N5. Workspace intelligence (features that make the cockpit smarter, not just calmer)
+- [ ] N5.1 Shared memory MCP server per workspace (Friday: Mem0 + ChromaDB + Neo4j, self-hosted) so panes keep decisions across sessions. Ledger 18 Sep.
+- [ ] N5.2 Docker container panel (DK-1, plan at docs/plans/docker-panel-dk1.md).
+- [ ] N5.3 Local LLM lane (section E, LM Studio/Qwen on the 16 GB card): summarise scrollback, classify attention rows.
+- [ ] N5.4 Trace panel: agent-graph and tool-call tracing with cost and latency per hop (OpenObserve / Phoenix patterns), fed by hook events and transcripts. Ledger 11 Sep, 6 Sep.
+- [ ] N5.5 Eval gate for what Flightdeck ships into agents (its installed hooks, shell integration): `claude plugin eval` suite run in the release gate. Ledger 13 Sep.
+- [ ] N5.6 .NET repo tool wiring: Graphify C# as a supervised-agent tool for Microsoft-stack work. Ledger 15 Sep.
+- [ ] N5.7 Sandbox posture per pane: default-deny egress and transcript monitoring pattern from the 2 Sep ledger entry; retry and circuit-breaker checklist for MCP calls (13 Sep).
+- [ ] N5.8 Cross-session messaging: wire Broadcast to Claude Code's Windows cross-session messaging where it exists. Ledger 21 Aug.
+
+### N6. Product readiness (parked by the single-user ruling; only if productised)
+- [ ] N6.1 CI on GitHub Actions running the release gate (I3).
+- [ ] N6.2 Motion system and reduced-motion audit (UI-41).
+- [ ] N6.3 Onboarding, telemetry, licensing (section H).
