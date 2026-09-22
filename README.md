@@ -1,6 +1,6 @@
 # Flightdeck
 
-Flightdeck is a Windows desktop cockpit for running several AI coding agents at once — Claude Code, Antigravity, local models via LM Studio, and plain shells — each as a live terminal pane in its own git worktree. A review drawer shows the diff for each pane and merges it back on your say-so. An attention queue tells you which pane is waiting on you, a Kanban board lets you dispatch work, and a broadcast bar sends one instruction to several panes at once.
+Flightdeck is a Windows desktop cockpit for running several AI coding agents at once, Claude Code, Antigravity, local models via LM Studio and plain shells, each as a live terminal pane in its own git worktree. A review drawer shows the diff for each pane and merges it back on your say-so. An attention queue tells you which pane is waiting on you, a Kanban board lets you dispatch work, and a broadcast bar sends one instruction to several panes at once.
 
 The point is supervision, not throughput. One person directing several agents in parallel, with every change reviewed before it merges, isolated by worktree so one agent's edits can't collide with another's.
 
@@ -21,7 +21,7 @@ Four panes running Claude Code and Antigravity in parallel, each in its own work
 
 ## Status
 
-v0.5.4 is the daily driver, running since 2026-08-13. v0.5.5 is cut and pending install. See [STATE.md](STATE.md) for the current session log and [BACKLOG.md](BACKLOG.md) for planned work.
+v0.5.4 is the daily driver, running since 2026-08-13. v0.5.5 is pending, with the main-thread lag fix from 2026-09-19 waiting on the cut. See [STATE.md](STATE.md) for the current session log and [BACKLOG.md](BACKLOG.md) for planned work.
 
 ## Tests
 
