@@ -1,3 +1,10 @@
+---
+hub_updated: 2026-09-30
+hub_status: paused
+hub_lane: products
+hub_last: CLAUDE.md tidied with no code change; Codex CLI third-vendor plan drafted, not approved.
+hub_next: Settle the Codex plan's open decisions near the mid-October purchase, then cut 0.5.5 and update in-app.
+---
 # STATE — Flightdeck
 
 Vault: [[HOME]] | [[PORTFOLIO|Portfolio]] | [[projects/active/flightdeck/BACKLOG|Backlog]]
