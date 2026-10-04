@@ -529,7 +529,7 @@ function DiagnosticsSection() {
       // Says exactly what is edited, what is added, and where the backup goes.
       // No summary-of-a-summary: this is someone's hand-edited config.
       body:
-        `Flightdeck will add two hooks (Notification and Stop) to ${hookStatus.settingsPath}. ` +
+        `Flightdeck will add three hooks (Notification, PermissionRequest and Stop) to ${hookStatus.settingsPath}. ` +
         `They run one small script from ${hookStatus.hooksDir}, which only appends the event to a log Flightdeck reads. ` +
         `A timestamped .bak copy of settings.json is written next to it first, and your own hooks and settings are left exactly as they are. ` +
         `Uninstall removes only Flightdeck's two entries.`,

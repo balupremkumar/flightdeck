@@ -48,9 +48,11 @@ const EVENTS_FILE: &str = "events.jsonl";
 /// Frontend event name. Kept in step with Notifications.tsx (HOOK_EVENT).
 const HOOK_EVENT: &str = "hook://event";
 /// The Claude Code hook events we register. Notification = "I need you";
+/// PermissionRequest = "a permission dialog is showing" (fires before the dialog,
+/// the relay never answers it, so the normal prompt still appears);
 /// Stop = "I've finished responding". Nothing else is installed: every extra
 /// hook is another process spawned on the agent's critical path.
-const HOOK_EVENTS: [&str; 2] = ["Notification", "Stop"];
+const HOOK_EVENTS: [&str; 3] = ["Notification", "PermissionRequest", "Stop"];
 
 /// The relay. Appends one compact JSON line per hook fire.
 ///
@@ -356,7 +358,7 @@ pub(crate) fn count_our_hooks(root: &Value, hooks_dir: &Path) -> usize {
         .count()
 }
 
-/// Add our Notification + Stop entries to `root`, in place.
+/// Add our Notification + PermissionRequest + Stop entries to `root`, in place.
 ///
 /// Idempotent and self-healing: any existing entry of ours is removed first, so
 /// reinstalling after the app data folder moved (or the pwsh flavour changed)
@@ -487,7 +489,7 @@ fn write_settings(path: &Path, value: &Value) -> Result<Option<String>, String> 
     Ok(backup)
 }
 
-/// Install the Notification + Stop relay hooks. Only ever called from the
+/// Install the Notification + PermissionRequest + Stop relay hooks. Only ever called from the
 /// Settings row, behind an explicit confirm that names this file.
 #[tauri::command]
 pub fn install_claude_hooks() -> Result<HookEdit, String> {
@@ -562,9 +564,9 @@ mod tests {
     }
 
     #[test]
-    fn install_appends_both_events_without_touching_user_hooks() {
+    fn install_appends_all_events_without_touching_user_hooks() {
         let mut doc = user_settings();
-        assert_eq!(merge_hooks(&mut doc, &dir(), "pwsh").unwrap(), 2);
+        assert_eq!(merge_hooks(&mut doc, &dir(), "pwsh").unwrap(), 3);
 
         // Unknown top-level keys survive untouched.
         assert_eq!(doc["model"], json!("opus"));
@@ -581,6 +583,10 @@ mod tests {
         let stop = doc["hooks"]["Stop"].as_array().unwrap();
         assert_eq!(stop.len(), 1);
         assert!(stop[0]["hooks"][0]["command"].as_str().unwrap().ends_with("Stop"));
+
+        let perm = doc["hooks"]["PermissionRequest"].as_array().unwrap();
+        assert_eq!(perm.len(), 1);
+        assert!(perm[0]["hooks"][0]["command"].as_str().unwrap().ends_with("PermissionRequest"));
     }
 
     #[test]
@@ -604,7 +610,7 @@ mod tests {
         let once = doc.clone();
         merge_hooks(&mut doc, &dir(), "pwsh").unwrap();
         assert_eq!(doc, once);
-        assert_eq!(count_our_hooks(&doc, &dir()), 2);
+        assert_eq!(count_our_hooks(&doc, &dir()), 3);
     }
 
     /// Reinstalling after the hooks folder moved must REPLACE the stale entry.
@@ -614,12 +620,12 @@ mod tests {
         let mut doc = json!({});
         merge_hooks(&mut doc, &old, "pwsh").unwrap();
         merge_hooks(&mut doc, &old, "pwsh").unwrap(); // still one per event
-        assert_eq!(count_our_hooks(&doc, &old), 2);
+        assert_eq!(count_our_hooks(&doc, &old), 3);
 
         // A move to a new folder leaves the old entry behind unless uninstalled
         // from the old path first — so install removes only ITS own path's
         // entries, and the old one is still visible to a targeted remove.
-        assert_eq!(remove_hooks(&mut doc, &old), 2);
+        assert_eq!(remove_hooks(&mut doc, &old), 3);
         assert!(doc.get("hooks").is_none());
     }
 
@@ -627,7 +633,7 @@ mod tests {
     fn uninstall_removes_only_ours() {
         let mut doc = user_settings();
         merge_hooks(&mut doc, &dir(), "pwsh").unwrap();
-        assert_eq!(remove_hooks(&mut doc, &dir()), 2);
+        assert_eq!(remove_hooks(&mut doc, &dir()), 3);
         assert_eq!(doc, user_settings(), "the file must come back exactly as it went in");
     }
 
@@ -753,7 +759,7 @@ mod tests {
         assert_eq!(read_settings(Path::new(&backup)).unwrap().unwrap(), user_settings());
 
         let mut back = read_settings(&path).unwrap().unwrap();
-        assert_eq!(count_our_hooks(&back, &dir()), 2);
+        assert_eq!(count_our_hooks(&back, &dir()), 3);
         remove_hooks(&mut back, &dir());
         assert_eq!(back, user_settings());
 
