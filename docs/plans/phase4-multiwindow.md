@@ -178,3 +178,32 @@ Rollback of data is safe: older builds read a v2 doc as one big window.
 Half-done states: after S4 the app is single-window with reload survival; after S7b Rust writes the session; after S8 the flag exists with nothing behind it; S9 without S10 is the one unsafe pair (closing a secondary would orphan its agents until quit), so S9 and S10 merge to main together.
 Out of scope, noted: single-instance plugin (a second launch today means two writers on session.json; worth a separate change), main-window promotion, per-window zoom, cross-window Broadcast.
 Security: no new path inputs (cwd still passes pathguard in `pty_spawn`); labels are minted by Rust and validated; all windows share one origin and one capability, so no new trust boundary. Scrollback in the doc keeps the existing redaction.
+
+## Red team addendum (Fable, 2026-10-04): BINDING, supersedes the sections above where they conflict
+
+Sources checked: tauri 2.11.5, tauri-runtime-wry 2.11.4, wry 0.55.1, tauri-utils 2.9.3, window-state 2.4.1, @tauri-apps/api 2.11.1, xterm 6.0.0.
+
+1. No per-pane Channels. `Channel::send` never fails for a dead webview and payloads over 8 KiB park in a global queue that is never cleared on window destroy (tauri ipc/channel.rs:37-39, :168-176, :329), so a hung window leaks for ever. Instead keep the four existing `pty://*` emits, add `seq: u64` (ring byte offset) to OutputPayload, route with `emit_to(owner_label)`; `pty_attach` returns the ring plus `next_seq`; the target drops events with `seq < next_seq`.
+2. WebView2 renderer crashes are not surfaced by tauri/wry (no ProcessFailed handling). Each window invokes `window_heartbeat` every 2 s; 8 s of silence: Rust re-adopts its workspaces into main and destroys the window.
+3. Move transfer is hybrid: `pane_pause(model_id)` swaps the pane to buffer-only and returns `seq`; the source drains xterm, serialises (serialize addon, caps as session.ts), posts the snapshot with that seq; the target writes snapshot then ring bytes after seq. Ring-only replay is the crash path. Head modes must include synchronized output (mode 2026). Drop resize-marker replay; truncate the ring to the next safe mark on every pty_resize.
+4. `set_read_roots(label, roots)`: Rust keeps a per-label map and unions (today the last window to push would narrow everyone's read scope).
+5. Closing a secondary: CloseRequested on `fw-*` -> prevent_close, emit `app://flush` to that label, wait up to 500 ms for its slice, merge, then destroy. Share the path with app quit.
+6. Session doc: uiPrefs replace per label, union across labels; validate `windows[]` on load (unknown workspaces to main, never-booted assignments collapse to main); older builds drop `windows` on next write (safe rollback).
+7. Pane ids: static partition `id = (window_ordinal << 24) | local`, main ordinal 0 so persisted ids are unchanged; no Rust allocator. Keep the pty_spawn duplicate-model-id refusal; assert restart's pty_kill-before-spawn order in vitest.
+8. Reattach after reload: `epoch` is not persisted, so key `by_model` on (model_id, vendor, cwd) with epoch only as a tiebreak (or persist epoch); safe mode must skip the reaper.
+9. Geometry: keep `fw-*` in tauri-plugin-window-state (stores by label, validates monitors); drop Geom/place_window.
+10. Gaps to include: chords for Move workspace to new window and Next window; initial focus + a11y announcement in new windows; gate per-window pollers (PaneView.tsx:328/736, LeftPanel.tsx:216, Notifications.tsx:402) to owned panes; support bundle includes the window registry; boot gate opens `fw-1` via a debug command and requires a second boot-ok beacon; pane-smoke runs once with `?label=fw-1`.
+
+### Revised order
+S0 spike (real app): capability glob, async window creation, storage events, focused(false), emit_to a destroyed label, heartbeat.
+S1 ring.rs: push, safe marks, head modes incl. 2026, truncate-on-resize, seq. Dark.
+S2 model_id/gen in pty_spawn, by_model, tombstone, ring fed, seq on OutputPayload. Dark.
+S3 pty_attach + attach-first + seq dedupe + pane_pause/serialize snapshot path + reaper (safe-mode aware). Ships reload survival.
+S4 paneSessions release, detach/adopt. Dark.
+S5 readscope per label; pollers gated to owned panes. Dark.
+S6 doc v2 shadow writer + per-label uiPrefs + load validation; S6b flip.
+S7 WindowRegistry, window_boot, heartbeat, id partition, capability glob + cargo guard, flag (off).
+S8 Move-to-new-window + close-with-flush + crash re-adopt + main-close quit (one PR).
+S9 Move-to-window, Merge all, palette entries, merge-first for snapshots/import.
+S10 attention, overlay badge, summon, notification click routing; window-state covers fw-* geometry.
+S11 flag default on after Balu's trial; S12 drag; pane tear-out to backlog.
