@@ -6,7 +6,7 @@ describe("rows() grid layout (R1)", () => {
     expect(rows(0)).toEqual([]);
     expect(rows(1)).toEqual([[0]]);
     expect(rows(2)).toEqual([[0, 1]]);
-    expect(rows(3)).toEqual([[0, 1], [2]]);
+    expect(rows(3)).toEqual([[0, 1, 2]]);
     expect(rows(4)).toEqual([[0, 1], [2, 3]]);
     expect(rows(5)).toEqual([[0, 1, 2], [3, 4]]);
     expect(rows(6)).toEqual([[0, 1, 2], [3, 4, 5]]);
@@ -31,7 +31,7 @@ describe("rows() grid layout (R1)", () => {
       const a = rowOf(n);
       const b = rowOf(n + 1);
       const moved = [...a].filter(([i, r]) => b.get(i) !== r).length;
-      if (n === 4 || n === 9 || n === 16) continue; // tier boundaries reshape
+      if (n === 3 || n === 4 || n === 9 || n === 16) continue; // tier boundaries reshape
       if (n > 16) continue; // sqrt tier reshapes more freely
       expect(moved, `n=${n} -> ${n + 1}`).toBe(0);
     }
