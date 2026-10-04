@@ -8,6 +8,7 @@ import { useUI, useOverlayEsc, ZOOM_STEPS } from "./ui";
 import { useApp } from "./store";
 import { bytes, relTime, absTime } from "./format";
 import { useFocusTrap } from "./useFocusTrap";
+import { collectSettingEntries, matchSettings, highlightRuns, type SettingEntry } from "./settingsSearch";
 import { listRestorePoints, restoreFromPoint, exportBackup, importBackup, type RestorePointInfo } from "./persist";
 import { adoptSession, lastSessionSaveAt } from "./session";
 import { clearPreferences, PREFERENCE_KEYS } from "./storageKeys";
@@ -75,6 +76,15 @@ export function memoryLevelClass(h: Pick<PaneHealthRow, "memoryMb" | "memoryWarn
   // threshold only if an older build didn't send the boolean.
   if (h.overMemoryWarn ?? (warnMb ? h.memoryMb >= warnMb : false)) return "diag-warn";
   return "";
+}
+
+// H3: a search result's text with the typed query marked.
+function Marked({ text, q }: { text: string; q: string }) {
+  return (
+    <>
+      {highlightRuns(text, q).map((r, i) => (r.hit ? <mark key={i} className="set-mark">{r.text}</mark> : <span key={i}>{r.text}</span>))}
+    </>
+  );
 }
 
 // UX-599: one small header row shape shared by every section that has real
@@ -911,26 +921,67 @@ export function Settings() {
     useUI.getState().clearSettingsJump();
   }, [open, jumpTo]);
 
-  // UI-180: live section filter. Matching is done on rendered text rather than
-  // a hand-maintained keyword table, so a new section is searchable for free.
+  // H3: settings search. The index is read from the rendered rows (see
+  // settingsSearch.ts), so a new setting is searchable with no extra wiring.
+  // While a query is typed, a results list stands in for the sections (which
+  // stay mounted, hidden, so no section loses its state); picking a result
+  // clears the query and scrolls to the real row.
   const [q, setQ] = useState("");
+  const [hits, setHits] = useState<SettingEntry[]>([]);
+  const [active, setActive] = useState(0);
+  const searchRef = useRef<HTMLInputElement>(null);
+  const pendingJump = useRef<SettingEntry | null>(null);
+  const searching = q.trim() !== "";
   const bodyRef = useRef<HTMLDivElement>(null);
+  function runSearch(next: string) {
+    setQ(next);
+    setActive(0);
+    setHits(next.trim() && bodyRef.current ? matchSettings(collectSettingEntries(bodyRef.current), next) : []);
+  }
+  function jumpToHit(h: SettingEntry) {
+    pendingJump.current = h;
+    runSearch("");
+  }
   // UI-30: Tab could walk out of the modal into the app behind the scrim.
   const modalRef = useRef<HTMLDivElement>(null);
   useFocusTrap(modalRef, open);
   useEffect(() => {
+    if (!open) { setQ(""); setHits([]); setActive(0); }
+  }, [open]);
+  useEffect(() => {
     const root = bodyRef.current;
     if (!root) return;
-    const needle = q.trim().toLowerCase();
-    let shown = 0;
     for (const sec of Array.from(root.querySelectorAll<HTMLElement>(".set-section"))) {
-      const hit = !needle || (sec.textContent ?? "").toLowerCase().includes(needle);
-      sec.style.display = hit ? "" : "none";
-      if (hit) shown++;
+      sec.style.display = searching ? "none" : "";
     }
-    const empty = root.querySelector<HTMLElement>(".set-noresults");
-    if (empty) empty.style.display = shown === 0 ? "" : "none";
+    const h = pendingJump.current;
+    if (h && !searching) {
+      pendingJump.current = null;
+      const el = h.el;
+      if (el?.isConnected) {
+        el.scrollIntoView({ block: "center" });
+        el.querySelector<HTMLElement>("button, input, select, textarea")?.focus({ preventScroll: true });
+        el.classList.add("set-flash");
+        window.setTimeout(() => el.classList.remove("set-flash"), 1600);
+      }
+    }
   });
+  // Ctrl+F while Settings is open goes to the search box rather than the
+  // webview's find (or a pane's) behind the scrim.
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey || e.key.toLowerCase() !== "f") return;
+      const t = e.target as Element | null;
+      if (t?.closest?.('[role="dialog"]') && !modalRef.current?.contains(t)) return; // another dialog on top
+      e.preventDefault();
+      e.stopPropagation();
+      searchRef.current?.focus();
+      searchRef.current?.select();
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [open]);
 
   // K0a: repos the user has granted a trust-requiring agent access to.
   const [trusted, setTrusted] = useState<string[]>(() => trustedRepos());
@@ -1023,6 +1074,12 @@ export function Settings() {
   // (both pushed after Settings, see their own useOverlayEsc calls) take Esc
   // first, no manual `!capturing && !popover` guard needed any more.
   useOverlayEsc(open, () => setOpen(false));
+  // H3: while a query is typed it sits on the stack above Settings, so the
+  // first Esc clears the box and the next one closes Settings. A purely local
+  // onKeyDown cannot do this: Cockpit's capture-phase Esc pops Settings off
+  // the stack before any input handler runs. The box keeps its own onKeyDown
+  // as well, for when no Cockpit listener is present.
+  useOverlayEsc(searching, () => runSearch(""), { restoreFocus: false });
 
   if (!open) return null;
 
@@ -1333,18 +1390,56 @@ export function Settings() {
       <div className="set-modal" ref={modalRef} onMouseDown={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Settings">
         <div className="set-head">
           <h2>Settings</h2>
-          {/* UI-180: eleven sections is too many to scan — filter them. */}
+          {/* H3: filters every setting by label, description and section. */}
           <input
+            ref={searchRef}
             className="set-search"
             value={q}
-            onChange={(e) => setQ(e.target.value)}
+            onChange={(e) => runSearch(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape" && q) { e.preventDefault(); e.stopPropagation(); runSearch(""); }
+              else if (e.key === "ArrowDown" && hits.length) { e.preventDefault(); setActive((i) => Math.min(i + 1, hits.length - 1)); }
+              else if (e.key === "ArrowUp" && hits.length) { e.preventDefault(); setActive((i) => Math.max(i - 1, 0)); }
+              else if (e.key === "Enter" && hits[active]) { e.preventDefault(); jumpToHit(hits[active]); }
+            }}
             placeholder="Search settings…"
             spellCheck={false}
+            role="combobox"
             aria-label="Search settings"
+            aria-expanded={searching && hits.length > 0}
+            aria-controls="set-results"
+            aria-activedescendant={searching && hits[active] ? `set-hit-${active}` : undefined}
           />
           <button className="ov-x" onClick={() => setOpen(false)} title="Close"><IconClose size={16} /></button>
         </div>
         <div className="set-body" ref={bodyRef}>
+          {searching && hits.length > 0 && (
+            <div className="set-results" id="set-results" role="listbox" aria-label="Matching settings">
+              {hits.map((h, i) => (
+                <button
+                  key={i}
+                  id={`set-hit-${i}`}
+                  type="button"
+                  role="option"
+                  aria-selected={i === active}
+                  className={"set-hit" + (i === active ? " on" : "")}
+                  tabIndex={-1}
+                  onMouseEnter={() => setActive(i)}
+                  onClick={() => jumpToHit(h)}
+                  ref={i === active ? (el) => el?.scrollIntoView?.({ block: "nearest" }) : undefined}
+                >
+                  <span className="set-hit-top">
+                    <span className="set-hit-name"><Marked text={h.label} q={q} /></span>
+                    <span className="set-hit-sec"><Marked text={h.section} q={q} /></span>
+                  </span>
+                  {h.description && <span className="set-hit-sub"><Marked text={h.description} q={q} /></span>}
+                </button>
+              ))}
+            </div>
+          )}
+          {searching && hits.length === 0 && (
+            <div className="set-noresults" role="status">{`No settings match "${q.trim()}"`}</div>
+          )}
 
           <section className="set-section">
             <SectionHead label="Appearance" onReset={resetAppearanceSection} />
@@ -2028,9 +2123,6 @@ export function Settings() {
               </ul>
             </details>
           </section>
-          <div className="set-noresults" style={{ display: "none" }}>
-            Nothing matches that. Try a shorter word — sections are matched on their full text.
-          </div>
         </div>
       </div>
       {/* UI-111: install/sign-in popover, portalled so the modal's own
