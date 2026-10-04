@@ -67,7 +67,9 @@ export default defineConfig(async () => ({
       : undefined,
     watch: {
       // 3. tell Vite to ignore watching `src-tauri`
-      ignored: ["**/src-tauri/**"],
+      // Agent worktrees under .claude/ are whole repo copies; watching them made
+      // their edits full-reload this server's pages mid-e2e.
+      ignored: ["**/src-tauri/**", "**/.claude/**"],
     },
   },
 
