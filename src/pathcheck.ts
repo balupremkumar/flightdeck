@@ -10,7 +10,8 @@ export interface PathHit {
   isDir: boolean;
 }
 
-const TTL_MS = 2000;
+const TTL_MS = 15000;
+const MAX_ENTRIES = 2000;
 
 const cache = new Map<string, { at: number; hit: PathHit | null }>();
 let queue: { raw: string; bases: string[]; resolve: (h: PathHit | null) => void }[] = [];
@@ -45,7 +46,10 @@ async function flush() {
       const now = Date.now();
       for (const q of g) {
         const hit = byRaw.get(q.raw) ?? null;
-        cache.set(key(q.raw, q.bases), { at: now, hit });
+        const ck = key(q.raw, q.bases);
+        cache.delete(ck); // re-insert so Map order stays oldest-first
+        cache.set(ck, { at: now, hit });
+        while (cache.size > MAX_ENTRIES) cache.delete(cache.keys().next().value as string);
         q.resolve(hit);
       }
     }),
@@ -70,6 +74,11 @@ export function resolveExisting(raws: string[], bases: string[]): Promise<(PathH
       });
     }),
   );
+}
+
+/** Drops every cached lookup (a pane's cwd moved, so relative results are stale). */
+export function invalidatePathCache() {
+  cache.clear();
 }
 
 /** Test hook. */

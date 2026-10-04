@@ -48,7 +48,6 @@ export interface PreviewTab {
   line?: number;
   /** Font-size (px) inherited from the pane that opened it (UX-510) so the
    *  preview visually matches the terminal zoom it was opened from. */
-  fontSize?: number;
 }
 
 // One entry per pane-state transition that matched the configured bell rules.
@@ -167,7 +166,7 @@ interface UIState {
   /** Opens `path` as a tab (or refocuses/updates it if already open). Also
    *  records the path into the back/forward nav stack (UX-531) unless the
    *  caller is the stack itself replaying a step — see navBack/navForward. */
-  openPreview: (path: string, opts?: { line?: number; fontSize?: number; skipHistory?: boolean }) => void;
+  openPreview: (path: string, opts?: { line?: number; skipHistory?: boolean }) => void;
   closePreview: (id: number) => void;
   /** Dismisses the whole drawer (every tab) — Esc / clicking the scrim. */
   closeAllPreviews: () => void;
@@ -370,14 +369,14 @@ export const useUI = create<UIState>((set, get) => ({
       const nav = opts?.skipHistory ? { navHistory: s.navHistory, navIndex: s.navIndex } : navPush(s.navHistory, s.navIndex, path);
       const existing = s.previewTabs.find((t) => t.path === path);
       if (existing) {
-        const updated = { ...existing, line: opts?.line ?? existing.line, fontSize: opts?.fontSize ?? existing.fontSize };
+        const updated = { ...existing, line: opts?.line ?? existing.line };
         return {
           previewTabs: s.previewTabs.map((t) => (t.id === existing.id ? updated : t)),
           activePreviewId: existing.id,
           ...nav,
         };
       }
-      const tab: PreviewTab = { id: ++pseq, path, line: opts?.line, fontSize: opts?.fontSize };
+      const tab: PreviewTab = { id: ++pseq, path, line: opts?.line };
       return { previewTabs: [...s.previewTabs, tab], activePreviewId: tab.id, ...nav };
     }),
   closePreview: (id) =>

@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 import { invoke } from "@tauri-apps/api/core";
-import { resolveExisting, _resetPathcheckCache } from "./pathcheck";
+import { resolveExisting, invalidatePathCache, _resetPathcheckCache } from "./pathcheck";
 
 const g = globalThis as Record<string, unknown>;
 const mocked = vi.mocked(invoke);
@@ -48,7 +48,7 @@ describe("resolveExisting", () => {
   it("expires after the TTL", async () => {
     vi.useFakeTimers();
     await resolveExisting(["a"], ["B"]);
-    vi.advanceTimersByTime(1900);
+    vi.advanceTimersByTime(14900);
     await resolveExisting(["a"], ["B"]);
     expect(mocked).toHaveBeenCalledTimes(1);
     vi.advanceTimersByTime(200);
@@ -65,5 +65,23 @@ describe("resolveExisting", () => {
   it("resolves null when invoke rejects", async () => {
     mocked.mockRejectedValueOnce(new Error("boom"));
     expect(await resolveExisting(["a"], ["B"])).toEqual([null]);
+  });
+});
+
+describe("pathcheck cache bounds", () => {
+  it("invalidatePathCache forces a fresh lookup", async () => {
+    await resolveExisting(["a"], ["B"]);
+    invalidatePathCache();
+    await resolveExisting(["a"], ["B"]);
+    expect(mocked).toHaveBeenCalledTimes(2);
+  });
+  it("caps entries, dropping the oldest", async () => {
+    const raws = Array.from({ length: 2100 }, (_, i) => `p${i}`);
+    await resolveExisting(raws, ["B"]);
+    mocked.mockClear();
+    await resolveExisting(["p2099"], ["B"]);
+    expect(mocked).not.toHaveBeenCalled();
+    await resolveExisting(["p0"], ["B"]);
+    expect(mocked).toHaveBeenCalledTimes(1);
   });
 });

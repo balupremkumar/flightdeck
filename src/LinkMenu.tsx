@@ -13,7 +13,6 @@ import "./linkmenu.css";
 export interface LinkMenuItem { id: string; label: string; run: () => void }
 
 export interface LinkMenuDeps {
-  fontSize: number;
   openUrl: (url: string) => void;
   /** Types text into the owning pane's PTY (no Enter). */
   sendToPane: (text: string) => void;
@@ -52,7 +51,7 @@ export function linkMenuItems(t: LinkTarget, d: LinkMenuDeps): LinkMenuItem[] {
   const items: LinkMenuItem[] = [];
   if (!t.isDir) {
     items.push(
-      { id: "preview", label: "Open in preview", run: () => useUI.getState().openPreview(t.path, { line: t.line, fontSize: d.fontSize }) },
+      { id: "preview", label: "Open in preview", run: () => useUI.getState().openPreview(t.path, { line: t.line }) },
       { id: "editor", label: "Open in editor", run: () => { void openInEditor(t.path, t.line, t.col); } },
     );
   }
