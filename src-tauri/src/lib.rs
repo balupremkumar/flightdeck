@@ -10,6 +10,7 @@ mod chatlog;
 mod codexsessions;
 mod doctor;
 mod editor;
+mod ghpr;
 mod gitstatus;
 mod health;
 mod hooks;
@@ -22,6 +23,7 @@ mod pathcheck;
 mod pathguard;
 mod overlay;
 mod persist;
+mod ports;
 mod procname;
 mod readscope;
 mod reveal;
@@ -1010,6 +1012,9 @@ pub fn run() {
             pane_health,
             recover_orphans,
             kill_orphans,
+            ports::workspace_ports,
+            ports::kill_port_process,
+            ghpr::pr_status,
             export_support_bundle,
             applog::log_event,
             applog::log_file_path,

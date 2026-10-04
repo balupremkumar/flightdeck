@@ -68,7 +68,7 @@ pub(crate) fn snapshot_processes() -> Vec<(u32, u32, String)> {
 
 // Every pid transitively descended from `roots` (inclusive) — these are
 // "known", i.e. owned by a live pane, and never candidates.
-fn descendants(roots: &[u32], all: &[(u32, u32, String)]) -> HashSet<u32> {
+pub(crate) fn descendants(roots: &[u32], all: &[(u32, u32, String)]) -> HashSet<u32> {
     let mut known: HashSet<u32> = roots.iter().copied().collect();
     let mut changed = true;
     while changed {
