@@ -24,6 +24,8 @@ export const PREFERENCE_KEYS = [
   "flightdeck-reduced-motion",
   "flightdeck-uiscale",
   "flightdeck-terminal-settings",
+  // 1.5b/1.5c: preview text size, interface text scale, preview line height and width.
+  "flightdeck-reading-settings",
   "flightdeck-terminal-settings-changed",
   "flightdeck-shortcuts",
   "flightdeck-agent-settings",

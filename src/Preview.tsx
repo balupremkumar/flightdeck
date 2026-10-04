@@ -469,7 +469,7 @@ function PreviewBody({ tab }: { tab: PreviewTab }) {
           </div>
         )}
       </div>
-      <div className="prv-content" style={tab.fontSize ? { fontSize: `${tab.fontSize}px` } : undefined}>
+      <div className="prv-content">
         {state === "loading" && <PreviewSkeleton />}
         {state === "binary" && (
           <div className="prv-state">

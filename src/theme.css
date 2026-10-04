@@ -83,12 +83,12 @@
        --fs-xl   17px   modal/dialog titles                      (was 17-19px)
      Line-heights are named by role, not tied 1:1 to a size — pick the one
      that matches how the text is used. */
-  --fs-xs:9.5px;
-  --fs-sm:10.5px;
-  --fs-base:12px;
-  --fs-md:13.5px;
-  --fs-lg:15px;
-  --fs-xl:17px;
+  --fs-xs:calc(9.5px * var(--ui-fs-scale, 1));
+  --fs-sm:calc(10.5px * var(--ui-fs-scale, 1));
+  --fs-base:calc(12px * var(--ui-fs-scale, 1));
+  --fs-md:calc(13.5px * var(--ui-fs-scale, 1));
+  --fs-lg:calc(15px * var(--ui-fs-scale, 1));
+  --fs-xl:calc(17px * var(--ui-fs-scale, 1));
   --lh-tight:1.15;   /* --fs-xl / big numerals — headings don't need air */
   --lh-snug:1.3;      /* --fs-md / --fs-lg labels and section titles */
   --lh-normal:1.45;   /* --fs-xs / --fs-sm / --fs-base — anything that can wrap in a row */

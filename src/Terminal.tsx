@@ -19,7 +19,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { terminalThemeFor } from "./terminal-theme";
-import { getTerminalSettings } from "./Settings";
+import { getTerminalSettings, terminalReadabilityOptions } from "./Settings";
 import { linkify, resolvePath, type LinkMatch } from "./linkify";
 import { openInEditor } from "./editor";
 import { useUI } from "./ui";
@@ -653,6 +653,7 @@ function createSession(modelId: number, gen: string, spec: SpawnSpec, handlers: 
       cursorBlink: true,
       cursorStyle: ts.cursorStyle,
       scrollback: ts.scrollback,
+      ...terminalReadabilityOptions(ts), // 1.5a/1.5c: minimumContrastRatio + lineHeight
       theme: themeRef.current,
       // QL-756: OSC 8 hyperlinks — agents and modern CLIs (gh, cargo, vitest)
       // emit them so a PR/docs URL is clickable without printing the raw link.
@@ -1462,7 +1463,21 @@ function createSession(modelId: number, gen: string, spec: SpawnSpec, handlers: 
     });
     themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
 
+    // 1.5a/1.5c: Settings > Terminal contrast + line height apply to every live
+    // session (parked ones too: sessions outlive their component), no remount.
+    const onTermSettings = () => {
+      const o = terminalReadabilityOptions();
+      if (term.options.minimumContrastRatio !== o.minimumContrastRatio) term.options.minimumContrastRatio = o.minimumContrastRatio;
+      if (term.options.lineHeight !== o.lineHeight) {
+        term.options.lineHeight = o.lineHeight;
+        fitSane(); // cell height moved: re-derive rows
+        entry.api.remeasure();
+      }
+    };
+    window.addEventListener("flightdeck-terminal-settings-changed", onTermSettings);
+
     entry.disposers.push(() => {
+      window.removeEventListener("flightdeck-terminal-settings-changed", onTermSettings);
       if (writeRaf) cancelAnimationFrame(writeRaf);
       clearQuietTimer();
       ro.disconnect();

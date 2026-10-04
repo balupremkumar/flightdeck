@@ -49,10 +49,110 @@ export interface TerminalSettings {
   fontSize: number;
   cursorStyle: "block" | "underline" | "bar";
   scrollback: number;
+  /** 1.5a: xterm minimumContrastRatio. 1 = off, 4.5 = WCAG AA (VS Code's default). */
+  minimumContrastRatio: number;
+  /** 1.5c: xterm lineHeight multiplier (1 = xterm's own default). */
+  lineHeight: number;
 }
 const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
   fontFamily: "JetBrains Mono", fontSize: 12.5, cursorStyle: "block", scrollback: 5000,
+  minimumContrastRatio: 4.5, lineHeight: 1,
 };
+export const CONTRAST_RANGE = { min: 1, max: 7, step: 0.5 } as const;
+export const TERM_LINE_HEIGHT_RANGE = { min: 1, max: 1.6, step: 0.05 } as const;
+function clampNum(n: unknown, lo: number, hi: number, fallback: number): number {
+  const v = Number(n);
+  return Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : fallback;
+}
+/** The xterm options this module owns, clamped. Used for creation and live apply. */
+export function terminalReadabilityOptions(t: TerminalSettings = getTerminalSettings()): { minimumContrastRatio: number; lineHeight: number } {
+  return {
+    minimumContrastRatio: clampNum(t.minimumContrastRatio, CONTRAST_RANGE.min, CONTRAST_RANGE.max, DEFAULT_TERMINAL_SETTINGS.minimumContrastRatio),
+    lineHeight: clampNum(t.lineHeight, TERM_LINE_HEIGHT_RANGE.min, TERM_LINE_HEIGHT_RANGE.max, DEFAULT_TERMINAL_SETTINGS.lineHeight),
+  };
+}
+
+// ---------------------------------------------------------------------
+// Reading settings (1.5b/1.5c): Preview text size, interface text size,
+// Preview line height and reading width. Persisted at
+// "flightdeck-reading-settings" and applied as root CSS variables
+// (--prv-fs, --prv-lh, --prv-width, --ui-fs-scale), so no component needs to
+// re-render. Interface text size scales the --fs-* tokens only: terminals are
+// untouched and whole-app zoom (applyUiScale) stays independent.
+// ---------------------------------------------------------------------
+export type PreviewWidth = "narrow" | "medium" | "full";
+export interface ReadingSettings {
+  previewFontSize: number;
+  uiTextScale: number;
+  previewLineHeight: number;
+  previewWidth: PreviewWidth;
+}
+export const DEFAULT_READING_SETTINGS: ReadingSettings = {
+  previewFontSize: 14, uiTextScale: 1, previewLineHeight: 1.6, previewWidth: "medium",
+};
+export const PREVIEW_FONT_RANGE = { min: 10, max: 24, step: 1 } as const;
+export const UI_TEXT_SCALE_RANGE = { min: 0.85, max: 1.3, step: 0.05 } as const;
+export const PREVIEW_LH_RANGE = { min: 1.4, max: 1.9, step: 0.05 } as const;
+export const PREVIEW_WIDTHS: Record<PreviewWidth, { label: string; css: string }> = {
+  narrow: { label: "Narrow", css: "70ch" },
+  medium: { label: "Medium", css: "90ch" },
+  full: { label: "Full", css: "none" },
+};
+const READING_SETTINGS_KEY = "flightdeck-reading-settings";
+export function getReadingSettings(): ReadingSettings {
+  const d = DEFAULT_READING_SETTINGS;
+  try {
+    const raw = localStorage.getItem(READING_SETTINGS_KEY);
+    if (raw) {
+      const p = JSON.parse(raw) ?? {};
+      return {
+        previewFontSize: clampNum(p.previewFontSize, PREVIEW_FONT_RANGE.min, PREVIEW_FONT_RANGE.max, d.previewFontSize),
+        uiTextScale: clampNum(p.uiTextScale, UI_TEXT_SCALE_RANGE.min, UI_TEXT_SCALE_RANGE.max, d.uiTextScale),
+        previewLineHeight: clampNum(p.previewLineHeight, PREVIEW_LH_RANGE.min, PREVIEW_LH_RANGE.max, d.previewLineHeight),
+        previewWidth: p.previewWidth in PREVIEW_WIDTHS ? p.previewWidth : d.previewWidth,
+      };
+    }
+  } catch { /* non-persistent */ }
+  return d;
+}
+/** Writes the CSS variables. Safe to call at boot before React mounts. */
+export function applyReadingSettings(r: ReadingSettings = getReadingSettings()): void {
+  const st = document.documentElement.style;
+  st.setProperty("--prv-fs", `${r.previewFontSize}px`);
+  st.setProperty("--prv-lh", String(r.previewLineHeight));
+  st.setProperty("--prv-width", PREVIEW_WIDTHS[r.previewWidth].css);
+  st.setProperty("--ui-fs-scale", String(r.uiTextScale));
+}
+function saveReadingSettings(patch: Partial<ReadingSettings>): ReadingSettings {
+  const next = { ...getReadingSettings(), ...patch };
+  try { localStorage.setItem(READING_SETTINGS_KEY, JSON.stringify(next)); } catch { /* non-persistent */ }
+  applyReadingSettings(next);
+  return next;
+}
+
+// 1.5a preview helpers: WCAG contrast, and the colour xterm would nudge a dim
+// foreground to for a given minimum ratio (it lightens or darkens until met).
+function parseRgb(css: string): [number, number, number] | null {
+  const m = /rgba?\(\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)/.exec(css);
+  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
+}
+function luminance([r, g, b]: [number, number, number]): number {
+  const f = (c: number) => { const v = c / 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+  return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
+}
+export function contrastRatio(a: [number, number, number], b: [number, number, number]): number {
+  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+  return (hi + 0.05) / (lo + 0.05);
+}
+export function adjustForContrast(fg: [number, number, number], bg: [number, number, number], ratio: number): [number, number, number] {
+  if (ratio <= 1 || contrastRatio(fg, bg) >= ratio) return fg;
+  const target: [number, number, number] = luminance(bg) > 0.5 ? [0, 0, 0] : [255, 255, 255];
+  for (let t = 0.05; t <= 1.0001; t += 0.05) {
+    const c = fg.map((v, i) => Math.round(v + (target[i] - v) * t)) as [number, number, number];
+    if (contrastRatio(c, bg) >= ratio) return c;
+  }
+  return target;
+}
 const TERMINAL_FONTS = ["JetBrains Mono", "Cascadia Code", "Consolas", "Fira Code", "Menlo", "ui-monospace"];
 
 export function getTerminalSettings(): TerminalSettings {
@@ -1120,6 +1220,19 @@ export function Settings() {
   const setUiZoom = useUI((s) => s.setUiZoom);
   const stepUiZoom = useUI((s) => s.stepUiZoom);
   const [term, setTerm] = useState(getTerminalSettings());
+  const [reading, setReading] = useState(getReadingSettings());
+  const contrastRef = useRef<HTMLDivElement>(null);
+  const [contrastSample, setContrastSample] = useState<string | undefined>(undefined);
+  // 1.5a: re-derive the sample's colour from the live pane-preview background.
+  useEffect(() => {
+    const el = contrastRef.current;
+    if (!el) return;
+    const bg = parseRgb(getComputedStyle(el).backgroundColor);
+    if (!bg) { setContrastSample(undefined); return; }
+    const dim: [number, number, number] = luminance(bg) > 0.5 ? [190, 190, 190] : [80, 80, 90];
+    const c = adjustForContrast(dim, bg, term.minimumContrastRatio);
+    setContrastSample(`rgb(${c[0]},${c[1]},${c[2]})`);
+  }, [term.minimumContrastRatio, themeId, appearance]);
   const [shortcuts, setShortcuts] = useState(getShortcuts());
   const [capturing, setCapturing] = useState<string | null>(null);
   // UI-190: a rebind that collides with an existing binding, pending the user's
@@ -1443,6 +1556,9 @@ export function Settings() {
     });
   }
 
+  function updateReading(patch: Partial<ReadingSettings>) {
+    setReading(saveReadingSettings(patch));
+  }
   function updateTerm(patch: Partial<TerminalSettings>) {
     setTerm(saveTerminalSettings(patch));
   }
@@ -1468,7 +1584,7 @@ export function Settings() {
   function resetAppearanceSection() {
     resetSection(
       "Reset appearance?",
-      "Theme, appearance mode, accent colour, colour-blind-safe and reduced-motion go back to defaults.",
+      "Theme, appearance mode, accent colour, colour-blind-safe, reduced-motion and the text size and reading settings go back to defaults.",
       () => {
         selectTheme(DEFAULT_THEME_ID);
         selectAccent(DEFAULT_ACCENT_ID);
@@ -1482,6 +1598,9 @@ export function Settings() {
         try { localStorage.removeItem("flightdeck-theme-light"); } catch { /* non-persistent */ }
         try { localStorage.removeItem("flightdeck-appearance-mode"); } catch { /* non-persistent */ }
         setAppearance(findTheme(DEFAULT_THEME_ID).mode);
+        try { localStorage.removeItem(READING_SETTINGS_KEY); } catch { /* non-persistent */ }
+        applyReadingSettings(DEFAULT_READING_SETTINGS);
+        setReading(DEFAULT_READING_SETTINGS);
         useUI.getState().pushToast("success", "Appearance reset.");
       }
     );
@@ -1489,7 +1608,7 @@ export function Settings() {
   function resetTerminalSection() {
     resetSection(
       "Reset terminal settings?",
-      "Font, size, cursor style and scrollback go back to defaults.",
+      "Font, size, cursor style, scrollback, contrast and line height go back to defaults.",
       () => {
         try { localStorage.removeItem("flightdeck-terminal-settings"); } catch { /* non-persistent */ }
         window.dispatchEvent(new CustomEvent("flightdeck-terminal-settings-changed", { detail: DEFAULT_TERMINAL_SETTINGS }));
@@ -1766,6 +1885,51 @@ export function Settings() {
                 )}
               </div>
             </div>
+            <div className="set-row">
+              <div className="set-row-t">
+                <span className="set-row-name">Preview text size</span>
+                <span className="set-row-sub">Pixels, for the Preview panel only. Terminal size is set under Terminal.</span>
+              </div>
+              <input
+                className="set-input set-input-num" type="number" aria-label="Preview text size in pixels"
+                min={PREVIEW_FONT_RANGE.min} max={PREVIEW_FONT_RANGE.max} step={PREVIEW_FONT_RANGE.step}
+                value={reading.previewFontSize}
+                onChange={(e) => updateReading({ previewFontSize: Number(e.target.value) || DEFAULT_READING_SETTINGS.previewFontSize })}
+              />
+            </div>
+            <div className="set-row">
+              <div className="set-row-t">
+                <span className="set-row-name">Interface text size</span>
+                <span className="set-row-sub">Scales menus, panels and labels. Terminals and Preview are not affected.</span>
+              </div>
+              <input
+                className="set-range" type="range" aria-label="Interface text size"
+                min={UI_TEXT_SCALE_RANGE.min} max={UI_TEXT_SCALE_RANGE.max} step={UI_TEXT_SCALE_RANGE.step}
+                value={reading.uiTextScale}
+                onChange={(e) => updateReading({ uiTextScale: Number(e.target.value) })}
+              />
+              <span className="set-range-val">{Math.round(reading.uiTextScale * 100)}%</span>
+            </div>
+            <div className="set-row">
+              <div className="set-row-t"><span className="set-row-name">Preview line height</span></div>
+              <input
+                className="set-range" type="range" aria-label="Preview line height"
+                min={PREVIEW_LH_RANGE.min} max={PREVIEW_LH_RANGE.max} step={PREVIEW_LH_RANGE.step}
+                value={reading.previewLineHeight}
+                onChange={(e) => updateReading({ previewLineHeight: Number(e.target.value) })}
+              />
+              <span className="set-range-val">{reading.previewLineHeight.toFixed(2)}</span>
+            </div>
+            <div className="set-row">
+              <div className="set-row-t"><span className="set-row-name">Preview reading width</span></div>
+              <div className="seg" role="group" aria-label="Preview reading width">
+                {(Object.keys(PREVIEW_WIDTHS) as PreviewWidth[]).map((w) => (
+                  <button key={w} className={reading.previewWidth === w ? "on" : ""} aria-pressed={reading.previewWidth === w} onClick={() => updateReading({ previewWidth: w })}>
+                    {PREVIEW_WIDTHS[w].label}
+                  </button>
+                ))}
+              </div>
+            </div>
           </section>
 
           <section className="set-section">
@@ -1802,6 +1966,32 @@ export function Settings() {
             <div className="term-preview" style={{ fontFamily: term.fontFamily, fontSize: term.fontSize }}>
               <span>$ npm run dev</span>
               <i className={"term-cursor term-cursor-" + term.cursorStyle} aria-hidden="true" />
+            </div>
+            <div className="set-row">
+              <div className="set-row-t">
+                <span className="set-row-name">Minimum contrast</span>
+                <span className="set-row-sub">Lifts dim text until it is readable. 1 is off, 4.5 matches VS Code.</span>
+              </div>
+              <input
+                className="set-range" type="range" aria-label="Terminal minimum contrast ratio"
+                min={CONTRAST_RANGE.min} max={CONTRAST_RANGE.max} step={CONTRAST_RANGE.step}
+                value={term.minimumContrastRatio}
+                onChange={(e) => updateTerm({ minimumContrastRatio: Number(e.target.value) })}
+              />
+              <span className="set-range-val">{term.minimumContrastRatio <= 1 ? "Off" : term.minimumContrastRatio.toFixed(1)}</span>
+            </div>
+            <div className="term-preview" ref={contrastRef} style={{ fontFamily: term.fontFamily, fontSize: term.fontSize, lineHeight: term.lineHeight }}>
+              <span style={{ color: contrastSample }}>dim text: warning, 3 files changed</span>
+            </div>
+            <div className="set-row">
+              <div className="set-row-t"><span className="set-row-name">Line height</span><span className="set-row-sub">Space between terminal rows</span></div>
+              <input
+                className="set-range" type="range" aria-label="Terminal line height"
+                min={TERM_LINE_HEIGHT_RANGE.min} max={TERM_LINE_HEIGHT_RANGE.max} step={TERM_LINE_HEIGHT_RANGE.step}
+                value={term.lineHeight}
+                onChange={(e) => updateTerm({ lineHeight: Number(e.target.value) })}
+              />
+              <span className="set-range-val">{term.lineHeight.toFixed(2)}</span>
             </div>
             <div className="set-row">
               <div className="set-row-t"><span className="set-row-name">Scrollback</span><span className="set-row-sub">Lines kept per pane</span></div>

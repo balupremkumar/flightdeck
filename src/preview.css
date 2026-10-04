@@ -69,7 +69,7 @@
 .prv-mode.on { background: var(--elevated); color: var(--text); }
 
 /* ---------- Content / states ---------- */
-.prv-content { flex: 1; overflow: auto; }
+.prv-content { flex: 1; overflow: auto; font-size: var(--prv-fs, 14px); }
 .prv-state {
   display: flex; flex-direction: column; align-items: flex-start; gap: 10px;
   padding: 28px 20px; color: var(--faint); font-size: 12.5px; max-width: 460px;
@@ -99,7 +99,7 @@
 .prv-tok-com { color: var(--faint); font-style: italic; }
 
 /* ---------- Rendered markdown ---------- */
-.prv-md { padding: 18px 22px 40px; max-width: 780px; color: var(--text); font-size: inherit; line-height: 1.6; }
+.prv-md { padding: 18px 22px 40px; max-width: var(--prv-width, 90ch); color: var(--text); font-size: inherit; line-height: var(--prv-lh, 1.6); }
 .prv-md p { margin: 0 0 14px; }
 /* UI-620: headings previously matched the GitHub-readme convention exactly
    (bold text + full-width grey bottom border on h1/h2) — the one spot in

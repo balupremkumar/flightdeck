@@ -24,6 +24,7 @@ const {
   clampMemoryCeiling, getMemoryCeilingMb, setMemoryCeilingMb,
   DEFAULT_MEMORY_CEILING_MB, MIN_MEMORY_CEILING_MB, MAX_MEMORY_CEILING_MB, MEMORY_CEILING_EVENT,
   hookStatusLine, hooksInstalled, setHooksInstalled, HOOKS_CHANGED_EVENT,
+  getTerminalSettings, terminalReadabilityOptions, getReadingSettings, DEFAULT_READING_SETTINGS, contrastRatio, adjustForContrast,
 } = await import("./Settings");
 import type { HookStatus } from "./Settings";
 
@@ -199,5 +200,34 @@ describe("Claude Code hooks row (QL-720)", () => {
       { type: HOOKS_CHANGED_EVENT, detail: true },
       { type: HOOKS_CHANGED_EVENT, detail: false },
     ]);
+  });
+});
+
+describe("readability settings (1.5a-c)", () => {
+  beforeEach(() => store.clear());
+
+  it("defaults: contrast 4.5, terminal line height 1, preview 14px / 1.6 / medium / 100%", () => {
+    expect(getTerminalSettings().minimumContrastRatio).toBe(4.5);
+    expect(getTerminalSettings().lineHeight).toBe(1);
+    expect(getReadingSettings()).toEqual(DEFAULT_READING_SETTINGS);
+    expect(DEFAULT_READING_SETTINGS).toEqual({ previewFontSize: 14, uiTextScale: 1, previewLineHeight: 1.6, previewWidth: "medium" });
+  });
+
+  it("old persisted terminal settings without the new fields pick up the defaults", () => {
+    store.set("flightdeck-terminal-settings", JSON.stringify({ fontSize: 14 }));
+    expect(getTerminalSettings()).toMatchObject({ fontSize: 14, minimumContrastRatio: 4.5, lineHeight: 1 });
+  });
+
+  it("clamps out-of-range or junk values", () => {
+    expect(terminalReadabilityOptions({ ...getTerminalSettings(), minimumContrastRatio: 99, lineHeight: 0.2 })).toEqual({ minimumContrastRatio: 7, lineHeight: 1 });
+    store.set("flightdeck-reading-settings", JSON.stringify({ previewFontSize: 500, previewLineHeight: "x", previewWidth: "huge", uiTextScale: 0.1 }));
+    expect(getReadingSettings()).toEqual({ previewFontSize: 24, uiTextScale: 0.85, previewLineHeight: 1.6, previewWidth: "medium" });
+  });
+
+  it("adjustForContrast lifts dim text to the ratio, and leaves it alone when off", () => {
+    const bg: [number, number, number] = [20, 20, 24];
+    const dim: [number, number, number] = [60, 60, 70];
+    expect(adjustForContrast(dim, bg, 1)).toEqual(dim);
+    expect(contrastRatio(adjustForContrast(dim, bg, 4.5), bg)).toBeGreaterThanOrEqual(4.5);
   });
 });

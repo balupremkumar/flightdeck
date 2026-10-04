@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import App from "./App";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { bootAppearance } from "./themes";
+import { applyReadingSettings } from "./Settings";
 import { useUI, applyUiScale } from "./ui";
 import { useVendors, armVendorHotReload, vendorShort } from "./vendors";
 import { runWorktreeGc } from "./worktrees";
@@ -57,6 +58,7 @@ if (didCrash) {
 // Apply saved theme + accent + colour-blind/reduced-motion overrides before
 // first paint (dark/Ice/off are the defaults).
 bootAppearance();
+applyReadingSettings(); // 1.5b/c: preview + interface text vars before first paint
 
 // Apply saved UI scale (whole-app zoom) before first paint. Must go through
 // applyUiScale (native webview zoom) — setting CSS zoom here would break
