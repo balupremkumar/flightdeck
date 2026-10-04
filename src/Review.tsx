@@ -22,6 +22,10 @@ import { closePaneGuarded } from "./worktrees";
 import { mapPatchLines } from "./difflines";
 import { nextUnreviewed } from "./reviewstate";
 import { buildExplainPrompt, buildLineCommentPrompt } from "./reviewprompt";
+import {
+  applyFolds, autoCollapseThreshold, AUTO_COLLAPSE_KEY, collapseReason, foldRuns, hashPatch, parseViewed,
+  reconcileViewed, shouldAutoCollapse, viewedStorageKey, whitespaceStorageKey, type ViewedMap,
+} from "./reviewfold";
 import "./review.css";
 
 // Patch-line classes for the unified diff view.
@@ -136,11 +140,27 @@ export function Review() {
   // (`size === 0`) that the merge call turns into `files: null` — the exact
   // all-files code path, unchanged from before this feature existed.
   const [deselected, setDeselected] = useState<Set<string>>(() => new Set());
-  // UX-567: files marked reviewed for THIS drawer session — resets with the
-  // diff (new pane, or the diff reloading with a different file set). This is
-  // deliberately not persisted: "reviewed" tracks having looked at the diff
-  // in front of you right now, not a permanent record.
-  const [reviewed, setReviewed] = useState<Set<string>>(() => new Set());
+  // UX-567 / QL-719: files marked reviewed ("Viewed"). Each mark carries a hash
+  // of the patch as it was ticked; a refresh that shows a different patch
+  // clears the mark (see load). Persisted per repo+branch in localStorage.
+  const [viewed, setViewed] = useState<ViewedMap>({});
+  const viewedRef = useRef<ViewedMap>({});
+  const reviewed = useMemo(() => new Set(Object.keys(viewed)), [viewed]);
+  // Files whose mark was just cleared because their diff moved on.
+  const [changedSince, setChangedSince] = useState<Set<string>>(() => new Set());
+  // Phase 3 C1: explicit per-file collapse choices (true = collapsed). Absent
+  // means "whatever the auto rule says". Per drawer session, not persisted.
+  const [collapseOv, setCollapseOv] = useState<Map<string, boolean>>(() => new Map());
+  // QL-739: paths whose loaded patch carried the truncation marker.
+  const [truncatedPaths, setTruncatedPaths] = useState<Set<string>>(() => new Set());
+  // QL-715: expanded fold starts for the current file, and "show all".
+  const [openFolds, setOpenFolds] = useState<Set<number>>(() => new Set());
+  const [showAllFolds, setShowAllFolds] = useState(false);
+  const [autoLines] = useState(() => {
+    try { return autoCollapseThreshold(localStorage.getItem(AUTO_COLLAPSE_KEY)); } catch { return autoCollapseThreshold(null); }
+  });
+  // git diff -w, remembered per repo.
+  const [hideWs, setHideWs] = useState(false);
   const [handing, setHanding] = useState(false);
   // UI-5: a failed merge surfaces its conflicted files + a way forward here,
   // instead of vanishing into a toast.
@@ -172,6 +192,37 @@ export function Review() {
 
   const pane = hit?.pane ?? null;
 
+  // QL-719: viewed marks persist per repo+branch. Writes go through here so
+  // state, the ref load() reads, and localStorage never drift apart.
+  const viewedKey = pane ? viewedStorageKey(pane.cwd, pane.branch) : null;
+  const viewedKeyRef = useRef<string | null>(null);
+  viewedKeyRef.current = viewedKey;
+  const commitViewed = (next: ViewedMap) => {
+    viewedRef.current = next;
+    setViewed(next);
+    const k = viewedKeyRef.current;
+    if (!k) return;
+    try {
+      if (Object.keys(next).length) localStorage.setItem(k, JSON.stringify(next)); else localStorage.removeItem(k);
+    } catch { /* non-persistent */ }
+  };
+  // Switching pane/branch swaps in that branch's marks. Declared before the
+  // load effect so load() sees them.
+  useEffect(() => {
+    let m: ViewedMap = {};
+    if (viewedKey) { try { m = parseViewed(localStorage.getItem(viewedKey)); } catch { /* none */ } }
+    viewedRef.current = m;
+    setViewed(m);
+    setChangedSince(new Set());
+    setCollapseOv(new Map());
+    setTruncatedPaths(new Set());
+    let ws = false;
+    if (pane) { try { ws = localStorage.getItem(whitespaceStorageKey(pane.cwd)) === "1"; } catch { /* default */ } }
+    setHideWs(ws);
+  }, [viewedKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Bumped by load() so a manual refresh re-reads the open file's patch too.
+  const [loadTick, setLoadTick] = useState(0);
+
   const load = useCallback(async () => {
     if (!pane) return;
     setError(null);
@@ -190,13 +241,27 @@ export function Review() {
         const next = new Set([...d].filter((p) => s.files.some((f) => f.path === p)));
         return next.size === d.size ? d : next;
       });
+      setLoadTick((t) => t + 1);
       // UX-567: a file that's no longer in the diff (reverted, or the merge
-      // that just landed it) can't stay "reviewed" — there's nothing left to
-      // review.
-      setReviewed((r) => {
-        const next = new Set([...r].filter((p) => s.files.some((f) => f.path === p)));
-        return next.size === r.size ? r : next;
-      });
+      // that just landed it) can't stay "reviewed". QL-719: and one whose
+      // patch changed since it was ticked is no longer reviewed either — it
+      // reopens with a "changed since viewed" marker. Hashes are always taken
+      // from the plain (not -w) patch so the whitespace toggle can't trip it.
+      const present = new Set(s.files.map((f) => f.path));
+      if (Object.keys(viewedRef.current).length) {
+        const fresh: Record<string, string | null> = {};
+        await Promise.all(Object.keys(viewedRef.current).filter((p) => present.has(p)).map(async (p) => {
+          try {
+            fresh[p] = hashPatch(await invoke<string>("git_file_diff", { cwd: pane.cwd, base: pane.baseBranch ?? null, file: p, ignoreWhitespace: false }));
+          } catch { fresh[p] = null; }
+        }));
+        const r = reconcileViewed(viewedRef.current, fresh, present);
+        if (Object.keys(r.viewed).length !== Object.keys(viewedRef.current).length) commitViewed(r.viewed);
+        if (r.invalidated.length) {
+          setChangedSince((c) => new Set([...c, ...r.invalidated]));
+          setCollapseOv((m) => { const n = new Map(m); for (const p of r.invalidated) n.set(p, false); return n; });
+        }
+      }
     } catch (e) {
       setSummary(null);
       setError(String(e));
@@ -220,25 +285,48 @@ export function Review() {
   }, 8000, [pane?.cwd, pane?.baseBranch], paneId != null);
 
   useEffect(() => { seenTotals.current = ""; setStaleSince(null); }, [paneId, selected]);
-  useEffect(() => { setConflict(null); setDeselected(new Set()); setReviewed(new Set()); }, [paneId]);
+  useEffect(() => { setConflict(null); setDeselected(new Set()); }, [paneId]);
 
   // Load the selected file's patch.
+  const [patchPath, setPatchPath] = useState<string | null>(null);
   useEffect(() => {
-    if (!pane || !selected) { setPatch(""); return; }
+    if (!pane || !selected) { setPatch(""); setPatchPath(null); return; }
     let cancelled = false;
-    invoke<string>("git_file_diff", { cwd: pane.cwd, base: pane.baseBranch ?? null, file: selected })
-      .then((p) => { if (!cancelled) { setPatch(p); setHunkIdx(0); patchRef.current?.scrollTo({ top: 0 }); } })
-      .catch(() => { if (!cancelled) setPatch(""); });
+    invoke<string>("git_file_diff", { cwd: pane.cwd, base: pane.baseBranch ?? null, file: selected, ignoreWhitespace: hideWs })
+      .then((p) => { if (!cancelled) { setPatch(p); setPatchPath(selected); setHunkIdx(0); patchRef.current?.scrollTo({ top: 0 }); } })
+      .catch(() => { if (!cancelled) { setPatch(""); setPatchPath(selected); } });
     return () => { cancelled = true; };
-  }, [pane?.cwd, pane?.baseBranch, selected]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [pane?.cwd, pane?.baseBranch, selected, hideWs, loadTick]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // QL-739: the marker never reaches the renderers — every view (unified,
   // split, word diff, line numbers, hunk index) works off the real patch body.
   const { body: patchBody, truncated } = useMemo(() => splitTruncationMarker(patch), [patch]);
-  const lines = useMemo(() => patchBody.split("\n"), [patchBody]);
+  // Phase 3 C1: effective collapse = explicit choice, else (viewed or auto
+  // rule). A patch that arrives truncated flags its path so it auto-collapses.
+  const isTruncated = (path: string) => truncatedPaths.has(path) || (truncated && patchPath === path && selected === path);
+  const isCollapsed = (f: DiffFile) =>
+    collapseOv.get(f.path) ?? (f.path in viewed || shouldAutoCollapse(f, isTruncated(f.path), autoLines));
+  useEffect(() => {
+    if (patchPath && truncated) setTruncatedPaths((s) => (s.has(patchPath) ? s : new Set(s).add(patchPath)));
+  }, [truncated, patchPath]);
+  const selFile = useMemo(() => summary?.files.find((f) => f.path === selected) ?? null, [summary, selected]);
+  const selCollapsed = !!selFile && isCollapsed(selFile);
+  // A collapsed file renders nothing, so none of the per-line work below runs.
+  const lines = useMemo(() => (selCollapsed ? [] : patchBody.split("\n")), [patchBody, selCollapsed]);
   // UI-166: which tokens actually changed within each paired -/+ line.
   const wordMarks = useMemo(() => wordDiffMap(lines), [lines]);
   const splitRows = useMemo(() => (split ? toSplitRows(lines) : []), [split, lines]);
+  // QL-715: runs of unchanged context longer than FOLD_MIN_RUN fold in both views.
+  const foldRanges = useMemo(
+    () => foldRuns(split ? splitRows.map((r) => r.kind === "context") : lines.map((l) => l.startsWith(" "))),
+    [split, splitRows, lines]
+  );
+  const segments = useMemo(
+    () => applyFolds(split ? splitRows.length : lines.length, foldRanges, openFolds, showAllFolds),
+    [split, splitRows, lines, foldRanges, openFolds, showAllFolds]
+  );
+  // Fold positions belong to one patch in one view; start fresh when either changes.
+  useEffect(() => { setOpenFolds(new Set()); setShowAllFolds(false); }, [patch, split, selected]);
   // UX-519/UI-617: each line's real old/new file line number — drives both
   // the unified view's gutter and the "click a line to preview it" jump.
   const patchLineNos = useMemo(() => mapPatchLines(lines), [lines]);
@@ -283,18 +371,40 @@ export function Review() {
   // UX-567: toggle the selected file's reviewed mark, and when it's just been
   // marked (not un-marked), jump on to the next unreviewed file — the same
   // "clear the list" flow j/k already supports, one keystroke shorter.
-  const toggleReviewed = (path: string) => {
-    const willReview = !reviewed.has(path);
-    setReviewed((r) => {
-      const next = new Set(r);
-      if (willReview) next.add(path); else next.delete(path);
-      return next;
-    });
-    if (willReview) {
-      const files = summary?.files.map((f) => f.path) ?? [];
-      const next = nextUnreviewed(files, path, reviewed);
-      if (next) setSelected(next);
+  // QL-719: ticking records a hash of the file's current patch and collapses
+  // it; unticking just drops the mark (the file stays as it is).
+  const toggleReviewed = async (path: string) => {
+    const cur = viewedRef.current;
+    if (path in cur) {
+      const { [path]: _gone, ...rest } = cur;
+      commitViewed(rest);
+      setCollapseOv((m) => { const n = new Map(m); n.delete(path); return n; });
+      return;
     }
+    if (!pane) return;
+    let hash: string;
+    try {
+      const raw = path === selected && patchPath === path && !hideWs
+        ? patch
+        : await invoke<string>("git_file_diff", { cwd: pane.cwd, base: pane.baseBranch ?? null, file: path, ignoreWhitespace: false });
+      hash = hashPatch(raw);
+    } catch (e) {
+      pushToast("error", `Couldn't mark ${path} viewed.`, { detail: String(e) });
+      return;
+    }
+    commitViewed({ ...viewedRef.current, [path]: hash });
+    setChangedSince((c) => { if (!c.has(path)) return c; const n = new Set(c); n.delete(path); return n; });
+    setCollapseOv((m) => new Map(m).set(path, true));
+    const files = summary?.files.map((f) => f.path) ?? [];
+    const next = nextUnreviewed(files, path, new Set(Object.keys(viewedRef.current)));
+    if (next) setSelected(next);
+  };
+  const setCollapsed = (path: string, v: boolean) => setCollapseOv((m) => new Map(m).set(path, v));
+  const setAllCollapsed = (v: boolean) => setCollapseOv(new Map((summary?.files ?? []).map((f) => [f.path, v] as const)));
+  // j/k/click-through lands on a collapsed file: open it, that's why you went.
+  const goToFile = (path: string, expand: boolean) => {
+    setSelected(path);
+    if (expand) setCollapsed(path, false);
   };
 
   // UI-168: files still selected for the merge, in diff order.
@@ -519,20 +629,21 @@ export function Review() {
     if (paneId == null) return;
     const onKey = (e: KeyboardEvent) => {
       // Never steal keys from a text field inside the drawer.
-      if ((e.target as HTMLElement)?.closest?.("input, textarea")) return;
+      // (Checkboxes are fine: ticking Viewed shouldn't strand j/k on it.)
+      if ((e.target as HTMLElement)?.closest?.("input:not([type=checkbox]), textarea")) return;
       const files = summary?.files.map((f) => f.path) ?? [];
       const at = selected ? files.indexOf(selected) : -1;
-      if (e.key === "j" && files.length) { e.preventDefault(); setSelected(files[Math.min(files.length - 1, at + 1)]); }
-      else if (e.key === "k" && files.length) { e.preventDefault(); setSelected(files[Math.max(0, at - 1)]); }
+      if (e.key === "j" && files.length) { e.preventDefault(); goToFile(files[Math.min(files.length - 1, at + 1)], true); }
+      else if (e.key === "k" && files.length) { e.preventDefault(); goToFile(files[Math.max(0, at - 1)], true); }
       else if (e.key === "n") { e.preventDefault(); jumpHunk(1); }
       else if (e.key === "p") { e.preventDefault(); jumpHunk(-1); }
       // UX-567: mark the current file reviewed without leaving the diff.
-      else if (e.key === "r" && selected) { e.preventDefault(); toggleReviewed(selected); }
+      else if (e.key === "r" && selected) { e.preventDefault(); void toggleReviewed(selected); }
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [paneId, setReviewPane, summary, selected, hunkLines, hunkIdx, reviewed]);
+  }, [paneId, setReviewPane, summary, selected, hunkLines, hunkIdx, viewed, patch, patchPath, hideWs]);
 
   if (paneId == null) return null;
   if (!pane) { setReviewPane(null); return null; }
@@ -564,12 +675,21 @@ export function Review() {
   // reviewing a diff doesn't require merge capability.
   const renderFile = (f: DiffFile) => (
     <div key={f.path} className={"rv-file-row" + (deselected.has(f.path) ? " excluded" : "")}>
+      <button
+        className="rv-file-chev"
+        onClick={() => setCollapsed(f.path, !isCollapsed(f))}
+        aria-expanded={!isCollapsed(f)}
+        aria-label={(isCollapsed(f) ? "Expand " : "Collapse ") + f.path}
+        title={isCollapsed(f) ? "Expand this file's diff" : "Collapse this file's diff"}
+      >
+        <IconChevron size={10} style={{ transform: isCollapsed(f) ? "none" : "rotate(90deg)" }} />
+      </button>
       <span
         className={"rv-file-reviewed" + (reviewed.has(f.path) ? " on" : "")}
         role="button"
         tabIndex={-1}
-        title={reviewed.has(f.path) ? "Mark unreviewed" : "Mark reviewed (r)"}
-        onClick={(e) => { e.stopPropagation(); toggleReviewed(f.path); }}
+        title={reviewed.has(f.path) ? "Mark unreviewed" : "Mark viewed (r)"}
+        onClick={(e) => { e.stopPropagation(); void toggleReviewed(f.path); }}
       >
         <IconCheck size={12} />
       </span>
@@ -588,6 +708,7 @@ export function Review() {
         title={f.path}
       >
         <span className="rv-file-path">{f.path}</span>
+        {changedSince.has(f.path) && <span className="rv-file-changed" title="This file changed since you marked it viewed">changed</span>}
         <span
           className="rv-file-open"
           role="button"
@@ -602,6 +723,19 @@ export function Review() {
           : <span className="rv-file-stat"><em className="add">+{f.added}</em><em className="del">−{f.deleted}</em></span>}
       </button>
     </div>
+  );
+
+  // QL-715: one "N hidden lines" row standing in for a folded run. Display:flex
+  // for the unified <pre>, grid-compatible for the split view via .rv-fold.
+  const foldRow = (start: number, end: number) => (
+    <button
+      key={"fold" + start}
+      className="rv-fold"
+      onClick={() => setOpenFolds((s) => new Set(s).add(start))}
+      title="Show the unchanged lines in between"
+    >
+      Show {end - start} hidden line{end - start === 1 ? "" : "s"}
+    </button>
   );
 
   return (
@@ -631,6 +765,25 @@ export function Review() {
             </button>
           )}
           <span className="sp" />
+          {fileCount > 0 && (
+            <>
+              <button
+                className={"rv-tb" + (hideWs ? " on" : "")}
+                aria-pressed={hideWs}
+                title="Hide whitespace-only changes (git diff -w)"
+                onClick={() => {
+                  setHideWs((v) => {
+                    try { localStorage.setItem(whitespaceStorageKey(pane.cwd), v ? "0" : "1"); } catch { /* non-persistent */ }
+                    return !v;
+                  });
+                }}
+              >
+                Hide whitespace
+              </button>
+              <button className="rv-tb" onClick={() => setAllCollapsed(true)} title="Collapse every file's diff">Collapse all</button>
+              <button className="rv-tb" onClick={() => setAllCollapsed(false)} title="Expand every file's diff">Expand all</button>
+            </>
+          )}
           <button className="rv-ic" onClick={() => void load()} title="Refresh diff"><IconRefresh size={16} /></button>
           <button className="rv-ic" onClick={() => setReviewPane(null)} title="Close (Esc)"><IconClose size={16} /></button>
         </div>
@@ -701,8 +854,37 @@ export function Review() {
             </div>
             <div className="rv-patch-wrap">
               <div className="rv-patch-bar">
+                {selFile && (
+                  <button
+                    className="rv-ic rv-patch-chev"
+                    onClick={() => setCollapsed(selFile.path, !selCollapsed)}
+                    aria-expanded={!selCollapsed}
+                    aria-label={selCollapsed ? "Expand this file" : "Collapse this file"}
+                    title={selCollapsed ? "Expand this file's diff" : "Collapse this file's diff"}
+                  >
+                    <IconChevron size={13} style={{ transform: selCollapsed ? "none" : "rotate(90deg)" }} />
+                  </button>
+                )}
                 <span className="rv-patch-file" title={selected ?? undefined}>{selected}</span>
+                {selFile && changedSince.has(selFile.path) && (
+                  <span className="rv-changed-note" title="The diff for this file changed after you marked it viewed">changed since viewed</span>
+                )}
                 <span className="sp" />
+                {selFile && (
+                  <label className="rv-viewed" title="Viewed (r): collapses the file; clears itself if the diff changes">
+                    <input
+                      type="checkbox"
+                      checked={selFile.path in viewed}
+                      onChange={() => void toggleReviewed(selFile.path)}
+                    />
+                    Viewed
+                  </label>
+                )}
+                {!selCollapsed && foldRanges.length > 0 && (
+                  <button className="rv-tb" onClick={() => { setShowAllFolds((v) => !v); setOpenFolds(new Set()); }} aria-pressed={showAllFolds}>
+                    {showAllFolds ? "Fold unchanged" : "Show all"}
+                  </button>
+                )}
                 <span className="rv-hunk-count">{hunkLines.length > 0 ? `hunk ${hunkIdx + 1}/${hunkLines.length}` : ""}</span>
                 <button className="rv-ic" onClick={() => jumpHunk(-1)} disabled={hunkLines.length === 0} title="Previous hunk">
                   <IconChevron size={15} style={{ transform: "rotate(-90deg)" }} />
@@ -742,7 +924,7 @@ export function Review() {
                   list's per-row action opens it (UI-173). Styled inline
                   because review.css is outside this change's scope; its
                   proper home is a .rv-truncated rule there. */}
-              {truncated && selected && (
+              {truncated && selected && !selCollapsed && (
                 <div
                   role="status"
                   style={{
@@ -764,9 +946,24 @@ export function Review() {
                   </button>
                 </div>
               )}
-              {split ? (
+              {selCollapsed && selFile ? (
+                <div className="rv-collapsed" role="status">
+                  <div className="rv-collapsed-t">
+                    {collapseReason(selFile, isTruncated(selFile.path), selFile.path in viewed, autoLines)}
+                    {!selFile.binary && (
+                      <span className="rv-file-stat"> <em className="add">+{selFile.added}</em><em className="del">−{selFile.deleted}</em></span>
+                    )}
+                  </div>
+                  <button className="rv-pr" onClick={() => setCollapsed(selFile.path, false)}>Show diff</button>
+                </div>
+              ) : !patch && patchPath === selected && hideWs ? (
+                <div className="rv-empty">No changes in this file other than whitespace.</div>
+              ) : split ? (
                 <div className="rv-split" ref={patchRef as unknown as React.RefObject<HTMLDivElement>}>
-                  {splitRows.map((r, k) => {
+                  {segments.map((seg) => {
+                    if (seg.kind === "fold") return foldRow(seg.start, seg.end);
+                    const k = seg.i;
+                    const r = splitRows[k];
                     // UX-519: same rule as the unified view — only a row that
                     // has a new-side line number has anywhere to jump to.
                     const clickable = r.kind !== "hunk" && r.kind !== "meta" && r.rightNo != null;
@@ -794,7 +991,10 @@ export function Review() {
                 </div>
               ) : (
               <pre className="rv-patch" ref={patchRef}>
-                {lines.map((l, i) => {
+                {segments.map((seg) => {
+                  if (seg.kind === "fold") return foldRow(seg.start, seg.end);
+                  const i = seg.i;
+                  const l = lines[i];
                   const cls = lineClass(l);
                   // UX-519/UI-617: aligned old/new gutters, and a click jumps
                   // the file preview to this line — only where the line

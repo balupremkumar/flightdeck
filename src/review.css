@@ -414,3 +414,40 @@ em.del { color: var(--st-error); margin-left: 5px; }
   background: var(--surface); border: 1px solid var(--line-strong); border-radius: 8px;
   white-space: pre-wrap; word-break: break-word;
 }
+
+/* Phase 3 C1: collapse, fold, viewed, whitespace. */
+.rv-tb {
+  height: 24px; padding: 0 9px; border-radius: 6px; border: 1px solid var(--line);
+  background: transparent; color: var(--muted); font: inherit; font-size: 11px; cursor: pointer;
+  white-space: nowrap; transition: background .14s ease, color .14s ease;
+}
+.rv-tb:hover { background: var(--surface); color: var(--text); }
+.rv-tb.on, .rv-tb[aria-pressed="true"] { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
+.rv-file-chev {
+  flex: none; display: inline-flex; align-items: center; justify-content: center;
+  width: 16px; height: 16px; padding: 0; border: 0; border-radius: 4px;
+  background: transparent; color: var(--faint); cursor: pointer;
+}
+.rv-file-chev:hover { color: var(--text); background: var(--surface); }
+.rv-patch-chev { width: 22px; height: 22px; flex: none; }
+.rv-file-changed, .rv-changed-note {
+  flex: none; font-size: 10px; color: var(--st-starting);
+  border: 1px solid color-mix(in srgb, var(--st-starting) 40%, transparent);
+  border-radius: 999px; padding: 0 6px; white-space: nowrap;
+}
+.rv-viewed {
+  display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--muted); cursor: pointer;
+}
+.rv-viewed input { accent-color: var(--accent); cursor: pointer; }
+.rv-collapsed {
+  display: flex; gap: 12px; padding: 14px 16px; align-items: flex-start;
+  color: var(--muted); font-size: 12px; background: var(--abyss); flex: 1;
+}
+.rv-collapsed-t { flex: 1; min-width: 0; padding-top: 5px; }
+.rv-fold {
+  display: block; width: 100%; padding: 3px 12px; border: 0;
+  border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--accent) 6%, transparent); color: var(--accent);
+  font: inherit; font-size: 11px; text-align: left; cursor: pointer; min-width: max-content;
+}
+.rv-fold:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }
