@@ -776,6 +776,8 @@ pub fn run() {
             // exit, so closing the window never leaves orphaned claude/agy/pwsh
             // trees running.
             RunEvent::ExitRequested { .. } => {
+                // A save running on a pool thread must land before we exit.
+                persist::wait_idle();
                 let reg = app_handle.state::<Registry>();
                 let ids: Vec<u32> = reg.panes.lock().unwrap().keys().copied().collect();
                 for id in ids {

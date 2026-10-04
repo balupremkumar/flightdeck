@@ -18,6 +18,7 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
@@ -188,20 +189,62 @@ fn read_session_file(app: &AppHandle) -> Result<Option<SessionDoc>, String> {
     Ok(Some(doc))
 }
 
-#[tauri::command]
+// Single-writer coalescer for autosave. `submit` parks the payload in `pending`
+// (replacing any older unwritten one, so the backlog never exceeds one), then
+// takes the write lock. Whoever holds the lock writes the newest pending
+// payload; a caller that finds `pending` already taken was superseded and its
+// data is covered by a later write, so it returns Ok once that write is done
+// (the lock wait guarantees it). Every caller therefore returns only after the
+// latest payload is on disk, which keeps the quit-time flush honest.
+struct Coalescer {
+    pending: Mutex<Option<String>>,
+    writing: Mutex<()>,
+}
+
+impl Coalescer {
+    const fn new() -> Self {
+        Coalescer { pending: Mutex::new(None), writing: Mutex::new(()) }
+    }
+
+    fn submit(&self, json: String, write: impl FnOnce(&str) -> Result<(), String>) -> Result<(), String> {
+        *self.pending.lock().unwrap_or_else(|e| e.into_inner()) = Some(json);
+        let _w = self.writing.lock().unwrap_or_else(|e| e.into_inner());
+        let next = self.pending.lock().unwrap_or_else(|e| e.into_inner()).take();
+        match next {
+            Some(j) => write(&j),
+            None => Ok(()),
+        }
+    }
+
+    // Blocks until any in-flight write has finished.
+    fn wait_idle(&self) {
+        drop(self.writing.lock().unwrap_or_else(|e| e.into_inner()));
+    }
+}
+
+static SAVER: Coalescer = Coalescer::new();
+
+/// Called on app exit so a save still running on a pool thread lands before
+/// the process dies.
+pub fn wait_idle() {
+    SAVER.wait_idle();
+}
+
+#[tauri::command(async)]
 pub fn save_session(app: AppHandle, mut doc: SessionDoc) -> Result<(), String> {
     doc.version = default_version();
     doc.saved_at = now_ms();
     let json = serde_json::to_string_pretty(&doc).map_err(|e| e.to_string())?;
-
-    write_atomic(&session_path(&app)?, &json)?;
-    snapshot(&app, &json)?;
-    Ok(())
+    let path = session_path(&app)?;
+    SAVER.submit(json, |j| {
+        write_atomic(&path, j)?;
+        snapshot(&app, j)
+    })
 }
 
 // Ok(None) means "nothing to restore" — either a first run or safe mode is
 // active. Only a genuinely corrupt session.json is an Err.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn load_session(app: AppHandle) -> Result<Option<SessionDoc>, String> {
     if safe_mode_active() {
         return Ok(None);
@@ -212,7 +255,7 @@ pub fn load_session(app: AppHandle) -> Result<Option<SessionDoc>, String> {
 // (80) Independent of safe mode: safe mode only suppresses auto-restore, it
 // doesn't hide that a previous session exists — the UI can still offer a
 // "reopen last session" prompt while safe mode is on.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn has_previous_session(app: AppHandle) -> Result<bool, String> {
     Ok(read_session_file(&app)?.is_some())
 }
@@ -244,7 +287,7 @@ fn prune_snapshots(dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_restore_points(app: AppHandle) -> Result<Vec<RestorePointInfo>, String> {
     let dir = snapshots_dir(&app)?;
     let mut out: Vec<RestorePointInfo> = fs::read_dir(&dir)
@@ -270,7 +313,7 @@ pub fn list_restore_points(app: AppHandle) -> Result<Vec<RestorePointInfo>, Stri
 // Reads a restore point's content. Deliberately does NOT overwrite
 // session.json — a caller that wants it to become the active session should
 // follow up with save_session(doc).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn restore_from_point(app: AppHandle, id: String) -> Result<SessionDoc, String> {
     if id.contains("..") || id.contains('/') || id.contains('\\') {
         return Err("invalid restore point id".into());
@@ -284,7 +327,7 @@ pub fn restore_from_point(app: AppHandle, id: String) -> Result<SessionDoc, Stri
 // Backup & restore (201) — export/import everything this module owns as one file.
 // ---------------------------------------------------------------------------
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn export_backup(app: AppHandle, dest_path: String) -> Result<(), String> {
     crate::pathguard::check(&dest_path)?;
     // Reads the raw file directly (not the `load_session` command) so an
@@ -306,7 +349,7 @@ pub fn export_backup(app: AppHandle, dest_path: String) -> Result<(), String> {
 
 // Returns the restored session (if the backup had one) so the caller can load
 // it straight into the store without a second round trip.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn import_backup(app: AppHandle, src_path: String) -> Result<Option<SessionDoc>, String> {
     crate::pathguard::check(&src_path)?;
     let s = fs::read_to_string(&src_path).map_err(|e| e.to_string())?;
@@ -315,6 +358,8 @@ pub fn import_backup(app: AppHandle, src_path: String) -> Result<Option<SessionD
 
     if let Some(session) = &bundle.session {
         let json = serde_json::to_string_pretty(session).map_err(|e| e.to_string())?;
+        // Same tmp file as autosave: hold the writer lock so they can't interleave.
+        let _w = SAVER.writing.lock().unwrap_or_else(|e| e.into_inner());
         write_atomic(&session_path(&app)?, &json)?;
     }
 
@@ -328,4 +373,108 @@ pub fn import_backup(app: AppHandle, src_path: String) -> Result<Option<SessionD
     }
 
     Ok(bundle.session)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    fn tmp_dir(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("fd-persist-{tag}-{}-{}", std::process::id(), now_ms()));
+        fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn write_atomic_replaces_and_leaves_no_tmp() {
+        let d = tmp_dir("atomic");
+        let f = d.join("session.json");
+        write_atomic(&f, "one").unwrap();
+        write_atomic(&f, "two").unwrap();
+        assert_eq!(fs::read_to_string(&f).unwrap(), "two");
+        assert!(!f.with_extension("tmp").exists());
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn failed_write_leaves_previous_file_intact() {
+        let d = tmp_dir("fail");
+        let f = d.join("session.json");
+        write_atomic(&f, "good").unwrap();
+        // Block the temp path with a directory so the write step fails.
+        fs::create_dir(f.with_extension("tmp")).unwrap();
+        assert!(write_atomic(&f, "bad").is_err());
+        assert_eq!(fs::read_to_string(&f).unwrap(), "good");
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn failed_rename_does_not_touch_other_files() {
+        let d = tmp_dir("rename");
+        let f = d.join("session.json");
+        write_atomic(&f, "good").unwrap();
+        // Destination is a directory: tmp write succeeds, rename fails.
+        let dest_dir = d.join("dest");
+        fs::create_dir(&dest_dir).unwrap();
+        assert!(write_atomic(&dest_dir, "bad").is_err());
+        assert_eq!(fs::read_to_string(&f).unwrap(), "good");
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn coalescer_keeps_only_latest_pending() {
+        let c = Arc::new(Coalescer::new());
+        let written = Arc::new(Mutex::new(Vec::<String>::new()));
+        let calls = Arc::new(AtomicUsize::new(0));
+        let (gate_tx, gate_rx) = std::sync::mpsc::channel::<()>();
+        let (started_tx, started_rx) = std::sync::mpsc::channel::<()>();
+
+        // First save blocks inside its write until released.
+        let t1 = {
+            let (c, w, n) = (c.clone(), written.clone(), calls.clone());
+            std::thread::spawn(move || {
+                c.submit("first".into(), |j| {
+                    n.fetch_add(1, Ordering::SeqCst);
+                    started_tx.send(()).unwrap();
+                    gate_rx.recv().unwrap();
+                    w.lock().unwrap().push(j.to_string());
+                    Ok(())
+                })
+            })
+        };
+        started_rx.recv().unwrap();
+
+        // Five more arrive while it is in flight; only the last may be written.
+        let mut handles = Vec::new();
+        for i in 0..5 {
+            let (c, w, n) = (c.clone(), written.clone(), calls.clone());
+            handles.push(std::thread::spawn(move || {
+                c.submit(format!("p{i}"), |j| {
+                    n.fetch_add(1, Ordering::SeqCst);
+                    w.lock().unwrap().push(j.to_string());
+                    Ok(())
+                })
+            }));
+            // Let each park its payload before the next so ordering is deterministic.
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        gate_tx.send(()).unwrap();
+        t1.join().unwrap().unwrap();
+        for h in handles {
+            h.join().unwrap().unwrap();
+        }
+        assert_eq!(*written.lock().unwrap(), vec!["first".to_string(), "p4".to_string()]);
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn coalescer_error_does_not_poison_later_saves() {
+        let c = Coalescer::new();
+        assert!(c.submit("a".into(), |_| Err("boom".into())).is_err());
+        let mut got = String::new();
+        c.submit("b".into(), |j| { got = j.into(); Ok(()) }).unwrap();
+        assert_eq!(got, "b");
+    }
 }
