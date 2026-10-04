@@ -84,7 +84,7 @@ export async function openInEditor(path: string, line?: number, col?: number): P
     } catch (e) {
       useUI
         .getState()
-        .pushToast("error", `Couldn’t open ${path} in ${argv.program} — ${String(e)}. Trying the default app instead.`);
+        .pushToast("error", `Couldn’t open ${path} in ${argv.program}: ${String(e)}. Trying the default app instead.`);
     }
   }
   await openPath(path).catch((e) => {

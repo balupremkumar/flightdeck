@@ -8,6 +8,7 @@ import { get as getPaneSession } from "./paneSessions";
 import {
   IconBranch, IconClose, IconRefresh, IconDrag, IconOverflow,
   IconMaximizePane, IconMinimize, IconFolder, IconChevron, IconDiff, IconFile,
+  IconTerminal, IconChat,
 } from "./Icons";
 import type { DiffSummary } from "./worktrees";
 import { cachedInvoke, usePoll, useVisible, usePaneMemory } from "./poll";
@@ -226,7 +227,7 @@ function PaneViewInner({
     requestConfirm({
       title: `Close ${displayName}?`,
       body:
-        "This pane is still live. Closing it ends the session — the running agent can’t be brought back." +
+        "This pane is still live. Closing it ends the session: the running agent can’t be brought back." +
         (isolated ? " Its worktree will be cleaned up (you’ll be asked about unmerged work)." : ""),
       confirmLabel: "Close & end session",
       danger: true,
@@ -399,7 +400,7 @@ function PaneViewInner({
       await navigator.clipboard.writeText(text);
       pushToast("success", okMsg);
     } catch {
-      pushToast("error", "Couldn’t copy — clipboard unavailable.");
+      pushToast("error", "Couldn’t copy: clipboard unavailable.");
     }
   };
 
@@ -408,7 +409,7 @@ function PaneViewInner({
       await navigator.clipboard.writeText(pane.cwd);
       pushToast("success", "Copied working directory.");
     } catch {
-      pushToast("error", "Couldn’t copy — clipboard unavailable.");
+      pushToast("error", "Couldn’t copy: clipboard unavailable.");
     }
     setMenuOpen(false);
   };
@@ -452,7 +453,7 @@ function PaneViewInner({
   const doDuplicate = () => {
     setMenuOpen(false);
     duplicatePane(wsId, pane.id);
-    pushToast("success", `Duplicated ${displayName ? displayName : "pane"} — same folder, fresh process.`);
+    pushToast("success", `Duplicated ${displayName ? displayName : "pane"} · same folder, fresh process.`);
   };
 
   // UX-563: export this pane's WORKSPACE as a file (client-side Blob
@@ -919,7 +920,7 @@ function PaneViewInner({
             onMouseDown={(e) => e.stopPropagation()}
           />
         ) : (
-          <span className="pname" title={`${displayName} — double-click to rename`} onDoubleClick={() => setEditing(true)}>
+          <span className="pname" title={`${displayName} · double-click to rename`} onDoubleClick={() => setEditing(true)}>
             {displayName}
           </span>
         )}
@@ -927,7 +928,7 @@ function PaneViewInner({
             and small on purpose (glance-only, no numbers) — the idle label
             only appears once there's actually something to say (>60s since
             output), so a busy pane shows nothing extra at all. */}
-        <span className="pspark" title={`Activity — last output ${relTime(lastOutputRef.current)}`}>
+        <span className="pspark" title={`Activity · last output ${relTime(lastOutputRef.current)}`}>
           <span className="pspark-bars">
             {activityBars.map((h, i) => <span key={i} className="pspark-bar" style={{ height: `${Math.max(8, h)}%` }} />)}
           </span>
@@ -985,10 +986,10 @@ function PaneViewInner({
             className={"pattn " + (openQuestion ? "permission" : pane.state)}
             title={
               pane.state === "permission"
-                ? "Blocked on your approval — open the attention queue (Ctrl+Shift+A)"
+                ? "Blocked on your approval · open the attention queue (Ctrl+Shift+A)"
                 : openQuestion
-                  ? `Asking a question: "${tailEllipsis(lastLine.get(pane.id) ?? "", 80)}" — open the attention queue (Ctrl+Shift+A)`
-                  : "Errored — open the attention queue (Ctrl+Shift+A)"
+                  ? `Asking a question: "${tailEllipsis(lastLine.get(pane.id) ?? "", 80)}" · open the attention queue (Ctrl+Shift+A)`
+                  : "Errored · open the attention queue (Ctrl+Shift+A)"
             }
             role="button"
             tabIndex={0}
@@ -1104,7 +1105,7 @@ Running low — consider /compact in this pane.` : "")
           <button
             className={"pdiff" + (diffPulse ? " pulsing" : "")}
             onClick={() => setReviewPane(pane.id)}
-            title={`${diffStat.files} file${diffStat.files === 1 ? "" : "s"} changed — review & merge`}
+            title={`${diffStat.files} file${diffStat.files === 1 ? "" : "s"} changed · review & merge`}
           >
             <IconDiff size={11} />
             <em className="add">+{diffStat.added}</em>
@@ -1112,9 +1113,13 @@ Running low — consider /compact in this pane.` : "")
           </button>
         )}
         {isClaude && (
-          <div className="pview-seg" role="group" aria-label="Pane view">
-            <button className={view === "terminal" ? "on" : ""} aria-pressed={view === "terminal"} onClick={() => switchView("terminal")} title="Terminal view">Terminal</button>
-            <button className={view === "chat" ? "on" : ""} aria-pressed={view === "chat"} onClick={() => switchView("chat")} title="Chat view (Ctrl+Shift+M)">Chat</button>
+          <div className="pview-toggle" role="group" aria-label="Pane view">
+            <button className={"pview-toggle-btn" + (view === "terminal" ? " on" : "")} aria-pressed={view === "terminal"} aria-label="Terminal" onClick={() => switchView("terminal")} title="Terminal">
+              <IconTerminal size={14} />
+            </button>
+            <button className={"pview-toggle-btn" + (view === "chat" ? " on" : "")} aria-pressed={view === "chat"} aria-label="Chat (Ctrl+Shift+M)" onClick={() => switchView("chat")} title="Chat (Ctrl+Shift+M)">
+              <IconChat size={14} />
+            </button>
           </div>
         )}
         <span className="sp" />
@@ -1313,7 +1318,7 @@ Running low — consider /compact in this pane.` : "")
               ? <>Running setup: <code>{setupCmd}</code><span className="plaunching-sub">the agent starts once this finishes</span></>
               : <>Launching {vendorShort(pane.vendor)}…<span className="plaunching-sub">
                   {/* UI-126: after 20s, stop saying "a few seconds" and suggest a cause. */}
-                  {slowStart ? "still starting — the agent may be waiting on sign-in, check its output" : "first output can take a few seconds"}
+                  {slowStart ? "still starting: the agent may be waiting on sign-in, check its output" : "first output can take a few seconds"}
                 </span></>}
           </div>
         )}

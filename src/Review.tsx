@@ -749,10 +749,10 @@ export function Review() {
 
   return (
     <div className="rv-scrim" onMouseDown={(e) => { if (e.target === e.currentTarget) setReviewPane(null); }}>
-      <aside className="rv-drawer" role="dialog" aria-label={`Review changes — ${title}`}>
+      <aside className="rv-drawer" role="dialog" aria-label={`Review changes: ${title}`}>
         <div className="rv-head">
           <IconDiff size={15} />
-          <span className="rv-title">Review — {title}</span>
+          <span className="rv-title">Review: {title}</span>
           {pane.branch && (
             <span className="rv-branch"><IconBranch size={11} /> {pane.branch} → {pane.baseBranch}</span>
           )}

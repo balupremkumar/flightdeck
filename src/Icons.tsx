@@ -193,3 +193,18 @@ export const IconCopy = (p: IconProps) => (
     <path d="M12.8 4.4 H5.4 a1.6 1.6 0 0 0 -1.6 1.6 V13" />
   </Svg>
 );
+
+// Terminal and Chat — pane view toggle icons.
+export const IconTerminal = (p: IconProps) => (
+  <Svg {...p}>
+    <rect x="3" y="4" width="14" height="12" rx="1.6" />
+    <path d="M5.5 8.5 L8 10.5 L5.5 12.5" />
+    <path d="M10 12.5 H12.5" />
+  </Svg>
+);
+
+export const IconChat = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M17 2 H3 a1 1 0 0 0 -1 1 v9 a1 1 0 0 0 1 1 h11 l3 3 v-3 h1 a1 1 0 0 0 1 -1 V3 a1 1 0 0 0 -1 -1 Z" />
+  </Svg>
+);

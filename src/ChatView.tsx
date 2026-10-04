@@ -179,7 +179,7 @@ function CallChip({ call, ctx, nested }: { call: ToolCall; ctx: Ctx; nested?: bo
         <span className="chat-chip-text">{chipLabel(call.tool, ctx.cwd)}</span>
         {failed && <span className="chat-badge">failed</span>}
       </button>
-      {(expanded || ctx.verbose) && call.result?.summary && (
+      {call.result?.summary && (failed || !expanded || !ctx.path) && (
         <div className={"chat-result" + (failed ? " err" : "")}>{call.result.summary}</div>
       )}
       {expanded && ctx.path && <CallDetail path={ctx.path} call={call} />}
