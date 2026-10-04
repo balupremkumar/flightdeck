@@ -14,7 +14,7 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ save: vi.fn(), open: vi.fn() }));
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn() }));
 
-const { fuzzyScore, rankByRecent, buildShortcutMap } = await import("./CommandPalette");
+const { fuzzyScore, rankByRecent, buildShortcutMap, pickTaskVendor, taskLabel } = await import("./CommandPalette");
 const { getShortcuts, FIXED_SHORTCUTS } = await import("./Settings");
 
 describe("fuzzyScore (command palette search matching)", () => {
@@ -74,5 +74,18 @@ describe("buildShortcutMap (UX-530, single source of truth)", () => {
     const after = buildShortcutMap();
     expect(after["settings"]).toBe("Ctrl+.");
     localStorage.removeItem("flightdeck-shortcuts");
+  });
+});
+
+describe("New task helpers", () => {
+  it("picks the first installed agent, else claude", () => {
+    expect(pickTaskVendor([{ id: "codex", installed: false }, { id: "gemini", installed: true }])).toBe("gemini");
+    expect(pickTaskVendor([])).toBe("claude");
+  });
+
+  it("collapses whitespace and caps the label at 60", () => {
+    expect(taskLabel("  fix   the\nbug ")).toBe("fix the bug");
+    expect(taskLabel("x".repeat(100))).toHaveLength(60);
+    expect(taskLabel("   ")).toBe("");
   });
 });

@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useApp, type PaneState } from "./store";
 import { useUI, useOverlayEsc, setTheme } from "./ui";
-import { closePaneGuarded } from "./worktrees";
+import { closePaneGuarded, spawnPane } from "./worktrees";
+import { agentVendors, vendorShort } from "./vendors";
 import { openSessionLauncher } from "./SessionLauncher";
 import { checkForUpdate } from "./updater";
 import { getShortcuts, FIXED_SHORTCUTS } from "./Settings";
@@ -30,6 +31,8 @@ interface Item {
   /** UI-236: pane rows render their vendor glyph. */
   vendor?: string;
   run: () => void;
+  /** Keep the palette open after run (the action switches it into a sub-mode). */
+  stay?: boolean;
 }
 
 const RECENT_KEY = "flightdeck-cmdp-recent";
@@ -63,6 +66,17 @@ export function buildShortcutMap(): Record<string, string> {
   const map: Record<string, string> = {};
   for (const s of [...getShortcuts(), ...FIXED_SHORTCUTS]) map[s.id] = s.combo;
   return map;
+}
+
+// 0.7b "New task": default vendor is the first installed agent (the board's
+// own last-used-per-repo memory went with the board). Pure for testing.
+export function pickTaskVendor(vendors: { id: string; installed: boolean }[]): string {
+  return vendors.find((v) => v.installed)?.id ?? "claude";
+}
+
+// The task text names the pane (renamePane caps at 60) and the worktree branch.
+export function taskLabel(text: string): string {
+  return text.trim().replace(/\s+/g, " ").slice(0, 60);
 }
 
 // Ordered-subsequence fuzzy match. Lower score = better match; null = no match.
@@ -123,6 +137,7 @@ export function CommandPalette() {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [index, setIndex] = useState(0);
+  const [taskMode, setTaskMode] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const activeRef = useRef<HTMLDivElement>(null);
 
@@ -146,6 +161,7 @@ export function CommandPalette() {
     if (!open) return;
     setQuery("");
     setIndex(0);
+    setTaskMode(false);
     const id = requestAnimationFrame(() => inputRef.current?.focus());
     return () => cancelAnimationFrame(id);
   }, [open]);
@@ -204,6 +220,14 @@ export function CommandPalette() {
       }
     }
     list.push({ id: "act:new-workspace", section: "Actions", label: "New workspace", run: () => startCreate() });
+    list.push({
+      id: "act:new-task",
+      section: "Actions",
+      label: "New task…",
+      keywords: "task agent spawn pane prompt",
+      stay: true,
+      run: () => { setTaskMode(true); setQuery(""); requestAnimationFrame(() => inputRef.current?.focus()); },
+    });
     list.push({ id: "act:settings", section: "Actions", label: "Open settings", run: () => setSettingsOpen(true) });
     list.push({ id: "act:cheat-sheet", section: "Actions", label: "Keyboard shortcuts cheat sheet", run: openCheatSheet });
     // UI-181/UX-598: every Settings section, so the palette is a complete
@@ -314,7 +338,30 @@ export function CommandPalette() {
   const runItem = (it: Item) => {
     pushRecent(it.id);
     it.run();
+    if (!it.stay) setOpen(false);
+  };
+
+  // 0.7b: spawn an agent pane in the active workspace, titled with the task.
+  // Same worktree-aware spawnPane path the board's dispatch used.
+  const submitTask = () => {
+    const label = taskLabel(query);
+    if (!label) return;
+    const { activeId } = useApp.getState();
+    const ws = useApp.getState().workspaces.find((w) => w.id === activeId);
+    if (activeId == null || !ws) {
+      pushToast("info", "Open a workspace to start a task.");
+      return;
+    }
+    const vendor = pickTaskVendor(agentVendors());
     setOpen(false);
+    void spawnPane(activeId, vendor, ws.root, undefined, label)
+      .then((paneId) => {
+        if (paneId != null) {
+          useApp.getState().renamePane(paneId, label);
+          pushToast("success", `Started "${label}" on ${vendorShort(vendor)}`);
+        } else pushToast("error", `Couldn’t start "${label}" — the pane didn’t start.`);
+      })
+      .catch((e) => pushToast("error", `Couldn’t start "${label}": ${String(e)}`));
   };
 
   // UX-542/543: Esc on the shared overlay stack (ui.ts); arrow/Enter
@@ -326,12 +373,13 @@ export function CommandPalette() {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "ArrowDown") { e.preventDefault(); setIndex((i) => Math.min(i + 1, results.length - 1)); }
       else if (e.key === "ArrowUp") { e.preventDefault(); setIndex((i) => Math.max(i - 1, 0)); }
+      else if (e.key === "Enter" && taskMode) { e.preventDefault(); submitTask(); }
       else if (e.key === "Enter") { e.preventDefault(); const it = results[index]; if (it) runItem(it); }
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, results, index]);
+  }, [open, results, index, taskMode, query]);
 
   if (!open) return null;
 
@@ -343,7 +391,8 @@ export function CommandPalette() {
           <input
             ref={inputRef}
             className="cmdp-input"
-            placeholder="Jump to a workspace, pane, or action…"
+            placeholder={taskMode ? "Describe the task, then press Enter…" : "Jump to a workspace, pane, or action…"}
+            aria-label={taskMode ? "New task description" : undefined}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             spellCheck={false}
@@ -351,7 +400,12 @@ export function CommandPalette() {
           <button className="ov-x" onClick={() => setOpen(false)} title="Close"><IconClose size={16} /></button>
         </div>
         <div className="cmdp-list">
-          {results.length === 0 && (
+          {taskMode && (
+            <div className="cmdp-empty">
+              New task: starts a {vendorShort(pickTaskVendor(agentVendors()))} pane in the active workspace, named after your text.
+            </div>
+          )}
+          {!taskMode && results.length === 0 && (
             <div className="cmdp-empty">
               {/* QOL 352: a bare "no matches" is a dead end — say what CAN be
                   searched, since that's the question the user actually has. */}
@@ -362,7 +416,7 @@ export function CommandPalette() {
               </span>
             </div>
           )}
-          {results.map((it, i) => {
+          {!taskMode && results.map((it, i) => {
             const showHeader = it.section !== lastSection;
             lastSection = it.section;
             const isActive = i === index;
@@ -395,7 +449,7 @@ export function CommandPalette() {
         </div>
         <div className="cmdp-foot">
           <span><kbd>↑</kbd><kbd>↓</kbd> navigate</span>
-          <span><kbd>Enter</kbd> select</span>
+          <span><kbd>Enter</kbd> {taskMode ? "start task" : "select"}</span>
           <span><kbd>Esc</kbd> close</span>
         </div>
       </div>
