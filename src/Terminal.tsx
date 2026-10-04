@@ -19,7 +19,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { terminalThemeFor } from "./terminal-theme";
-import { getTerminalSettings, terminalReadabilityOptions } from "./Settings";
+import { getTerminalSettings, terminalReadabilityOptions } from "./settingsStore";
 import { linkify, resolvePath, isRemotePath, type LinkMatch } from "./linkify";
 import { invalidatePathCache } from "./pathcheck";
 import { openInEditor } from "./editor";

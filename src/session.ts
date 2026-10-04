@@ -15,7 +15,7 @@ import {
   type SessionDraft, type PersistedWorkspace,
 } from "./persist";
 import { repoToplevel, closeWorkspaceWithCleanup, type WorktreeInfo } from "./worktrees";
-import { getStartupBehavior } from "./Settings";
+import { getStartupBehavior } from "./settingsStore";
 import { lastLine } from "./attention";
 import { redactText } from "./transcript";
 

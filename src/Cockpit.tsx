@@ -1,24 +1,15 @@
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState, type ComponentType } from "react";
 import { useApp } from "./store";
 import { LeftPanel } from "./LeftPanel";
 import { PaneGrid } from "./PaneGrid";
 import { IconBrand, IconPanel, IconSettings, IconTheme, IconFile, IconBroadcast, IconTerminalPlus } from "./Icons";
 import { useVendors, accentCss, vendorShort } from "./vendors";
-import { Settings } from "./Settings";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { ToastHost } from "./ToastHost";
 import { Notifications } from "./Notifications";
-import { Broadcast } from "./Broadcast";
 import { CommandPalette } from "./CommandPalette";
-import { Explorer } from "./Explorer";
-import { Review } from "./Review";
-import { AttentionQueue } from "./AttentionQueue";
-import { Shortcuts } from "./Shortcuts";
-import { SessionLauncher } from "./SessionLauncher";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
-import { PreviewHost } from "./PreviewHost";
 import { isSplitActive, GRID_MIN_PCT, PREVIEW_MIN_PCT, PREVIEW_MAX_PCT } from "./previewSplit";
-import { QuickOpen } from "./QuickOpenOverlay";
 import { ZoomHud } from "./ZoomHud";
 import { useUI, closeTopOverlay } from "./ui";
 // Quick light/dark flip lives in the themes registry (toggleThemeMode): it
@@ -28,8 +19,24 @@ import { toggleThemeMode } from "./themes";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getName } from "@tauri-apps/api/app";
 import { spawnPane, closePaneGuarded, closeWorkspaceGuarded } from "./worktrees";
-import { isTypingTarget } from "./Shortcuts";
+import { isTypingTarget } from "./isTypingTarget";
 import { attentionQueue, mostRecentOutputPane } from "./attention";
+
+// Rarely-opened panels are lazy chunks so they stay out of the first-paint
+// bundle. Ones gated on store state mount only while that state is set; the
+// three that own a global hotkey (QuickOpen, Shortcuts, SessionLauncher) mount
+// at once but load off the critical path.
+const lazyNamed = <T extends Record<string, unknown>, K extends keyof T>(load: () => Promise<T>, name: K) =>
+  lazy(() => load().then((m) => ({ default: m[name] as ComponentType<any> })));
+const Settings = lazyNamed(() => import("./Settings"), "Settings");
+const Broadcast = lazyNamed(() => import("./Broadcast"), "Broadcast");
+const Explorer = lazyNamed(() => import("./Explorer"), "Explorer");
+const Review = lazyNamed(() => import("./Review"), "Review");
+const AttentionQueue = lazyNamed(() => import("./AttentionQueue"), "AttentionQueue");
+const Shortcuts = lazyNamed(() => import("./Shortcuts"), "Shortcuts");
+const SessionLauncher = lazyNamed(() => import("./SessionLauncher"), "SessionLauncher");
+const PreviewHost = lazyNamed(() => import("./PreviewHost"), "PreviewHost");
+const QuickOpen = lazyNamed(() => import("./QuickOpenOverlay"), "QuickOpen");
 
 export function Cockpit() {
   const workspaces = useApp((s) => s.workspaces);
@@ -44,6 +51,10 @@ export function Cockpit() {
 
   const [expanded, setExpanded] = useState(true);
   const showExplorer = useUI((s) => s.explorerOpen);
+  const settingsOpen = useUI((s) => s.settingsOpen);
+  const reviewOpen = useUI((s) => s.reviewPaneId !== null);
+  const attentionOpen = useUI((s) => s.attentionOpen);
+  const hasPreview = useUI((s) => s.previewTabs.length > 0);
   const setShowExplorer = useUI((s) => s.setExplorerOpen);
   const setSettingsOpen = useUI((s) => s.setSettingsOpen);
   const updateAvailable = useUI((s) => s.updateAvailable);
@@ -386,25 +397,27 @@ export function Cockpit() {
         </button>
       </div>
 
-      <Settings />
       <ConfirmDialog />
       <ToastHost />
       <CommandPalette />
-      <QuickOpen />
-      <Broadcast />
-      <Review />
-      {!splitActive && <PreviewHost mode="drawer" />}
-      <AttentionQueue />
-      <Shortcuts />
+      <Suspense fallback={null}>
+        {settingsOpen && <Settings />}
+        <QuickOpen />
+        {broadcastOpen && <Broadcast />}
+        {reviewOpen && <Review />}
+        {!splitActive && hasPreview && <PreviewHost mode="drawer" />}
+        {attentionOpen && <AttentionQueue />}
+        <Shortcuts />
       {/* QL-764: resume/fork launcher. Owns its own open state and Ctrl+Shift+R
           listener, the same way CommandPalette and Shortcuts do. */}
-      <SessionLauncher />
+        <SessionLauncher />
+      </Suspense>
       <ZoomHud />
 
       <div className="cockpit">
         <LeftPanel expanded={expanded} />
         {showExplorer && active && (
-          <Explorer
+          <Suspense fallback={null}><Explorer
             root={active.root}
             wsId={active.id}
             paneRoot={active.panes.find((p) => p.id === active.focused)?.worktreePath}
@@ -412,7 +425,7 @@ export function Cockpit() {
               const p = active.panes.find((x) => x.id === active.focused);
               return p ? (p.title || vendorShort(p.vendor)) : undefined;
             })()}
-          />
+          /></Suspense>
         )}
         <div className="main">
           {/* QL-708: the PanelGroup is ALWAYS rendered (one grid panel); only the
@@ -443,7 +456,7 @@ export function Cockpit() {
                     if (Math.abs(size - useUI.getState().previewSplitSize) >= 0.5) useUI.getState().setPreviewSplitSize(size);
                   }}
                 >
-                  <PreviewHost mode="split" />
+                  <Suspense fallback={null}><PreviewHost mode="split" /></Suspense>
                 </Panel>
               </>
             )}

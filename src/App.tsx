@@ -3,14 +3,15 @@ import { useApp } from "./store";
 import { NewWorkspace } from "./NewWorkspace";
 import { Cockpit } from "./Cockpit";
 import { IconBrand, IconSettings, IconTheme } from "./Icons";
-import { Settings } from "./Settings";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { ToastHost } from "./ToastHost";
 import { useUI } from "./ui";
 import { applyThemeForMode, isFollowingSystem, toggleThemeMode } from "./themes";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { useEffect } from "react";
+import { lazy, Suspense, useEffect } from "react";
 import { logEvent } from "./applog";
+
+const Settings = lazy(() => import("./Settings").then((m) => ({ default: m.Settings })));
 
 // QL-784: "Follow Windows" (Settings > Appearance) hands the light/dark choice
 // to the OS, landing on whichever theme was last used in that mode.
@@ -50,6 +51,7 @@ function useFollowSystemTheme() {
 function LauncherChrome() {
   const setSettingsOpen = useUI((s) => s.setSettingsOpen);
   const updateAvailable = useUI((s) => s.updateAvailable);
+  const settingsOpen = useUI((s) => s.settingsOpen);
   return (
     <div className="cockpit-root">
       <div className="topbar">
@@ -64,7 +66,7 @@ function LauncherChrome() {
           {updateAvailable && <span className="tb-update-dot" />}
         </button>
       </div>
-      <Settings />
+      {settingsOpen && <Suspense fallback={null}><Settings /></Suspense>}
       <ConfirmDialog />
       <ToastHost />
       <div className="cockpit">

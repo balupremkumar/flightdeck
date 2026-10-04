@@ -27,7 +27,7 @@ import {
   MEMORY_CEILING_EVENT,
   HOOKS_CHANGED_EVENT,
   hooksInstalled,
-} from "./Settings";
+} from "./settingsStore";
 import "./Notifications.css";
 
 // All configurable states, approval/waiting/error first since those are the

@@ -21,7 +21,7 @@ import { closePaneWithCleanup } from "./worktrees";
 import { Transcript } from "./TranscriptView";
 import { extractLastCommand, redactText, scrollbackFilename, toLines } from "./transcript";
 import { SelectionToolbar, GroupsPanel, SessionSnapshots } from "./PaneOps";
-import { openSessionLauncher, modelShort, contextWindowFor, RESUME_VENDOR } from "./SessionLauncher";
+import { openSessionLauncher, modelShort, contextWindowFor, RESUME_VENDOR } from "./sessionLauncherLogic";
 import { SubagentTree, subagentChipLabel, type SubagentCount } from "./SubagentTreeView";
 import { PlanPanel, pendingPlan, planChipTitle, PLAN_APPROVE_KEYS, type PlanEntry } from "./PlanPanelView";
 import { parseWorkspaceDef, serializeWorkspaceExport } from "./snapshots";

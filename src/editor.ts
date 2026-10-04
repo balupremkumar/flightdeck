@@ -19,7 +19,7 @@
 // stop mattering.
 import { invoke } from "@tauri-apps/api/core";
 import { openPath } from "@tauri-apps/plugin-opener";
-import { getEditorSettings, resolveEditorCommand } from "./Settings";
+import { getEditorSettings, resolveEditorCommand } from "./settingsStore";
 import { useUI } from "./ui";
 import { isRemotePath, REMOTE_PATH_MSG } from "./linkify";
 

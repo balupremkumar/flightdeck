@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useOverlayEsc } from "./ui";
-import { getShortcuts, FIXED_SHORTCUTS, CONTEXTUAL_SHORTCUTS } from "./Settings";
+import { isTypingTarget } from "./isTypingTarget";
+import { getShortcuts, FIXED_SHORTCUTS, CONTEXTUAL_SHORTCUTS } from "./settingsStore";
 import { IconClose } from "./Icons";
 import "./overlays.css";
 
@@ -12,13 +13,7 @@ import "./overlays.css";
 // read from — so there's exactly one place these can drift from reality
 // instead of three hand-typed copies.
 
-/** True when the event target is somewhere typing "?" should be treated as
- *  the literal character rather than the cheat-sheet toggle. Exported for
- *  the accompanying test. */
-export function isTypingTarget(el: Element | null): boolean {
-  if (!el) return false;
-  return !!el.closest('input, textarea, select, [contenteditable="true"], .pbody');
-}
+export { isTypingTarget };
 
 export function Shortcuts() {
   const [open, setOpen] = useState(false);
