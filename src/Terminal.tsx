@@ -1429,6 +1429,9 @@ function createSession(modelId: number, gen: string, spec: SpawnSpec, handlers: 
       // UI-141: keep the last meaningful line for the attention queue.
       const clean = outTail.replace(OSC_RE, "").replace(ANSI_RE, "");
       const lines = clean.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+      // G2: an MCP notice that isn't the newest line would otherwise never reach
+      // the MCP chip; feed those first so the last call still sets lastLine.
+      for (let i = 0; i < lines.length - 1; i++) if (lines[i].includes("MCP server")) entry.handlers.onLine?.(lines[i].slice(0, 120));
       if (lines.length) entry.handlers.onLine?.(lines[lines.length - 1].slice(0, 120));
     };
     const tailShowsPermissionPrompt = () =>
