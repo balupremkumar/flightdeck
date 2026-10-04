@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
@@ -68,5 +69,11 @@ export default defineConfig(async () => ({
       // 3. tell Vite to ignore watching `src-tauri`
       ignored: ["**/src-tauri/**"],
     },
+  },
+
+  // Agent worktrees live under .claude/worktrees inside the repo; without this
+  // every `vitest run` also runs each worktree's copy of the suite.
+  test: {
+    exclude: ["**/node_modules/**", "**/dist/**", ".claude/**", "demo/**", "e2e/**"],
   },
 }));
