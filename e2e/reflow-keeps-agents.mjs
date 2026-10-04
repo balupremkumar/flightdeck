@@ -1,11 +1,15 @@
 // Regression test for R1: adding, closing or reordering a pane must not kill
 // (and respawn) the PTYs of panes that are already live.
 //
-// React StrictMode (dev) spawns then kills a NEW pane's PTY before it goes
-// live. That is a dev artefact, so we never judge a step by the raw kill log.
-// Instead we track the set of PTY ids alive (spawned and not killed) once each
-// step settles: every id alive before a step must still be alive after it,
-// except the one pane the step deliberately closes.
+// The registry makes StrictMode a no-op (one spawn, zero kills per pane), so the
+// raw kill log is exact: add and drag steps must log no pty_kill at all, and the
+// close step exactly one, of the closed pane. We also track the set of PTY ids
+// alive (spawned and not killed): every id alive before a step must still be
+// alive after it, except the one pane the step deliberately closes.
+//
+// Sizes: every pty_spawn and pty_resize must carry cols >= 20 and rows >= 5. A
+// tiny size reaches a live agent (Claude Code re-renders at 2 columns and the
+// re-wrapped lines stay in scrollback).
 //
 // Run from e2e/ with the Vite dev server on :1420: node reflow-keeps-agents.mjs
 import { chromium } from "playwright";
@@ -16,7 +20,7 @@ import path from "node:path";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const mock = readFileSync(path.join(here, "..", "demo", "mock-tauri-interactive.js"), "utf8");
 const boot = `localStorage.setItem("flightdeck-startup","reopen");`;
-const wrap = `(()=>{const T=window.__TAURI_INTERNALS__;const inv=T.invoke;window.__ptylog=[];T.invoke=(c,a)=>{const r=inv(c,a);if(c==="pty_spawn"){Promise.resolve(r).then(id=>window.__ptylog.push("spawn "+id+" "+a.vendor));}if(c==="pty_kill")window.__ptylog.push("kill "+a.paneId);return r;};})();`;
+const wrap = `(()=>{const T=window.__TAURI_INTERNALS__;const inv=T.invoke;window.__ptylog=[];window.__sizes=[];T.invoke=(c,a)=>{if(c==="pty_spawn"||c==="pty_resize")window.__sizes.push({op:c,id:a.paneId,cols:a.cols,rows:a.rows});const r=inv(c,a);if(c==="pty_spawn"){Promise.resolve(r).then(id=>window.__ptylog.push("spawn "+id+" "+a.vendor));}if(c==="pty_kill")window.__ptylog.push("kill "+a.paneId);return r;};})();`;
 
 const URL = "http://localhost:1420";
 const failures = [];
@@ -73,6 +77,11 @@ async function step(name, action, { expectKilled = [] } = {}) {
   const { set: after, log } = await alive();
   const killedEstablished = [...before].filter((id) => !after.has(id) && !expectKilled.includes(id));
   const missedExpected = expectKilled.filter((id) => after.has(id));
+  const kills = log.slice(logBefore.length).filter((l) => l.startsWith("kill "));
+  if (expectKilled.length === 0 && kills.length) failures.push(`${name}: expected zero pty_kill, saw ${kills.join(", ")}`);
+  if (expectKilled.length && (kills.length !== expectKilled.length || kills.some((k) => !expectKilled.includes(k.split(" ")[1])))) {
+    failures.push(`${name}: expected exactly kill of [${expectKilled}], saw [${kills}]`);
+  }
   console.log(`${name}: alive before=[${[...before]}] after=[${[...after]}] log+=${JSON.stringify(log.slice(logBefore.length))}`);
   if (killedEstablished.length) {
     failures.push(`${name}: established PTY id(s) ${killedEstablished.join(", ")} were killed by the reflow`);
@@ -116,6 +125,14 @@ await step("drag pane 1 onto pane 2 (cross-row)", async () => {
   const to = page.locator(".pane:visible").nth(2);
   await from.dragTo(to);
 });
+
+{
+  const sizes = await page.evaluate(() => window.__sizes.slice());
+  console.log(`pty size calls: ${sizes.length}`);
+  for (const z of sizes) {
+    if (!(z.cols >= 20 && z.rows >= 5)) failures.push(`degenerate ${z.op} ${z.id ?? ""} ${z.cols}x${z.rows}`);
+  }
+}
 
 if (pageErrors.length) console.log("page errors:", pageErrors.slice(0, 3).join(" | "));
 await browser.close();
