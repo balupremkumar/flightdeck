@@ -10,7 +10,11 @@
 // passthrough" requirement falls out of that, rather than needing a
 // sanitiser dependency).
 
-import { normalizeSegments } from "./linkify";
+import { linkify, normalizeSegments } from "./linkify";
+
+/** Root that `[[wikilinks]]` resolve against. A constant for now; a future
+ *  setting (phase1-links.md, vault root) replaces this. */
+export const VAULT_ROOT = "D:\\Dev\\ai";
 
 export type InlineNode =
   | { type: "text"; text: string }
@@ -44,6 +48,7 @@ export type BlockNode =
 const IMAGE_RE = /^!\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/;
 const LINK_RE = /^\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/;
 const CODE_RE = /^`([^`]+)`/;
+const WIKI_RE = /^\[\[([^[\]|]+?)(?:\|([^[\]]*))?\]\]/;
 
 function isWordChar(ch: string | undefined): boolean {
   return !!ch && /[A-Za-z0-9]/.test(ch);
@@ -64,6 +69,16 @@ export function parseInline(text: string): InlineNode[] {
     if (ch === "!" && text[i + 1] === "[") {
       const m = IMAGE_RE.exec(rest);
       if (m) { flush(); nodes.push({ type: "image", alt: m[1], src: m[2] }); i += m[0].length; continue; }
+    }
+    if (ch === "[" && text[i + 1] === "[") {
+      const m = WIKI_RE.exec(rest);
+      if (m) {
+        flush();
+        const w = parseWikilink(m[1], m[2]);
+        nodes.push({ type: "link", href: w.href, children: [{ type: "text", text: w.label }] });
+        i += m[0].length;
+        continue;
+      }
     }
     if (ch === "[") {
       const m = LINK_RE.exec(rest);
@@ -196,8 +211,8 @@ export function parseMarkdown(src: string): BlockNode[] {
         const m = LIST_RE.exec(lines[i]);
         if (!m || /\d/.test(m[2]) !== ordered) break;
         const task = TASK_RE.exec(m[3]);
-        if (task) items.push({ children: parseInline(task[2]), checked: task[1].toLowerCase() === "x" });
-        else items.push({ children: parseInline(m[3]) });
+        if (task) items.push({ children: autolinkInline(parseInline(task[2])), checked: task[1].toLowerCase() === "x" });
+        else items.push({ children: autolinkInline(parseInline(m[3])) });
         i++;
       }
       blocks.push({ type: "list", ordered, items });
@@ -219,7 +234,7 @@ export function parseMarkdown(src: string): BlockNode[] {
       para.push(lines[i]);
       i++;
     }
-    if (para.length) blocks.push({ type: "paragraph", children: parseInline(para.join("\n")) });
+    if (para.length) blocks.push({ type: "paragraph", children: autolinkInline(parseInline(para.join("\n"))) });
   }
 
   return blocks;
@@ -262,14 +277,151 @@ export function resolveMdLink(href: string, mdFilePath: string): string {
   if (isExternalHref(href) || href.startsWith("#")) return href;
   // An absolute local path is already resolved; joining it onto the md file's
   // directory would produce nonsense.
-  if (isAbsoluteLocalPath(href)) return href.split("#")[0].split("?")[0];
-  const clean = href.split("#")[0].split("?")[0];
+  if (isAbsoluteLocalPath(href)) return safeDecode(href.split("#")[0].split("?")[0]);
+  const clean = safeDecode(href.split("#")[0].split("?")[0]);
   if (!clean) return href; // pure "#anchor"/"?query" already handled above; empty guard
   const isWin = /^[A-Za-z]:/.test(mdFilePath) || mdFilePath.includes("\\");
   const sep = isWin ? "\\" : "/";
   const dirSegs = mdFilePath.split(/[\\/]+/);
   dirSegs.pop(); // drop the filename, keep the containing directory
-  const relSegs = clean.split("/");
+  const relSegs = clean.split(/[\\/]/);
   const merged = normalizeSegments([...dirSegs, ...relSegs]);
   return isWin ? merged.join(sep) : "/" + merged.join(sep);
+}
+
+/** decodeURIComponent that never throws: a lone `%` (a literal filename like
+ *  `100%.md`) just stays as typed. */
+export function safeDecode(s: string): string {
+  try { return decodeURIComponent(s); } catch { return s; }
+}
+
+// ---------------------------------------------------------------------
+// Heading slugs (GitHub style) for `#anchor` links
+// ---------------------------------------------------------------------
+
+/** Flattens inline nodes to their visible text (for heading slugs). */
+export function inlineText(nodes: InlineNode[]): string {
+  return nodes
+    .map((n) => {
+      switch (n.type) {
+        case "text": case "code": return n.text;
+        case "image": return n.alt;
+        default: return inlineText(n.children);
+      }
+    })
+    .join("");
+}
+
+/** GitHub's heading slug: lowercase, drop everything but letters, digits,
+ *  spaces, `-` and `_`, then spaces become `-`. */
+export function slugify(text: string): string {
+  return text
+    .trim()
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\p{M} _-]/gu, "")
+    .replace(/ /g, "-");
+}
+
+/** Returns a function that slugs headings in document order, de-duplicating
+ *  repeats the way GitHub does (`intro`, `intro-1`, `intro-2`). */
+export function makeSlugger(): (text: string) => string {
+  const seen = new Map<string, number>();
+  return (text) => {
+    const base = slugify(text);
+    const n = seen.get(base) ?? 0;
+    seen.set(base, n + 1);
+    return n === 0 ? base : `${base}-${n}`;
+  };
+}
+
+// ---------------------------------------------------------------------
+// Wikilinks `[[path|alias]]` / `[[path]]`
+// ---------------------------------------------------------------------
+
+/** Resolves a wikilink target against VAULT_ROOT. `.md` is appended when the
+ *  last segment has no extension; a `#suffix` (anchor or L12) is preserved.
+ *  The result is an absolute local path, so it goes through the same
+ *  open-in-preview route as any other local link. */
+export function parseWikilink(target: string, alias?: string): { href: string; label: string } {
+  const t = target.trim();
+  const hashAt = t.indexOf("#");
+  const pathPart = hashAt === -1 ? t : t.slice(0, hashAt);
+  const suffix = hashAt === -1 ? "" : t.slice(hashAt);
+  const segs = pathPart.split(/[\\/]/).filter(Boolean);
+  const last = segs[segs.length - 1] ?? pathPart;
+  const label = alias?.trim() || last;
+  let file = pathPart;
+  if (!/\.[A-Za-z0-9]+$/.test(last)) file += ".md";
+  const abs = isAbsoluteLocalPath(file) ? file : `${VAULT_ROOT}\\${file}`;
+  const norm = abs.replace(/\//g, "\\");
+  // Encode `%` so resolveMdLink's percent-decoding leaves a literal one alone.
+  return { href: norm.replace(/%/g, "%25") + suffix, label };
+}
+
+// ---------------------------------------------------------------------
+// Bare paths / URLs in prose
+// ---------------------------------------------------------------------
+
+/** Turns bare URLs and paths in plain text nodes into link nodes. Reuses
+ *  linkify() unchanged. Links/code are left alone; strong/em are recursed. */
+export function autolinkInline(nodes: InlineNode[]): InlineNode[] {
+  const out: InlineNode[] = [];
+  for (const n of nodes) {
+    if (n.type === "strong" || n.type === "em") {
+      out.push({ ...n, children: autolinkInline(n.children) });
+      continue;
+    }
+    if (n.type !== "text") { out.push(n); continue; }
+    let last = 0;
+    for (const m of linkify(n.text)) {
+      let href: string;
+      if (m.kind === "url") {
+        if (!isExternalHref(m.raw)) continue;
+        href = m.raw;
+      } else if (m.kind === "path") {
+        if (/^(\\\\|\/\/)/.test(m.raw)) continue; // UNC is never linked
+        if (!/[\\/]/.test(m.raw)) continue; // a lone word is not obviously a path
+        href = m.raw.replace(/%/g, "%25") + (m.line ? `#L${m.line}` : "");
+      } else continue;
+      if (m.start > last) out.push({ type: "text", text: n.text.slice(last, m.start) });
+      out.push({ type: "link", href, children: [{ type: "text", text: m.text }] });
+      last = m.end;
+    }
+    if (last === 0) out.push(n);
+    else if (last < n.text.length) out.push({ type: "text", text: n.text.slice(last) });
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------
+// Link target parsing (anchors, line targets, relative resolution)
+// ---------------------------------------------------------------------
+
+export type LinkTarget =
+  | { kind: "external"; url: string }
+  | { kind: "file"; path: string; line?: number; anchor?: string };
+
+const LINE_FRAG_RE = /^L(\d+)(?:C\d+)?(?:-L?\d+(?:C\d+)?)?$/i;
+const PATH_LINE_RE = /^(.*\.[A-Za-z0-9]+):(\d+)(?::\d+)?$/;
+
+/** Classifies a markdown link target. `path` is always absolute (a bare
+ *  `#anchor` resolves to mdPath itself). `file.md#L12` and `file.ts:12[:5]`
+ *  yield `line`; any other `#fragment` yields `anchor` (percent-decoded). */
+export function parseLinkTarget(href: string, mdPath: string): LinkTarget {
+  if (isExternalHref(href)) return { kind: "external", url: href };
+  const noQuery = href.split("?")[0];
+  const hashAt = noQuery.indexOf("#");
+  let pathPart = hashAt === -1 ? noQuery : noQuery.slice(0, hashAt);
+  const frag = hashAt === -1 ? "" : safeDecode(noQuery.slice(hashAt + 1));
+  let line: number | undefined;
+  let anchor: string | undefined;
+  const lm = LINE_FRAG_RE.exec(frag);
+  if (lm) line = Number(lm[1]);
+  else if (frag) anchor = frag;
+  if (line === undefined) {
+    const pl = PATH_LINE_RE.exec(pathPart);
+    if (pl) { pathPart = pl[1]; line = Number(pl[2]); }
+  }
+  const path = pathPart === "" ? mdPath : resolveMdLink(pathPart, mdPath);
+  return { kind: "file", path, ...(line !== undefined ? { line } : {}), ...(anchor ? { anchor } : {}) };
 }

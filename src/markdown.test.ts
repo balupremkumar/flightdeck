@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { parseInline, parseMarkdown, isExternalHref, isBlockedHref, isAbsoluteLocalPath, resolveMdLink } from "./markdown";
+import {
+  parseInline, parseMarkdown, isExternalHref, isBlockedHref, isAbsoluteLocalPath, resolveMdLink,
+  safeDecode, slugify, makeSlugger, inlineText, parseWikilink, parseLinkTarget, autolinkInline, VAULT_ROOT,
+} from "./markdown";
 import type { BlockNode } from "./markdown";
 
 describe("parseInline", () => {
@@ -224,5 +227,98 @@ describe("link scheme safety", () => {
     expect(isBlockedHref("C:\\Windows\\System32\\calc.exe")).toBe(false);
     expect(isExternalHref("C:\\Windows\\System32\\calc.exe")).toBe(false);
     expect(resolveMdLink("C:\\a\\b.md", "D:\\docs\\readme.md")).toBe("C:\\a\\b.md");
+  });
+});
+
+describe("percent-decoding (Phase 1 L4)", () => {
+  const md = "D:\\Dev\\ai\\notes\\readme.md";
+  it("decodes %20 in a relative target", () => {
+    expect(resolveMdLink("my%20notes/a%2Bb.md", md)).toBe("D:\\Dev\\ai\\notes\\my notes\\a+b.md");
+  });
+  it("leaves a lone % alone instead of throwing", () => {
+    expect(safeDecode("100%.md")).toBe("100%.md");
+    expect(resolveMdLink("100%.md", md)).toBe("D:\\Dev\\ai\\notes\\100%.md");
+  });
+});
+
+describe("heading slugs", () => {
+  it("slugs the GitHub way", () => {
+    expect(slugify("Hello, World!")).toBe("hello-world");
+    expect(slugify("  API & Usage (v2) ")).toBe("api--usage-v2");
+    expect(slugify("snake_case Heading-1")).toBe("snake_case-heading-1");
+  });
+  it("de-duplicates repeats in order", () => {
+    const s = makeSlugger();
+    expect([s("Intro"), s("Intro"), s("Intro"), s("Other")]).toEqual(["intro", "intro-1", "intro-2", "other"]);
+  });
+  it("flattens inline nodes to text", () => {
+    const h = parseMarkdown("## The `code` **bold** title")[0] as Extract<BlockNode, { type: "heading" }>;
+    expect(slugify(inlineText(h.children))).toBe("the-code-bold-title");
+  });
+});
+
+describe("wikilinks", () => {
+  it("[[path|alias]] shows the alias and resolves under the vault", () => {
+    const w = parseWikilink("projects/active/flightdeck/STATE", "Flightdeck");
+    expect(w.label).toBe("Flightdeck");
+    expect(w.href).toBe(VAULT_ROOT + "\\projects\\active\\flightdeck\\STATE.md");
+  });
+  it("[[path]] shows the last segment; keeps an existing extension", () => {
+    expect(parseWikilink("brain/rulings").label).toBe("rulings");
+    expect(parseWikilink("docs/x.txt").href).toBe(VAULT_ROOT + "\\docs\\x.txt");
+  });
+  it("keeps a #suffix off the extension check", () => {
+    expect(parseWikilink("notes/a#L12").href).toBe(VAULT_ROOT + "\\notes\\a.md#L12");
+  });
+  it("parses inline into a link node", () => {
+    const n = parseInline("see [[brain/rulings|Rulings]] now");
+    expect(n[1]).toEqual({
+      type: "link",
+      href: VAULT_ROOT + "\\brain\\rulings.md",
+      children: [{ type: "text", text: "Rulings" }],
+    });
+  });
+});
+
+describe("parseLinkTarget", () => {
+  const md = "D:\\Dev\\ai\\notes\\readme.md";
+  it("bare #anchor targets the current file", () => {
+    expect(parseLinkTarget("#My%20Heading", md)).toEqual({ kind: "file", path: md, anchor: "My Heading" });
+  });
+  it("file.md#L12 and ranges give a line", () => {
+    expect(parseLinkTarget("other.md#L12", md)).toEqual({ kind: "file", path: "D:\\Dev\\ai\\notes\\other.md", line: 12 });
+    expect(parseLinkTarget("../a.ts#L5-L9", md)).toEqual({ kind: "file", path: "D:\\Dev\\ai\\a.ts", line: 5 });
+  });
+  it("path:12 and path:12:5 give a line", () => {
+    expect(parseLinkTarget("src/x.ts:12", md)).toEqual({ kind: "file", path: "D:\\Dev\\ai\\notes\\src\\x.ts", line: 12 });
+    expect(parseLinkTarget("C:\\a\\b.ts:7:3", md)).toEqual({ kind: "file", path: "C:\\a\\b.ts", line: 7 });
+  });
+  it("other.md#heading carries an anchor, relative to the md folder", () => {
+    expect(parseLinkTarget("sub/other.md#Setup", md)).toEqual({ kind: "file", path: "D:\\Dev\\ai\\notes\\sub\\other.md", anchor: "Setup" });
+  });
+  it("external urls pass through", () => {
+    expect(parseLinkTarget("https://a.dev/x#y", md)).toEqual({ kind: "external", url: "https://a.dev/x#y" });
+  });
+});
+
+describe("autolinkInline", () => {
+  const text = (s: string) => autolinkInline([{ type: "text", text: s }]);
+  it("links a bare URL and keeps surrounding text", () => {
+    const out = text("go to https://example.com/a now");
+    expect(out.map((n) => n.type)).toEqual(["text", "link", "text"]);
+    expect((out[1] as { href: string }).href).toBe("https://example.com/a");
+  });
+  it("links an absolute path with a line suffix", () => {
+    const out = text("see D:\\Dev\\x\\y.ts:12 here");
+    const link = out.find((n) => n.type === "link") as { href: string } | undefined;
+    expect(link?.href).toBe("D:\\Dev\\x\\y.ts#L12");
+  });
+  it("leaves plain prose alone", () => {
+    expect(text("nothing to see here")).toEqual([{ type: "text", text: "nothing to see here" }]);
+  });
+  it("paragraph parsing autolinks but explicit links and code are untouched", () => {
+    const p = parseMarkdown("[a](https://x.dev) `https://y.dev` https://z.dev")[0] as Extract<BlockNode, { type: "paragraph" }>;
+    expect(p.children.filter((n) => n.type === "link")).toHaveLength(2);
+    expect(p.children.some((n) => n.type === "code")).toBe(true);
   });
 });
