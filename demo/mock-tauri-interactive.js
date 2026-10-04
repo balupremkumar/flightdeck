@@ -25,7 +25,16 @@
   let nextPaneId = 0;
   const panes = new Map(); // ptyId -> pane runtime state
 
+  // pty://output carries `seq`, like the Rust PaneOut ring: the running byte
+  // count for the pane, AFTER this chunk. Stamped here so every emit site (and
+  // __mockPrint) gets it.
+  const outSeq = new Map(); // pane_id -> bytes emitted so far
   const emit = (event, payload) => {
+    if (event === "pty://output" && payload && payload.seq === undefined) {
+      const next = (outSeq.get(payload.pane_id) ?? 0) + atob(payload.b64).length;
+      outSeq.set(payload.pane_id, next);
+      payload = { ...payload, seq: next };
+    }
     for (const cb of listeners.get(event) ?? []) cb({ event, id: 0, payload });
   };
   const b64 = (s) => btoa(String.fromCharCode(...new TextEncoder().encode(s)));
@@ -616,6 +625,9 @@ index 3c92f1a..7d40b2e 100644
   // --- Command handlers -------------------------------------------------
   const handlers = {
     // PTY
+    // Reattach after a webview reload. Null (spawn instead) unless a test installs
+    // window.__fdMockAttach(modelId, gen) -> AttachInfo | null before page load.
+    pty_attach: ({ modelId, gen }) => (typeof window.__fdMockAttach === "function" ? window.__fdMockAttach(modelId, gen) : null),
     pty_spawn: ({ vendor, cwd }) => { const id = ++nextPaneId; startPane(id, vendor, cwd); return id; },
     pty_write: ({ paneId, data }) => { handleInput(paneId, String(data ?? "")); return null; },
     pty_resize: () => null,
