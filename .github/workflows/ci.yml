@@ -71,6 +71,14 @@ jobs:
         working-directory: e2e
         run: node viewers.mjs
 
+      - name: Review collapse
+        working-directory: e2e
+        run: node review-collapse.mjs
+
+      - name: Chat view
+        working-directory: e2e
+        run: node chat-view.mjs
+
   backend:
     name: Backend (Cargo)
     # The Rust crate calls Win32 APIs (Job Objects, process/thread control),

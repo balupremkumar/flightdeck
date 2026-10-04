@@ -738,6 +738,9 @@ index 3c92f1a..7d40b2e 100644
   // Test hook: make a pane print text (newlines become CRLF).
   window.__mockPrint = (paneId, text) => emit("pty://output", { pane_id: paneId, b64: b64(String(text).replace(/\r?\n/g, "\r\n")) });
 
+  // Test hook: push any backend event (e.g. pty://exit) at the frontend.
+  window.__mockEmit = emit;
+
   window.__FD_MOCK__ = true;
   window.__FD_DEMO__ = true;
   console.log("[fd-demo] interactive Tauri bridge installed");
