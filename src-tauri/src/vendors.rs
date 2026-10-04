@@ -27,6 +27,7 @@ pub const BASE_ENV_STRIP: &[&str] = &[
     "MOONSHOT_API_KEY",
     "OPENAI_API_KEY",
     "CODEX_API_KEY",
+    "OPENAI_BASE_URL",
 ];
 
 /// Proxy / enterprise auth-mode switches. Present here rather than as a TODO:
@@ -139,6 +140,107 @@ fn agy_settings_path() -> Option<std::path::PathBuf> {
 /// only — we never read or parse the user's credentials.
 fn cred_file_present(path: &std::path::Path) -> bool {
     std::fs::metadata(path).map(|m| m.is_file() && m.len() > 0).unwrap_or(false)
+}
+
+/// A2: TOML basic-string escaping (backslash and double quote).
+fn toml_escape(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+/// A2: the `-c key=value` override that marks `cwd` trusted for this launch
+/// only, so Codex's "Trust this folder?" screen never blocks a pane and
+/// nothing is written to the user's config.toml.
+pub fn codex_trust_override(cwd: &str) -> String {
+    format!("projects.\"{}\".trust_level=\"trusted\"", toml_escape(cwd))
+}
+
+/// Quote one argument for the Windows C runtime (CommandLineToArgvW rules):
+/// backslashes before a `"` are doubled, and the `"` itself is backslashed.
+fn win_native_quote(s: &str) -> String {
+    let mut out = String::new();
+    let mut slashes = 0usize;
+    for ch in s.chars() {
+        match ch {
+            '\\' => {
+                slashes += 1;
+                out.push('\\');
+            }
+            '"' => {
+                out.push_str(&"\\".repeat(slashes));
+                out.push_str("\\\"");
+                slashes = 0;
+            }
+            _ => {
+                slashes = 0;
+                out.push(ch);
+            }
+        }
+    }
+    out
+}
+
+/// A2: the pwsh `-Command` text for a Codex pane. `codex` is an npm `.cmd`
+/// shim, and PowerShell passes args to .cmd files in legacy mode, which strips
+/// bare double quotes (verified: `projects."C:\\x"` arrives as `projects.C:\\x`).
+/// So the TOML is native-quoted first (`\"`), then wrapped in a PowerShell
+/// single-quoted string (`'` doubled).
+pub fn codex_command_text(cwd: &str) -> String {
+    let native = win_native_quote(&codex_trust_override(cwd));
+    format!("codex -c '{}'", native.replace('\'', "''"))
+}
+
+/// A3: `codex login status` exit code to auth state. 0 signed in, 1 not.
+pub fn parse_login_status(code: Option<i32>) -> &'static str {
+    match code {
+        Some(0) => "ok",
+        Some(1) => "none",
+        _ => "unknown",
+    }
+}
+
+/// A3: `$CODEX_HOME/auth.json`, defaulting to `~/.codex/auth.json`. Read only;
+/// Flightdeck never sets CODEX_HOME.
+fn codex_auth_path() -> Option<std::path::PathBuf> {
+    match std::env::var("CODEX_HOME") {
+        Ok(h) if !h.trim().is_empty() => Some(std::path::PathBuf::from(h).join("auth.json")),
+        _ => Some(home_dir()?.join(".codex").join("auth.json")),
+    }
+}
+
+/// A3: run `codex login status` (hidden window, 3 s cap) for keyring-stored
+/// credentials. Returns the exit code, or None on spawn failure / timeout.
+/// Blocking, but detect_vendors is `#[tauri::command(async)]` (thread pool).
+fn codex_login_status_code() -> Option<i32> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let mut child = std::process::Command::new("cmd.exe")
+            .args(["/c", "codex", "login", "status"])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .creation_flags(0x08000000) // CREATE_NO_WINDOW
+            .spawn()
+            .ok()?;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        loop {
+            match child.try_wait() {
+                Ok(Some(st)) => return st.code(),
+                Ok(None) if std::time::Instant::now() < deadline => {
+                    std::thread::sleep(std::time::Duration::from_millis(50))
+                }
+                _ => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return None;
+                }
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        None
+    }
 }
 
 fn read_trust_doc(path: &std::path::Path) -> serde_json::Value {
@@ -394,6 +496,47 @@ impl VendorAdapter for Agy {
             Some(h) if cred_file_present(&h.join(".gemini").join("google_accounts.json")) => ("ok", String::new()),
             Some(_) => ("none", "no stored Google sign-in — the pane will ask you to log in on first launch".into()),
             None => ("unknown", String::new()),
+        }
+    }
+}
+
+struct Codex;
+impl VendorAdapter for Codex {
+    fn id(&self) -> &str { "codex" }
+    fn label(&self) -> &str { "Codex CLI" }
+    fn short(&self) -> &str { "Codex" }
+    fn accent(&self) -> &str { "--agent-codex" }
+    fn probe(&self) -> (bool, String) {
+        match which("codex") {
+            Some(p) => (true, p),
+            None => (false, "`codex` not on PATH (npm install -g @openai/codex)".into()),
+        }
+    }
+    fn install(&self) -> (&'static str, &'static str) {
+        ("npm install -g @openai/codex", "https://developers.openai.com/codex/cli")
+    }
+    fn command(&self, cwd: &str) -> CommandBuilder {
+        // Via pwsh so the npm .cmd shim resolves. Trust is granted by a
+        // launch-time -c override, not by editing ~/.codex/config.toml.
+        let mut c = CommandBuilder::new("pwsh.exe");
+        c.args(["-NoLogo", "-NoProfile", "-Command"]);
+        c.arg(codex_command_text(cwd));
+        c.cwd(cwd);
+        c
+    }
+    fn root_exe(&self) -> &str { "pwsh.exe" }
+    fn needs_trust(&self) -> bool { true }
+    // Codex streams reasoning with pauses; same threshold as agy.
+    fn quiet_seconds(&self) -> u32 { 6 }
+    fn auth(&self) -> (&'static str, String) {
+        if codex_auth_path().map(|p| cred_file_present(&p)).unwrap_or(false) {
+            return ("ok", String::new());
+        }
+        // No file: the credential store may be the OS keyring, so ask the CLI.
+        match parse_login_status(codex_login_status_code()) {
+            "ok" => ("ok", String::new()),
+            "none" => ("none", "no Codex sign-in, the pane will show the ChatGPT sign-in screen on first launch".into()),
+            _ => ("unknown", String::new()),
         }
     }
 }
@@ -795,7 +938,7 @@ pub fn manifest_problems() -> Vec<ManifestProblem> {
     let mut out = Vec::new();
     let Some(dir) = manifest_dir() else { return out };
     let Ok(entries) = std::fs::read_dir(&dir) else { return out };
-    let builtin: Vec<String> = vec!["claude", "agy", "pwsh", "cmd", "git-bash", "wsl"]
+    let builtin: Vec<String> = vec!["claude", "agy", "codex", "pwsh", "cmd", "git-bash", "wsl"]
         .into_iter()
         .map(String::from)
         .collect();
@@ -852,6 +995,7 @@ pub fn registry() -> Vec<Box<dyn VendorAdapter>> {
     let mut reg: Vec<Box<dyn VendorAdapter>> = vec![
         Box::new(Claude),
         Box::new(Agy),
+        Box::new(Codex),
         Box::new(Pwsh),
         Box::new(Cmd),
         Box::new(GitBash),
@@ -929,6 +1073,7 @@ mod tests {
             }
         }
         assert!(find("agy").needs_trust(), "agy's prepare() writes trustedWorkspaces");
+        assert!(find("codex").needs_trust(), "codex launches with a trust override");
         assert!(!find("claude").needs_trust(), "claude has no such gate");
         assert!(detect().iter().any(|v| v.needs_trust), "detect() must carry the flag");
     }
@@ -1259,12 +1404,100 @@ mod tests {
         let m: VendorManifest = serde_json::from_str(GOOD).unwrap();
         let v = ManifestVendor::new(m);
         let strip = v.env_strip();
-        assert!(!strip.contains(&"OPENAI_API_KEY"), "explicit key must be exempt");
-        for key in BASE_ENV_STRIP.iter().filter(|k| **k != "OPENAI_API_KEY") {
+        // GOOD declares exactly these two env keys; both are base-stripped keys.
+        let declared = ["OPENAI_API_KEY", "OPENAI_BASE_URL"];
+        for key in declared {
+            assert!(!strip.contains(&key), "explicit key {key} must be exempt");
+        }
+        for key in BASE_ENV_STRIP.iter().filter(|k| !declared.contains(k)) {
             assert!(strip.contains(key), "still strips {key}");
         }
         for key in PROXY_ENV_STRIP {
             assert!(strip.contains(key), "still strips proxy var {key}");
         }
+    }
+
+    // --- codex (A2/A3) ------------------------------------------------------
+
+    #[test]
+    fn codex_trust_override_escapes_toml() {
+        assert_eq!(
+            codex_trust_override(r"C:\Users\a b\p"),
+            r#"projects."C:\\Users\\a b\\p".trust_level="trusted""#
+        );
+        assert_eq!(
+            codex_trust_override(r#"C:\we"ird"#),
+            r#"projects."C:\\we\"ird".trust_level="trusted""#
+        );
+    }
+
+    #[test]
+    fn codex_command_text_survives_pwsh_and_cmd_shim() {
+        // Sample cwd with spaces: TOML quotes are native-escaped (\") inside a
+        // PowerShell single-quoted string.
+        assert_eq!(
+            codex_command_text(r"C:\Users\a b\p"),
+            r#"codex -c 'projects.\"C:\\Users\\a b\\p\".trust_level=\"trusted\"'"#
+        );
+        // A single quote in the path is doubled for PowerShell.
+        assert!(codex_command_text("C:\\o'brien").contains("o''brien"));
+        // Trailing backslash: TOML gives 2, and the run is doubled again to 4
+        // before the closing quote's own backslash.
+        assert!(codex_command_text("C:\\dir\\").contains(r#"dir\\\\\".trust"#));
+        let c = Codex.command(r"C:\a b");
+        let argv: Vec<String> = c.get_argv().iter().map(|a| a.to_string_lossy().into_owned()).collect();
+        assert_eq!(&argv[..4], ["pwsh.exe", "-NoLogo", "-NoProfile", "-Command"]);
+        assert!(argv[4].starts_with("codex -c '"));
+        assert_eq!(argv.len(), 5);
+    }
+
+    #[test]
+    fn codex_login_status_parse_table() {
+        assert_eq!(parse_login_status(Some(0)), "ok");
+        assert_eq!(parse_login_status(Some(1)), "none");
+        assert_eq!(parse_login_status(Some(2)), "unknown");
+        assert_eq!(parse_login_status(Some(127)), "unknown");
+        assert_eq!(parse_login_status(None), "unknown");
+    }
+
+    #[test]
+    fn codex_auth_file_honours_codex_home() {
+        let dir = std::env::temp_dir().join(format!("fd-codex-home-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let prev = std::env::var("CODEX_HOME").ok();
+        std::env::set_var("CODEX_HOME", &dir);
+        assert_eq!(codex_auth_path().unwrap(), dir.join("auth.json"));
+        assert!(!cred_file_present(&codex_auth_path().unwrap()));
+        std::fs::write(dir.join("auth.json"), "{}").unwrap();
+        assert!(cred_file_present(&codex_auth_path().unwrap()));
+        assert_eq!(Codex.auth().0, "ok");
+        match prev {
+            Some(v) => std::env::set_var("CODEX_HOME", v),
+            None => std::env::remove_var("CODEX_HOME"),
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn codex_adapter_identity() {
+        let c = find("codex");
+        assert_eq!((c.id(), c.short(), c.accent(), c.root_exe()), ("codex", "Codex", "--agent-codex", "pwsh.exe"));
+        assert_eq!(c.quiet_seconds(), 6);
+        assert_eq!(c.install().0, "npm install -g @openai/codex");
+        assert!(c.env_strip().contains(&"OPENAI_BASE_URL"));
+    }
+
+    /// Manual: `cargo test -- --ignored codex_probe_live --nocapture` with
+    /// codex installed and CODEX_HOME pointing at an empty dir (signed out).
+    #[test]
+    #[ignore]
+    fn codex_probe_live() {
+        let (installed, detail) = Codex.probe();
+        eprintln!(
+            "installed={installed} detail={detail} auth={:?} code={:?}",
+            Codex.auth(),
+            codex_login_status_code()
+        );
+        assert!(installed);
     }
 }
