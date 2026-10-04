@@ -269,6 +269,14 @@ pub fn load_session(app: AppHandle) -> Result<Option<SessionDoc>, String> {
     read_session_file(&app)
 }
 
+// Pane model ids in session.json, for the post-reload PTY reaper (lib.rs).
+// None means "could not tell" (no file, unreadable, corrupt): the reaper must
+// treat that as unknown, never as an empty doc.
+pub(crate) fn session_pane_ids(app: &AppHandle) -> Option<std::collections::HashSet<u32>> {
+    let doc = read_session_file(app).ok().flatten()?;
+    Some(doc.workspaces.iter().flat_map(|w| w.panes.iter().map(|p| p.id)).collect())
+}
+
 // (80) Independent of safe mode: safe mode only suppresses auto-restore, it
 // doesn't hide that a previous session exists — the UI can still offer a
 // "reopen last session" prompt while safe mode is on.

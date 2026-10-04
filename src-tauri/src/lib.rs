@@ -15,6 +15,7 @@ mod hooks;
 mod job;
 mod orphans;
 mod outbuf;
+mod paneout;
 mod pathcheck;
 mod pathguard;
 mod overlay;
@@ -58,18 +59,28 @@ pub(crate) struct Pane {
     proc_name: Mutex<String>,
     // Claude session pin/resolve state (chatlog.rs).
     session: Mutex<chatlog::SessionState>,
+    // Replay ring + buffer-only switch (paneout.rs). Shared with the pty threads.
+    out: std::sync::Arc<Mutex<paneout::PaneOut>>,
 }
 
 #[derive(Default)]
 pub(crate) struct Registry {
     panes: Mutex<HashMap<u32, Pane>>,
     next_id: Mutex<u32>,
+    // PaneModel id -> live pty (paneout.rs); what pty_attach answers from.
+    by_model: Mutex<paneout::ByModel>,
+    // Bumped on every main-webview load; a reaper pass only acts if it is still
+    // the latest load when its grace period ends.
+    load_gen: AtomicU64,
 }
 
 #[derive(Clone, Serialize)]
 struct OutputPayload {
     pane_id: u32,
     b64: String,
+    /// Ring seq after this chunk. A chunk is inside a pty_attach snapshot iff
+    /// seq <= snapshot.next_seq.
+    seq: u64,
 }
 
 #[derive(Clone, Serialize)]
@@ -171,6 +182,8 @@ fn build_command(
 async fn pty_spawn(
     app: AppHandle,
     reg: State<'_, Registry>,
+    model_id: u32,
+    gen: String,
     vendor: String,
     cwd: String,
     cols: u16,
@@ -247,12 +260,13 @@ async fn pty_spawn(
     // UX-594: output coalescing/backpressure — see outbuf.rs. The reader only
     // buffers; a separate flusher thread (below) is what actually emits.
     let coalescer = std::sync::Arc::new(outbuf::OutputCoalescer::new());
+    let out = std::sync::Arc::new(Mutex::new(paneout::PaneOut::new(cols, rows)));
 
     // Reader thread: blocking read -> coalescer, plus activity bookkeeping.
     // Emitting the output event is the flusher thread's job now, so a flood
     // of small reads can't turn into a flood of IPC events.
-    let (app_r, last_r, waiting_r, alive_r, coal_r) =
-        (app.clone(), last.clone(), waiting.clone(), alive.clone(), coalescer.clone());
+    let (app_r, last_r, waiting_r, alive_r, coal_r, out_r) =
+        (app.clone(), last.clone(), waiting.clone(), alive.clone(), coalescer.clone(), out.clone());
     std::thread::spawn(move || {
         let mut buf = [0u8; 8192];
         loop {
@@ -273,8 +287,7 @@ async fn pty_spawn(
         // last output reaches the frontend BEFORE the exit event — the async
         // flusher thread would otherwise race it by up to one flush interval.
         if let Some(chunk) = coal_r.drain() {
-            let b64 = STANDARD.encode(&chunk);
-            let _ = app_r.emit("pty://output", OutputPayload { pane_id: id, b64 });
+            emit_output(&app_r, &out_r, id, &chunk);
         }
         // Natural-exit path (pty_kill is NOT called here): read the child's exit
         // status to tell a crash from a clean quit, prune the dead pane from the
@@ -290,6 +303,7 @@ async fn pty_spawn(
             panes.remove(&id);
             crashed
         };
+        reg.by_model.lock().unwrap().remove_pty(id);
         let _ = app_r.emit("pty://exit", ExitPayload { pane_id: id, crashed });
     });
 
@@ -314,22 +328,28 @@ async fn pty_spawn(
     // actually producing bytes. ~60fps interval matches the frontend's own
     // per-frame batching, so this never adds perceptible latency in the
     // common case — it only kicks in as backpressure during a real flood.
-    let (app_f, alive_f, coal_f) = (app.clone(), alive.clone(), coalescer.clone());
+    let (app_f, alive_f, coal_f, out_f) = (app.clone(), alive.clone(), coalescer.clone(), out.clone());
     std::thread::spawn(move || {
         const FLUSH_MS: u64 = 16;
         loop {
             std::thread::sleep(Duration::from_millis(FLUSH_MS));
             match coal_f.drain() {
-                Some(chunk) => {
-                    let b64 = STANDARD.encode(&chunk);
-                    let _ = app_f.emit("pty://output", OutputPayload { pane_id: id, b64 });
-                }
+                Some(chunk) => emit_output(&app_f, &out_f, id, &chunk),
                 None if !alive_f.load(Ordering::Relaxed) => break,
                 None => {}
             }
         }
     });
 
+    let (epoch, _, _) = paneout::parse_gen(&gen);
+    let entry = paneout::ModelEntry {
+        pty_id: id,
+        vendor: vendor.clone(),
+        cwd: cwd.clone(),
+        epoch,
+        out: out.clone(),
+        attached: true,
+    };
     reg.panes.lock().unwrap().insert(
         id,
         Pane {
@@ -338,6 +358,7 @@ async fn pty_spawn(
             child,
             vendor,
             cwd: cwd.clone(),
+            out,
             last_cpu_100ns: AtomicU64::new(0),
             last_sample_ms: AtomicU64::new(0),
             proc_name: Mutex::new(root_proc_name),
@@ -350,7 +371,163 @@ async fn pty_spawn(
             }),
         },
     );
+    // One model, one pty. A live predecessor here means a restart whose kill has
+    // not landed yet, or a stray double spawn: reap it so it cannot linger as an
+    // invisible agent.
+    let superseded = reg.by_model.lock().unwrap().insert(model_id, entry);
+    if let Some(old) = superseded {
+        applog::log(
+            "warn",
+            "pty",
+            &format!("pty_spawn for model {model_id} superseded live pty {}; reaping it", old.pty_id),
+        );
+        reap_pane(reg.inner(), old.pty_id);
+    }
     Ok(id)
+}
+
+/// Feed a chunk to the pane's ring and, unless the pane is buffer-only, emit it.
+/// Push and emit happen under one lock so emit order equals seq order and a
+/// concurrent pty_attach snapshot lands cleanly between two chunks.
+fn emit_output(app: &AppHandle, out: &Mutex<paneout::PaneOut>, pane_id: u32, chunk: &[u8]) {
+    let b64 = STANDARD.encode(chunk);
+    let mut o = paneout::lock_out(out);
+    if let Some(seq) = o.push(chunk) {
+        let _ = app.emit("pty://output", OutputPayload { pane_id, b64, seq });
+    }
+}
+
+#[derive(Serialize)]
+struct AttachSnapshot {
+    /// Base64: mode-restoring escapes to write first.
+    head: String,
+    /// Base64: buffered output, starting at a safe cut.
+    body: String,
+    start_seq: u64,
+    next_seq: u64,
+}
+
+#[derive(Serialize)]
+struct AttachInfo {
+    pty_id: u32,
+    snapshot: AttachSnapshot,
+    /// The pty's current size: the snapshot bytes were written at this width.
+    cols: u16,
+    rows: u16,
+    proc_name: String,
+}
+
+/// Reattach to the live pty for this pane model instead of spawning (webview
+/// reload). None when there is none, or its vendor/cwd differ from `gen`.
+/// Async so a 4 MiB snapshot never runs on the main thread.
+#[tauri::command]
+async fn pty_attach(reg: State<'_, Registry>, model_id: u32, gen: String) -> Result<Option<AttachInfo>, String> {
+    let (_, vendor, cwd) = paneout::parse_gen(&gen);
+    let (pty_id, out) = {
+        let mut bm = reg.by_model.lock().unwrap();
+        let Some(e) = bm.lookup(model_id, &vendor, &cwd) else { return Ok(None) };
+        let found = (e.pty_id, e.out.clone());
+        bm.mark_attached(model_id);
+        found
+    };
+    // Snapshot under the PaneOut lock: any chunk is either inside it (its event
+    // seq <= next_seq, which the frontend drops) or after it (delivered live).
+    let (snap, cols, rows) = {
+        let o = paneout::lock_out(&out);
+        (o.snapshot(), o.cols, o.rows)
+    };
+    let proc_name = reg
+        .panes
+        .lock()
+        .unwrap()
+        .get(&pty_id)
+        .map(|p| p.proc_name.lock().unwrap().clone())
+        .unwrap_or_default();
+    Ok(Some(AttachInfo {
+        pty_id,
+        snapshot: AttachSnapshot {
+            head: STANDARD.encode(&snap.head),
+            body: STANDARD.encode(&snap.body),
+            start_seq: snap.start_seq,
+            next_seq: snap.next_seq,
+        },
+        cols,
+        rows,
+        proc_name,
+    }))
+}
+
+fn out_for_model(reg: &Registry, model_id: u32) -> Result<(u32, std::sync::Arc<Mutex<paneout::PaneOut>>), String> {
+    let bm = reg.by_model.lock().unwrap();
+    bm.get(model_id)
+        .map(|e| (e.pty_id, e.out.clone()))
+        .ok_or_else(|| format!("no live pty for pane model {model_id}"))
+}
+
+/// Buffer-only mode for the later workspace transfer: output keeps filling the
+/// ring but is no longer emitted. Returns the seq at which emits stopped.
+#[tauri::command]
+async fn pane_pause(reg: State<'_, Registry>, model_id: u32) -> Result<u64, String> {
+    let (_, out) = out_for_model(reg.inner(), model_id)?;
+    let seq = paneout::lock_out(&out).pause();
+    Ok(seq)
+}
+
+/// Undo pane_pause: live emits resume, preceded by one catch-up chunk holding
+/// whatever arrived while paused.
+#[tauri::command]
+async fn pane_resume(app: AppHandle, reg: State<'_, Registry>, model_id: u32) -> Result<(), String> {
+    let (pty_id, out) = out_for_model(reg.inner(), model_id)?;
+    let mut o = paneout::lock_out(&out);
+    if let Some((bytes, seq)) = o.resume() {
+        let _ = app.emit("pty://output", OutputPayload { pane_id: pty_id, b64: STANDARD.encode(&bytes), seq });
+    }
+    Ok(())
+}
+
+/// Called on every main-webview load. A fresh load has no frontend attached to
+/// anything, so mark every pty unclaimed and, after a grace period, reap the ones
+/// still unclaimed whose model is no longer in the session doc (the pane was
+/// closed, or its workspace is gone). Safe mode never reaps.
+fn on_main_webview_load(app: &AppHandle) {
+    let reg = app.state::<Registry>();
+    reg.by_model.lock().unwrap().mark_all_unattached();
+    let my_gen = reg.load_gen.fetch_add(1, Ordering::SeqCst) + 1;
+    let app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_secs(paneout::REAP_GRACE_SECS));
+        reap_unclaimed(&app, my_gen);
+    });
+}
+
+fn reap_unclaimed(app: &AppHandle, my_gen: u64) {
+    let reg = app.state::<Registry>();
+    if reg.load_gen.load(Ordering::SeqCst) != my_gen {
+        return; // a newer load owns the next pass
+    }
+    let safe = persist::safe_mode_active();
+    let unclaimed = reg.by_model.lock().unwrap().unattached();
+    if unclaimed.is_empty() {
+        return;
+    }
+    if safe {
+        applog::log("info", "pty", &format!("reaper skipped in safe mode ({} unclaimed pty)", unclaimed.len()));
+        return;
+    }
+    let doc = persist::session_pane_ids(app);
+    for (model_id, pty_id) in paneout::reap_targets(&unclaimed, doc.as_ref(), false) {
+        // Re-check: it may have been claimed or replaced since the snapshot.
+        let still = reg.by_model.lock().unwrap().get(model_id).is_some_and(|e| e.pty_id == pty_id && !e.attached);
+        if !still {
+            continue;
+        }
+        applog::log(
+            "warn",
+            "pty",
+            &format!("reaper: killing pty {pty_id} (pane model {model_id}) unclaimed {}s after reload and not in the session doc", paneout::REAP_GRACE_SECS),
+        );
+        reap_pane(reg.inner(), pty_id);
+    }
 }
 
 /// Largest single write handed to the PTY (QL-759). Interactive input is a few
@@ -421,6 +598,7 @@ fn pty_resize(reg: State<Registry>, pane_id: u32, cols: u16, rows: u16) -> Resul
                 pixel_height: 0,
             })
             .map_err(|e| e.to_string())?;
+        paneout::lock_out(&p.out).resized(cols, rows);
     }
     Ok(())
 }
@@ -436,6 +614,7 @@ pub(crate) fn live_pane_ids(reg: &Registry) -> Vec<u32> {
 // (claude/agy/kimi) spawn children that child.kill() alone would orphan, so we
 // taskkill /T the tree. Idempotent: a pane already pruned (natural exit) is a no-op.
 pub(crate) fn reap_pane(reg: &Registry, pane_id: u32) {
+    reg.by_model.lock().unwrap().kill_pty(pane_id);
     if let Some(mut p) = reg.panes.lock().unwrap().remove(&pane_id) {
         let pid = p.child.process_id();
         #[cfg(windows)]
@@ -727,8 +906,16 @@ pub fn run() {
                 .build(),
         )
         .manage(Registry::default())
+        .on_page_load(|webview, payload| {
+            if webview.label() == "main" && matches!(payload.event(), tauri::webview::PageLoadEvent::Started) {
+                on_main_webview_load(webview.app_handle());
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             pty_spawn,
+            pty_attach,
+            pane_pause,
+            pane_resume,
             chatlog::pane_session_info,
             chatlog::session_tail,
             chatlog::session_record,
