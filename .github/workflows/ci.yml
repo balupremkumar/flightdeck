@@ -67,6 +67,10 @@ jobs:
         working-directory: e2e
         run: node links.mjs
 
+      - name: Viewers
+        working-directory: e2e
+        run: node viewers.mjs
+
   backend:
     name: Backend (Cargo)
     # The Rust crate calls Win32 APIs (Job Objects, process/thread control),

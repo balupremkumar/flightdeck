@@ -121,7 +121,8 @@ const clearOverlays = async () => { await page.mouse.move(2, 2); await page.keyb
   await page.waitForTimeout(900);
   const names = await tabs();
   check(names.includes("app.ts"), `(c) Preview tab is app.ts (tabs: ${JSON.stringify(names)})`);
-  const hit = await page.locator(".prv-line-hit").first().textContent().catch(() => null);
+  await page.waitForSelector(".prv-line-hit, .cv-hit", { timeout: 8000 }).catch(() => null); // CodeMirror view marks it cv-hit
+  const hit = await page.locator(".prv-line-hit, .cv-hit").first().textContent().catch(() => null);
   check(hit != null && /line12\b/.test(hit), `(c) highlighted preview line is line 12 (got ${JSON.stringify(hit)})`);
   await clearOverlays();
 }

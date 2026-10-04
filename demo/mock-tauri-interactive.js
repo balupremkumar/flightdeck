@@ -588,6 +588,31 @@ index 3c92f1a..7d40b2e 100644
     });
   }
 
+  // --- Viewer fixtures (e2e/viewers.mjs): one file per Phase 2 viewer ---
+  const VFX = "D:\\Dev\\ai\\vfx\\";
+  const VIEWER_FILES = {
+    [VFX + "data.json"]: JSON.stringify({ name: "flightdeck", version: 2, tags: ["a", "b", "c"], nested: { deep: { value: 42, list: [1, 2, 3] }, flag: true }, empty: null }, null, 2),
+    [VFX + "session.jsonl"]: [
+      { type: "user", message: { role: "user", content: "hello agent" }, timestamp: "2026-10-04T10:00:00Z" },
+      { type: "assistant", message: { role: "assistant", content: "hi there" }, timestamp: "2026-10-04T10:00:02Z" },
+      { type: "summary", summary: "greeting" },
+    ].map((r) => JSON.stringify(r)).join("\n") + "\n",
+    [VFX + "table.csv"]: "name,qty,price\nwidget,10,2.5\ngadget,3,19.99\nsprocket,25,0.75\ncog,7,4\n",
+    [VFX + "doc.md"]: "# Title\n\nIntro paragraph.\n\n## Diagram\n\n```mermaid\ngraph TD\n  A[Start] --> B[End]\n```\n\n## Details\n\nSome text.\n\n### Sub detail\n\nMore text.\n",
+    [VFX + "code.ts"]: Array.from({ length: 30 }, (_, i) => `export const value${i + 1}: number = ${i + 1};`).join("\n") + "\n",
+    [VFX + "app.log"]: [
+      "2026-10-04 10:00:00 INFO  server started",
+      "2026-10-04 10:00:01 WARN  slow request",
+      "2026-10-04 10:00:02 ERROR connection refused",
+      "2026-10-04 10:00:03 DEBUG cache hit",
+    ].join("\n") + "\n",
+  };
+  const OUTSIDE_FX = "C:\\secret\\outside.txt";
+  const viewerFile = (path) => {
+    const k = Object.keys(VIEWER_FILES).find((x) => x.toLowerCase() === normP(path).toLowerCase());
+    return k ? VIEWER_FILES[k] : null;
+  };
+
   // --- Command handlers -------------------------------------------------
   const handlers = {
     // PTY
@@ -608,7 +633,12 @@ index 3c92f1a..7d40b2e 100644
       return hit?.isDir ? [{ name: "notes.md", dir: false }] : [];
     },
     paths_exist: (a) => pathsExist(a),
+    set_read_roots: () => null,
+    fs_stat: ({ path }) => ({ mtime_ms: 1, size: (viewerFile(path) ?? "").length, is_dir: false }),
     fs_read_text_file: ({ path }) => {
+      if (normP(path).toLowerCase() === OUTSIDE_FX.toLowerCase()) throw "outside-read-scope";
+      const vf = viewerFile(path);
+      if (vf !== null) return vf;
       const hit = FIXTURE_BY_KEY.get(normP(path).toLowerCase());
       if (!hit) throw new Error("No such file: " + path);
       if (hit.isDir) throw new Error("Is a directory (os error 21): " + path);
