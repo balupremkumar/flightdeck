@@ -167,9 +167,9 @@ fn build_command(
 }
 
 #[tauri::command]
-fn pty_spawn(
+async fn pty_spawn(
     app: AppHandle,
-    reg: State<Registry>,
+    reg: State<'_, Registry>,
     vendor: String,
     cwd: String,
     cols: u16,
@@ -178,6 +178,16 @@ fn pty_spawn(
     focus_mode: Option<bool>,
 ) -> Result<u32, String> {
     crate::pathguard::check(&cwd)?;
+    // prepare() reads/parses/rewrites a vendor config (e.g. codex config.toml),
+    // so it runs off the main thread. It is awaited before openpty/spawn_command,
+    // so trust is still in place before the agent starts, and nothing else here
+    // (id allocation, registry insert) moves: ordering is unchanged.
+    {
+        let (v, c) = (vendor.clone(), cwd.clone());
+        tauri::async_runtime::spawn_blocking(move || vendors::find(&v).prepare(&c))
+            .await
+            .map_err(|e| e.to_string())?;
+    }
     let pty_system = native_pty_system();
     let pair = pty_system
         .openpty(PtySize {
@@ -189,7 +199,6 @@ fn pty_spawn(
         .map_err(|e| e.to_string())?;
 
     let adapter = vendors::find(&vendor);
-    adapter.prepare(&cwd);
     let spawn_ms = now_ms();
     let (cmd, plan) = build_command(&vendor, &cwd, setup.as_deref(), focus_mode.unwrap_or(false));
     let child = pair
