@@ -1167,11 +1167,19 @@ pub struct SearchHit {
     /// Matching lines found in this session — never more than SEARCH_FILE_CAP,
     /// which is what `truncated` warns about.
     pub session_hits: u64,
+    /// Project folder the transcript belongs to (the line's own `cwd`), so an
+    /// all-projects hit can open a pane in the right place. Empty if unknown.
+    pub cwd: String,
 }
 
 #[derive(Clone, Serialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct SearchResults {
+    /// The time budget or file cap stopped the scan before every transcript was
+    /// looked at; the UI says "partial results".
+    pub partial: bool,
+    /// Set when `regex` was requested and the pattern did not compile.
+    pub error: Option<String>,
     pub hits: Vec<SearchHit>,
     /// A cap stopped the scan — the UI says "first N" rather than implying this
     /// is everything.
@@ -1296,16 +1304,87 @@ fn snippet_around(text: &str, at: usize, needle_len: usize) -> String {
     )
 }
 
-/// One transcript, streamed. `needle` is ASCII-lowercased by the caller.
-fn scan_file_for(path: &Path, needle: &str) -> Vec<SearchHit> {
-    let Ok(f) = std::fs::File::open(path) else { return Vec::new() };
+/// Bytes of one transcript a search will read at most (the newest part).
+const SEARCH_FILE_BYTES: u64 = 64 * 1024 * 1024;
+/// Transcripts looked at in an all-projects search.
+const SEARCH_ALL_FILES: usize = 300;
+/// Wall-clock budget for one search.
+const SEARCH_BUDGET: std::time::Duration = std::time::Duration::from_secs(2);
+/// Largest compiled regex a user pattern may build.
+const SEARCH_REGEX_SIZE: usize = 1 << 20;
+
+#[derive(Clone)]
+pub struct SearchOpts {
+    pub all_projects: bool,
+    pub regex: bool,
+    pub budget: std::time::Duration,
+    pub max_files: usize,
+    pub max_bytes_per_file: u64,
+}
+
+impl Default for SearchOpts {
+    fn default() -> Self {
+        SearchOpts {
+            all_projects: false,
+            regex: false,
+            budget: SEARCH_BUDGET,
+            max_files: SEARCH_ALL_FILES,
+            max_bytes_per_file: SEARCH_FILE_BYTES,
+        }
+    }
+}
+
+enum Matcher {
+    /// ASCII-lowercased literal.
+    Lit(String),
+    Re(regex::Regex),
+}
+
+impl Matcher {
+    /// Cheap raw-line test: could this JSON line contain a hit?
+    fn prefilter(&self, raw: &[u8]) -> bool {
+        match self {
+            Matcher::Lit(n) => find_ci(raw, n.as_bytes()).is_some(),
+            // A regex can't be run on JSON-escaped bytes reliably, so only
+            // spoken lines are worth parsing.
+            Matcher::Re(_) => find_ci(raw, b"\"type\":\"user\"").is_some() || find_ci(raw, b"\"type\":\"assistant\"").is_some(),
+        }
+    }
+    /// (byte offset, byte length) of the first match in `text`.
+    fn find(&self, text: &str) -> Option<(usize, usize)> {
+        match self {
+            Matcher::Lit(n) => find_ci(text.as_bytes(), n.as_bytes()).map(|i| (i, n.len())),
+            Matcher::Re(r) => r.find(text).map(|m| (m.start(), m.end() - m.start())),
+        }
+    }
+    fn key(&self) -> String {
+        match self {
+            Matcher::Lit(n) => n.clone(),
+            Matcher::Re(r) => format!("re:{}", r.as_str()),
+        }
+    }
+}
+
+/// One transcript, streamed. Returns (hits, complete). `complete` is false when
+/// the deadline stopped the scan, in which case the result must not be cached.
+fn scan_file_for(path: &Path, m: &Matcher, deadline: std::time::Instant, max_bytes: u64) -> (Vec<SearchHit>, bool) {
+    let Ok(mut f) = std::fs::File::open(path) else { return (Vec::new(), true) };
     let session_id = path
         .file_stem()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_default();
+    // Over the cap: read only the newest max_bytes and drop the cut first line.
+    let len = f.metadata().map(|m| m.len()).unwrap_or(0);
+    let skip_first = len > max_bytes;
+    if skip_first && f.seek(SeekFrom::Start(len - max_bytes)).is_err() {
+        return (Vec::new(), true);
+    }
     let mut reader = std::io::BufReader::with_capacity(256 * 1024, f);
     let mut buf: Vec<u8> = Vec::new();
     let mut hits: Vec<SearchHit> = Vec::new();
+    let mut complete = true;
+    let mut first = true;
+    let mut lines = 0u32;
     loop {
         buf.clear();
         match std::io::BufRead::read_until(&mut reader, b'\n', &mut buf) {
@@ -1313,24 +1392,36 @@ fn scan_file_for(path: &Path, needle: &str) -> Vec<SearchHit> {
             Ok(_) => {}
             Err(_) => break,
         }
+        lines = lines.wrapping_add(1);
+        if lines % 128 == 0 && std::time::Instant::now() >= deadline {
+            complete = false;
+            break;
+        }
+        if first {
+            first = false;
+            if skip_first {
+                continue;
+            }
+        }
         // Pre-filter on the raw line: no match in the bytes means no match in
-        // any field, so serde never runs. (A query containing characters JSON
-        // escapes — a quote, a backslash, a newline — won't match; that's the
+        // any field, so serde never runs. (A literal containing characters JSON
+        // escapes, a quote, a backslash, a newline, won't match; that's the
         // price of not parsing 110 MB.)
-        if find_ci(&buf, needle.as_bytes()).is_none() {
+        if !m.prefilter(&buf) {
             continue;
         }
         let line = String::from_utf8_lossy(&buf);
         let Ok(v) = serde_json::from_str::<serde_json::Value>(line.trim()) else { continue };
         let Some((role, text)) = message_text(&v) else { continue };
         // The raw line matched, but maybe only inside a tool payload.
-        let Some(at) = find_ci(text.as_bytes(), needle.as_bytes()) else { continue };
+        let Some((at, n)) = m.find(&text) else { continue };
         hits.push(SearchHit {
             session_id: session_id.clone(),
             timestamp_ms: v.get("timestamp").and_then(|t| t.as_str()).and_then(iso_ms).unwrap_or(0),
             role,
-            snippet: snippet_around(&text, at, needle.len()),
+            snippet: snippet_around(&text, at, n),
             session_hits: 0, // filled in below, once the file's total is known
+            cwd: v.get("cwd").and_then(|c| c.as_str()).unwrap_or("").to_string(),
         });
         if hits.len() >= SEARCH_FILE_CAP {
             break;
@@ -1341,25 +1432,28 @@ fn scan_file_for(path: &Path, needle: &str) -> Vec<SearchHit> {
     for h in &mut hits {
         h.session_hits = n;
     }
-    hits
+    (hits, complete)
 }
 
 /// `scan_file_for` behind the mtime+size cache. The scan itself runs outside
 /// the lock so a slow file can't block another pane's search.
-fn search_file(path: &Path, needle: &str) -> Vec<SearchHit> {
-    let Ok(meta) = std::fs::metadata(path) else { return Vec::new() };
+fn search_file(path: &Path, m: &Matcher, deadline: std::time::Instant, max_bytes: u64) -> (Vec<SearchHit>, bool) {
+    let Ok(meta) = std::fs::metadata(path) else { return (Vec::new(), true) };
     let (len, mtime) = (meta.len(), modified_ms(path));
-    let key = (path.to_path_buf(), needle.to_string());
+    let key = (path.to_path_buf(), m.key());
     {
         let mut cache = search_cache().lock().unwrap();
         if let Some(e) = cache.get_mut(&key) {
             if e.modified_ms == mtime && e.len == len {
                 e.used = search_tick();
-                return e.hits.clone();
+                return (e.hits.clone(), true);
             }
         }
     }
-    let hits = scan_file_for(path, needle);
+    let (hits, complete) = scan_file_for(path, m, deadline, max_bytes);
+    if !complete {
+        return (hits, false);
+    }
     let mut cache = search_cache().lock().unwrap();
     if cache.len() >= SEARCH_CACHE_CAP && !cache.contains_key(&key) {
         if let Some(oldest) = cache.iter().min_by_key(|(_, e)| e.used).map(|(k, _)| k.clone()) {
@@ -1367,41 +1461,76 @@ fn search_file(path: &Path, needle: &str) -> Vec<SearchHit> {
         }
     }
     cache.insert(key, SearchEntry { modified_ms: mtime, len, hits: hits.clone(), used: search_tick() });
-    hits
+    (hits, true)
 }
 
-/// Every session in `cwd`'s project dir searched for `query`, newest session
-/// first. Empty (never an error) for no transcript dir, or for a query too
-/// short to mean anything.
-pub fn search_sessions(projects_root: &Path, cwd: &str, query: &str) -> SearchResults {
-    let needle = query.trim().to_ascii_lowercase();
-    if needle.chars().count() < MIN_QUERY_CHARS {
+fn jsonl_in(dir: &Path, out: &mut Vec<(PathBuf, u64)>) {
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    for p in entries.filter_map(|e| e.ok()).map(|e| e.path()) {
+        if p.extension().map(|x| x == "jsonl").unwrap_or(false) {
+            let ms = modified_ms(&p);
+            out.push((p, ms));
+        }
+    }
+}
+
+/// Sessions searched for `query`, newest session first: `cwd`'s project dir, or
+/// every project under `projects_root` with `opts.all_projects`. Empty (never an
+/// error) for no transcript dir or a query too short to mean anything; a bad
+/// regex comes back in `error`.
+pub fn search_sessions_with(projects_root: &Path, cwd: &str, query: &str, opts: &SearchOpts) -> SearchResults {
+    let q = query.trim();
+    if q.chars().count() < MIN_QUERY_CHARS {
         return SearchResults::default();
     }
-    let dir = projects_root.join(slugify(cwd));
-    let Ok(entries) = std::fs::read_dir(&dir) else { return SearchResults::default() };
-    let mut files: Vec<(PathBuf, u64)> = entries
-        .filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .filter(|p| p.extension().map(|x| x == "jsonl").unwrap_or(false))
-        .map(|p| {
-            let ms = modified_ms(&p);
-            (p, ms)
-        })
-        .collect();
+    let matcher = if opts.regex {
+        match regex::RegexBuilder::new(q).case_insensitive(true).size_limit(SEARCH_REGEX_SIZE).build() {
+            Ok(r) => Matcher::Re(r),
+            Err(e) => {
+                let msg = e.to_string().lines().last().unwrap_or("invalid regex").trim().to_string();
+                return SearchResults { error: Some(msg), ..Default::default() };
+            }
+        }
+    } else {
+        Matcher::Lit(q.to_ascii_lowercase())
+    };
+    let deadline = std::time::Instant::now() + opts.budget;
+    let mut files: Vec<(PathBuf, u64)> = Vec::new();
+    if opts.all_projects {
+        if let Ok(dirs) = std::fs::read_dir(projects_root) {
+            for d in dirs.filter_map(|e| e.ok()).map(|e| e.path()).filter(|p| p.is_dir()) {
+                jsonl_in(&d, &mut files);
+            }
+        }
+    } else {
+        jsonl_in(&projects_root.join(slugify(cwd)), &mut files);
+    }
     // Same order and same window as the picker's list, so every hit belongs to
     // a session the launcher can also show a row for.
     files.sort_by(|a, b| b.1.cmp(&a.1));
-    files.truncate(LIST_CAP);
-
+    let cap = if opts.all_projects { opts.max_files } else { LIST_CAP };
     let mut out = SearchResults::default();
+    if files.len() > cap {
+        files.truncate(cap);
+        if opts.all_projects {
+            out.partial = true;
+        }
+    }
+
     for (p, _) in &files {
         if out.hits.len() >= SEARCH_CAP {
             out.truncated = true;
             break;
         }
+        if std::time::Instant::now() >= deadline {
+            out.partial = true;
+            break;
+        }
         out.sessions_searched += 1;
-        let mut hits = search_file(p, &needle);
+        let (mut hits, complete) = search_file(p, &matcher, deadline, opts.max_bytes_per_file);
+        if !complete {
+            out.partial = true;
+        }
         if hits.len() >= SEARCH_FILE_CAP {
             out.truncated = true;
         }
@@ -1410,15 +1539,29 @@ pub fn search_sessions(projects_root: &Path, cwd: &str, query: &str) -> SearchRe
             hits.truncate(room);
             out.truncated = true;
         }
+        for h in &mut hits {
+            if h.cwd.is_empty() && !opts.all_projects {
+                h.cwd = cwd.to_string();
+            }
+        }
         out.hits.append(&mut hits);
     }
     out
 }
 
-#[tauri::command(async)]
-pub fn search_claude_sessions(cwd: String, query: String) -> SearchResults {
-    let Ok(home) = std::env::var("USERPROFILE") else { return SearchResults::default() };
-    search_sessions(&Path::new(&home).join(".claude").join("projects"), &cwd, &query)
+pub fn search_sessions(projects_root: &Path, cwd: &str, query: &str) -> SearchResults {
+    search_sessions_with(projects_root, cwd, query, &SearchOpts::default())
+}
+
+#[tauri::command]
+pub async fn search_claude_sessions(cwd: String, query: String, all_projects: bool, regex: bool) -> SearchResults {
+    tauri::async_runtime::spawn_blocking(move || {
+        let Ok(home) = std::env::var("USERPROFILE") else { return SearchResults::default() };
+        let opts = SearchOpts { all_projects, regex, ..Default::default() };
+        search_sessions_with(&Path::new(&home).join(".claude").join("projects"), &cwd, &query, &opts)
+    })
+    .await
+    .unwrap_or_default()
 }
 
 // ---------------------------------------------------------------------------
@@ -1509,6 +1652,9 @@ const WEEK_MS: u64 = 7 * 24 * 3_600_000;
 const HOUR_MS: u64 = 3_600_000;
 /// Per-file first read ceiling (tail), so one monster transcript can't stall a poll.
 const QUOTA_FIRST_READ_CAP: u64 = 64 * 1024 * 1024;
+/// Only transcripts touched this recently are scanned: the weekly window plus a
+/// day of margin.
+const QUOTA_SCAN_MS: u64 = 8 * 24 * 3_600_000;
 
 #[derive(Clone, Serialize, Default, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -1728,7 +1874,7 @@ fn quota_files(dir: &Path, depth: u32, min_mtime: std::time::SystemTime, out: &m
 
 fn plan_usage_with(st: &mut QuotaState, projects_root: &Path, now: u64) -> Option<PlanUsage> {
     let cutoff = now.saturating_sub(WEEK_MS);
-    let min_mtime = std::time::UNIX_EPOCH + std::time::Duration::from_millis(cutoff);
+    let min_mtime = std::time::UNIX_EPOCH + std::time::Duration::from_millis(now.saturating_sub(QUOTA_SCAN_MS));
     let mut files = Vec::new();
     quota_files(projects_root, 0, min_mtime, &mut files);
     for f in &files {
@@ -2770,6 +2916,131 @@ mod tests {
         // A subagent transcript counts toward the same window.
         std::fs::write(proj.join("s1").join("subagents").join("agent-1.jsonl"), format!("{}\n", quota_asst("2026-10-05T00:30:00.000Z", "c", 1, 1))).unwrap();
         assert_eq!(plan_usage_with(&mut st, &root, now).unwrap().five_hour.used_tokens, 117);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // --- session search: scope, regex, caps -------------------------------
+
+    fn user_cwd(cwd: &str, text: &str) -> String {
+        let c = cwd.replace('\\', "\\\\");
+        format!(r#"{{"type":"user","cwd":"{c}","timestamp":"2026-08-11T01:00:00.000Z","message":{{"role":"user","content":"{text}"}}}}"#)
+    }
+
+    fn write_session(root: &Path, cwd: &str, name: &str, lines: &[String]) -> PathBuf {
+        let dir = root.join(slugify(cwd));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join(format!("{name}.jsonl"));
+        std::fs::write(&f, lines.join("\n") + "\n").unwrap();
+        f
+    }
+
+    #[test]
+    fn all_projects_scope_finds_other_folders_and_reports_their_cwd() {
+        let root = temp_root();
+        let (a, b) = ("D:\\proj\\a", "D:\\proj\\b");
+        write_session(&root, a, "sa", &[user_cwd(a, "the zanzibar plan")]);
+        write_session(&root, b, "sb", &[user_cwd(b, "zanzibar elsewhere")]);
+
+        let here = search_sessions(&root, a, "zanzibar");
+        assert_eq!(here.hits.len(), 1);
+        assert_eq!(here.hits[0].cwd, a);
+
+        let all = search_sessions_with(&root, a, "zanzibar", &SearchOpts { all_projects: true, ..Default::default() });
+        assert_eq!(all.hits.len(), 2);
+        assert!(!all.partial);
+        let mut cwds: Vec<_> = all.hits.iter().map(|h| h.cwd.clone()).collect();
+        cwds.sort();
+        assert_eq!(cwds, vec![a.to_string(), b.to_string()]);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn regex_mode_matches_patterns_and_reports_bad_ones() {
+        let root = temp_root();
+        let cwd = "D:\\proj\\re";
+        write_session(&root, cwd, "s1", &[
+            user_cwd(cwd, "ticket QL-771 is open"),
+            user_cwd(cwd, "ticket QL-nope is open"),
+            user_cwd(cwd, "nothing here"),
+        ]);
+        let re = SearchOpts { regex: true, ..Default::default() };
+        let res = search_sessions_with(&root, cwd, r"QL-\d+", &re);
+        assert_eq!(res.hits.len(), 1);
+        assert_eq!(res.hits[0].snippet, "ticket QL-771 is open");
+        // The same text as a literal does not match.
+        assert!(search_sessions(&root, cwd, r"QL-\d+").hits.is_empty());
+
+        let bad = search_sessions_with(&root, cwd, "(unclosed", &re);
+        assert!(bad.hits.is_empty());
+        assert!(bad.error.is_some());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn search_caps_flag_partial_results() {
+        let root = temp_root();
+        for i in 0..3 {
+            let cwd = format!("D:\\proj\\cap{i}");
+            write_session(&root, &cwd, &format!("s{i}"), &[user_cwd(&cwd, "capword here")]);
+        }
+        // File cap.
+        let capped = search_sessions_with(&root, "", "capword", &SearchOpts { all_projects: true, max_files: 2, ..Default::default() });
+        assert!(capped.partial);
+        assert_eq!(capped.sessions_searched, 2);
+        // Time budget already spent.
+        let timed = search_sessions_with(&root, "", "capword", &SearchOpts { all_projects: true, budget: std::time::Duration::ZERO, ..Default::default() });
+        assert!(timed.partial);
+        assert!(timed.hits.is_empty());
+        // Unbounded run is complete.
+        let full = search_sessions_with(&root, "", "capword", &SearchOpts { all_projects: true, ..Default::default() });
+        assert!(!full.partial);
+        assert_eq!(full.hits.len(), 3);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn oversized_transcript_is_read_from_its_tail_only() {
+        let root = temp_root();
+        let cwd = "D:\\proj\\big";
+        let late = user_cwd(cwd, "bigword late");
+        write_session(&root, cwd, "s1", &[
+            user_cwd(cwd, "bigword early"),
+            user_cwd(cwd, "filler filler filler filler filler filler"),
+            late.clone(),
+        ]);
+        let opts = SearchOpts { max_bytes_per_file: late.len() as u64 + 10, ..Default::default() };
+        let res = search_sessions_with(&root, cwd, "bigword", &opts);
+        assert_eq!(res.hits.len(), 1);
+        assert_eq!(res.hits[0].snippet, "bigword late");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn first_scan_skips_transcripts_older_than_eight_days() {
+        let root = temp_root();
+        let proj = root.join(slugify("D:\\proj\\q"));
+        std::fs::create_dir_all(&proj).unwrap();
+        let now = iso_ms("2026-10-05T01:00:00.000Z").unwrap();
+        let line = format!("{}\n", quota_asst("2026-10-05T00:10:00.000Z", "a", 10, 5));
+        let at = |ms: u64| std::time::UNIX_EPOCH + std::time::Duration::from_millis(ms);
+        let day = 24 * 3_600_000u64;
+        let stale = proj.join("stale.jsonl");
+        let edge = proj.join("edge.jsonl");
+        std::fs::write(&stale, &line).unwrap();
+        std::fs::write(&edge, &line).unwrap();
+        std::fs::File::options().write(true).open(&stale).unwrap().set_modified(at(now - 9 * day)).unwrap();
+        std::fs::File::options().write(true).open(&edge).unwrap().set_modified(at(now - 7 * day - day / 2)).unwrap();
+
+        let mut st = QuotaState::default();
+        plan_usage_with(&mut st, &root, now);
+        assert!(!st.files.contains_key(&stale), "9-day-old file is never opened");
+        assert!(st.files.contains_key(&edge), "inside the 8-day margin it is scanned");
+
+        // Incremental cache still works: a second pass reads nothing new.
+        let off = st.files[&edge].offset;
+        plan_usage_with(&mut st, &root, now);
+        assert_eq!(st.files[&edge].offset, off);
+        assert_eq!(st.events.len(), 1);
         let _ = std::fs::remove_dir_all(&root);
     }
 
