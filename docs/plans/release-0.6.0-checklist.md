@@ -29,3 +29,7 @@ Each phase's red team adds its items here; the final release note links this fil
 
 - [ ] New Claude pane opens in Chat; the folder trust prompt is reachable via "Switch to Terminal".
 - [ ] Focus mode pane: permission prompt and an AskUserQuestion dialog are still visible in Claude's focus view.
+- [ ] Never run through pwsh yet (agent sandbox blocked it): a Claude pane launches with `--settings '<app-data>\claude-view\claude-view-focus.json'`; also with the setup wrapper on (double quoting). Quick check from a plain PowerShell window: `pwsh -NoProfile -Command "claude --settings '<that path>' --version"` prints the version.
+- [ ] Focus pane: Ctrl+O shows the full transcript; `/focus off` inside the pane still works.
+- [ ] After `/focus` in one pane, a classic pane still shows full output.
+- [ ] `<app-data>\claude-view\` holds the two files; nothing under `~/.claude` changed.
