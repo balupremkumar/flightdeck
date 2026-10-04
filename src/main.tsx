@@ -9,6 +9,7 @@ import { useVendors, armVendorHotReload, vendorShort } from "./vendors";
 import { runWorktreeGc } from "./worktrees";
 import { startAutosave, offerSessionRestore, crashedLastRun, armCleanExitSentinel, lastRestoreReport } from "./session";
 import { armGlobalErrorLog } from "./applog";
+import { syncReadRoots } from "./readscope";
 
 // Flight recorder catch-alls FIRST: a throw or rejection anywhere in the boot
 // sequence below must reach the on-disk log (the v0.5.3 failure didn't).
@@ -25,6 +26,8 @@ armVendorHotReload();
 // the same session doc for its keep-list, so order isn't load-bearing, but
 // restore-first keeps the worktree reattach path cheap (dir usually intact).
 startAutosave();
+// Read scope: tell Rust which folders content reads may touch (readscope.rs).
+syncReadRoots();
 // UI-197: read the sentinel BEFORE arming it for this run, then offer the
 // support bundle while the evidence from the bad run is still on disk.
 const didCrash = crashedLastRun();
