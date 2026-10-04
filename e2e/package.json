@@ -1,0 +1,13 @@
+{
+  "name": "flightdeck-e2e",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Browser e2e tests against the Vite dev server on :1420 with the demo mock backend.",
+  "scripts": {
+    "test": "node reflow-keeps-agents.mjs"
+  },
+  "devDependencies": {
+    "playwright": "^1.48.0"
+  }
+}

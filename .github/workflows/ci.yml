@@ -20,6 +20,51 @@ jobs:
 
       - run: npm ci
       - run: npm run test
+      # tsc && vite build: catches type errors and case-colliding imports
+      # that vitest alone misses.
+      - run: npm run build
+
+  e2e:
+    name: Browser e2e (Playwright)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+      # demo/ owns pane-smoke.mjs; skip its postinstall (ffmpeg download).
+      - run: npm ci --ignore-scripts
+        working-directory: demo
+      - run: npm install --no-audit --no-fund
+        working-directory: e2e
+      - run: npx playwright install --with-deps chromium
+        working-directory: e2e
+      - run: npx playwright install chromium
+        working-directory: demo
+
+      - name: Start Vite dev server
+        run: |
+          nohup npx vite --port 1420 --strictPort > vite.log 2>&1 &
+          for i in $(seq 1 60); do
+            curl -sf http://localhost:1420 > /dev/null && exit 0
+            sleep 1
+          done
+          cat vite.log
+          exit 1
+
+      - name: Pane smoke
+        working-directory: demo
+        run: node pane-smoke.mjs
+
+      # R1 fix pending; remove when qol/p0-r1 merges
+      - name: Reflow keeps agents (R1)
+        continue-on-error: true
+        working-directory: e2e
+        run: node reflow-keeps-agents.mjs
 
   backend:
     name: Backend (Cargo)
