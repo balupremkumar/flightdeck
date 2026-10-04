@@ -746,3 +746,9 @@
 
 /* Shortcut hint on a pane-menu row (QL-754). */
 .pmenu-key { margin-left: auto; font-size: 10.5px; color: var(--faint); white-space: nowrap; }
+
+/* Pane header Terminal | Chat toggle */
+.pview-seg { display: inline-flex; border: 1px solid var(--line-strong); border-radius: 7px; overflow: hidden; flex: none; }
+.pview-seg button { background: transparent; border: 0; padding: 1px 8px; font-size: 11.5px; color: var(--muted); cursor: pointer; }
+.pview-seg button.on { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--text); }
+.pview-seg button:focus-visible { outline: 2px solid var(--ice); outline-offset: -2px; }

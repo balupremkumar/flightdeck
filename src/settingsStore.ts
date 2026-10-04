@@ -172,6 +172,7 @@ export const FIXED_SHORTCUTS: ShortcutDef[] = [
   { id: "focus-pane-n", label: "Focus pane 1-9 in this workspace", combo: "Alt+1..9" },
   { id: "focus-pane-arrows", label: "Move pane focus", combo: "Ctrl+Alt+Arrows" },
   { id: "close-pane", label: "Close the focused pane", combo: "Ctrl+W" },
+  { id: "toggle-chat-view", label: "Toggle Terminal / Chat view (Claude pane)", combo: "Ctrl+Shift+M" },
   { id: "close-workspace", label: "Close the active workspace", combo: "Ctrl+Shift+W" },
   { id: "zoom-in", label: "Zoom in (whole app)", combo: "Ctrl+=" },
   { id: "zoom-out", label: "Zoom out (whole app)", combo: "Ctrl+-" },

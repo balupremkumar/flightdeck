@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, memo, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { revealPath } from "./reveal";
 import { useApp, registerPaneSend, unregisterPaneSend, type PaneModel, type PaneState } from "./store";
@@ -14,6 +14,9 @@ import { cachedInvoke, usePoll, useVisible, usePaneMemory } from "./poll";
 import { compact, num, duration, bytes, relTime, tailEllipsis } from "./format";
 import { stateSince, lastLine, isOpenQuestion, STATE_LABEL as STATE_TITLE } from "./attention";
 import "./panes.css";
+
+// Phase 3: the chat view is its own chunk, fetched the first time a pane opens it.
+const ChatView = lazy(() => import("./ChatView"));
 
 import { vendorShort, vendorMeta, vendorColor } from "./vendors";
 import { VendorGlyph } from "./VendorGlyph";
@@ -656,6 +659,41 @@ function PaneViewInner({
   // Code transcripts the chip above reads — so both are Claude-only, and a pane
   // running anything else never calls either command.
   const isClaude = pane.vendor === RESUME_VENDOR;
+  // Phase 3 chat view: Claude panes only. The terminal stays mounted (and keeps
+  // receiving output) underneath; chat is an overlay inside .pbody.
+  const setPaneView = useApp((s) => s.setPaneView);
+  const setPaneFocusMode = useApp((s) => s.setPaneFocusMode);
+  const view = isClaude && pane.view === "chat" ? "chat" : "terminal";
+  const switchView = (v: "terminal" | "chat") => {
+    setPaneView(pane.id, v);
+    if (v === "terminal") requestAnimationFrame(() => getPaneSession(pane.id)?.term.focus());
+  };
+  const switchViewRef = useRef(switchView);
+  switchViewRef.current = () => switchView(view === "chat" ? "terminal" : "chat");
+  // Ctrl+Shift+M toggles the focused Claude pane. (Ctrl+Shift+V is the
+  // terminal paste convention, so it is left alone.)
+  useEffect(() => {
+    if (!focused || !isClaude) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey && (e.key === "M" || e.key === "m")) {
+        e.preventDefault();
+        e.stopPropagation();
+        switchViewRef.current("terminal");
+      }
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [focused, isClaude]);
+  const toggleFocusMode = () => {
+    setMenuOpen(false);
+    const on = !pane.focusMode;
+    requestConfirm({
+      title: on ? "Turn on Focus mode?" : "Turn off Focus mode?",
+      body: "Restarts this Claude pane. The running session ends and Claude relaunches " + (on ? "in its fullscreen renderer." : "in the classic view."),
+      confirmLabel: "Restart pane",
+      onConfirm: () => setPaneFocusMode(pane.id, on),
+    });
+  };
   const [subCount, setSubCount] = useState<SubagentCount | null>(null);
   const [subagentsOpen, setSubagentsOpen] = useState(false);
   const [subagentPos, setSubagentPos] = useState<{ top: number; left: number } | null>(null);
@@ -1062,6 +1100,12 @@ Running low — consider /compact in this pane.` : "")
             <em className="del">−{diffStat.deleted}</em>
           </button>
         )}
+        {isClaude && (
+          <div className="pview-seg" role="group" aria-label="Pane view">
+            <button className={view === "terminal" ? "on" : ""} aria-pressed={view === "terminal"} onClick={() => switchView("terminal")} title="Terminal view">Terminal</button>
+            <button className={view === "chat" ? "on" : ""} aria-pressed={view === "chat"} onClick={() => switchView("chat")} title="Chat view (Ctrl+Shift+M)">Chat</button>
+          </div>
+        )}
         <span className="sp" />
         {dead && (
           <button
@@ -1104,6 +1148,11 @@ Running low — consider /compact in this pane.` : "")
               <button className="pmenu-item" onClick={() => { restartPane(pane.id); closeMenu(); }}>
                 <IconRefresh size={13} /> Restart
               </button>
+              {isClaude && (
+                <button className="pmenu-item" role="menuitemcheckbox" aria-checked={!!pane.focusMode} onClick={toggleFocusMode}>
+                  {pane.focusMode ? "✓ " : ""}Focus mode (Claude fullscreen)
+                </button>
+              )}
               <button className="pmenu-item" onClick={() => { onToggleMaximize(pane.id); closeMenu(); }}>
                 {maximized ? <IconMinimize size={13} /> : <IconMaximizePane size={13} />}
                 {maximized ? "Restore" : "Maximise"}
@@ -1268,7 +1317,7 @@ Running low — consider /compact in this pane.` : "")
             ↓ {behind > 999 ? "999+" : behind} new
           </button>
         )}
-        {searchOpen && (
+        {searchOpen && view === "terminal" && (
           <div className="pfind">
             <IconSearch size={12} />
             <input
@@ -1300,6 +1349,7 @@ Running low — consider /compact in this pane.` : "")
           ref={terminalRef}
           modelId={pane.id}
           epoch={pane.epoch}
+          focusMode={isClaude && !!pane.focusMode}
           vendor={pane.vendor}
           cwd={pane.cwd}
           initialDraft={pane.draft}
@@ -1321,6 +1371,18 @@ Running low — consider /compact in this pane.` : "")
           onScrollAway={setBehind}
           onProgress={setProgress}
         />
+        {view === "chat" && (
+          <Suspense fallback={<div role="status" style={{ position: "absolute", inset: 0, zIndex: 4, display: "grid", placeItems: "center", background: "var(--surface)", color: "var(--muted)", fontSize: 12.5 }}>Loading chat...</div>}>
+            <ChatView
+              paneId={pane.id}
+              cwd={pane.cwd}
+              epoch={pane.epoch}
+              paneState={pane.state}
+              active={paneVisible}
+              onSwitchToTerminal={() => switchView("terminal")}
+            />
+          </Suspense>
+        )}
       </div>
       {ctxMenu && createPortal(
         <div
