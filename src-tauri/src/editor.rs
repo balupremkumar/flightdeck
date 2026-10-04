@@ -150,6 +150,12 @@ pub fn launch_editor(program: String, args: Vec<String>) -> Result<(), String> {
     if program.trim().is_empty() {
         return Err("no editor command is configured".to_string());
     }
+    // Backstop: the frontend refuses network file paths, but a direct invoke or
+    // a network program path set in Settings would otherwise reach the OS.
+    crate::pathguard::check(&program)?;
+    for a in &args {
+        crate::pathguard::check(a)?;
+    }
     let resolved = resolve_program(&program).unwrap_or_else(|| PathBuf::from(&program));
     spawn(&resolved, &args).map_err(|e| spawn_error_message(&program, &e))
 }

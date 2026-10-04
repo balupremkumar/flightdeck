@@ -29,6 +29,10 @@ pub fn is_remote_or_device(p: &Path) -> bool {
 
 pub fn is_remote_or_device_str(s: &str) -> bool {
     let s = s.trim_start();
+    // NT namespace prefix (`\??\UNC\host`): Win32 path conversion honours it.
+    if s.replace('/', "\\").starts_with("\\??\\") {
+        return true;
+    }
     let mut it = s.chars();
     matches!((it.next(), it.next()), (Some('/' | '\\'), Some('/' | '\\')))
 }
@@ -64,6 +68,7 @@ mod tests {
             r"/\\server\share",
             r"\\?\UNC\server\share\x",
             r"\\?\C:\x",
+            r"\??\UNC\server\share\x",
             r"\\.\pipe\x",
             "//server/share",
             r"\\server\share",

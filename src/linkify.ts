@@ -87,7 +87,8 @@ const INNER_SUFFIX_RE =
 export function isRemotePath(s: string): boolean {
   let d = s.trimStart();
   try { d = decodeURIComponent(d); } catch { d = d.replace(/%5C/gi, "\\").replace(/%2F/gi, "/"); }
-  return d.replace(/\//g, "\\").startsWith("\\\\");
+  const b = d.replace(/\//g, "\\");
+  return b.startsWith("\\\\") || b.startsWith("\\??\\"); // UNC, device, NT namespace
 }
 
 const PUNCT_END_RE =/[.,;!?]+$/;

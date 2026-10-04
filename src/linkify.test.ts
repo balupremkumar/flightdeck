@@ -455,7 +455,7 @@ describe("isRemotePath", () => {
   const remote = [
     "\\\\srv\\share\\x.txt", "//srv/share/x.txt", "/\\srv\\share\\x.txt", "\\/srv/share/x.txt",
     "%5C%5Csrv%5Cshare", "/%5Csrv/share/x.txt", "%2F%2Fsrv/x", "\\\\?\\UNC\\srv\\share\\x", "\\\\.\\pipe\\foo",
-    "//?/UNC/srv/share", "/\\localhost/c$/Windows/win.ini", "%5c%5cSRV",
+    "//?/UNC/srv/share", "/\\localhost/c$/Windows/win.ini", "%5c%5cSRV", "\\??\\UNC\\srv\\share", "/??/UNC/srv/share",
   ];
   for (const r of remote) it(`rejects ${r}`, () => expect(isRemotePath(r)).toBe(true));
   const local = ["C:\\Users\\x\\a.md", "C:/Users/x", "/home/me/a.md", "src/a.ts", "~/a", ".\\a", "100%.md", "%TEMP%\\a", "\\a", "/a"];

@@ -2,14 +2,39 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Capability for the main window",
-  "windows": ["main"],
+  "windows": [
+    "main"
+  ],
   "permissions": [
     "core:default",
     "opener:default",
     {
       "identifier": "opener:allow-open-path",
-      "allow": [{ "path": "**" }],
-      "deny": [{ "path": "\\\\**" }, { "path": "\\\\?\\UNC\\**" }, { "path": "//**" }]
+      "allow": [
+        {
+          "path": "**"
+        }
+      ],
+      "deny": [
+        {
+          "path": "\\\\**"
+        },
+        {
+          "path": "\\\\?\\UNC\\**"
+        },
+        {
+          "path": "//**"
+        },
+        {
+          "path": "/\\**"
+        },
+        {
+          "path": "\\/**"
+        },
+        {
+          "path": "\\??\\**"
+        }
+      ]
     },
     "dialog:allow-open",
     "dialog:allow-save",
