@@ -22,7 +22,7 @@ const mock = readFileSync(path.join(here, "..", "demo", "mock-tauri-interactive.
 const boot = `localStorage.setItem("flightdeck-startup","reopen");`;
 const wrap = `(()=>{const T=window.__TAURI_INTERNALS__;const inv=T.invoke;window.__ptylog=[];window.__sizes=[];T.invoke=(c,a)=>{if(c==="pty_spawn"||c==="pty_resize")window.__sizes.push({op:c,id:a.paneId,cols:a.cols,rows:a.rows});const r=inv(c,a);if(c==="pty_spawn"){Promise.resolve(r).then(id=>window.__ptylog.push("spawn "+id+" "+a.vendor));}if(c==="pty_kill")window.__ptylog.push("kill "+a.paneId);return r;};})();`;
 
-const URL = "http://localhost:1420";
+const URL = process.env.FD_URL ?? "http://localhost:1420";
 const failures = [];
 
 const browser = await chromium.launch();
