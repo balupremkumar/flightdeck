@@ -232,7 +232,7 @@
   --aqua:#0E8C66;
   --deepblue:#2B53E0;
   --red:#D6394A;
-  --accent:#1C72D0;
+  --accent:#1A6DC7; /* was #1C72D0 (4.32:1 on --bg); darkened to pass WCAG AA 4.5:1 */
 
   --st-starting:#1C72D0;
   --st-running:#12A65B;

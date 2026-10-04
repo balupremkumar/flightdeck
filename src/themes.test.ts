@@ -180,7 +180,7 @@ describe("preset themes", () => {
 // rather than silently edited (owner decides). A pair listed here must still
 // FAIL; if someone fixes the theme the test goes red until the entry is removed.
 // Deep Cove Light: --accent #1C72D0 on --bg #EFF3F8 measures 4.32:1 (needs 4.5).
-const KNOWN_FAILS: Record<string, string[]> = { light: ["--accent"] };
+const KNOWN_FAILS: Record<string, string[]> = {};
 
 describe("WCAG AA contrast (4.5:1 on --bg) for every theme", () => {
   const pairs = ["--text", "--muted", "--accent"];
