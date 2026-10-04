@@ -22,6 +22,7 @@ mod persist;
 mod procname;
 mod readscope;
 mod reveal;
+mod ring;
 mod shellmarks;
 mod summon;
 mod support;
