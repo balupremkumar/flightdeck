@@ -7,7 +7,6 @@ import { useUI, applyUiScale } from "./ui";
 import { useVendors, armVendorHotReload, vendorShort } from "./vendors";
 import { runWorktreeGc } from "./worktrees";
 import { startAutosave, offerSessionRestore, crashedLastRun, armCleanExitSentinel, lastRestoreReport } from "./session";
-import { scheduleStartupCheck } from "./updater";
 import { armGlobalErrorLog } from "./applog";
 
 // Flight recorder catch-alls FIRST: a throw or rejection anywhere in the boot
@@ -54,10 +53,6 @@ if (didCrash) {
     "Flightdeck didn't shut down cleanly last time. The error log may say why — Settings > Diagnostics > Open error log, or export a support bundle (the log rides in it)."
   );
 }
-
-// Self-update (R? — local-file check, no network): ~10s after boot so it
-// never competes with the session-restore prompt above.
-scheduleStartupCheck();
 
 // Apply saved theme + accent + colour-blind/reduced-motion overrides before
 // first paint (dark/Ice/off are the defaults).

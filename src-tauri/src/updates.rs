@@ -1,3 +1,12 @@
+// NOTE (2026-10-04, brain ruling): the app no longer installs updates. Only
+// `check_update` and `default_releases_dir` are registered in lib.rs's
+// invoke_handler. `install_update`, `take_update_status`,
+// `list_rollback_candidates` and the detached watcher below stay compiled but
+// are NOT registered, so the webview cannot reach them (the watcher never
+// worked reliably: a detached powershell dies on this machine, and installing
+// from inside the app kills every pane). Releases are installed by hand; see
+// docs/RELEASING.md.
+//
 // updates.rs — in-app self-update, local-file only. The installed app and the
 // release output (built by tools/release.ps1) live on the same machine, so
 // "checking for updates" means reading releases\latest.json next to the
@@ -42,6 +51,10 @@
 // the cases where the app is never coming back to show a toast. Every failure
 // message names the installer's full path so the manual fallback (run it by
 // hand from releases\) is always one sentence away.
+
+// The unregistered install/rollback/watcher machinery (see NOTE at the top) is
+// intentionally unreachable; keep it quiet rather than deleting a tested path.
+#![allow(dead_code)]
 
 use std::path::{Path, PathBuf};
 

@@ -12,13 +12,10 @@ import { listRestorePoints, restoreFromPoint, exportBackup, importBackup, type R
 import { adoptSession, lastSessionSaveAt } from "./session";
 import { clearPreferences, PREFERENCE_KEYS } from "./storageKeys";
 import {
-  checkForUpdate, installUpdate, getReleasesDir, setReleasesDir,
-  getAutoUpdateCheck, setAutoUpdateCheck, resolveReleasesDir,
+  checkForUpdate, getReleasesDir, setReleasesDir, resolveReleasesDir,
   getPendingReleaseNotes, clearPendingReleaseNotes, type UpdateCheckResult,
-  getUpdateFailure, clearUpdateFailure,
-  listRollbackCandidates, type RollbackCandidate,
+  installNote, REVERT_COMMAND,
 } from "./updater";
-import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { trustedRepos, untrustRepo } from "./trust";
 import { spawnPane } from "./worktrees";
 import { useVendors, vendorColor, vendorAccentOverrides, setVendorAccentOverride } from "./vendors";
@@ -525,30 +522,30 @@ function SessionSection() {
   );
 }
 
-// In-app self-update (local-file only — no network, see src-tauri/src/updates.rs).
-// Lives in the About section. `updateAvailable` comes from the shared store so
-// this agrees with whatever last triggered a check (startup toast, the command
-// palette, or the button below).
+/// Update check (local-file only — no network, see src-tauri/src/updates.rs).
+// NOTIFY-ONLY: Flightdeck never installs itself. Installing from inside the
+// app kills every pane (job object), so the user closes Flightdeck and runs
+// the installer by hand. Nothing here runs at startup or on a timer.
+// `updateAvailable` comes from the shared store so this agrees with whatever
+// last triggered a check (the command palette or the button below).
 /** UX-592: how long the UI waits for a check before giving up on it. */
 const UPDATE_CHECK_TIMEOUT_MS = 10_000;
+function copyText(text: string, done: string) {
+  void navigator.clipboard.writeText(text)
+    .then(() => useUI.getState().pushToast("success", done))
+    .catch(() => useUI.getState().pushToast("info", text));
+}
 function UpdatesBlock() {
   const updateAvailable = useUI((s) => s.updateAvailable);
   const [checking, setChecking] = useState(false);
   const [checkError, setCheckError] = useState<string | null>(null);
   const [lastCheckedAt, setLastCheckedAt] = useState<number | null>(null);
-  const [installing, setInstalling] = useState(false);
-  const [installError, setInstallError] = useState<string | null>(null);
-  const [autoCheck, setAutoCheckState] = useState(getAutoUpdateCheck());
   const [releasesDir, setReleasesDirState] = useState(getReleasesDir());
   // What the check uses when nothing is saved: "" on a public build (the user
   // must pick a folder), the repo's releases\ in a dev build.
   const [suggestedDir, setSuggestedDir] = useState("");
   useEffect(() => { void resolveReleasesDir().then(setSuggestedDir); }, []);
-  // UPD-1: an update that failed did so while the app was CLOSED, so the only
-  // in-app trace was a toast the user may never have seen. Keep it here until
-  // it's dismissed — "the update silently did nothing" is the failure this
-  // whole path exists to prevent.
-  const [failure, setFailure] = useState(() => getUpdateFailure());
+  const effectiveDir = releasesDir || suggestedDir;
 
   const runCheck = async () => {
     setChecking(true);
@@ -572,81 +569,14 @@ function UpdatesBlock() {
     if (res.error) setCheckError(res.error);
   };
 
-  const doInstallPath = async (installerPath: string) => {
-    setInstalling(true);
-    setInstallError(null);
-    try {
-      await installUpdate(installerPath);
-      // On success the app exits itself (updates.rs) — nothing else to do.
-    } catch (e) {
-      setInstalling(false);
-      setInstallError(String(e));
-    }
-  };
-  const doInstall = () => updateAvailable && void doInstallPath(updateAvailable.installerPath);
-
-  const confirmInstall = () => {
-    if (!updateAvailable) return;
-    // Same live-session itemisation closePaneGuarded/closeWorkspaceGuarded use
-    // (worktrees.ts) — an update install ends every running agent same as a quit.
-    const live = useApp.getState().workspaces
-      .flatMap((w) => w.panes)
-      .filter((p) => p.state === "running" || p.state === "starting" || p.state === "waiting" || p.state === "permission");
-    const liveNote = live.length > 0
-      ? ` ${live.length} pane${live.length === 1 ? "" : "s"} still live — closing ends ${live.length === 1 ? "its session" : "their sessions"}, the running agents can’t be brought back.`
-      : "";
-    useUI.getState().requestConfirm({
-      title: "Restart Flightdeck to finish updating?",
-      body: `Installs Flightdeck ${updateAvailable.version} and relaunches.${liveNote}`,
-      confirmLabel: "Install & restart",
-      danger: live.length > 0,
-      onConfirm: () => void doInstall(),
-    });
-  };
-
-  // Rollback (deployment rework, phase 3): every cut leaves its installer in
-  // the releases folder, so "go back to the version that worked" is a button
-  // here instead of an uninstall/hunt/reinstall loop.
-  const [rollbacks, setRollbacks] = useState<RollbackCandidate[]>([]);
-  const [rollbackTo, setRollbackTo] = useState("");
-  useEffect(() => {
-    void listRollbackCandidates().then((c) => {
-      setRollbacks(c);
-      if (c.length > 0) setRollbackTo(c[0].version);
-    });
-  }, []);
-  const confirmRollback = () => {
-    const cand = rollbacks.find((c) => c.version === rollbackTo);
-    if (!cand) return;
-    const live = useApp.getState().workspaces
-      .flatMap((w) => w.panes)
-      .filter((p) => p.state === "running" || p.state === "starting" || p.state === "waiting" || p.state === "permission");
-    const liveNote = live.length > 0
-      ? ` ${live.length} pane${live.length === 1 ? "" : "s"} still live — closing ends ${live.length === 1 ? "its session" : "their sessions"}.`
-      : "";
-    useUI.getState().requestConfirm({
-      title: `Roll back to Flightdeck ${cand.version}?`,
-      body: `Installs ${cand.version} over ${APP_VERSION} and relaunches. Sessions and settings are kept, though features added since ${cand.version} won’t understand their newer data.${liveNote}`,
-      confirmLabel: "Roll back & restart",
-      danger: true,
-      onConfirm: () => void doInstallPath(cand.installerPath),
-    });
-  };
-
-  const toggleAutoCheck = () => {
-    const next = !autoCheck;
-    setAutoCheckState(next);
-    setAutoUpdateCheck(next);
-  };
-
   const commitReleasesDir = (v: string) => {
     setReleasesDirState(v);
     setReleasesDir(v);
   };
 
-  // Canary flavour (deployment rework): a side-by-side trial install that
-  // never self-updates — updates.rs returns none/rejects for it, so the whole
-  // check/install UI would only mislead. Say what this build is instead.
+  // Canary flavour (deployment rework): a side-by-side trial install — the
+  // update check would only mislead (updates.rs returns none for it). Say what
+  // this build is instead.
   const [isCanary, setIsCanary] = useState(false);
   useEffect(() => {
     getName().then((n) => setIsCanary(n.includes("Canary"))).catch(() => {});
@@ -658,7 +588,7 @@ function UpdatesBlock() {
           <span className="set-row-name">Updates — Canary channel</span>
           <span className="set-row-sub">
             This is the side-by-side trial build with its own copy of your data. It never
-            self-updates and never touches the stable install. Happy with it? Install the stable
+            touches the stable install. Happy with it? Install the stable
             build of this version. Broken? Uninstall it — stable is exactly as you left it.
           </span>
         </div>
@@ -671,17 +601,14 @@ function UpdatesBlock() {
       <div className="set-row">
         <div className="set-row-t">
           <span className="set-row-name">Updates</span>
-          {/* UX-584: one honest line per real state — checking, ready, up to
-              date, or failed (below). There's no separate "downloading" state:
-              the update is a local file already on this machine (see Settings
-              > Releases folder), so nothing is fetched over the network. */}
+          {/* One honest line per real state. Flightdeck only tells you; it
+              never installs. The update is a local file already on this
+              machine (see Releases folder below), so nothing is fetched. */}
           <span className="set-row-sub">
             {checking
               ? "Checking…"
-              : installing
-              ? `Installing ${updateAvailable?.version ?? ""}…`
               : updateAvailable
-              ? `Ready to install — Flightdeck ${updateAvailable.version}`
+              ? `Flightdeck ${updateAvailable.version} is available`
               : checkError
               ? "Couldn’t check — see below"
               : lastCheckedAt
@@ -689,76 +616,52 @@ function UpdatesBlock() {
               : "Not checked yet this session"}
           </span>
         </div>
-        <button className="set-btn" onClick={() => void runCheck()} disabled={checking || installing}>
+        <button className="set-btn" onClick={() => void runCheck()} disabled={checking}>
           {checking ? "Checking…" : "Check for updates"}
         </button>
       </div>
       {checkError && <div className="set-error">Couldn’t check for updates: {checkError}</div>}
-      {failure && (
-        <div className="set-error set-update-failure">
-          <div>Version {failure.version} didn’t install. {failure.message}</div>
-          {failure.exitCode != null && <div className="set-error-detail">Installer exit code: {failure.exitCode}</div>}
-          {failure.detail && <div className="set-error-detail">{failure.detail}</div>}
-          <div className="set-update-failure-actions">
-            {failure.manualPath && (
-              <button
-                className="set-btn"
-                onClick={() => { void revealItemInDir(failure.manualPath!).catch(() => { /* best effort */ }); }}
-              >
-                Show me the installer
-              </button>
-            )}
-            <button className="set-btn" onClick={() => { clearUpdateFailure(); setFailure(null); }}>
-              Dismiss
-            </button>
-          </div>
-        </div>
-      )}
       {updateAvailable && (
         <div className="set-row set-row-block">
-          {/* UX-585: the manifest's own notes, shown before the install button
-              is ever clicked — never asking for a leap of faith. */}
+          {/* UX-585: the manifest's own notes, never invented copy. */}
           {updateAvailable.notes && (
             <div className="set-update-notes">
               <div className="set-update-notes-t">What’s in {updateAvailable.version}</div>
               <div className="set-row-sub" style={{ whiteSpace: "pre-wrap" }}>{updateAvailable.notes}</div>
             </div>
           )}
-          <button className="set-btn" onClick={confirmInstall} disabled={installing}>
-            {installing ? "Installing…" : `Install ${updateAvailable.version} and restart`}
-          </button>
-          {installError && <div className="set-error">Couldn’t install: {installError}</div>}
+          <div className="set-row-sub">Close Flightdeck, then run the installer. Installing from inside the app would end every running pane.</div>
+          <div className="set-update-failure-actions">
+            <button className="set-btn" onClick={() => { if (effectiveDir) void revealPath(`${effectiveDir}\\latest.json`); }}>
+              Open releases folder
+            </button>
+            <button
+              className="set-btn"
+              onClick={() => copyText(installNote(updateAvailable.version, updateAvailable.installerPath), "Install note copied.")}
+            >
+              Copy install note
+            </button>
+          </div>
         </div>
       )}
       <div className="set-row">
         <div className="set-row-t">
-          <span className="set-row-name">Check for updates automatically</span>
-          <span className="set-row-sub">Silent check on launch, once per session</span>
+          <span className="set-row-name">Revert to an earlier version</span>
+          <span className="set-row-sub">
+            Every installer is kept in the releases archive, and your data is backed up before each install.
+            Close Flightdeck, then run this in PowerShell 7 from the Flightdeck repo folder:
+          </span>
+          <code className="set-releases-dir">{REVERT_COMMAND}</code>
         </div>
-        <button className={"toggle" + (autoCheck ? " on" : "")} role="switch" aria-checked={autoCheck} onClick={toggleAutoCheck}><span /></button>
+        <button className="set-btn" onClick={() => copyText(REVERT_COMMAND, "Revert command copied.")}>Copy command</button>
+        <button className="set-btn" onClick={() => { if (effectiveDir) void revealPath(`${effectiveDir}\\archive`); }}>
+          Open releases archive
+        </button>
       </div>
-      {rollbacks.length > 0 && (
-        <div className="set-row">
-          <div className="set-row-t">
-            <span className="set-row-name">Roll back</span>
-            <span className="set-row-sub">Reinstall an earlier version from the releases folder</span>
-          </div>
-          <select
-            className="set-select"
-            aria-label="Version to roll back to"
-            value={rollbackTo}
-            onChange={(e) => setRollbackTo(e.target.value)}
-            disabled={installing}
-          >
-            {rollbacks.map((c) => <option key={c.version} value={c.version}>v{c.version}</option>)}
-          </select>
-          <button className="set-btn" onClick={confirmRollback} disabled={installing}>Roll back…</button>
-        </div>
-      )}
       <div className="set-row">
         <div className="set-row-t">
           <span className="set-row-name">Releases folder</span>
-          <span className="set-row-sub">Where latest.json and the installer live</span>
+          <span className="set-row-sub">Where latest.json and the installers live</span>
         </div>
         <input
           className="set-search set-releases-dir"
@@ -769,7 +672,7 @@ function UpdatesBlock() {
         <button
           className="set-btn"
           onClick={() => {
-            void openDialog({ directory: true, defaultPath: releasesDir || suggestedDir || undefined })
+            void openDialog({ directory: true, defaultPath: effectiveDir || undefined })
               .then((d) => { if (typeof d === "string") commitReleasesDir(d); })
               .catch(() => { /* dialog unavailable */ });
           }}

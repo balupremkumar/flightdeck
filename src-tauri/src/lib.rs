@@ -685,9 +685,6 @@ pub fn run() {
             persist::import_backup,
             updates::check_update,
             updates::default_releases_dir,
-            updates::install_update,
-            updates::take_update_status,
-            updates::list_rollback_candidates,
             overlay::set_attention_overlay,
             // QL-720: hook-driven session state. install/uninstall are the only
             // things in Flightdeck that write to ~/.claude/settings.json, and

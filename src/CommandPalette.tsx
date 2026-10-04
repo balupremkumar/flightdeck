@@ -249,7 +249,7 @@ export function CommandPalette() {
       run: () => {
         useUI.getState().openSettingsAt("About");
         void checkForUpdate().then((res) => {
-          if (res.available && res.info) pushToast("info", `Flightdeck ${res.info.version} is available — install it from Settings > About.`);
+          if (res.available && res.info) pushToast("info", `Flightdeck ${res.info.version} is available — see Settings > About.`);
           else if (res.error) pushToast("error", `Update check failed: ${res.error}`);
           else pushToast("success", "Flightdeck is up to date.");
         });
