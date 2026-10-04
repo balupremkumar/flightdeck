@@ -29,6 +29,8 @@ base64 = "0.22"
 tauri-plugin-single-instance = "2"
 # Codex trust: edit ~/.codex/config.toml preserving comments and layout.
 toml_edit = "0.22"
+# Session search regex mode (already in the lockfile transitively).
+regex = "1"
 
 # QL-780 summon hotkey. Desktop-only by construction (the plugin doesn't build
 # for mobile), matching the `#[cfg(desktop)]` guard on its registration in
