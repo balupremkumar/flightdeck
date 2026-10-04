@@ -1,15 +1,21 @@
 ---
-hub_updated: 2026-09-30
+hub_updated: 2026-10-04
 hub_status: paused
 hub_lane: products
-hub_last: CLAUDE.md tidied with no code change; Codex CLI third-vendor plan drafted, not approved.
-hub_next: Settle the Codex plan's open decisions near the mid-October purchase, then cut 0.5.5 and update in-app.
+hub_last: "QoL roadmap review under way: Ledger, history, competitor and VS Code research; link bugs reproduced in linkify.ts."
+hub_next: "Deliver the red-teamed QoL list, then phase it with Balu; Codex plan decisions still open."
+hub_you: "Pick and add to the QoL list once it lands."
 ---
 # STATE — Flightdeck
 
 Vault: [[HOME]] | [[PORTFOLIO|Portfolio]] | [[projects/active/flightdeck/BACKLOG|Backlog]]
 
 Updated: 2026-08-14 (Docker container panel fully planned, parked to BACKLOG DK-1 by Balu; no code changes this session).
+
+2026-10-04 (later): 20 roadmap decisions LOCKED (brain/rulings.md 2026-10-04, top of the roadmap file). NEXT: Phase 0 on Balu's go (merge origin, CI tsc + browser lane, R1 fix, UNC, manual-release pipeline with archive + auto-backup + revert, Board export + delete).
+2026-10-04: QoL roadmap DELIVERED: docs/plans/qol-roadmap-2026-10-04.md (Fable red-teamed; no code changed). OPEN BUG R1 (reproduced, Playwright on mock): pane reflow (3->4 panes, close, cross-row drag) kills and respawns the agent in the pane that changes row (PaneGrid.tsx:138-141 + Terminal.tsx:1404). Link bugs reproduced in src/linkify.ts (spaced paths split, `~/` broken, wikilinks/bare names unlinked, UNC clickable). Local main 1 ahead / 3 behind origin: reconcile before any build.
+
+2026-09-29: CLAUDE.md tidied (heading, case-collision note keeps its reason, drops the incident date); no code changed. PLANNED (DRAFT, not approved): third agent vendor, OpenAI Codex CLI (ChatGPT plan, purchase ~mid Oct), modelled on how `agy` was added. Plan: docs/plans/codex-vendor-plan-2026-09-29.md (phases A-E, file:line touchpoints, gates). Resume when Balu answers its open decisions. This dashboard is otherwise stale since 2026-08-14 (see root STATE sweep item).
 
 ## PARKED 2026-08-14: Docker container panel (DK-1) — planned, not built
 Balu asked for VS Code Docker-extension-style container management; scoped, explored, and a full implementation plan written, then parked by his call for a future enhancement wave.

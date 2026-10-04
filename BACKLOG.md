@@ -1260,3 +1260,40 @@ Five UI states required: no CLI / daemon not running (very common on Windows, au
 No new Tauri plugin or capability needed (CSP already forces everything through Rust IPC).
 Note: the v1 spec's "no Docker" ruling (flightdeck-build-plan.md:221) rejected containers as an agent SANDBOX; this is a container MANAGER panel, a different feature — ruling not reversed.
 Out of scope for DK-1, candidates for DK-2+: compose orchestration UI, volumes/networks tabs, image actions (run/pull/rm/prune), container stats, Windows-container shells (needs platform inspect to pick cmd over sh), "Start Docker Desktop" button (needs Desktop 4.37+ CLI gate), single-sidebar view switcher shared with Explorer, in-pane log filtering beyond xterm find.
+
+## OpenCode as a first-class vendor (OC-1) — raised by Balu 2026-08-27
+
+Balu wants OpenCode in the New Workspace agent picker beside Claude and Antigravity.
+Today he works around it by opening a `pwsh` pane and typing `opencode`, which works but does not get a vendor chip, accent, quiet-seconds, auth state or orphan scanning.
+
+**This is already supported without code.** The manifest vendor system (I1 #218, `src-tauri/src/vendors.rs:499`) exists precisely for this, and OpenCode is its worked example: `EXAMPLE_MANIFEST` at `vendors.rs:523` IS an OpenCode manifest, written to `<app-data>/vendors/_example-opencode.json` on first run (`vendors.rs:551`).
+Confirmed present on this machine at `C:\Users\User\AppData\Roaming\ai.flightdeck.app\vendors\_example-opencode.json`, dated 2026-07-20.
+Renaming it to drop the leading underscore is the whole job; the poller at `vendors.rs:602` picks it up without a restart.
+So §E's "the local adapter becomes a manifest entry rather than code" is satisfied, and OC-1 is only about promoting it from user-dropped file to shipped built-in.
+
+**The shipped example is stale against OpenCode 1.18.23 and will mislead.**
+Its `env` block sets `OPENAI_BASE_URL` and `OPENAI_API_KEY`, which did the job when the example was written but do nothing now.
+OpenCode ships a built-in `lmstudio` provider (npm `@ai-sdk/openai-compatible`, api `http://127.0.0.1:1234/v1`) and reads its config from `~/.config/opencode/opencode.jsonc`, so the endpoint no longer comes from env at all.
+It also hardcodes `qwen2.5-coder` in the block comment at `vendors.rs:505`, which is not a model Balu has.
+Fixing `EXAMPLE_MANIFEST` is worth doing on its own even if OC-1 never ships, because a wrong example is worse than no example.
+
+**A shipped built-in must pass `-m`, not rely on the config default.**
+Balu's global `~/.config/opencode/opencode.jsonc` deliberately defines the provider and model but sets NO top-level default, so that running `opencode` in an unrelated repo is unaffected; the default lives only in `D:\Dev\ai\projects\active\OpenCode\opencode.json`.
+Launched by Flightdeck into an arbitrary workspace, OpenCode would therefore resolve no default model.
+`opencode` accepts `-m, --model provider/model`, so the adapter needs `args: ["-m", "lmstudio/qwen3.8-27b-uncensored"]` or an equivalent picked from a setting.
+
+**Open design question: parallel panes against one server.**
+Flightdeck's whole premise is several agent CLIs running at once, but LM Studio serves one loaded model instance, so N OpenCode panes contend for it.
+Measured 2026-08-27: LM Studio's default `--parallel 4` allocates the KV cache four times over and pushed the 16 GiB card to 16.93 GiB dedicated, spilling 6.72 GiB into system RAM; `--parallel 1` fixed it but serialises concurrent requests.
+So the parallel count is a straight trade of VRAM against pane concurrency, and a built-in adapter should either pick one deliberately or surface it as a setting.
+The 27B also leaves only ~2.16 GiB spare, which is not enough for Quiett's read-aloud to run at the same time.
+
+Scope for OC-1: add an `opencode` builtin adapter beside the `claude` (`vendors.rs:330`) and `agy` (`vendors.rs:364`) ones, add its id to the builtin list at `vendors.rs:798`, add it to the `FALLBACK` array at `src/vendors.ts:36`, give it an accent token, a `quietSeconds`, and an auth/probe path.
+`src/vendors.ts:6` says adding an agent is a backend-only change, so verify that still holds or update the comment.
+Out of scope: model picker UI, LM Studio lifecycle management (loading or unloading models from Flightdeck), and anything that would make Flightdeck responsible for the GPU budget.
+
+**Status 2026-08-27: manifest written, awaiting Balu's test.** `<app-data>\vendors\opencode.json`, id `opencode-local`, validated against the shipped schema.
+Two departures from the shipped example were forced and are the reason a straight rename does not work.
+`exe` points at `...\npm\node_modules\opencode-ai\bin\opencode.exe` rather than the bare name, because `ManifestVendor::command()` (`vendors.rs:694`) builds a raw `CommandBuilder` with no shell, and what is on PATH is `opencode.cmd` plus two shell shims, none of which `CreateProcess` can execute. The builtin Claude adapter dodges this by wrapping in `pwsh -Command` (`vendors.rs:347`); manifest vendors have no such wrapper.
+`args` carries `-m lmstudio/qwen3.8-27b-uncensored`, verified working from an unrelated cwd.
+If OC-1 ships a builtin, note the manifest id is `opencode-local`, so a builtin using `opencode` will not collide and both would appear; retire the manifest at that point.
