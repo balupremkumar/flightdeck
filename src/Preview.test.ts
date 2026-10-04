@@ -5,7 +5,34 @@ vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn(), openPath: vi.fn(
 
 // UX-517: openInEditor moved out of this file and into src/editor.ts, which is
 // now the one canonical launcher — its own suite is editor.test.ts.
-const { isTooLargeError } = await import("./Preview");
+const { isTooLargeError, isBinaryPath, looksBinary, isDirReadError } = await import("./Preview");
+
+describe("binary detection (Phase 1 L4)", () => {
+  it("flags standalone binary extensions, case-insensitively", () => {
+    for (const p of ["a.png", "D:\\x\\b.JPG", "c.pdf", "d.exe", "e.zip", "f.dll", "g.svg", "h.webp"]) {
+      expect(isBinaryPath(p)).toBe(true);
+    }
+  });
+  it("leaves text and code alone", () => {
+    for (const p of ["a.md", "b.ts", "c.json", "README", "d.txt", "e.png.md"]) expect(isBinaryPath(p)).toBe(false);
+  });
+  it("detects NULs and replacement-char floods, not the odd one", () => {
+    expect(looksBinary("abc\0def")).toBe(true);
+    expect(looksBinary("\uFFFD".repeat(50) + "x".repeat(100))).toBe(true);
+    expect(looksBinary("plain text with one bad \uFFFD char " + "x".repeat(500))).toBe(false);
+    expect(looksBinary("")).toBe(false);
+  });
+});
+
+describe("isDirReadError", () => {
+  it("matches the Windows and POSIX folder-read failures", () => {
+    expect(isDirReadError("Access is denied. (os error 5)")).toBe(true);
+    expect(isDirReadError("Is a directory (os error 21)")).toBe(true);
+  });
+  it("ignores a missing file", () => {
+    expect(isDirReadError("The system cannot find the file specified. (os error 2)")).toBe(false);
+  });
+});
 
 describe("isTooLargeError (QL-745/746)", () => {
   it("matches the text reader's refusal verbatim", () => {

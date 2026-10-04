@@ -16,12 +16,12 @@
 // the retry-me error line (QL-745/746).
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { openUrl, openPath } from "@tauri-apps/plugin-opener";
 import { openInEditor } from "./editor";
 import { useUI, useOverlayEsc } from "./ui";
 import { revealPath } from "./reveal";
 import type { PreviewTab } from "./ui";
-import { parseMarkdown, isExternalHref, isBlockedHref, resolveMdLink } from "./markdown";
+import { parseMarkdown, isExternalHref, isBlockedHref, resolveMdLink, parseLinkTarget, makeSlugger, inlineText, slugify } from "./markdown";
 import type { BlockNode, InlineNode } from "./markdown";
 import { highlightLine, langFor } from "./diffhighlight";
 import type { Lang } from "./diffhighlight";
@@ -46,6 +46,67 @@ const MD_RE = /\.mdx?$/i;
  *  can never help, so these route to their own state instead of the error one. */
 export function isTooLargeError(err: unknown): boolean {
   return /too large to preview/i.test(String(err));
+}
+
+/** Extensions Flightdeck never tries to show as text (Phase 1 L4). Images are
+ *  rendered inside markdown, but a standalone one opens outside. */
+const BINARY_EXT_RE =
+  /\.(png|jpe?g|gif|webp|bmp|ico|svg|pdf|exe|dll|msi|zip|7z|rar|gz|tgz|tar|bz2|xz|iso|bin|so|dylib|class|jar|wasm|mp3|mp4|mov|avi|mkv|wav|flac|ogg|webm|woff2?|ttf|otf|eot|docx?|xlsx?|pptx?|sqlite|db|pdb|obj|o|lib)$/i;
+
+export function isBinaryPath(path: string): boolean {
+  return BINARY_EXT_RE.test(path);
+}
+
+/** A lossy-decoded text that is really binary: any NUL, or more than 1% of
+ *  the first 8000 chars being U+FFFD replacement characters. */
+export function looksBinary(text: string): boolean {
+  const head = text.length > 8000 ? text.slice(0, 8000) : text;
+  if (head.length === 0) return false;
+  if (head.includes("\0")) return true;
+  let bad = 0;
+  for (let i = 0; i < head.length; i++) if (head.charCodeAt(i) === 0xfffd) bad++;
+  return bad / head.length > 0.01;
+}
+
+/** Windows answers a read of a folder with "Access is denied (os error 5)";
+ *  other platforms say "Is a directory". Either is worth a directory probe. */
+export function isDirReadError(err: unknown): boolean {
+  return /denied|permission|is a directory|os error 5\b|os error 21\b/i.test(String(err));
+}
+
+// `path#heading` links open a tab that may not be loaded yet; the anchor waits
+// here until that tab has rendered, then PreviewBody consumes it.
+const pendingAnchors = new Map<string, string>();
+const ANCHOR_EVENT = "fd-preview-anchor";
+const headingId = (slug: string) => "prv-h-" + slug;
+
+/** Scrolls the rendered markdown to the heading an anchor names. Tries the
+ *  anchor as typed (lowercased), then re-slugged. Returns whether it found one. */
+export function scrollToAnchor(anchor: string): boolean {
+  const el =
+    document.getElementById(headingId(anchor.toLowerCase())) ??
+    document.getElementById(headingId(slugify(anchor)));
+  if (!el) return false;
+  el.scrollIntoView({ block: "start", behavior: "smooth" });
+  return true;
+}
+
+function openLocalTarget(t: { path: string; line?: number; anchor?: string }, mdPath: string) {
+  const ui = useUI.getState();
+  if (t.anchor && t.path === mdPath) {
+    if (!scrollToAnchor(t.anchor)) ui.pushToast("info", `No heading “${t.anchor}” in this file.`);
+    return;
+  }
+  if (t.anchor) pendingAnchors.set(t.path, t.anchor);
+  ui.openPreview(t.path, t.line !== undefined ? { line: t.line } : undefined);
+  if (t.anchor) window.dispatchEvent(new Event(ANCHOR_EVENT));
+}
+
+function copyPath(path: string) {
+  navigator.clipboard
+    .writeText(path)
+    .then(() => useUI.getState().pushToast("success", "Path copied"))
+    .catch(() => useUI.getState().pushToast("error", "Couldn’t copy the path."));
 }
 
 // ---------------------------------------------------------------------
@@ -198,8 +259,7 @@ function renderInline(nodes: InlineNode[], mdPath: string): ReactNode {
             return;
           }
           if (external) openUrl(n.href).catch(() => { /* best-effort */ });
-          else if (!n.href.startsWith("#")) useUI.getState().openPreview(resolveMdLink(n.href, mdPath));
-          // Bare "#anchor" links are a deferred scroll-to-heading feature.
+          else openLocalTarget(parseLinkTarget(n.href, mdPath) as { path: string; line?: number; anchor?: string }, mdPath);
         };
         return (
           <a
@@ -217,14 +277,14 @@ function renderInline(nodes: InlineNode[], mdPath: string): ReactNode {
   });
 }
 
-function Heading({ level, children }: { level: 1 | 2 | 3 | 4 | 5 | 6; children: ReactNode }) {
+function Heading({ level, id, children }: { level: 1 | 2 | 3 | 4 | 5 | 6; id?: string; children: ReactNode }) {
   switch (level) {
-    case 1: return <h1 className="prv-h prv-h1">{children}</h1>;
-    case 2: return <h2 className="prv-h prv-h2">{children}</h2>;
-    case 3: return <h3 className="prv-h prv-h3">{children}</h3>;
-    case 4: return <h4 className="prv-h prv-h4">{children}</h4>;
-    case 5: return <h5 className="prv-h prv-h5">{children}</h5>;
-    default: return <h6 className="prv-h prv-h6">{children}</h6>;
+    case 1: return <h1 id={id} className="prv-h prv-h1">{children}</h1>;
+    case 2: return <h2 id={id} className="prv-h prv-h2">{children}</h2>;
+    case 3: return <h3 id={id} className="prv-h prv-h3">{children}</h3>;
+    case 4: return <h4 id={id} className="prv-h prv-h4">{children}</h4>;
+    case 5: return <h5 id={id} className="prv-h prv-h5">{children}</h5>;
+    default: return <h6 id={id} className="prv-h prv-h6">{children}</h6>;
   }
 }
 
@@ -251,17 +311,17 @@ function PreviewTable({ block, mdPath }: { block: Extract<BlockNode, { type: "ta
   );
 }
 
-function renderBlocks(blocks: BlockNode[], mdPath: string): ReactNode {
+function renderBlocks(blocks: BlockNode[], mdPath: string, slug: (t: string) => string): ReactNode {
   return blocks.map((b, i) => {
     switch (b.type) {
       case "heading":
-        return <Heading key={i} level={b.level}>{renderInline(b.children, mdPath)}</Heading>;
+        return <Heading key={i} level={b.level} id={headingId(slug(inlineText(b.children)))}>{renderInline(b.children, mdPath)}</Heading>;
       case "paragraph":
         return <p key={i}>{renderInline(b.children, mdPath)}</p>;
       case "hr":
         return <hr key={i} />;
       case "blockquote":
-        return <blockquote key={i} className="prv-quote">{renderBlocks(b.children, mdPath)}</blockquote>;
+        return <blockquote key={i} className="prv-quote">{renderBlocks(b.children, mdPath, slug)}</blockquote>;
       case "list": {
         const items = b.items;
         const isTaskList = items.some((it) => it.checked !== undefined);
@@ -293,7 +353,7 @@ function renderBlocks(blocks: BlockNode[], mdPath: string): ReactNode {
 // Per-tab body: loads the file and renders raw/rendered per its state.
 // ---------------------------------------------------------------------
 
-type LoadState = "loading" | "loaded" | "error";
+type LoadState = "loading" | "loaded" | "error" | "binary";
 
 function guessErrorMessage(err: unknown): string {
   const raw = String(err);
@@ -323,22 +383,41 @@ function PreviewBody({ tab }: { tab: PreviewTab }) {
   const [text, setText] = useState("");
   const [errMsg, setErrMsg] = useState("");
   const [tooLarge, setTooLarge] = useState(false);
-  const [mode, setMode] = useState<"rendered" | "raw">(isMd ? "rendered" : "raw");
+  // A line target (file.md#L12, path:12) only means something in the raw view.
+  const [mode, setMode] = useState<"rendered" | "raw">(isMd && !tab.line ? "rendered" : "raw");
   const seq = useRef(0);
+
+  useEffect(() => { if (tab.line) setMode("raw"); }, [tab.line]);
 
   const load = useCallback(() => {
     const my = ++seq.current;
     setState("loading");
+    if (isBinaryPath(tab.path)) { setState("binary"); return; }
     invoke<string>("fs_read_text_file", { path: tab.path })
-      .then((t) => { if (seq.current === my) { setText(t); setState("loaded"); } })
-      .catch((e) => {
+      .then((t) => {
         if (seq.current !== my) return;
+        if (looksBinary(t)) { setState("binary"); return; }
+        setText(t);
+        setState("loaded");
+      })
+      .catch(async (e) => {
+        if (seq.current !== my) return;
+        // A folder is not a failed file: hand it to Explorer and drop the tab.
+        if (isDirReadError(e)) {
+          const isDir = await invoke("fs_list_dir", { path: tab.path }).then(() => true, () => false);
+          if (seq.current !== my) return;
+          if (isDir) {
+            void revealPath(tab.path);
+            useUI.getState().closePreview(tab.id);
+            return;
+          }
+        }
         const big = isTooLargeError(e);
         setTooLarge(big);
         setErrMsg(big ? "" : guessErrorMessage(e));
         setState("error");
       });
-  }, [tab.path]);
+  }, [tab.path, tab.id]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -347,10 +426,37 @@ function PreviewBody({ tab }: { tab: PreviewTab }) {
     [isMd, state, text]
   );
 
+  // `other.md#heading` links: scroll once this tab has rendered the markdown.
+  const rendered = isMd && state === "loaded" && mode === "rendered";
+  useEffect(() => {
+    if (!isMd || state !== "loaded") return;
+    const consume = () => {
+      const a = pendingAnchors.get(tab.path);
+      if (!a) return;
+      // In raw view: switch first; this effect re-runs once headings exist.
+      if (!rendered) { setMode("rendered"); return; }
+      pendingAnchors.delete(tab.path);
+      requestAnimationFrame(() => { scrollToAnchor(a); });
+    };
+    consume();
+    window.addEventListener(ANCHOR_EVENT, consume);
+    return () => window.removeEventListener(ANCHOR_EVENT, consume);
+  }, [isMd, state, tab.path, rendered]);
+
+  const mdTree = useMemo(
+    () => (rendered && blocks ? renderBlocks(blocks, tab.path, makeSlugger()) : null),
+    [rendered, blocks, tab.path]
+  );
+
   return (
     <div className="prv-body-wrap">
       <div className="prv-toolbar">
         <span className="prv-path" title={tab.path}>{tab.path}</span>
+        <div className="prv-actions">
+          <button className="prv-copy" onClick={() => { void openInEditor(tab.path, tab.line); }}>Open in editor</button>
+          <button className="prv-copy" onClick={() => { void revealPath(tab.path); }}>Reveal in Explorer</button>
+          <button className="prv-copy" onClick={() => copyPath(tab.path)}>Copy path</button>
+        </div>
         {isMd && state === "loaded" && (
           <div className="prv-modes" role="tablist" aria-label="View mode">
             <button className={"prv-mode" + (mode === "rendered" ? " on" : "")} onClick={() => setMode("rendered")}>
@@ -364,6 +470,24 @@ function PreviewBody({ tab }: { tab: PreviewTab }) {
       </div>
       <div className="prv-content" style={tab.fontSize ? { fontSize: `${tab.fontSize}px` } : undefined}>
         {state === "loading" && <PreviewSkeleton />}
+        {state === "binary" && (
+          <div className="prv-state">
+            <code className="prv-icode">{baseName(tab.path)}</code>
+            <span>This file type opens outside Flightdeck.</span>
+            <div className="prv-actions">
+              <button
+                className="prv-retry"
+                onClick={() => {
+                  openPath(tab.path).catch((e) => useUI.getState().pushToast("error", `Couldn’t open ${baseName(tab.path)}: ${String(e)}`));
+                }}
+              >
+                Open externally
+              </button>
+              <button className="prv-retry" onClick={() => { void revealPath(tab.path); }}>Reveal in Explorer</button>
+              <button className="prv-retry" onClick={() => copyPath(tab.path)}>Copy path</button>
+            </div>
+          </div>
+        )}
         {/* QL-745: the 5MB cap is a refusal, not a fault, so no Retry (a second
             read fails identically). Name the file, frame the limit, hand it to
             the editor that can actually open it. */}
@@ -385,8 +509,8 @@ function PreviewBody({ tab }: { tab: PreviewTab }) {
         )}
         {state === "loaded" && text === "" && <div className="prv-state">Empty file.</div>}
         {state === "loaded" && text !== "" && (
-          isMd && mode === "rendered" && blocks ? (
-            <div className="prv-md">{renderBlocks(blocks, tab.path)}</div>
+          mdTree ? (
+            <div className="prv-md">{mdTree}</div>
           ) : (
             <CodeView text={text} path={tab.path} targetLine={tab.line} />
           )
