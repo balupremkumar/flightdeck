@@ -503,13 +503,23 @@ pub fn diff_summary(dir: &Path, base: Option<&str>, include_untracked: bool) -> 
     Ok(DiffSummary { base: anchor, files, total_added: ta, total_deleted: td })
 }
 
+/// Args for one file's patch. `-w` (hide whitespace) goes right after `diff`.
+fn file_diff_args<'a>(anchor: &'a str, file: &'a str, ignore_whitespace: bool) -> Vec<&'a str> {
+    let mut a = vec!["diff"];
+    if ignore_whitespace {
+        a.push("-w");
+    }
+    a.extend([anchor, "--", file]);
+    a
+}
+
 /// One file's patch text, untrimmed, capped at MAX_FILE_DIFF_BYTES.
-pub fn file_diff(dir: &Path, base: Option<&str>, file: &str, include_untracked: bool) -> Result<String, String> {
+pub fn file_diff(dir: &Path, base: Option<&str>, file: &str, include_untracked: bool, ignore_whitespace: bool) -> Result<String, String> {
     let anchor = diff_anchor(dir, base)?;
     if include_untracked {
         stage_intent(dir);
     }
-    let out = git(dir, &["diff", &anchor, "--", file])?;
+    let out = git(dir, &file_diff_args(&anchor, file, ignore_whitespace))?;
     if !out.ok() {
         return Err(explain_git_failure("git diff failed", &out.stderr));
     }
@@ -1063,10 +1073,10 @@ pub fn git_diff_summary(app: AppHandle, cwd: String, base: Option<String>) -> Re
 }
 
 #[tauri::command(async)]
-pub fn git_file_diff(app: AppHandle, cwd: String, base: Option<String>, file: String) -> Result<String, String> {
+pub fn git_file_diff(app: AppHandle, cwd: String, base: Option<String>, file: String, ignore_whitespace: Option<bool>) -> Result<String, String> {
     crate::pathguard::check(&cwd)?;
     let untracked = is_flightdeck_worktree(&app, &cwd);
-    file_diff(Path::new(&cwd), base.as_deref(), &file, untracked)
+    file_diff(Path::new(&cwd), base.as_deref(), &file, untracked, ignore_whitespace.unwrap_or(false))
 }
 
 /// UI-168: `files` is `None` for "merge everything" (default, matches the
@@ -1412,15 +1422,21 @@ two
         let small = s.files.iter().find(|f| f.path == "small.txt").unwrap();
         assert!(!small.binary);
         assert_eq!(small.added, 2);
-        let patch = file_diff(&t.repo, Some("main"), "big.txt", false).unwrap();
+        let patch = file_diff(&t.repo, Some("main"), "big.txt", false, false).unwrap();
         assert!(patch.contains("+xxx"), "file_diff is not bounded by the summary's threshold");
+    }
+
+    #[test]
+    fn file_diff_args_adds_w_only_when_hiding_whitespace() {
+        assert_eq!(file_diff_args("abc", "a b.txt", false), vec!["diff", "abc", "--", "a b.txt"]);
+        assert_eq!(file_diff_args("abc", "a b.txt", true), vec!["diff", "-w", "abc", "--", "a b.txt"]);
     }
 
     #[test]
     fn file_diff_on_non_repo_dir_is_a_typed_error_not_a_panic() {
         let non_repo = std::env::temp_dir().join(format!("fd-not-a-repo-fd-{}", std::process::id()));
         std::fs::create_dir_all(&non_repo).unwrap();
-        let err = file_diff(&non_repo, None, "whatever.txt", false);
+        let err = file_diff(&non_repo, None, "whatever.txt", false, false);
         assert!(err.is_err());
         let _ = std::fs::remove_dir_all(&non_repo);
     }
@@ -1520,7 +1536,7 @@ two
         let paths: Vec<_> = sum.files.iter().map(|f| f.path.as_str()).collect();
         assert!(paths.contains(&"a.txt"), "modified file missing: {paths:?}");
         assert!(paths.contains(&"new.txt"), "untracked file missing from diff (D8): {paths:?}");
-        let patch = file_diff(wt, Some(&a.base_branch), "new.txt", true).unwrap();
+        let patch = file_diff(wt, Some(&a.base_branch), "new.txt", true, false).unwrap();
         assert!(patch.contains("brand new"));
     }
 
