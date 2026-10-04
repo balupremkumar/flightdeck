@@ -314,6 +314,7 @@ export default function ChatView({ paneId, cwd, epoch, paneState, exited, onRest
   const findRef = useRef<HTMLInputElement>(null);
   const atBottomRef = useRef(true);
   const tailer = useRef<{ t: SessionTailer; pty: number; pinned: boolean } | null>(null);
+  const pinCheck = useRef(0);
   const busy = useRef(false);
   const tickRef = useRef<() => Promise<void>>(async () => {});
 
@@ -337,8 +338,11 @@ export default function ChatView({ paneId, cwd, epoch, paneState, exited, onRest
       if (!pty) return;
       let cur = tailer.current;
       if (cur && cur.pty !== pty) cur = tailer.current = null;
-      if (!cur || !cur.pinned) {
-        // Unpinned sessions are re-resolved each tick: the match can change.
+      // Unpinned sessions are re-resolved every tick (the match can change);
+      // pinned ones every 5th tick, because /clear starts a new JSONL in the
+      // same folder and the backend then reports that newer file.
+      pinCheck.current = (pinCheck.current + 1) % 5;
+      if (!cur || !cur.pinned || pinCheck.current === 0) {
         const si = await paneSessionInfo(pty);
         if (!si.jsonl_path) { setInfo(si); setError(null); return; }
         if (!cur || cur.t.path !== si.jsonl_path) {
