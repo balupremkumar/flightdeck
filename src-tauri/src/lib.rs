@@ -7,6 +7,7 @@
 mod applog;
 mod canary;
 mod chatlog;
+mod codexsessions;
 mod editor;
 mod gitstatus;
 mod health;
@@ -757,6 +758,7 @@ pub fn run() {
             worktree::git_update_from_base,
             usage::pane_usage,
             usage::list_claude_sessions,
+            codexsessions::list_codex_sessions,
             usage::search_claude_sessions,
             usage::stage_launch_args,
             usage::pane_subagents,

@@ -31,6 +31,15 @@ pub struct PaneUsage {
     pub last_cache_read_tokens: u64,
     pub last_cache_creation_tokens: u64,
     pub last_output_tokens: u64,
+    /// Codex only: the model's context window as the rollout states it
+    /// (`model_context_window`), so the chip need not guess from a model table.
+    pub context_window: Option<u64>,
+    /// Codex only: plan rate-limit usage, straight from `rate_limits`. None when
+    /// the rollout has no such block. Percent is 0-100, `resets` epoch seconds.
+    pub plan_used_percent_5h: Option<f64>,
+    pub plan_resets_5h: Option<u64>,
+    pub plan_used_percent_week: Option<f64>,
+    pub plan_resets_week: Option<u64>,
 }
 
 /// Claude Code's project-dir slug: every non-alphanumeric byte becomes '-'
@@ -61,6 +70,81 @@ fn apply_line(line: &str, u: &mut PaneUsage) {
     apply_usage(&v, u);
 }
 
+/// Phase D: one Codex rollout line. `turn_context` sets the model;
+/// `event_msg` `token_count` sets the token figures and rate limits. Anything of
+/// an unknown shape is skipped untouched, so an upstream schema change yields
+/// no chip (turns stays 0) rather than a wrong number.
+///
+/// Context size is `last_token_usage.total_tokens`, which is what Codex's own
+/// status line counts against the window. `input_tokens` already INCLUDES the
+/// cached part, so the split below is input minus cached (fresh), cached read,
+/// and `cache_write_input_tokens` (written).
+fn apply_codex_line(line: &str, u: &mut PaneUsage) {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else { return };
+    let Some(p) = v.get("payload") else { return };
+    match v.get("type").and_then(|t| t.as_str()) {
+        Some("turn_context") => {
+            if let Some(m) = p.get("model").and_then(|m| m.as_str()).filter(|m| !m.is_empty()) {
+                u.model = Some(m.to_string());
+            }
+        }
+        Some("event_msg") if p.get("type").and_then(|t| t.as_str()) == Some("token_count") => {
+            apply_codex_token_count(p, u);
+        }
+        _ => {}
+    }
+}
+
+fn apply_codex_token_count(p: &serde_json::Value, u: &mut PaneUsage) {
+    // Rate limits ride on the same event and may arrive with `info: null`.
+    if let Some(rl) = p.get("rate_limits").filter(|r| r.is_object()) {
+        apply_codex_rate_limits(rl, u);
+    }
+    let Some(info) = p.get("info").filter(|i| i.is_object()) else { return };
+    let Some(last) = info.get("last_token_usage").filter(|l| l.is_object()) else { return };
+    let get = |k: &str| last.get(k).and_then(|x| x.as_u64());
+    // Require the fields we sum; a renamed schema must not read as zeros.
+    let (Some(input), Some(output)) = (get("input_tokens"), get("output_tokens")) else { return };
+    let cached = get("cached_input_tokens").unwrap_or(0).min(input);
+    let context = get("total_tokens").unwrap_or(input + output);
+    if context == 0 {
+        return;
+    }
+    u.context_tokens = context;
+    u.output_tokens += output;
+    u.turns += 1;
+    u.last_input_tokens = input - cached;
+    u.last_cache_read_tokens = cached;
+    u.last_cache_creation_tokens = get("cache_write_input_tokens").unwrap_or(0);
+    u.last_output_tokens = output;
+    if let Some(w) = info.get("model_context_window").and_then(|w| w.as_u64()).filter(|w| *w > 0) {
+        u.context_window = Some(w);
+    }
+}
+
+/// `primary`/`secondary` are keyed by `window_minutes` when present (300 = the
+/// 5h window, 10080 = weekly), else by position. Unknown windows are ignored.
+fn apply_codex_rate_limits(rl: &serde_json::Value, u: &mut PaneUsage) {
+    for (key, positional_week) in [("primary", false), ("secondary", true)] {
+        let Some(w) = rl.get(key).filter(|w| w.is_object()) else { continue };
+        let Some(pct) = w.get("used_percent").and_then(|x| x.as_f64()).filter(|x| x.is_finite() && *x >= 0.0) else { continue };
+        let resets = w.get("resets_at").and_then(|x| x.as_u64());
+        let week = match w.get("window_minutes").and_then(|x| x.as_u64()) {
+            Some(m) if m <= 360 => false,
+            Some(m) if m >= 10_000 => true,
+            Some(_) => continue,
+            None => positional_week,
+        };
+        if week {
+            u.plan_used_percent_week = Some(pct);
+            u.plan_resets_week = resets;
+        } else {
+            u.plan_used_percent_5h = Some(pct);
+            u.plan_resets_5h = resets;
+        }
+    }
+}
+
 /// The usage half of a transcript line, split out of `apply_line` so the
 /// subagent scan (QL-769) can sum tokens from a line it has already parsed
 /// instead of parsing it a second time. Behaviour is unchanged.
@@ -87,6 +171,10 @@ fn apply_usage(v: &serde_json::Value, u: &mut PaneUsage) {
 }
 
 fn scan(path: &Path) -> Option<PaneUsage> {
+    scan_with(path, apply_line)
+}
+
+fn scan_with(path: &Path, apply: fn(&str, &mut PaneUsage)) -> Option<PaneUsage> {
     let len = std::fs::metadata(path).ok()?.len();
     let mut map = states().lock().unwrap();
     let st = map.entry(path.to_path_buf()).or_insert_with(|| FileState {
@@ -107,7 +195,7 @@ fn scan(path: &Path) -> Option<PaneUsage> {
         let chunk = st.carry.clone() + &String::from_utf8_lossy(&buf);
         let complete_up_to = chunk.rfind('\n').map(|i| i + 1).unwrap_or(0);
         for line in chunk[..complete_up_to].lines() {
-            apply_line(line, &mut st.usage);
+            apply(line, &mut st.usage);
         }
         st.carry = chunk[complete_up_to..].to_string();
     }
@@ -136,11 +224,25 @@ pub fn usage_for(projects_root: &Path, cwd: &str) -> Option<PaneUsage> {
     scan(&newest).filter(|u| u.turns > 0)
 }
 
+/// Phase D: usage for a Codex pane, from the newest rollout recorded for `cwd`.
+pub fn codex_usage_for(sessions_root: &Path, cwd: &str) -> Option<PaneUsage> {
+    let newest = crate::codexsessions::newest_rollout(sessions_root, cwd)?;
+    scan_with(&newest, apply_codex_line).filter(|u| u.turns > 0)
+}
+
+/// `vendor` is optional so older callers (and the Claude default) keep working.
+/// Any other vendor has no transcript to read and gets no chip.
 #[tauri::command(async)]
-pub fn pane_usage(cwd: String) -> Option<PaneUsage> {
-    let home = std::env::var("USERPROFILE").ok()?;
-    let root = Path::new(&home).join(".claude").join("projects");
-    usage_for(&root, &cwd)
+pub fn pane_usage(vendor: Option<String>, cwd: String) -> Option<PaneUsage> {
+    match vendor.as_deref().unwrap_or("claude") {
+        "claude" => {
+            let home = std::env::var("USERPROFILE").ok()?;
+            let root = Path::new(&home).join(".claude").join("projects");
+            usage_for(&root, &cwd)
+        }
+        "codex" => codex_usage_for(&crate::codexsessions::codex_home()?.join("sessions"), &cwd),
+        _ => None,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -162,7 +264,7 @@ pub fn pane_usage(cwd: String) -> Option<PaneUsage> {
 // ---------------------------------------------------------------------------
 
 /// Newest N sessions listed; older ones are noise in a picker.
-const LIST_CAP: usize = 50;
+pub(crate) const LIST_CAP: usize = 50;
 /// Sample size per end. Sized so an ordinary session (well under 1 MB) is read
 /// whole — and so gets an exact turn count — while the multi-megabyte monsters
 /// still cost two seeks. Measured at ~90 ms for a 22-session folder totalling
@@ -170,7 +272,7 @@ const LIST_CAP: usize = 50;
 const HEAD_BYTES: u64 = 512 * 1024;
 const TAIL_BYTES: u64 = 512 * 1024;
 /// Prompt/summary line shown in the picker.
-const TITLE_CHARS: usize = 120;
+pub(crate) const TITLE_CHARS: usize = 120;
 
 #[derive(Clone, Serialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -240,7 +342,7 @@ fn user_prompt_text(v: &serde_json::Value) -> Option<String> {
 }
 
 /// One line, collapsed and clipped for a picker row.
-fn clip(s: &str, chars: usize) -> String {
+pub(crate) fn clip(s: &str, chars: usize) -> String {
     let flat = s.split_whitespace().collect::<Vec<_>>().join(" ");
     if flat.chars().count() <= chars {
         return flat;
@@ -330,7 +432,7 @@ fn summarise(path: &Path, modified_ms: u64) -> Option<SessionSummary> {
     })
 }
 
-fn modified_ms(path: &Path) -> u64 {
+pub(crate) fn modified_ms(path: &Path) -> u64 {
     std::fs::metadata(path)
         .and_then(|m| m.modified())
         .ok()
@@ -425,9 +527,26 @@ fn take_at(vendor: &str, cwd: &str, now: u64) -> Vec<String> {
 }
 
 /// Stage extra CLI args for the next spawn of `vendor` in `cwd` (QL-764).
+///
+/// Codex args end up inside a `pwsh -Command` line, so they are held to the one
+/// shape ever needed, `resume <uuid>`; anything else is refused rather than
+/// pasted into a shell command.
 #[tauri::command]
-pub fn stage_launch_args(vendor: String, cwd: String, args: Vec<String>) {
+pub fn stage_launch_args(vendor: String, cwd: String, args: Vec<String>) -> Result<(), String> {
+    check_staged(&vendor, &args)?;
     stage_at(&vendor, &cwd, args, now_ms());
+    Ok(())
+}
+
+fn check_staged(vendor: &str, args: &[String]) -> Result<(), String> {
+    if vendor == "codex" {
+        match args {
+            [a, id] if a == "resume" && crate::codexsessions::is_uuid(id) => {}
+            [] => {}
+            _ => return Err("codex accepts only `resume <session-uuid>`".into()),
+        }
+    }
+    Ok(())
 }
 
 /// Take (and clear) any staged args for this spawn. Empty is the normal case.
@@ -1831,5 +1950,94 @@ mod tests {
             cold.truncated
         );
         assert_eq!(cold.hits.len(), warm.hits.len());
+    }
+
+    // --- Phase D: Codex rollouts -----------------------------------------------
+
+    use crate::codexsessions::tests as cx;
+
+    fn tc_line(last: serde_json::Value, window: u64, rl: serde_json::Value) -> String {
+        serde_json::json!({
+            "timestamp": "2026-10-03T01:05:00.000Z",
+            "type": "event_msg",
+            "payload": {
+                "type": "token_count",
+                "info": {
+                    "total_token_usage": { "input_tokens": 99999, "total_tokens": 99999 },
+                    "last_token_usage": last,
+                    "model_context_window": window
+                },
+                "rate_limits": rl
+            }
+        })
+        .to_string()
+    }
+
+    fn rl(p5: f64, pw: f64) -> serde_json::Value {
+        serde_json::json!({
+            "primary": { "used_percent": p5, "window_minutes": 300, "resets_at": 1790000000u64 },
+            "secondary": { "used_percent": pw, "window_minutes": 10080, "resets_at": 1790500000u64 },
+            "credits": null, "plan_type": "plus"
+        })
+    }
+
+    #[test]
+    fn codex_usage_reads_newest_rollout_incrementally() {
+        let r = cx::root("usage");
+        let ctx = serde_json::json!({"type":"turn_context","payload":{"cwd":"C:\\Dev\\Repo","model":"gpt-5-codex"}}).to_string();
+        let t1 = tc_line(serde_json::json!({"input_tokens":1000,"cached_input_tokens":600,"cache_write_input_tokens":0,"output_tokens":50,"reasoning_output_tokens":10,"total_tokens":1050}), 272000, rl(12.5, 3.0));
+        let path = cx::write_rollout(&r, "2026/10/03", cx::ID_A, r"C:\Dev\Repo", &[cx::user_event("hi"), ctx, t1]);
+
+        let u = codex_usage_for(&r, "c:/dev/repo").expect("usage");
+        assert_eq!(u.turns, 1);
+        assert_eq!(u.context_tokens, 1050);
+        assert_eq!(u.output_tokens, 50);
+        assert_eq!((u.last_input_tokens, u.last_cache_read_tokens, u.last_cache_creation_tokens, u.last_output_tokens), (400, 600, 0, 50));
+        assert_eq!(u.model.as_deref(), Some("gpt-5-codex"));
+        assert_eq!(u.context_window, Some(272000));
+        assert_eq!((u.plan_used_percent_5h, u.plan_resets_5h), (Some(12.5), Some(1790000000)));
+        assert_eq!((u.plan_used_percent_week, u.plan_resets_week), (Some(3.0), Some(1790500000)));
+
+        // The file grows: only the new tail is applied, cumulative output sums.
+        let t2 = tc_line(serde_json::json!({"input_tokens":2000,"cached_input_tokens":1500,"output_tokens":70,"total_tokens":2070}), 272000, rl(14.0, 3.5));
+        let mut f = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
+        use std::io::Write;
+        writeln!(f, "{t2}").unwrap();
+        let u = codex_usage_for(&r, r"C:\Dev\Repo").unwrap();
+        assert_eq!((u.turns, u.context_tokens, u.output_tokens), (2, 2070, 120));
+        assert_eq!(u.plan_used_percent_5h, Some(14.0));
+    }
+
+    #[test]
+    fn codex_unknown_schema_yields_no_chip_not_a_wrong_number() {
+        let r = cx::root("usage-drift");
+        let renamed = serde_json::json!({"type":"event_msg","payload":{"type":"token_count","info":{
+            "last_token_usage":{"prompt":1000,"completion":50},"model_context_window":272000}}}).to_string();
+        let null_info = serde_json::json!({"type":"event_msg","payload":{"type":"token_count","info":null}}).to_string();
+        let string_numbers = tc_line(serde_json::json!({"input_tokens":"1000","output_tokens":"5"}), 1, serde_json::json!(null));
+        let wrong_shape = serde_json::json!({"type":"event_msg","payload":["token_count"]}).to_string();
+        cx::write_rollout(&r, "2026/10/03", cx::ID_A, r"C:\Dev\Drift", &[cx::user_event("hi"), renamed, null_info, string_numbers, wrong_shape, "garbage{".into()]);
+        assert!(codex_usage_for(&r, r"C:\Dev\Drift").is_none());
+        // No rollout for a folder at all.
+        assert!(codex_usage_for(&r, r"C:\Dev\Elsewhere").is_none());
+    }
+
+    #[test]
+    fn codex_rate_limits_without_window_minutes_go_by_position_and_odd_windows_are_ignored() {
+        let mut u = PaneUsage::default();
+        apply_codex_rate_limits(&serde_json::json!({"primary":{"used_percent":7.0},"secondary":{"used_percent":9.0}}), &mut u);
+        assert_eq!((u.plan_used_percent_5h, u.plan_used_percent_week), (Some(7.0), Some(9.0)));
+        let mut u = PaneUsage::default();
+        apply_codex_rate_limits(&serde_json::json!({"primary":{"used_percent":7.0,"window_minutes":1000}, "secondary":{"used_percent":-1.0}}), &mut u);
+        assert_eq!((u.plan_used_percent_5h, u.plan_used_percent_week), (None, None));
+    }
+
+    #[test]
+    fn staged_codex_args_must_be_resume_uuid() {
+        assert!(check_staged("codex", &["resume".into(), cx::ID_A.into()]).is_ok());
+        assert!(check_staged("codex", &["resume".into(), "x; calc".into()]).is_err());
+        assert!(check_staged("codex", &["resume".into(), cx::ID_A.into(), "--fork-session".into()]).is_err());
+        assert!(check_staged("codex", &["--yolo".into()]).is_err());
+        assert!(check_staged("claude", &["--resume".into(), "anything".into()]).is_ok());
     }
 }
