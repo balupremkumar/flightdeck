@@ -6,7 +6,7 @@ import { useUI, useOverlayEsc } from "./ui";
 import { Terminal, type TerminalHandle } from "./Terminal";
 import { get as getPaneSession } from "./paneSessions";
 import { getTerminalSettings } from "./settingsStore";
-import { rightClickAction } from "./terminalMouse";
+import { rightClickAction, shouldConfirmPaste } from "./terminalMouse";
 import {
   IconBranch, IconClose, IconRefresh, IconDrag, IconOverflow,
   IconMaximizePane, IconMinimize, IconFolder, IconChevron, IconDiff, IconFile,
@@ -16,7 +16,7 @@ import type { DiffSummary } from "./worktrees";
 import { cachedInvoke, usePoll, useVisible, usePaneMemory } from "./poll";
 import { compact, num, duration, bytes, relTime, tailEllipsis } from "./format";
 import { mcpChip, noteMcpLine } from "./mcphealth";
-import { stateSince, lastLine, isOpenQuestion, STATE_LABEL as STATE_TITLE } from "./attention";
+import { stateSince, lastLine, isOpenQuestion, attentionKind, STATE_LABEL as STATE_TITLE } from "./attention";
 import "./panes.css";
 
 // Phase 3: the chat view is its own chunk, fetched the first time a pane opens it.
@@ -608,17 +608,19 @@ function PaneViewInner({
 
   // UI-133: pasting many lines into a shell can execute them all — confirm
   // first. Single-line pastes go straight through.
-  const pasteFromClipboard = async () => {
+  const pasteFromClipboard = async (forceConfirm = false) => {
     setCtxMenu(null);
     let text = "";
     try { text = await navigator.clipboard.readText(); } catch { pushToast("error", "Couldn’t read the clipboard."); return; }
     if (!text) return;
     const lines = text.split(/\r?\n/).filter((l) => l.length > 0).length;
-    if (lines > 1) {
+    if (lines > 1 || forceConfirm) {
       requestConfirm({
-        title: `Paste ${lines} lines into ${displayName}?`,
-        body: "Multi-line pastes can run every line at once in a shell. Check it’s what you meant to send.",
-        confirmLabel: `Paste ${lines} lines`,
+        title: lines > 1 ? `Paste ${lines} lines into ${displayName}?` : `Paste into ${displayName}?`,
+        body: lines > 1
+          ? "Multi-line pastes can run every line at once in a shell. Check it’s what you meant to send."
+          : "This pane is waiting on you or isn’t the focused pane, so a paste could answer a prompt you haven’t read.",
+        confirmLabel: lines > 1 ? `Paste ${lines} lines` : "Paste",
         onConfirm: () => terminalRef.current?.paste(text),
       });
       return;
@@ -1411,6 +1413,7 @@ Running low — consider /compact in this pane.` : "")
           const act = rightClickAction({
             hasSelection: !!sel, overLink: false, mouseTracking: !!t?.isMouseTracking(),
             shift: e.shiftKey, setting: getTerminalSettings().rightClick,
+            confirmPaste: shouldConfirmPaste({ attention: attentionKind(pane), focused }),
           });
           if (act === "app") return;
           if (act === "copy") {
@@ -1419,6 +1422,7 @@ Running low — consider /compact in this pane.` : "")
             return;
           }
           if (act === "paste") { void pasteFromClipboard(); return; }
+          if (act === "paste-confirm") { void pasteFromClipboard(true); return; }
           setCtxMenu({ x: e.clientX, y: e.clientY, hasSel: !!sel });
         }}
       >

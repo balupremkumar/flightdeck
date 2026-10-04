@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { rightClickAction, shouldCopyOnSelect } from "./terminalMouse";
+import { rightClickAction, shouldConfirmPaste, shouldCopyOnSelect } from "./terminalMouse";
 
 const base = { hasSelection: false, overLink: false, mouseTracking: false, shift: false, setting: "paste" as const };
 
@@ -15,6 +15,21 @@ describe("rightClickAction", () => {
   it("menu setting is always today's menu", () => {
     expect(rightClickAction({ ...base, setting: "menu", hasSelection: true })).toBe("menu");
     expect(rightClickAction({ ...base, setting: "menu", mouseTracking: true })).toBe("menu");
+  });
+});
+
+describe("right-click paste confirm (SF2)", () => {
+  it("routes paste through the confirm when flagged", () => expect(rightClickAction({ ...base, confirmPaste: true })).toBe("paste-confirm"));
+  it("a selection still copies", () => expect(rightClickAction({ ...base, confirmPaste: true, hasSelection: true })).toBe("copy"));
+  it("the menu setting is unaffected", () => expect(rightClickAction({ ...base, confirmPaste: true, setting: "menu" })).toBe("menu"));
+  it("permission, open question and unfocused panes confirm", () => {
+    expect(shouldConfirmPaste({ attention: "permission", focused: true })).toBe(true);
+    expect(shouldConfirmPaste({ attention: "question", focused: true })).toBe(true);
+    expect(shouldConfirmPaste({ attention: null, focused: false })).toBe(true);
+  });
+  it("a focused pane that is not blocked pastes straight in", () => {
+    expect(shouldConfirmPaste({ attention: null, focused: true })).toBe(false);
+    expect(shouldConfirmPaste({ attention: "error", focused: true })).toBe(false);
   });
 });
 

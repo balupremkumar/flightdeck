@@ -119,6 +119,24 @@ const setTerm = (patch) => page.evaluate((p) => {
   await page.waitForTimeout(200);
 }
 
+// (f2) SF2: a permission pane must not take a bare right-click paste
+{
+  await page.evaluate(([i]) => window.__mockEmit("pty://state", { pane_id: i, state: "permission" }), [id]);
+  await page.waitForTimeout(300);
+  await page.evaluate(() => navigator.clipboard.writeText("1"));
+  await page.evaluate(() => { window.__writes.length = 0; });
+  const p = await cell(5, 10);
+  await page.mouse.click(p.x, p.y, { button: "right" });
+  await page.waitForTimeout(400);
+  check(await page.locator(".confirm-modal").isVisible().catch(() => false), "(f2) permission pane: right-click paste shows the confirm");
+  check((await writes()).length === 0, "(f2) ...and nothing is written until confirmed");
+  await page.locator(".confirm-modal .btn-primary").click();
+  await page.waitForTimeout(300);
+  check((await writes()).some((x) => x.data === "1"), "(f2) confirming writes the paste");
+  await page.evaluate(([i]) => window.__mockEmit("pty://state", { pane_id: i, state: "running" }), [id]);
+  await page.waitForTimeout(200);
+}
+
 // (g) settings off: copy on select disabled, right-click behaves as Menu
 {
   await setTerm({ copyOnSelect: false, rightClick: "menu" });
