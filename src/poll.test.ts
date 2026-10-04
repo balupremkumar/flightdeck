@@ -23,26 +23,14 @@ describe("cachedInvoke", () => {
   });
 
   it("serves from cache inside the TTL and refetches after it", async () => {
-    // Mock Date.now() to control timing deterministically and avoid flakiness from
-    // adaptive slow-call TTL. Times sequence: first call start, first call end,
-    // second call, third call (after TTL + adaptive TTL have expired).
-    let callIdx = 0;
-    const times = [1000, 1001, 1001, 12000];
-    const nowSpy = vi.spyOn(global.Date, "now").mockImplementation(() => times[callIdx++]);
+    invokeMock.mockResolvedValue("v1");
+    await cachedInvoke("git_status", { cwd: "D:/r" }, 10_000);
+    await cachedInvoke("git_status", { cwd: "D:/r" }, 10_000);
+    expect(invokeMock).toHaveBeenCalledTimes(1);
 
-    try {
-      invokeMock.mockResolvedValue("v1");
-      await cachedInvoke("git_status", { cwd: "D:/r" }, 10_000);
-      await cachedInvoke("git_status", { cwd: "D:/r" }, 10_000);
-      expect(invokeMock).toHaveBeenCalledTimes(1);
-
-      // TTL of 0 always misses, because now (12000) - hit.at (1001) = 10999ms,
-      // which exceeds both the requested TTL (0) and any adaptive TTL.
-      await cachedInvoke("git_status", { cwd: "D:/r" }, 0);
-      expect(invokeMock).toHaveBeenCalledTimes(2);
-    } finally {
-      nowSpy.mockRestore();
-    }
+    // TTL of 0 always misses.
+    await cachedInvoke("git_status", { cwd: "D:/r" }, 0);
+    expect(invokeMock).toHaveBeenCalledTimes(2);
   });
 
   it("keys separately per argument set", async () => {
