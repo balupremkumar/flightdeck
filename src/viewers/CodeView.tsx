@@ -14,21 +14,24 @@ import { tags as t } from "@lezer/highlight";
 import { findTheme } from "../themes";
 import { findOffsets } from "./findInViewer";
 import { LANG_LOADERS } from "./cmlang";
+import { codeVar } from "./codeTokens";
 import { CODE_LANG, extOf } from "./registry";
 import type { TreeFind } from "./JsonTree";
 
+// Colours come from codeTokens.ts (tested for contrast and distinctness).
+const c = codeVar;
 const hl = HighlightStyle.define([
-  { tag: [t.keyword, t.controlKeyword, t.operatorKeyword, t.modifier, t.definitionKeyword], color: "var(--azure)" },
-  { tag: [t.string, t.special(t.string), t.regexp, t.character], color: "var(--aqua)" },
-  { tag: [t.number, t.bool, t.null, t.atom], color: "var(--ice)" },
-  { tag: [t.comment, t.lineComment, t.blockComment, t.docComment], color: "var(--faint)", fontStyle: "italic" },
-  { tag: [t.typeName, t.className, t.namespace], color: "var(--ice)" },
-  { tag: [t.function(t.variableName), t.function(t.propertyName), t.labelName], color: "var(--accent)" },
-  { tag: [t.propertyName, t.attributeName], color: "var(--text)", fontWeight: "600" },
-  { tag: [t.tagName, t.heading], color: "var(--azure)" },
-  { tag: [t.punctuation, t.bracket, t.separator, t.operator], color: "var(--muted)" },
-  { tag: [t.meta, t.processingInstruction, t.url, t.link], color: "var(--muted)" },
-  { tag: t.invalid, color: "var(--red)" },
+  { tag: [t.keyword, t.controlKeyword, t.operatorKeyword, t.modifier, t.definitionKeyword], color: c("keyword"), fontWeight: "600" },
+  { tag: [t.string, t.special(t.string), t.regexp, t.character], color: c("string") },
+  { tag: [t.number, t.bool, t.null, t.atom], color: c("number") },
+  { tag: [t.comment, t.lineComment, t.blockComment, t.docComment], color: c("comment"), fontStyle: "italic" },
+  { tag: [t.typeName, t.className, t.namespace], color: c("type") },
+  { tag: [t.function(t.variableName), t.function(t.propertyName), t.labelName], color: c("function") },
+  { tag: [t.propertyName, t.attributeName], color: c("property") },
+  { tag: [t.tagName, t.heading], color: c("keyword") },
+  { tag: [t.punctuation, t.bracket, t.separator, t.operator], color: c("operator") },
+  { tag: [t.meta, t.processingInstruction, t.url, t.link], color: c("operator") },
+  { tag: t.invalid, color: c("invalid") },
 ]);
 
 function baseTheme(dark: boolean): Extension {
