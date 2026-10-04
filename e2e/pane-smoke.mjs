@@ -10,7 +10,7 @@
 // the server itself): node pane-smoke.mjs
 import { chromium } from "playwright";
 
-const URL = "http://localhost:1420";
+const URL = process.env.FD_URL ?? "http://localhost:1420";
 const fail = (msg) => { console.error("PANE-SMOKE FAIL:", msg); process.exitCode = 1; };
 
 const browser = await chromium.launch();
