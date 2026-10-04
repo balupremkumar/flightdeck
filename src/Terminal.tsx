@@ -23,6 +23,13 @@ import { getTerminalSettings } from "./Settings";
 import { linkify, resolvePath, type LinkMatch } from "./linkify";
 import { openInEditor } from "./editor";
 import { useUI } from "./ui";
+import { resolveCandidates } from "./termlinkResolve";
+import {
+  VAULT_ROOT, candidateBases, stitchLogical, matchRange, rangesOverlap, rangeTouchesRow, hardWrapLink, parseFileUri,
+  pickFileHit, createDedupe, type LinkTarget, type Range, type RowInfo,
+} from "./termlinks";
+import { requestReveal } from "./revealInTree";
+import { LinkMenuHost, linkMenuItems, openLinkMenu } from "./LinkMenu";
 import {
   acquire, attach, detach, get as getSession, setSessionFactory, fitIfSane, FALLBACK_COLS, FALLBACK_ROWS,
   type PaneHandlers, type PaneSession, type SessionLive, type SpawnSpec,
@@ -75,39 +82,69 @@ function searchDecorations(theme: ITheme) {
 }
 
 // UX-501..504/523: clickable file paths in terminal output. URLs are left to
-// WebLinksAddon (registered alongside this in the mount effect below) — this
-// provider only emits `linkify()`'s 'path' matches, so the two never fight
-// over the same span. Plain click previews the file in-app (UX-505); Ctrl/Cmd
-// +click opens it in the editor configured in Settings (src/editor.ts), the
-// same helper Review's file rows use. Existence is checked via the
-// one Rust command that's actually available for it (`fs_list_dir`, reading
-// the parent directory) — a path that isn't there loses its link styling and
-// its click turns into a "not found" toast instead of a dead navigation.
+// WebLinksAddon (registered alongside this in createSession) — this provider
+// only emits `linkify()`'s 'path' matches, so the two never fight over the same
+// span. Plain click previews the file in-app (UX-505); Ctrl/Cmd+click opens it in
+// the editor configured in Settings (src/editor.ts); a folder reveals in the
+// Explorer panel (1.4a); right-click opens LinkMenu (1.4b/c).
+// Phase 1 L3: a path is only underlined once a candidate base resolves it on
+// disk (pane worktree, last-known cwd, workspace root, vault root; see
+// termlinks.ts candidateBases and termlinkResolve.ts) — unresolved text stays
+// plain, so there is no "maybe" state and no not-found toast. Rows joined by an
+// xterm soft wrap are linked as one logical line (1.3d), and an Ink hard wrap is
+// only joined when the joined path resolves.
 // QL-757: `cwdRef` is a ref, not a string, because the pane's folder moves —
 // the shell reports the live one via OSC 9;9 after every `cd`, and a relative
 // path in output must resolve against where the shell actually IS, not where
 // the pane was spawned.
-function registerPathLinks(term: XTerm, cwdRef: { current: string }, fontSizeRef: { current: number }): { dispose(): void } {
-  const dirCache = new Map<string, Promise<Set<string>>>();
-  const dirOf = (p: string): string => {
-    const i = Math.max(p.lastIndexOf("\\"), p.lastIndexOf("/"));
-    return i > 0 ? p.slice(0, i) : p;
-  };
-  const baseOf = (p: string): string => {
-    const i = Math.max(p.lastIndexOf("\\"), p.lastIndexOf("/"));
-    return i >= 0 ? p.slice(i + 1) : p;
-  };
-  const listDir = (dir: string): Promise<Set<string>> => {
-    let cached = dirCache.get(dir);
-    if (!cached) {
-      cached = invoke<{ name: string; dir: boolean }[]>("fs_list_dir", { path: dir })
-        .then((entries) => new Set(entries.map((e) => e.name.toLowerCase())))
-        .catch(() => new Set<string>()); // unreadable/missing dir — nothing in it "exists"
-      dirCache.set(dir, cached);
-    }
-    return cached;
-  };
 
+/** What createSession hands the link layer for one pane. */
+interface PaneLinkCtx {
+  modelId: number;
+  cwdRef: { current: string };
+  /** The hovered link's menu target (set by hover, cleared by leave), so a
+   *  right-click knows whether it landed on a link. Shared by all three sources:
+   *  this provider, WebLinksAddon and OSC 8. */
+  hover: { current: (() => Promise<LinkTarget | null>) | null };
+  /** Click behaviour (dedupe + preview/editor/explorer/browser). */
+  open: (t: LinkTarget, e: { ctrlKey: boolean; metaKey: boolean }) => void;
+  menuDeps: () => Parameters<typeof linkMenuItems>[1];
+}
+
+let vaultBase: Promise<string | null> | null = null;
+/** The vault root, but only if it exists on this machine. Cached for the app's life. */
+function vaultRootIfExists(): Promise<string | null> {
+  vaultBase ??= resolveCandidates([VAULT_ROOT], []).then((h) => (h[0]?.isDir ? VAULT_ROOT : null), () => null);
+  return vaultBase;
+}
+
+/** Bases for a pane's relative paths, in priority order (1.3b). */
+async function paneBases(modelId: number, cwd: string): Promise<string[]> {
+  let worktree: string | undefined;
+  let root: string | undefined;
+  for (const w of useApp.getState().workspaces) {
+    const p = w.panes.find((x) => x.id === modelId);
+    if (p) { worktree = p.worktreePath; root = w.root; break; }
+  }
+  return candidateBases({ worktree, cwd, root, vault: await vaultRootIfExists() });
+}
+
+/** Resolves an OSC 8 `file://` URI to something that exists, or null. */
+async function resolveFileLink(uri: string): Promise<LinkTarget | null> {
+  const f = parseFileUri(uri);
+  if (!f) return null;
+  const hit = pickFileHit(f, await resolveCandidates(f.candidates, []));
+  return hit ? { kind: "path", path: hit.path, isDir: hit.isDir, line: hit.line, col: hit.col } : null;
+}
+
+/** OSC 8 target: http(s) goes to the browser, file:// must exist, anything else is ignored. */
+async function resolveOscLink(uri: string): Promise<LinkTarget | null> {
+  if (/^https?:\/\//i.test(uri)) return { kind: "url", url: uri };
+  if (/^file:/i.test(uri)) return resolveFileLink(uri);
+  return null;
+}
+
+function registerPathLinks(term: XTerm, pane: PaneLinkCtx): { dispose(): void } {
   // UX-504: a small DOM tooltip explaining click vs Ctrl+click. Per xterm's
   // own ILink.hover doc it must live inside term.element and carry the
   // xterm-hover class so xterm doesn't treat the pointer leaving the link
@@ -127,48 +164,83 @@ function registerPathLinks(term: XTerm, cwdRef: { current: string }, fontSizeRef
   };
   const hideTip = () => { tip.style.display = "none"; };
 
+  interface Cand { m: LinkMatch; range: Range; hard: boolean }
+
+  const buildLinks = async (y: number): Promise<ILink[] | undefined> => {
+    const buf = term.buffer.active;
+    const getRow = (yy: number): RowInfo | undefined => {
+      const l = buf.getLine(yy - 1);
+      return l ? { text: l.translateToString(false), wrapped: l.isWrapped } : undefined;
+    };
+    const logical = stitchLogical(getRow, y);
+    if (!logical) return undefined;
+    const cands: Cand[] = [];
+    for (const m of linkify(logical.text)) {
+      if (m.kind !== "path") continue;
+      const range = matchRange(logical, m.start, m.end);
+      if (range && rangeTouchesRow(range, y)) cands.push({ m, range, hard: false });
+    }
+    // 1.3d: Ink-style hard wraps (rows NOT flagged isWrapped): this row and the
+    // next, or the previous row and this one.
+    for (const upperY of [y - 1, y]) {
+      const upper = buf.getLine(upperY - 1);
+      const lower = buf.getLine(upperY);
+      if (!upper || !lower || lower.isWrapped) continue;
+      const hw = hardWrapLink(upper.translateToString(true), lower.translateToString(true), term.cols, upperY, upperY + 1);
+      if (hw && rangeTouchesRow(hw.range, y)) cands.push({ m: hw.match, range: hw.range, hard: true });
+    }
+    if (!cands.length) return undefined;
+
+    const hits = await resolveCandidates(cands.map((c) => c.m.raw), await paneBases(pane.modelId, pane.cwdRef.current));
+    const resolved = cands.flatMap((c, i) => (hits[i] ? [{ c, hit: hits[i]! }] : []));
+    // A joined (hard-wrapped) path supersedes any partial match inside it.
+    const joined = resolved.filter((r) => r.c.hard).map((r) => r.c.range);
+    const final = resolved.filter((r) => r.c.hard || !joined.some((j) => rangesOverlap(j, r.c.range)));
+    if (!final.length) return undefined;
+
+    return final.map(({ c, hit }) => {
+      const target: LinkTarget = { kind: "path", path: hit.path, isDir: hit.isDir, line: c.m.line, col: c.m.col };
+      const resolver = () => Promise.resolve<LinkTarget | null>(target);
+      const link: ILink = {
+        range: c.range,
+        text: c.m.text,
+        decorations: { pointerCursor: true, underline: true },
+        // xterm fires activate on mouseup of ANY button; only the left one is a click.
+        activate: (event) => { if (event.button === 0) pane.open(target, event); },
+        hover: (event) => {
+          pane.hover.current = resolver;
+          showTip(event, hit.isDir
+            ? "Click — reveal in Explorer   ·   Right-click — more"
+            : "Click — preview   ·   Ctrl+click — open in editor   ·   Right-click — more");
+        },
+        leave: () => { if (pane.hover.current === resolver) pane.hover.current = null; hideTip(); },
+      };
+      return link;
+    });
+  };
+
   const provider: ILinkProvider = {
     provideLinks(bufferLineNumber, callback) {
-      const line = term.buffer.active.getLine(bufferLineNumber - 1);
-      if (!line) { callback(undefined); return; }
-      const text = line.translateToString(true);
-      const matches = linkify(text).filter((m) => m.kind === "path");
-      if (!matches.length) { callback(undefined); return; }
-
-      const links: ILink[] = matches.map((m) => {
-        const abs = resolvePath(m, cwdRef.current);
-        // UX-517: the editor chosen in Settings, at the line the output named
-        // (`src/App.tsx:42` jumps to 42). editor.ts owns the fallback to the OS
-        // hand-off this used to do directly, and reports its own failures.
-        // Column is parsed by linkify but has no placeholder in the command
-        // template, so it isn't passed on.
-        const openEditor = () => { void openInEditor(abs, m.line); };
-        const openInPreview = () => {
-          useUI.getState().openPreview(abs, { line: m.line, fontSize: fontSizeRef.current });
-        };
-        const link: ILink = {
-          range: { start: { x: m.start + 1, y: bufferLineNumber }, end: { x: m.end, y: bufferLineNumber } },
-          text: m.text,
-          decorations: { pointerCursor: true, underline: true },
-          activate: (event) => { if (event.ctrlKey || event.metaKey) openEditor(); else openInPreview(); },
-          hover: (event) => showTip(event, "Click — preview   ·   Ctrl+click — open in editor"),
-          leave: hideTip,
-        };
-        // Fire-and-forget existence check; ILink.decorations is documented as
-        // tracked, so mutating it in place after the fact still repaints.
-        listDir(dirOf(abs)).then((names) => {
-          if (names.has(baseOf(abs).toLowerCase())) return;
-          link.decorations = { pointerCursor: false, underline: false };
-          link.activate = () => useUI.getState().pushToast("error", `${abs} — not found on disk`);
-          link.hover = (event) => showTip(event, "Not found on disk");
-        });
-        return link;
-      });
-      callback(links);
+      buildLinks(bufferLineNumber).then(callback, () => callback(undefined));
     },
   };
   const disp = term.registerLinkProvider(provider);
-  return { dispose() { disp.dispose(); tip.remove(); } };
+
+  // 1.4b: right-click over a link opens LinkMenu; anywhere else the event is
+  // left completely alone (native/xterm behaviour unchanged).
+  const onContextMenu = (e: MouseEvent) => {
+    const resolve = pane.hover.current;
+    if (!resolve) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const { clientX: x, clientY: y } = e;
+    void resolve().then((t) => {
+      if (t) openLinkMenu({ modelId: pane.modelId, x, y, items: linkMenuItems(t, pane.menuDeps()) });
+    });
+  };
+  const el = term.element;
+  el?.addEventListener("contextmenu", onContextMenu, true);
+  return { dispose() { disp.dispose(); el?.removeEventListener("contextmenu", onContextMenu, true); tip.remove(); } };
 }
 
 // ---------------------------------------------------------------------------
@@ -549,6 +621,21 @@ function createSession(modelId: number, gen: string, spec: SpawnSpec, handlers: 
     ligatures: { current: false },
   };
   const webglRef: WebglRef = { current: null, lost: false };
+    // Phase 1 L3 link plumbing, declared before the XTerm options that close over it.
+    // QL-757: starts at the spawn cwd and is replaced by every OSC 9;9 report,
+    // so a `cd` inside the pane immediately re-bases relative file links.
+    const cwdRef = { current: spec.cwd };
+    const hoverRef: PaneLinkCtx["hover"] = { current: null };
+    let oscHover: (() => Promise<LinkTarget | null>) | null = null;
+    let urlHover: (() => Promise<LinkTarget | null>) | null = null;
+    const dedupe = createDedupe(); // 1.3e: Claude Code fullscreen fires one OSC 8 activation twice
+    const openTarget: PaneLinkCtx["open"] = (t, e) => {
+      if (!dedupe(t.kind === "url" ? t.url : `${t.path}:${t.line ?? ""}`)) return;
+      if (t.kind === "url") { openTerminalUrl(t.url); return; }
+      if (t.isDir) { requestReveal(t.path); return; } // 1.4a
+      if (e.ctrlKey || e.metaKey) { void openInEditor(t.path, t.line); return; }
+      useUI.getState().openPreview(t.path, { line: t.line, fontSize: live.fontSize.current });
+    };
     // Terminal settings from Settings > Terminal (QOL 319 — they were persisted
     // but never read). fontSize stays a per-pane prop (zoom control).
     const ts = getTerminalSettings();
@@ -568,7 +655,23 @@ function createSession(modelId: number, gen: string, spec: SpawnSpec, handlers: 
       // emit them so a PR/docs URL is clickable without printing the raw link.
       // xterm hands the URI over verbatim, so it goes through the same
       // allowlisted opener as the regex-matched URLs below.
-      linkHandler: { activate: (_e, uri) => openTerminalUrl(uri) },
+      // Phase 1 1.3e: Claude Code also emits file:// links. xterm drops every
+      // non-http OSC 8 link unless allowNonHttpProtocols is set, so the scheme
+      // gate moves HERE: http(s) -> browser, file:// -> only if it exists, and
+      // everything else is ignored (resolveOscLink returns null).
+      linkHandler: {
+        allowNonHttpProtocols: true,
+        activate: (e, uri) => {
+          if (e.button !== 0) return;
+          void resolveOscLink(uri).then((t) => { if (t) openTarget(t, e); });
+        },
+        hover: (_e, uri) => {
+          const resolver = () => resolveOscLink(uri);
+          hoverRef.current = resolver;
+          oscHover = resolver;
+        },
+        leave: () => { if (hoverRef.current === oscHover) hoverRef.current = null; },
+      },
       // QL-753: the slim strip down the pane's scrollbar edge. xterm's own
       // overview ruler is used rather than a hand-positioned overlay so tick
       // positions stay proportional through resize, reflow and scrollback
@@ -581,7 +684,13 @@ function createSession(modelId: number, gen: string, spec: SpawnSpec, handlers: 
     term.loadAddon(fit);
     const search = new SearchAddon();
     term.loadAddon(search);
-    const webLinks = new WebLinksAddon((_e, uri) => openTerminalUrl(uri));
+    const webLinks = new WebLinksAddon(
+      (e, uri) => { if (e.button === 0) openTarget({ kind: "url", url: uri }, e); },
+      {
+        hover: (_e, uri) => { const r = () => Promise.resolve<LinkTarget | null>({ kind: "url", url: uri }); hoverRef.current = r; urlHover = r; },
+        leave: () => { if (hoverRef.current === urlHover) hoverRef.current = null; },
+      }
+    );
     term.loadAddon(webLinks);
     // QL-751: agent TUIs draw with emoji and box-drawing characters whose
     // widths changed in Unicode 11; on xterm's default table they measure one
@@ -618,11 +727,23 @@ function createSession(modelId: number, gen: string, spec: SpawnSpec, handlers: 
       api: { jumpMark: () => false, showHints: () => false, remeasure: () => {}, onAttach: () => { fitSane(); reloadWebglIfLost(term, webglRef); } },
       owner: null, saved: { viewportY: 0, atBottom: true, hadFocus: false }, disposers: [], disposed: false,
     };
-    // QL-757: starts at the spawn cwd and is replaced by every OSC 9;9 report,
-    // so a `cd` inside the pane immediately re-bases relative file links.
-    const cwdRef = { current: spec.cwd };
     // Needs term.element, so registered only after open() above.
-    const pathLinks = registerPathLinks(term, cwdRef, live.fontSize);
+    const pathLinks = registerPathLinks(term, {
+      modelId,
+      cwdRef,
+      hover: hoverRef,
+      open: openTarget,
+      menuDeps: () => ({
+        fontSize: live.fontSize.current,
+        openUrl: openTerminalUrl,
+        // 1.4c: types into THIS pane's PTY, no Enter.
+        sendToPane: (text) => {
+          if (!entry.ptyId) { useUI.getState().pushToast("error", "This pane isn’t running."); return; }
+          void invoke("pty_write", { paneId: entry.ptyId, data: text });
+          term.focus();
+        },
+      }),
+    });
 
     // QL-762: the serializer turns this pane's buffer back into the bytes that
     // drew it, so a restored pane comes back with its history instead of a
@@ -1506,5 +1627,10 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
     if (s) s.live.osc52.current = osc52;
   }, [osc52, modelId, vendor, cwd, epoch]);
 
-  return <div ref={elRef} style={{ width: "100%", height: "100%" }} />;
+  return (
+    <>
+      <div ref={elRef} style={{ width: "100%", height: "100%" }} />
+      <LinkMenuHost modelId={modelId} />
+    </>
+  );
 });
