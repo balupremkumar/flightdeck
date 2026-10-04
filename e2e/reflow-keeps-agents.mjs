@@ -44,10 +44,30 @@ async function alive() {
   return { set, log };
 }
 
+// The terminal DOM node itself must survive a reflow, not just the PTY: tag each
+// visible pane's .xterm element, then require the same element (by tag) to still
+// be in the document after the step.
+async function tagNodes() {
+  return page.evaluate(() => {
+    const tags = [];
+    document.querySelectorAll(".pane").forEach((p, i) => {
+      const x = p.querySelector(".xterm");
+      if (!x) return;
+      if (!x.__fdTag) x.__fdTag = "t" + Math.random().toString(36).slice(2);
+      tags.push(x.__fdTag);
+    });
+    return tags;
+  });
+}
+async function liveTags() {
+  return new Set(await page.evaluate(() => [...document.querySelectorAll(".pane .xterm")].map((x) => x.__fdTag).filter(Boolean)));
+}
+
 // Run a step, let it settle, then require every previously-alive id (minus the
 // intentionally closed ones) to still be alive.
 async function step(name, action, { expectKilled = [] } = {}) {
   const { set: before, log: logBefore } = await alive();
+  const tagsBefore = await tagNodes();
   await action();
   await page.waitForTimeout(2000);
   const { set: after, log } = await alive();
@@ -57,6 +77,12 @@ async function step(name, action, { expectKilled = [] } = {}) {
   if (killedEstablished.length) {
     failures.push(`${name}: established PTY id(s) ${killedEstablished.join(", ")} were killed by the reflow`);
   }
+  const tagsAfter = await liveTags();
+  const lostNodes = tagsBefore.filter((t) => !tagsAfter.has(t)).length;
+  // Closing a pane legitimately removes exactly its own node.
+  if (lostNodes > expectKilled.length) {
+    failures.push(`${name}: ${lostNodes - expectKilled.length} terminal DOM node(s) of established panes were replaced by the reflow`);
+  }
   if (missedExpected.length) failures.push(`${name}: PTY id(s) ${missedExpected.join(", ")} should have been killed but are still alive`);
 }
 
@@ -65,7 +91,7 @@ const addPane = async () => {
   await page.locator(".apm-item").first().click();
 };
 
-const startPanes = await page.locator(".pane").count();
+const startPanes = await page.locator(".pane:visible").count();
 console.log(`panes at start: ${startPanes}, alive: [${[...(await alive()).set]}]`);
 
 for (let i = 0; i < 3; i++) {
@@ -77,14 +103,19 @@ for (let i = 0; i < 3; i++) {
 {
   const victimId = [...(await alive()).set].at(-1);
   await step("close one pane", async () => {
-    await page.locator(".pane").last().locator("button.x").click();
+    await page.locator(".pane:visible").last().locator("button.x").click();
     const confirm = page.getByText("Close & end session");
     if (await confirm.count()) await confirm.first().click();
   }, { expectKilled: [victimId] });
 }
 
-// TODO: drag-reorder via the ".phead" grip (title "Drag to reorder"). HTML5
-// drag events are flaky under headless Playwright; add once a stable path exists.
+// Cross-row drag-reorder: pane index 1 dropped on index 2 swaps rows, so both
+// panes change parent. Neither PTY may die and neither node may be replaced.
+await step("drag pane 1 onto pane 2 (cross-row)", async () => {
+  const from = page.locator(".pane:visible").nth(1).locator(".pgrip");
+  const to = page.locator(".pane:visible").nth(2);
+  await from.dragTo(to);
+});
 
 if (pageErrors.length) console.log("page errors:", pageErrors.slice(0, 3).join(" | "));
 await browser.close();
