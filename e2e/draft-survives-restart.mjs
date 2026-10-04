@@ -22,7 +22,7 @@ const wrap = `(()=>{const T=window.__TAURI_INTERNALS__;const inv=T.invoke;window
 const browser = await chromium.launch();
 const page = await browser.newPage({ viewport: { width: 1600, height: 900 } });
 await page.addInitScript(boot + "\n" + mock + "\n" + wrap);
-await page.goto("http://localhost:1420", { waitUntil: "networkidle" });
+await page.goto(process.env.FD_URL ?? "http://localhost:1420", { waitUntil: "networkidle" });
 await page.waitForTimeout(2500);
 await page.getByText("acme-web", { exact: true }).first().click();
 await page.waitForTimeout(1500);

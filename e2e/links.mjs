@@ -16,7 +16,7 @@ mkdirSync(shots, { recursive: true });
 const boot = `localStorage.setItem("flightdeck-startup","reopen");`;
 const wrap = `(()=>{const T=window.__TAURI_INTERNALS__;const inv=T.invoke;window.__spawned=[];window.__size={};window.__writes=[];window.__pathsExist=[];T.invoke=(c,a)=>{if(c==="paths_exist")window.__pathsExist.push(JSON.stringify(a));if(c==="pty_resize")window.__size[a.paneId]={cols:a.cols,rows:a.rows};if(c==="pty_write")window.__writes.push({id:a.paneId,data:a.data});const r=inv(c,a);if(c==="pty_spawn"){Promise.resolve(r).then(id=>{window.__spawned.push(id);window.__size[id]={cols:a.cols,rows:a.rows};});}return r;};})();`;
 
-const URL = "http://localhost:1420";
+const URL = process.env.FD_URL ?? "http://localhost:1420";
 const failures = [];
 const check = (ok, msg) => { if (!ok) { failures.push(msg); console.error("FAIL: " + msg); } else console.log("ok: " + msg); };
 
