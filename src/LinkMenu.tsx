@@ -22,7 +22,7 @@ export interface LinkMenuDeps {
 function copy(text: string, what: string) {
   navigator.clipboard.writeText(text).then(
     () => useUI.getState().pushToast("success", `Copied ${what}`),
-    () => useUI.getState().pushToast("error", "Couldn’t copy — clipboard unavailable.")
+    () => useUI.getState().pushToast("error", "Couldn’t copy: clipboard unavailable.")
   );
 }
 
