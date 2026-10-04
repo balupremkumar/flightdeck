@@ -24,10 +24,15 @@ export interface TerminalSettings {
   minimumContrastRatio: number;
   /** 1.5c: xterm lineHeight multiplier (1 = xterm's own default). */
   lineHeight: number;
+  /** H2: selecting text with the mouse copies it (Windows Terminal style). */
+  copyOnSelect: boolean;
+  /** H2: right-click copies a selection / pastes, or opens the pane menu. */
+  rightClick: "paste" | "menu";
 }
 export const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
   fontFamily: "JetBrains Mono", fontSize: 12.5, cursorStyle: "block", scrollback: 5000,
   minimumContrastRatio: 4.5, lineHeight: 1,
+  copyOnSelect: true, rightClick: "paste",
 };
 export const CONTRAST_RANGE = { min: 1, max: 7, step: 0.5 } as const;
 export const TERM_LINE_HEIGHT_RANGE = { min: 1, max: 1.6, step: 0.05 } as const;

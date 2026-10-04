@@ -5,6 +5,8 @@ import { useApp, registerPaneSend, unregisterPaneSend, type PaneModel, type Pane
 import { useUI, useOverlayEsc } from "./ui";
 import { Terminal, type TerminalHandle } from "./Terminal";
 import { get as getPaneSession } from "./paneSessions";
+import { getTerminalSettings } from "./settingsStore";
+import { rightClickAction } from "./terminalMouse";
 import {
   IconBranch, IconClose, IconRefresh, IconDrag, IconOverflow,
   IconMaximizePane, IconMinimize, IconFolder, IconChevron, IconDiff, IconFile,
@@ -1402,7 +1404,22 @@ Running low — consider /compact in this pane.` : "")
         className={"pbody" + (bell ? " bell" : "")}
         onContextMenu={(e) => {
           e.preventDefault();
-          setCtxMenu({ x: e.clientX, y: e.clientY, hasSel: !!terminalRef.current?.getSelection() });
+          // H2: Windows Terminal style. A right-click over a link never gets
+          // here (Terminal.tsx's capture listener opens LinkMenu and stops it).
+          const t = terminalRef.current;
+          const sel = t?.getSelection() ?? "";
+          const act = rightClickAction({
+            hasSelection: !!sel, overLink: false, mouseTracking: !!t?.isMouseTracking(),
+            shift: e.shiftKey, setting: getTerminalSettings().rightClick,
+          });
+          if (act === "app") return;
+          if (act === "copy") {
+            void navigator.clipboard.writeText(sel).catch(() => pushToast("error", "Couldn’t copy: clipboard unavailable."));
+            t?.clearSelection();
+            return;
+          }
+          if (act === "paste") { void pasteFromClipboard(); return; }
+          setCtxMenu({ x: e.clientX, y: e.clientY, hasSel: !!sel });
         }}
       >
         {pane.state === "starting" && (

@@ -22,6 +22,7 @@ import { OutputPipe, attachFirst, attachPlan, isRestoredPane, type OutputEvt } f
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { terminalThemeFor } from "./terminal-theme";
 import { getTerminalSettings, terminalReadabilityOptions } from "./settingsStore";
+import { shouldCopyOnSelect } from "./terminalMouse";
 import { linkify, resolvePath, isRemotePath, type LinkMatch } from "./linkify";
 import { computeFoldRanges, foldAll, foldsContaining, foldSummary, pruneFolded, toggleFold, type FoldRange } from "./foldmarks";
 import { invalidatePathCache } from "./pathcheck";
@@ -526,6 +527,10 @@ export interface TerminalHandle {
   selectAll: () => void;
   copySelection: () => Promise<void>;
   paste: (text: string) => void;
+  /** H2: drop the selection (right-click copy), and whether the app in the pane
+   *  has mouse tracking on (xterm then forwards clicks to it). */
+  clearSelection: () => void;
+  isMouseTracking: () => boolean;
   /** QL-753: scroll to the previous (-1) / next (1) command mark. False when
    *  there is none that way (or the shell emits no marks at all). Same action
    *  Ctrl+Up/Ctrl+Down performs inside the pane. */
@@ -810,6 +815,31 @@ function createSession(modelId: number, gen: string, spec: SpawnSpec, handlers: 
         .catch(() => { /* no snapshotting for this pane — never fatal */ });
     };
     serializeIdle = window.setTimeout(loadSerializer, 5000);
+
+    // H2: copy on select. Only a real mouse gesture counts: mousedown arms it
+    // (remembering the selection it started from) and mouseup copies if the
+    // selection is now different and non-empty. Not driven by
+    // onSelectionChange: xterm fires that from a rAF, after mouseup. So
+    // selectAll(), quick hints and other programmatic selection never copy, and
+    // the selection stays visible afterwards.
+    {
+      let armed = false;
+      let before = "";
+      const onDown = (e: MouseEvent) => { if (e.button === 0) { armed = true; before = term.getSelection(); } };
+      const onUp = () => {
+        if (!armed) return;
+        const text = term.getSelection();
+        const go = shouldCopyOnSelect({ enabled: getTerminalSettings().copyOnSelect, userGesture: armed, changed: text !== before, text });
+        armed = false;
+        if (go) void navigator.clipboard.writeText(text).catch(() => { /* clipboard unavailable: selection stays visible */ });
+      };
+      term.element?.addEventListener("mousedown", onDown, true);
+      window.addEventListener("mouseup", onUp, true);
+      entry.disposers.push(() => {
+        term.element?.removeEventListener("mousedown", onDown, true);
+        window.removeEventListener("mouseup", onUp, true);
+      });
+    }
 
     // QL-758: OSC 52 clipboard, WRITE ONLY. Registered unconditionally but
     // inert unless this pane opted in — and it always returns handled, so an
@@ -1791,6 +1821,8 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
       const sel = sess()?.term.getSelection() ?? "";
       if (sel) await navigator.clipboard.writeText(sel);
     },
+    clearSelection: () => sess()?.term.clearSelection(),
+    isMouseTracking: () => (sess()?.term.modes.mouseTrackingMode ?? "none") !== "none",
     paste: (text: string) => { const id = sess()?.ptyId; if (id) invoke("pty_write", { paneId: id, data: text }); },
     jumpToCommandMark: (dir) => sess()?.api.jumpMark(dir) ?? false,
     foldAllCommands: (on) => sess()?.api.foldAll?.(on),
