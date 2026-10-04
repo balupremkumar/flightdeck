@@ -51,6 +51,9 @@ export const PREFERENCE_KEYS = [
   "flightdeck-isolate",
   "flightdeck-releases-dir",
   "flightdeck-editor-settings",
+  // Phase 2 viewers: the "View" menu pick per file extension, and the preview word-wrap toggle.
+  "flightdeck-viewer-choice",
+  "flightdeck-preview-wrap",
 ] as const;
 
 /**

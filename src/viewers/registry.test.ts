@@ -1,0 +1,50 @@
+import { describe, expect, it } from "vitest";
+import { extOf, viewersForExt, resolveViewer, rememberViewer, getWrap, setWrap, VIEWER_CHOICE_KEY } from "./registry";
+
+function fakeStore(init: Record<string, string> = {}) {
+  const m = new Map(Object.entries(init));
+  return { getItem: (k: string) => m.get(k) ?? null, setItem: (k: string, v: string) => void m.set(k, v) };
+}
+
+describe("registry", () => {
+  it("maps extensions to ordered viewers, default first", () => {
+    expect(viewersForExt("json", { csv: true })).toEqual(["json-tree", "text"]);
+    expect(viewersForExt("JSONL", { csv: true })).toEqual(["jsonl", "text"]);
+    expect(viewersForExt("ndjson", { csv: true })).toEqual(["jsonl", "text"]);
+    expect(viewersForExt("tsv", { csv: true })).toEqual(["csv", "text"]);
+    expect(viewersForExt("md", { csv: true })).toEqual(["rendered", "raw"]);
+    expect(viewersForExt("rs", { csv: true })).toEqual(["text"]);
+    expect(viewersForExt("", { csv: true })).toEqual(["text"]);
+  });
+  it("drops the table viewer while CsvTable does not exist", () => {
+    expect(viewersForExt("csv", { csv: false })).toEqual(["text"]);
+  });
+  it("reads the extension from Windows and POSIX paths", () => {
+    expect(extOf("D:\\a.b\\c\\Data.JSON")).toBe("json");
+    expect(extOf("/x/y/.gitignore")).toBe("");
+    expect(extOf("/x/README")).toBe("");
+  });
+  it("remembers the choice per extension", () => {
+    const s = fakeStore();
+    expect(resolveViewer("a.json", s, { csv: true })).toBe("json-tree");
+    rememberViewer("a.json", "text", s);
+    rememberViewer("b.md", "raw", s);
+    expect(resolveViewer("other/dir/z.json", s, { csv: true })).toBe("text");
+    expect(resolveViewer("c.md", s, { csv: true })).toBe("raw");
+    expect(resolveViewer("c.jsonl", s, { csv: true })).toBe("jsonl");
+  });
+  it("ignores a remembered viewer the extension no longer offers, and corrupt storage", () => {
+    expect(resolveViewer("a.csv", fakeStore({ [VIEWER_CHOICE_KEY]: JSON.stringify({ csv: "csv" }) }), { csv: false })).toBe("text");
+    expect(resolveViewer("a.json", fakeStore({ [VIEWER_CHOICE_KEY]: "{not json" }), { csv: true })).toBe("json-tree");
+    expect(resolveViewer("a.json", fakeStore({ [VIEWER_CHOICE_KEY]: "[1]" }), { csv: true })).toBe("json-tree");
+    expect(resolveViewer("a.json", null, { csv: true })).toBe("json-tree");
+  });
+  it("wrap defaults on and persists", () => {
+    const s = fakeStore();
+    expect(getWrap(s)).toBe(true);
+    setWrap(false, s);
+    expect(getWrap(s)).toBe(false);
+    setWrap(true, s);
+    expect(getWrap(s)).toBe(true);
+  });
+});
