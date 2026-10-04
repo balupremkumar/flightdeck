@@ -116,8 +116,6 @@ export const CONTEXTUAL_SHORTCUTS: Array<ShortcutDef & { context: string }> = [
   { id: "review-prev-file", label: "Previous changed file", combo: "K", context: "Review drawer" },
   { id: "review-next-hunk", label: "Next diff hunk", combo: "N", context: "Review drawer" },
   { id: "review-prev-hunk", label: "Previous diff hunk", combo: "P", context: "Review drawer" },
-  { id: "board-move-column", label: "Move focused card to the next/previous column", combo: "Arrow ←/→", context: "Board (card focused)" },
-  { id: "board-reorder-card", label: "Reorder the focused card within its column", combo: "Arrow ↑/↓", context: "Board (card focused)" },
 ];
 export function getShortcuts(): ShortcutDef[] {
   let overrides: Record<string, string> = {};
@@ -1497,12 +1495,12 @@ export function Settings() {
   }
 
   // UI-183: one honest reset. Deliberately scoped to PREFERENCES — it must
-  // never touch session state (workspaces/board/worktrees), which is why the
+  // never touch session state (workspaces/worktrees), which is why the
   // key list is explicit rather than a localStorage.clear().
   function resetEverything() {
     useUI.getState().requestConfirm({
       title: "Reset all settings?",
-      body: "Theme, accent, terminal, shortcuts, agent and startup preferences go back to defaults. Your workspaces, board cards and worktrees are not affected.",
+      body: "Theme, accent, terminal, shortcuts, agent and startup preferences go back to defaults. Your workspaces and worktrees are not affected.",
       confirmLabel: "Reset settings",
       danger: true,
       onConfirm: () => {
@@ -2185,7 +2183,7 @@ export function Settings() {
                 <span className="set-row-name">Reset all settings</span>
                 <span className="set-row-sub">
                   Theme, accent, terminal, shortcuts, agents and startup — back to defaults.
-                  Your workspaces, board and worktrees are untouched.
+                  Your workspaces and worktrees are untouched.
                 </span>
               </div>
               <button className="set-btn danger" onClick={resetEverything}>Reset</button>

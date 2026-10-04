@@ -19,8 +19,6 @@ import { groupByDir } from "./diffgroups";
 import { highlightLine, langFor } from "./diffhighlight";
 import { invalidateCwd, usePoll } from "./poll";
 import { closePaneGuarded } from "./worktrees";
-import { useBoardStore } from "./board/boardStore";
-import type { Card, ColumnId } from "./board/types";
 import { mapPatchLines } from "./difflines";
 import { nextUnreviewed } from "./reviewstate";
 import { buildExplainPrompt, buildLineCommentPrompt } from "./reviewprompt";
@@ -361,16 +359,11 @@ export function Review() {
                 `Merged ${pane.branch} into ${pane.baseBranch} — ${stat}${commitNote}.`,
                 { url: m.commitUrl }
               );
-              // UI-159: a merge is the ONLY unambiguous "this work landed"
-              // signal. The obvious heuristic — the pane's diff going to zero —
-              // fires identically on `git reset --hard`, on the agent reverting
-              // itself, and after Update-from-base, so it would happily mark
-              // lost work as Done. Driving it from here instead.
-              // UI-168: a partial merge deliberately leaves work outstanding —
-              // the card isn't done and the pane isn't ready to close, so
-              // neither of these fires unless everything landed.
+              // A merge is the ONLY unambiguous "this work landed" signal (a
+              // diff going to zero also happens on reset --hard / agent revert).
+              // UI-168: a partial merge deliberately leaves work outstanding,
+              // so the pane isn't ready to close unless everything landed.
               if (allSelected) {
-                completeCardForPane(pane.id, pane.branch ?? "this branch");
                 // UI-176: a merged pane is usually finished work. Offer the tidy-up
                 // in the moment rather than leaving a stale worktree behind for the
                 // user to remember about later.
@@ -418,8 +411,6 @@ export function Review() {
           pushToast("success", `Pushed ${pane.branch} to origin.${r.url ? "" : ` ${r.detail}`}`);
           if (r.url) {
             setPrUrl(r.url);
-            // UI-157: if this pane came from a board card, the card keeps the link.
-            useBoardStore.getState().setCardPr(pane.id, r.url);
             void openUrl(r.url).catch(() => pushToast("info", r.url!));
           }
         } else if (r.status === "nothing-to-push") {
@@ -454,19 +445,6 @@ export function Review() {
       })
       .catch((e) => pushToast("error", "Update failed.", { detail: String(e) }))
       .finally(() => setUpdating(false));
-  };
-
-  // UI-159: move the board card that dispatched this pane into Done, if any.
-  const completeCardForPane = (paneId: number, branch: string) => {
-    const board = useBoardStore.getState();
-    for (const [colId, list] of Object.entries(board.cards) as [ColumnId, Card[]][]) {
-      const card = list.find((c) => c.paneId === paneId);
-      if (!card) continue;
-      if (colId === "complete") return; // already there
-      board.moveCard(card.id, "complete", 0);
-      pushToast("success", `"${card.title}" moved to Done — ${branch} is merged.`);
-      return;
-    }
   };
 
   // UI-169: hand the whole patch to the clipboard for pasting elsewhere.

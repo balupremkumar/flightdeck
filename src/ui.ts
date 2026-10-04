@@ -127,11 +127,6 @@ interface UIState {
   pushNotifyEvent: (e: Omit<NotifyEvent, "id" | "at" | "repeats">) => void;
   clearFeed: () => void;
 
-  // Which main surface is showing. Lives here (not as Cockpit-local state) so
-  // the command palette / notifications can switch back to the terminal grid.
-  activeView: "terminals" | "board";
-  setActiveView: (v: "terminals" | "board") => void;
-
   // Explorer + Broadcast visibility, store-level so the command palette and
   // top bar can both drive them. Explorer open state persists across launches.
   explorerOpen: boolean;
@@ -329,8 +324,6 @@ export const useUI = create<UIState>((set, get) => ({
     }),
   clearFeed: () => set({ feed: [] }),
 
-  activeView: "terminals",
-  setActiveView: (activeView) => set({ activeView }),
 
   explorerOpen: (() => {
     try { return localStorage.getItem("flightdeck-explorer-open") === "1"; } catch { return false; }

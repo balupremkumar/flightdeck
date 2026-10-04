@@ -6,7 +6,7 @@ import { useUI, useOverlayEsc } from "./ui";
 import { Terminal, type TerminalHandle } from "./Terminal";
 import {
   IconBranch, IconClose, IconRefresh, IconDrag, IconOverflow,
-  IconMaximizePane, IconMinimize, IconFolder, IconChevron, IconDiff, IconBoard, IconFile,
+  IconMaximizePane, IconMinimize, IconFolder, IconChevron, IconDiff, IconFile,
 } from "./Icons";
 import type { DiffSummary } from "./worktrees";
 import { cachedInvoke, usePoll, useVisible, usePaneMemory } from "./poll";
@@ -17,7 +17,6 @@ import "./panes.css";
 import { vendorShort, vendorMeta, vendorColor } from "./vendors";
 import { VendorGlyph } from "./VendorGlyph";
 import { closePaneWithCleanup } from "./worktrees";
-import { useBoardStore, useCardForPane } from "./board/boardStore";
 import { Transcript } from "./TranscriptView";
 import { extractLastCommand, redactText, scrollbackFilename, toLines } from "./transcript";
 import { SelectionToolbar, GroupsPanel, SessionSnapshots } from "./PaneOps";
@@ -740,13 +739,6 @@ function PaneViewInner({
   // Re-read on every render; the 4s tick above is what makes this move.
   const idleLabel = paneVisible && Date.now() - lastOutputRef.current > IDLE_SHOW_MS ? relTime(lastOutputRef.current) : null;
 
-  // UX-573: this pane's linked board card, if any — click focuses it on the
-  // board. Read-only from here; the board owns the card (board/boardStore.ts).
-  const card = useCardForPane(wsId, pane.id);
-  const focusCardOnBoard = () => {
-    useBoardStore.getState().setFocusCardId(card!.id);
-    useUI.getState().setActiveView("board");
-  };
 
   // UX-553/554: register this pane's send function so bulk broadcast (from
   // ANY pane's selection toolbar/group action) can reach it — see PaneOps.tsx
@@ -933,21 +925,6 @@ function PaneViewInner({
           </span>
           );
         })()}
-        {/* UX-573: this pane dispatched (or was dispatched from) a board
-            card — click focuses it there. Read-only linkage; the board owns
-            the card. */}
-        {card && (
-          <span
-            className="pcard"
-            role="button"
-            tabIndex={0}
-            title={`Board card: ${card.title} — click to focus it on the board`}
-            onClick={focusCardOnBoard}
-            onKeyDown={(e) => { if (e.key === "Enter") focusCardOnBoard(); }}
-          >
-            <IconBoard size={11} /> {tailEllipsis(card.title, 16)}
-          </span>
-        )}
         {/* UI-129: this pane is in the attention queue — show it where the user is looking.
             UX-559: an open question ranks above plain waiting (attention.ts) and gets its
             own label — "waiting" undersells a pane that's actively asking you something. */}

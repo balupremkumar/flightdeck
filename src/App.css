@@ -159,7 +159,6 @@ body {
 .lp-ws.active { background: var(--accent-dim); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 38%, transparent); }
 .lp-ws.active::before { content: ""; position: absolute; left: -10px; top: 4px; bottom: 4px; width: 3px; border-radius: 2px; background: var(--accent); box-shadow: 0 0 10px var(--accent); }
 .lp-i { width: 34px; height: 34px; border-radius: 10px; background: var(--bg-elevated); color: var(--text-secondary); font-size: 13.5px; font-weight: 700; display: grid; place-items: center; flex: none; transition: background-color .14s ease, color .14s ease; }
-.lp-i.lp-board-i { color: var(--accent); display: inline-flex; align-items: center; justify-content: center; }
 .lp-ws.active .lp-i { color: var(--accent); background: color-mix(in srgb, var(--accent) 22%, var(--bg-elevated)); }
 .lp-name { flex: 1; min-width: 0; font-size: 14px; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .lp-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
@@ -182,10 +181,6 @@ body {
 .lp-ws:hover .lp-x { opacity: 1; }
 .lp-x:hover { color: var(--st-error); background: color-mix(in srgb, var(--st-error) 12%, transparent); }
 .lp-sep { height: 1px; background: var(--border); margin: 10px 14px; }
-.lp-app { position: relative; display: flex; align-items: center; gap: 9px; padding: 7px 8px; margin: 0 10px; border-radius: 8px; cursor: pointer; transition: background-color .14s ease, box-shadow .14s ease; }
-.lp-app:hover { background: color-mix(in srgb, var(--text) 5%, transparent); }
-.lp-app.active { background: var(--accent-dim); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 38%, transparent); }
-.lp-app.active::before { content: ""; position: absolute; left: -10px; top: 4px; bottom: 4px; width: 3px; border-radius: 2px; background: var(--accent); box-shadow: 0 0 10px var(--accent); }
 
 @keyframes hud-pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: .5; transform: scale(1.25); } }
 
@@ -193,7 +188,6 @@ body {
 .main { flex: 1; min-width: 0; display: flex; min-height: 0; }
 .wsstack { flex: 1; min-width: 0; min-height: 0; }
 .wsgrid { flex: 1; min-width: 0; min-height: 0; flex-direction: column; }
-.main > .board { flex: 1; min-width: 0; min-height: 0; }
 .grid-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: var(--tmuted); }
 .grid-empty > svg { color: var(--faint); opacity: .7; margin-bottom: 2px; }
 .grid-empty-title { font-size: 13px; font-weight: 600; color: var(--text-secondary); }
@@ -295,7 +289,7 @@ body {
 /* UI-14: acknowledge the click — every icon/action button gets a press state. */
 .tb-ic:active, .lp-ic:active, .lp-add:active, .rv-ic:active, .set-btn:active,
 .ntf-bell:active, .browse:active, .pfindbtn:active, .pmaxbtn:active,
-.pmenubtn:active, .board-icon-btn:active, .btn-primary:active, .rv-merge:active {
+.pmenubtn:active, .btn-primary:active, .rv-merge:active {
   transform: translateY(1px) scale(.96);
 }
 
@@ -308,6 +302,6 @@ body {
    globally by the reduced-motion rule in theme.css. */
 .wsgrid { animation: ws-fade .16s ease; }
 @keyframes ws-fade { from { opacity: .4; } to { opacity: 1; } }
-.topbar, .lpanel, .pane, .phead, .dialog, .set-modal, .board, .explorer, .rv-drawer {
+.topbar, .lpanel, .pane, .phead, .dialog, .set-modal, .explorer, .rv-drawer {
   transition: background-color .15s ease, border-color .15s ease, color .15s ease;
 }

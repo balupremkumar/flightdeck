@@ -5,7 +5,7 @@ import { useUI, useOverlayEsc } from "./ui";
 import { defaultCycle, vendorShort } from "./vendors";
 import { attentionQueue, STATE_LABEL } from "./attention";
 import { closeWorkspaceWithCleanup, preparePanes, isolationPref, rememberedOrSuggestedSetup } from "./worktrees";
-import { IconPlus, IconClose, IconBoard, IconDrag } from "./Icons";
+import { IconPlus, IconClose, IconDrag } from "./Icons";
 import { relTime as fmtRel, timeTitle, num } from "./format";
 import { cachedInvoke, usePoll } from "./poll";
 import { PANE_DRAG_TYPE } from "./PaneView";
@@ -66,7 +66,6 @@ function paneLabel(p: PaneModel): string {
   return p.title || vendorShort(p.vendor);
 }
 
-type View = "terminals" | "board";
 type MenuState = { wsId: number; x: number; y: number } | null;
 
 const LAST_ACTIVE_KEY = "flightdeck-ws-lastactive";
@@ -127,7 +126,7 @@ const SortIcon = (p: SVGProps<SVGSVGElement>) => (
 // Default pane mix for a workspace spun up by dropping a folder. Comes from the
 // vendor registry (installed agents), not a hardcoded list.
 
-export function LeftPanel({ expanded, view, setView }: { expanded: boolean; view: View; setView: (v: View) => void }) {
+export function LeftPanel({ expanded }: { expanded: boolean }) {
   const workspaces = useApp((s) => s.workspaces);
   const activeId = useApp((s) => s.activeId);
   const switchWorkspace = useApp((s) => s.switchWorkspace);
@@ -205,7 +204,6 @@ export function LeftPanel({ expanded, view, setView }: { expanded: boolean; view
   // scroll container to worry about), so focusing IS the whole of "jump to it".
   const openWs = (id: number) => {
     switchWorkspace(id);
-    setView("terminals");
     touch(id);
     const w = workspaces.find((x) => x.id === id);
     const top = w ? attentionQueue([w], snoozed)[0] : undefined;
@@ -267,14 +265,13 @@ export function LeftPanel({ expanded, view, setView }: { expanded: boolean; view
             // isolated panes per the remembered preference.
             const panes = await preparePanes(slots, isolationPref());
             createWorkspace(path, panes, await rememberedOrSuggestedSetup(path));
-            setView("terminals");
             pushToast("success", `Created workspace from ${path}`);
           })
           .catch(() => pushToast("error", "That drop wasn’t a folder — nothing created"));
       })
       .then((fn) => { if (!cancelled) unlisten = fn; else fn(); });
     return () => { cancelled = true; unlisten?.(); };
-  }, [createWorkspace, setView, pushToast]);
+  }, [createWorkspace, pushToast]);
 
   // Context menu: dismiss on outside click / Esc. UX-542/543: Esc on the
   // shared overlay stack (ui.ts), outside-click stays a local listener.
@@ -424,8 +421,7 @@ export function LeftPanel({ expanded, view, setView }: { expanded: boolean; view
     // interaction effect below closes `menu` on ANY window mousedown with no
     // target check, and this container was the one popover in the app missing
     // the `onMouseDown` stopPropagation guard its siblings already carry
-    // (compare Board.tsx's `.bd-pop`/`.pri-legend` and CardItem.tsx's agent
-    // picker). A mousedown on "Rename" (or any other item) bubbled straight to
+    // (compare the other popovers). A mousedown on "Rename" (or any other item) bubbled straight to
     // `window` and unmounted the menu before the browser ever dispatched the
     // matching `click`, silently swallowing the click. Guarding the whole
     // menu, not just the colour-swatch row, closes it for every item at once.
@@ -466,7 +462,7 @@ export function LeftPanel({ expanded, view, setView }: { expanded: boolean; view
         <button className="lp-ic add" onClick={startCreate} title="New workspace" data-tip="New workspace"><IconPlus size={20} /></button>
         {workspaces.map((w) => {
           const r = rollup(w.panes);
-          const active = w.id === activeId && view === "terminals";
+          const active = w.id === activeId;
           const status = tileState(r);
           const needy = status ? needyPanes(w) : [];
           // Rail tooltip is one line (CSS-driven, see data-tip in leftpanel.css)
@@ -498,8 +494,6 @@ export function LeftPanel({ expanded, view, setView }: { expanded: boolean; view
             </button>
           );
         })}
-        <div className="lp-rail-sep" />
-        <button className={"lp-ic board-ic" + (view === "board" ? " active" : "")} onClick={() => setView("board")} title="Board" data-tip="Board"><IconBoard size={21} /></button>
         {dropHint}
         {contextMenu}
       </div>
@@ -537,7 +531,7 @@ export function LeftPanel({ expanded, view, setView }: { expanded: boolean; view
         {filtered.length === 0 && search.trim() && <div className="lp-empty">No workspaces match “{search.trim()}”</div>}
         {ordered.map((w) => {
           const r = rollup(w.panes);
-          const active = w.id === activeId && view === "terminals";
+          const active = w.id === activeId;
           const isRenaming = renameId === w.id;
           const last = relTime(lastActive[w.id], now);
           const status = tileState(r);
@@ -644,12 +638,6 @@ export function LeftPanel({ expanded, view, setView }: { expanded: boolean; view
             </div>
           );
         })}
-      </div>
-      <div className="lp-sep" />
-      <div className={"lp-app" + (view === "board" ? " active" : "")} onClick={() => setView("board")}>
-        {/* NOT class "board" — Board.css declares a global .board for the board screen */}
-        <span className="lp-i lp-board-i"><IconBoard size={18} /></span>
-        <span className="lp-name">Board</span>
       </div>
       {dropHint}
       {contextMenu}

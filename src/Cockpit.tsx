@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react";
 import { useApp } from "./store";
 import { LeftPanel } from "./LeftPanel";
 import { PaneGrid } from "./PaneGrid";
-import { Board } from "./Board";
 import { IconBrand, IconPanel, IconSettings, IconTheme, IconFile, IconBroadcast, IconTerminalPlus } from "./Icons";
 import { useVendors, accentCss, vendorShort } from "./vendors";
 import { Settings } from "./Settings";
@@ -40,8 +39,6 @@ export function Cockpit() {
   const [expanded, setExpanded] = useState(true);
   const showExplorer = useUI((s) => s.explorerOpen);
   const setShowExplorer = useUI((s) => s.setExplorerOpen);
-  const view = useUI((s) => s.activeView);
-  const setView = useUI((s) => s.setActiveView);
   const setSettingsOpen = useUI((s) => s.setSettingsOpen);
   const updateAvailable = useUI((s) => s.updateAvailable);
   const broadcastOpen = useUI((s) => s.broadcastOpen);
@@ -325,8 +322,8 @@ export function Cockpit() {
         </button>
         <IconBrand size={18} className="brand-mark" />
         <span className="brand">Flightdeck</span>
-        <span className="ws" title={view === "board" ? "Board" : active?.name}>{view === "board" ? "Board" : active?.name}</span>
-        {view === "terminals" && active && (
+        <span className="ws" title={active?.name}>{active?.name}</span>
+        {active && (
           <div className="addpane-wrap">
             <button
               className={"tb-ic" + (addOpen ? " on" : "")}
@@ -358,11 +355,11 @@ export function Cockpit() {
         <button
           className={"tb-ic" + (showExplorer ? " on" : "")}
           title={
-            !active || view !== "terminals"
+            !active
               ? "File explorer opens in the terminal view of a workspace"
               : "Toggle file explorer"
           }
-          disabled={!active || view !== "terminals"}
+          disabled={!active}
           onClick={() => setShowExplorer(!showExplorer)}
         >
           <IconFile size={17} />
@@ -399,8 +396,8 @@ export function Cockpit() {
       <ZoomHud />
 
       <div className="cockpit">
-        <LeftPanel expanded={expanded} view={view} setView={setView} />
-        {showExplorer && active && view === "terminals" && (
+        <LeftPanel expanded={expanded} />
+        {showExplorer && active && (
           <Explorer
             root={active.root}
             wsId={active.id}
@@ -412,14 +409,13 @@ export function Cockpit() {
           />
         )}
         <div className="main">
-          <div className="wsstack" style={{ display: view === "board" ? "none" : "flex" }}>
+          <div className="wsstack" style={{ display: "flex" }}>
             {workspaces.map((w) => (
               <div className="wsgrid" style={{ display: w.id === activeId ? "flex" : "none" }} key={w.id}>
                 <PaneGrid ws={w} />
               </div>
             ))}
           </div>
-          {view === "board" && <Board />}
         </div>
       </div>
     </div>

@@ -67,7 +67,6 @@
 @container phead (max-width: 600px) { .pane .phead .pproc { display: none; } }
 @container phead (max-width: 520px) { .pane .phead .ptok { display: none; } }
 @container phead (max-width: 460px) { .pane .phead .prepo { display: none; } }
-@container phead (max-width: 420px) { .pane .phead .pcard { display: none; } }
 @container phead (max-width: 380px) { .pane .phead .pdiff { display: none; } }
 @container phead (max-width: 320px) { .pane .phead .branch { display: none; } }
 
@@ -118,18 +117,6 @@
   font-family: var(--font-mono); font-size: 9.5px; color: var(--st-waiting);
   white-space: nowrap;
 }
-
-/* UX-573: board card <-> pane linkage, pane side. */
-.phead .pcard {
-  display: inline-flex; align-items: center; gap: 4px; flex: 0 1 auto;
-  min-width: 0; max-width: 140px; font-size: 10.5px; color: var(--muted);
-  cursor: pointer; padding: 2px 8px; border-radius: 999px;
-  border: 1px solid var(--line); background: var(--surface);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  transition: border-color .14s ease, color .14s ease;
-}
-.phead .pcard:hover { border-color: var(--accent); color: var(--text); }
-.phead .pcard:focus-visible { outline: 2px solid var(--ice); outline-offset: 1px; }
 
 /* UI-3: live token chip (from the agent's own session transcript) */
 .phead .ptok {

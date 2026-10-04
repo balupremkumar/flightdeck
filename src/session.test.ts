@@ -103,18 +103,23 @@ describe("session restore (UX-581 draft round-trip / UX-583 restore report)", ()
 // is the backward-compat contract: an OLD doc, saved before either shipped,
 // must still load with sane defaults rather than throwing.
 describe("parseUiPrefs backward compatibility (UX-554/561)", () => {
-  const empty = { board: undefined, groups: [], summary: [], scrollback: {} };
+  const empty = { groups: [], summary: [], scrollback: {} };
 
-  it("a pre-UX-554/561 doc (uiPrefs has only board, or is entirely absent) still parses", () => {
-    expect(parseUiPrefs({ board: { columns: [] } })).toEqual({ ...empty, board: { columns: [] } });
+  it("a pre-UX-554/561 doc (uiPrefs has only a legacy board, or is entirely absent) still parses", () => {
+    expect(parseUiPrefs({ board: { columns: [] } })).toEqual(empty);
     expect(parseUiPrefs(undefined)).toEqual(empty);
     expect(parseUiPrefs(null)).toEqual(empty);
     expect(parseUiPrefs("not even an object")).toEqual(empty);
   });
 
-  it("a current doc round-trips board, groups and summary", () => {
+  it("silently ignores a legacy uiPrefs.board and a saved board view (Board removed)", () => {
+    const parsed = parseUiPrefs({ board: { todo: [{ id: "c1", title: "x" }] }, view: "board", activeView: "board", groups: [] });
+    expect(parsed).toEqual(empty);
+    expect(parsed).not.toHaveProperty("board");
+  });
+
+  it("a current doc round-trips groups and summary", () => {
     const uiPrefs = {
-      board: { columns: [] },
       groups: [{ id: 1, name: "backend", paneIds: [10, 11] }],
       summary: [{ workspaceName: "ws", vendor: "claude", cwd: "D:\\proj", state: "waiting", lastLine: "done" }],
     };

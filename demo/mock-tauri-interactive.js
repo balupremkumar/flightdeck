@@ -98,36 +98,10 @@
         ],
       },
     ],
-    uiPrefs: { board: null }, // filled in below once BOARD_SEED exists
+    uiPrefs: {},
   };
 
   const nowTs = Date.now();
-  const BOARD_SEED = {
-    todo: [
-      { id: "card-1", title: "Add pagination to the activity feed", description: "Cursor-based, 50 per page.", priority: "MEDIUM", labels: [], checklist: [], createdAt: nowTs - 86_400_000 * 2 },
-      { id: "card-2", title: "Write onboarding email copy", description: "", priority: "LOW", labels: [], checklist: [], createdAt: nowTs - 86_400_000 * 3 },
-    ],
-    inprogress: [
-      { id: "card-3", title: "Migrate session store to Redis", description: "Move off in-memory sessions before the next deploy.", priority: "HIGH", agent: "claude",
-        labels: [{ id: "lbl-1", name: "backend", colorVar: "--accent" }],
-        checklist: [
-          { id: "chk-1", text: "Write RedisStore", done: true },
-          { id: "chk-2", text: "Update session.ts", done: true },
-          { id: "chk-3", text: "docker compose for local redis", done: false },
-        ],
-        createdAt: nowTs - 3_600_000 * 5, wsId: 2, paneId: 5 }, // linked to the live "acme-web" Claude pane
-    ],
-    review: [
-      { id: "card-4", title: "Rate limit the upload endpoint", description: "100 req/min per token.", priority: "MEDIUM", agent: "claude", labels: [], checklist: [], createdAt: nowTs - 3_600_000 * 20 },
-    ],
-    complete: [
-      { id: "card-5", title: "Fix flaky checkout test", description: "", priority: "HIGH", labels: [],
-        checklist: [{ id: "chk-4", text: "repro", done: true }, { id: "chk-5", text: "fix", done: true }], createdAt: nowTs - 86_400_000 },
-      { id: "card-6", title: "Bump vitest to v4", description: "", priority: "LOW", labels: [], checklist: [], createdAt: nowTs - 86_400_000 * 4 },
-    ],
-  };
-  SESSION_DOC.uiPrefs.board = BOARD_SEED;
-
   const DIRS = {
     "C:\\dev": [{ name: "acme-api", dir: true }, { name: "acme-web", dir: true }, { name: "scratch", dir: true }],
     "C:\\dev\\acme-api": [

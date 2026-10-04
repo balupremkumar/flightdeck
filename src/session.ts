@@ -15,8 +15,6 @@ import {
   type SessionDraft, type PersistedWorkspace,
 } from "./persist";
 import { repoToplevel, closeWorkspaceWithCleanup, type WorktreeInfo } from "./worktrees";
-import { useBoardStore, getBoardState, setBoardState } from "./board/boardStore";
-import type { BoardCards } from "./board/types";
 import { getStartupBehavior } from "./Settings";
 import { lastLine } from "./attention";
 import { redactText } from "./transcript";
@@ -186,16 +184,13 @@ function toDraft(workspaces: Workspace[], activeId: number | null): SessionDraft
         draft: p.draft,
       })),
     })),
-    // The board rides in the opaque prefs blob (BACKLOG 229 — cards were
-    // in-memory only; every restart wiped the Kanban). UX-554/561: pane
-    // groups and the "what was each pane doing" summary ride alongside it —
-    // all three are caller-shaped and round-tripped as-is by persist.rs
+    // UX-554/561: pane groups and the "what was each pane doing" summary
+    // ride in the opaque prefs blob — caller-shaped and round-tripped as-is by persist.rs
     // (SessionDoc.uiPrefs is `unknown` on that side), so adding fields here
     // needs no Rust/persist.ts change and is automatically backward
     // compatible: an old doc simply has these keys absent, and every reader
     // below treats absence as "none" rather than throwing.
     uiPrefs: {
-      board: getBoardState(),
       groups: useApp.getState().groups,
       summary: summarize(workspaces),
       scrollback: scrollbackFor(workspaces), // QL-762
@@ -225,10 +220,10 @@ export async function lastSessionSummary(): Promise<PaneSummaryEntry[]> {
  *  into offerSessionRestore) so this exact compatibility contract is unit
  *  testable without needing to drive the whole restore-prompt flow. */
 export function parseUiPrefs(uiPrefs: unknown): {
-  board?: BoardCards; groups: PaneGroup[]; summary: PaneSummaryEntry[]; scrollback: Record<number, string>;
+  groups: PaneGroup[]; summary: PaneSummaryEntry[]; scrollback: Record<number, string>;
 } {
   const p = (uiPrefs && typeof uiPrefs === "object" ? uiPrefs : {}) as {
-    board?: BoardCards; groups?: unknown; summary?: unknown; scrollback?: unknown;
+    groups?: unknown; summary?: unknown; scrollback?: unknown;
   };
   // QL-762: a doc written by hand, by an older build, or by a version that
   // capped differently is all the same case — take only numeric keys with
@@ -242,7 +237,6 @@ export function parseUiPrefs(uiPrefs: unknown): {
     }
   }
   return {
-    board: p.board && typeof p.board === "object" ? p.board : undefined,
     groups: Array.isArray(p.groups) ? (p.groups as PaneGroup[]) : [],
     summary: Array.isArray(p.summary) ? (p.summary as PaneSummaryEntry[]) : [],
     scrollback,
@@ -276,7 +270,6 @@ export function startAutosave() {
     scheduleScrollbackRefresh();
   };
   useApp.subscribe(scheduleIfChanged);
-  useBoardStore.subscribe(scheduleIfChanged); // card edits persist too (229)
   onScrollbackRefreshed = scheduleIfChanged;
   // Best-effort last write on the way out; the 800ms debounce means almost
   // everything is already on disk, this just narrows the window.
@@ -447,13 +440,12 @@ export async function offerSessionRestore() {
     }
     const doc = await loadSession();
     if (!doc) return;
-    // The board (and, UX-554, pane groups) restore unconditionally — both are
-    // workspace-independent state, so declining the workspace prompt below
-    // shouldn't wipe them. parseUiPrefs is the backward-compat boundary: a
-    // doc saved before this shipped just has both absent (see its own doc
-    // comment + session.test.ts).
+    // UX-554 pane groups restore unconditionally — workspace-independent
+    // state, so declining the workspace prompt below shouldn't wipe them.
+    // parseUiPrefs is the backward-compat boundary: a doc saved before this
+    // shipped just has them absent, and a legacy `board` key (the Board was
+    // removed) is silently ignored (see its own doc comment + session.test.ts).
     const prefs = parseUiPrefs(doc.uiPrefs);
-    if (prefs.board) setBoardState(prefs.board);
     if (prefs.groups.length) useApp.getState().hydrateGroups(prefs.groups);
     // QL-762: staged before either hydrate path below, so the panes those
     // create find their scrollback already waiting. Declining the restore

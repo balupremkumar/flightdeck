@@ -53,24 +53,6 @@ export const IconFolder = (p: IconProps) => (
 export const IconFile = (p: IconProps) => (
   <Svg {...p}><path d="M6 3.5 h5 l4 4 v9 a1 1 0 0 1 -1 1 h-8 a1 1 0 0 1 -1 -1 v-12 a1 1 0 0 1 1 -1 Z" /><path d="M11 3.5 V7.5 H15" /></Svg>
 );
-// Kanban icon (UI-613, second pass). The previous version drew three separate
-// 3.8-wide lane rects with card ticks inside them; at the 16px render every
-// call site uses, that geometry could not survive. With strokeWidth 1.6 on a
-// 20-unit grid each lane wall occupies 1.6 units, so a 3.8-wide lane has only
-// 2.2 units of clear interior — less than a round-capped tick (1.7 + two 0.8
-// caps = 3.3) — and consecutive lanes sat 1.1 units apart, i.e. their walls
-// overlapped outright. Three lanes plus four ticks plus a 0.55r dot simply
-// cannot be resolved in 16 device pixels; it rendered as a block.
-// One container with two dividers keeps the columns-of-a-board reading, uses
-// the same container grammar as Panel/Workspace/Agent, and leaves ~2.9 units
-// (2.3px at 16) of clear space between every stroke.
-export const IconBoard = (p: IconProps) => (
-  <Svg {...p}>
-    <rect x="3.2" y="4.5" width="13.6" height="11" rx="2" />
-    <path d="M7.7 4.5 V15.5" />
-    <path d="M12.3 4.5 V15.5" />
-  </Svg>
-);
 export const IconWorkspace = (p: IconProps) => (
   <Svg {...p}><rect x="3.5" y="4.5" width="13" height="11" rx="2" /><path d="M3.5 8 H16.5" /><circle cx="6" cy="6.2" r="0.5" fill="currentColor" /></Svg>
 );

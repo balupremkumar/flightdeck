@@ -285,7 +285,7 @@ describe("filterFiles / keepPathsForMatches / buildFilterRows (UX-535)", () => {
 });
 
 describe("typeaheadNext (UX-534)", () => {
-  const names = ["App.tsx", "Board.tsx", "Cockpit.tsx", "explorer.css", "Explorer.tsx"];
+  const names = ["App.tsx", "Broadcast.tsx", "Cockpit.tsx", "explorer.css", "Explorer.tsx"];
 
   it("finds the next name starting with the buffer, wrapping from the top", () => {
     expect(typeaheadNext(names, -1, "e")).toBe(3); // "explorer.css" — first case-insensitive match from the top
