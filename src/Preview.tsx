@@ -14,7 +14,7 @@
 // for text, 10MB for images) and fails with "too large to preview (over NMB)"
 // past it. That's a refusal, not a fault, so it gets its own state rather than
 // the retry-me error line (QL-745/746).
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Component, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ComponentType, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl, openPath } from "@tauri-apps/plugin-opener";
 import { openInEditor } from "./editor";
@@ -29,6 +29,12 @@ import { highlightLine, langFor } from "./diffhighlight";
 import type { Lang } from "./diffhighlight";
 import { useFocusTrap } from "./useFocusTrap";
 import { IconClose } from "./Icons";
+import { findTheme } from "./themes";
+import {
+  csvLoaders, mermaidLoaders, rememberViewer, resolveViewer, viewersFor, VIEWER_LABEL, getWrap, setWrap, type ViewerId,
+} from "./viewers/registry";
+import { clearDomFind, nextIndex, scanDom, type DomFind } from "./viewers/findInViewer";
+import type { JsonParseError } from "./viewers/jsonflatten";
 import "./preview.css";
 
 function baseName(p: string): string {
@@ -36,7 +42,37 @@ function baseName(p: string): string {
   return i >= 0 ? p.slice(i + 1) : p;
 }
 
-const MD_RE = /\.mdx?$/i;
+const MD_RE = /\.(mdx?|markdown)$/i;
+
+// Phase 2 viewers are lazy chunks so the main bundle does not grow. CsvTable and
+// MermaidBlock come from a parallel stream: lazyFrom is null until the file exists.
+const JsonTree = lazy(() => import("./viewers/JsonTree"));
+const JsonlView = lazy(() => import("./viewers/JsonlView"));
+function lazyFrom<P extends object>(loaders: Record<string, () => Promise<unknown>>): ComponentType<P> | null {
+  const load = Object.values(loaders)[0];
+  return load ? (lazy(load as () => Promise<{ default: ComponentType<P> }>) as unknown as ComponentType<P>) : null;
+}
+const CsvTable = lazyFrom<{ text: string; path: string }>(csvLoaders);
+const MermaidBlock = lazyFrom<{ source: string; theme: "light" | "dark" }>(mermaidLoaders);
+
+function themeMode(): "light" | "dark" {
+  return findTheme(document.documentElement.getAttribute("data-theme") ?? "dark").mode;
+}
+
+/** A viewer chunk that fails to load (or throws) must not take the drawer down. */
+class ViewerBoundary extends Component<{ children: ReactNode; onText?: () => void }, { failed: boolean }> {
+  state = { failed: false };
+  static getDerivedStateFromError() { return { failed: true }; }
+  render() {
+    if (!this.state.failed) return this.props.children;
+    return (
+      <div className="prv-state prv-error">
+        This viewer couldn’t load.
+        {this.props.onText && <button className="prv-retry" onClick={this.props.onText}>Show as text</button>}
+      </div>
+    );
+  }
+}
 
 // QL-745/746: the escape hatch offered by every dead-end state below. UX-517:
 // it now launches the editor picked in Settings (src/editor.ts), falling back
@@ -122,7 +158,7 @@ function renderTokens(text: string, lang: Lang | null): ReactNode {
   );
 }
 
-function CodeView({ text, path, targetLine }: { text: string; path: string; targetLine?: number }) {
+function CodeView({ text, path, targetLine, wrap = true }: { text: string; path: string; targetLine?: number; wrap?: boolean }) {
   const lang = useMemo(() => langFor(path), [path]);
   const lines = useMemo(() => text.split(/\r?\n/), [text]);
   const hitRef = useRef<HTMLDivElement | null>(null);
@@ -132,13 +168,13 @@ function CodeView({ text, path, targetLine }: { text: string; path: string; targ
   }, [targetLine, text]);
 
   return (
-    <pre className="prv-code-view">
+    <pre className={"prv-code-view" + (wrap ? "" : " prv-nowrap")}>
       {lines.map((l, i) => {
         const n = i + 1;
         const isHit = n === targetLine;
         return (
           <div key={n} ref={isHit ? hitRef : undefined} className={"prv-line" + (isHit ? " prv-line-hit" : "")}>
-            <span className="prv-lno">{n}</span>
+            <span className="prv-lno" data-nofind>{n}</span>
             <span className="prv-ltext">{renderTokens(l, lang)}</span>
           </div>
         );
@@ -161,6 +197,15 @@ const FENCE_LANG: Record<string, Lang> = {
 
 function CodeFence({ lang, code }: { lang: string; code: string }) {
   const [copied, setCopied] = useState(false);
+  if (MermaidBlock && lang.toLowerCase() === "mermaid") {
+    return (
+      <ViewerBoundary>
+        <Suspense fallback={<span className="prv-img-loading">Loading diagram…</span>}>
+          <MermaidBlock source={code} theme={themeMode()} />
+        </Suspense>
+      </ViewerBoundary>
+    );
+  }
   const tokLang = FENCE_LANG[lang.toLowerCase()] ?? null;
   const copy = () => {
     navigator.clipboard
@@ -380,17 +425,117 @@ function PreviewSkeleton() {
   );
 }
 
+// "Reopen with" menu: the viewers this extension offers. A transient dropdown
+// whose trigger holds focus, so it opts out of focus restore and puts focus back
+// on the trigger itself when it closes by Esc or a pick.
+function ViewMenu({ viewers, current, onPick }: { viewers: ViewerId[]; current: ViewerId; onPick: (id: ViewerId) => void }) {
+  const [open, setOpen] = useState(false);
+  const btn = useRef<HTMLButtonElement>(null);
+  const box = useRef<HTMLDivElement>(null);
+  const close = useCallback(() => { setOpen(false); btn.current?.focus(); }, []);
+  useOverlayEsc(open, close, { restoreFocus: false });
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (!box.current?.contains(e.target as Node) && !btn.current?.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    box.current?.querySelector<HTMLButtonElement>('[aria-checked="true"]')?.focus();
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [open]);
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+    e.preventDefault();
+    const items = Array.from(box.current?.querySelectorAll<HTMLButtonElement>("button") ?? []);
+    const at = items.indexOf(document.activeElement as HTMLButtonElement);
+    items[(at + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length]?.focus();
+  };
+  return (
+    <div className="prv-menu-wrap">
+      <button
+        ref={btn}
+        className="prv-copy"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        title="Reopen with another viewer"
+        onClick={() => setOpen((o) => !o)}
+      >
+        View: {VIEWER_LABEL[current]} ▾
+      </button>
+      {open && (
+        <div className="prv-menu" role="menu" aria-label="Reopen with" ref={box} onKeyDown={onKeyDown}>
+          {viewers.map((v) => (
+            <button
+              key={v}
+              role="menuitemradio"
+              aria-checked={v === current}
+              className={"prv-menu-item" + (v === current ? " on" : "")}
+              onClick={() => { onPick(v); close(); }}
+            >
+              {VIEWER_LABEL[v]}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Find bar. Mounted only while open, so its Escape rides the shared overlay
+// stack for exactly that long: the Cockpit's capture-phase Escape listener runs
+// before any input handler and would otherwise close the whole drawer.
+function FindBar({ query, onQuery, index, count, onNav, onClose, inputRef }: {
+  query: string; onQuery: (q: string) => void; index: number; count: number;
+  onNav: (dir: 1 | -1) => void; onClose: () => void; inputRef: React.RefObject<HTMLInputElement | null>;
+}) {
+  useOverlayEsc(true, onClose);
+  useEffect(() => { inputRef.current?.focus(); inputRef.current?.select(); }, [inputRef]);
+  return (
+    <div className="prv-find" role="search">
+      <input
+        ref={inputRef}
+        className="prv-find-in"
+        value={query}
+        placeholder="Find in file"
+        aria-label="Find in file"
+        spellCheck={false}
+        onChange={(e) => onQuery(e.target.value)}
+        onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); onNav(e.shiftKey ? -1 : 1); } }}
+      />
+      <span className="prv-find-count" aria-live="polite">
+        {query ? (count > 0 ? `${(index % count) + 1} of ${count.toLocaleString()}` : "No matches") : ""}
+      </span>
+      <button className="prv-copy" onClick={() => onNav(-1)} disabled={count === 0} aria-label="Previous match" title="Previous (Shift+Enter)">↑</button>
+      <button className="prv-copy" onClick={() => onNav(1)} disabled={count === 0} aria-label="Next match" title="Next (Enter)">↓</button>
+      <button className="prv-tab-close" onClick={onClose} aria-label="Close find" title="Close (Esc)"><IconClose size={11} /></button>
+    </div>
+  );
+}
+
 function PreviewBody({ tab }: { tab: PreviewTab }) {
   const isMd = MD_RE.test(tab.path);
   const [state, setState] = useState<LoadState>("loading");
   const [text, setText] = useState("");
   const [errMsg, setErrMsg] = useState("");
   const [tooLarge, setTooLarge] = useState(false);
-  // A line target (file.md#L12, path:12) only means something in the raw view.
-  const [mode, setMode] = useState<"rendered" | "raw">(isMd && !tab.line ? "rendered" : "raw");
+  // A line target (file.md#L12, path:12) only means something in the text view.
+  const textView: ViewerId = isMd ? "raw" : "text";
+  const viewers = useMemo(() => viewersFor(tab.path), [tab.path]);
+  const [mode, setMode] = useState<ViewerId>(() => (tab.line ? textView : resolveViewer(tab.path)));
+  const [wrap, setWrapState] = useState(getWrap);
+  const [badJson, setBadJson] = useState<JsonParseError | null>(null);
   const seq = useRef(0);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => { if (tab.line) setMode("raw"); }, [tab.line]);
+  useEffect(() => { if (tab.line) setMode(textView); }, [tab.line, textView]);
+
+  const pick = useCallback((id: ViewerId) => {
+    setMode(id);
+    setBadJson(null);
+    rememberViewer(tab.path, id);
+  }, [tab.path]);
+  const onInvalid = useCallback((e: JsonParseError) => setBadJson(e), []);
 
   const load = useCallback(() => {
     const my = ++seq.current;
@@ -402,6 +547,7 @@ function PreviewBody({ tab }: { tab: PreviewTab }) {
         if (seq.current !== my) return;
         if (looksBinary(t)) { setState("binary"); return; }
         setText(t);
+        setBadJson(null);
         setState("loaded");
       })
       .catch(async (e) => {
@@ -452,8 +598,91 @@ function PreviewBody({ tab }: { tab: PreviewTab }) {
     [rendered, blocks, tab.path]
   );
 
+  // Invalid JSON drops to the text view (with a banner) at the error's line.
+  const view: ViewerId = mode === "json-tree" && badJson ? "text" : mode;
+  const selfFind = view === "json-tree" || view === "jsonl"; // windowed views count their own rows
+  const fill = selfFind || view === "csv";
+
+  // ---- find in viewer (Ctrl+F while focus is in this drawer) ----
+  const [findOpen, setFindOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [idx, setIdx] = useState(0);
+  const [domCount, setDomCount] = useState(0);
+  const [selfCount, setSelfCount] = useState(0);
+  const [scanId, setScanId] = useState(0);
+  const [tick, setTick] = useState(0);
+  const finder = useRef<DomFind | null>(null);
+  const findInput = useRef<HTMLInputElement>(null);
+  const findOpenRef = useRef(false);
+  findOpenRef.current = findOpen;
+  const lastScroll = useRef("");
+  const canFind = state === "loaded" && text !== "";
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey || e.key.toLowerCase() !== "f") return;
+      if (!canFind) return;
+      const drawer = wrapRef.current?.closest(".prv-drawer");
+      // Focus on <body> counts: a tab switch unmounts whatever held it.
+      const at = document.activeElement;
+      if (!drawer || !(drawer.contains(at) || at === document.body)) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      if (findOpenRef.current) { findInput.current?.focus(); findInput.current?.select(); }
+      else setFindOpen(true);
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [canFind]);
+
+  // Repaint when the viewer's DOM changes underneath an open find (lazy chunk
+  // arriving, windowed rows scrolling, images loading).
+  useEffect(() => {
+    const root = contentRef.current;
+    if (!findOpen || !root) return;
+    let raf = 0;
+    const mo = new MutationObserver(() => {
+      if (!raf) raf = requestAnimationFrame(() => { raf = 0; setTick((n) => n + 1); });
+    });
+    mo.observe(root, { childList: true, subtree: true });
+    return () => { mo.disconnect(); cancelAnimationFrame(raf); };
+  }, [findOpen]);
+
+  useEffect(() => {
+    const root = contentRef.current;
+    if (!findOpen || !query || !root || !canFind) {
+      clearDomFind();
+      finder.current = null;
+      setDomCount(0);
+      return;
+    }
+    const f = scanDom(root, query);
+    finder.current = f;
+    setDomCount(f.count);
+    setScanId((n) => n + 1);
+  }, [findOpen, query, view, wrap, text, canFind, tick]);
+  useEffect(() => clearDomFind, []);
+
+  useEffect(() => {
+    const f = finder.current;
+    if (!f) return;
+    if (selfFind) { f.setActive(-1); return; }
+    const key = `${query}|${idx}|${view}`;
+    const scroll = lastScroll.current !== key;
+    lastScroll.current = key;
+    f.setActive(f.count ? idx % f.count : -1, scroll);
+  }, [scanId, idx, selfFind, query, view]);
+
+  const findCount = selfFind ? selfCount : domCount;
+  const closeFind = useCallback(() => setFindOpen(false), []);
+  const onNav = useCallback((dir: 1 | -1) => setIdx((i) => nextIndex(i % Math.max(findCount, 1), findCount, dir)), [findCount]);
+  const treeFind = useMemo(
+    () => (findOpen ? { query, index: idx, onCount: setSelfCount } : undefined),
+    [findOpen, query, idx]
+  );
+
   return (
-    <div className="prv-body-wrap">
+    <div className="prv-body-wrap" ref={wrapRef}>
       <div className="prv-toolbar">
         <span className="prv-path" title={tab.path}>{tab.path}</span>
         <div className="prv-actions">
@@ -461,18 +690,54 @@ function PreviewBody({ tab }: { tab: PreviewTab }) {
           <button className="prv-copy" onClick={() => { void revealPath(tab.path); }}>Reveal in Explorer</button>
           <button className="prv-copy" onClick={() => copyPath(tab.path)}>Copy path</button>
         </div>
+        {state === "loaded" && (
+          <div className="prv-actions">
+            {!isMd && viewers.length > 1 && <ViewMenu viewers={viewers} current={view} onPick={pick} />}
+            {(view === "text" || view === "raw") && (
+              <button
+                className="prv-copy"
+                aria-pressed={wrap}
+                title="Toggle word wrap"
+                onClick={() => setWrapState((w) => { setWrap(!w); return !w; })}
+              >
+                Wrap: {wrap ? "on" : "off"}
+              </button>
+            )}
+            {canFind && (
+              <button className="prv-copy" aria-pressed={findOpen} title="Find (Ctrl+F)" onClick={() => setFindOpen((o) => !o)}>
+                Find
+              </button>
+            )}
+          </div>
+        )}
         {isMd && state === "loaded" && (
           <div className="prv-modes" role="tablist" aria-label="View mode">
-            <button className={"prv-mode" + (mode === "rendered" ? " on" : "")} onClick={() => setMode("rendered")}>
+            <button className={"prv-mode" + (view === "rendered" ? " on" : "")} onClick={() => pick("rendered")}>
               Rendered
             </button>
-            <button className={"prv-mode" + (mode === "raw" ? " on" : "")} onClick={() => setMode("raw")}>
+            <button className={"prv-mode" + (view === "raw" ? " on" : "")} onClick={() => pick("raw")}>
               Raw
             </button>
           </div>
         )}
       </div>
-      <div className="prv-content">
+      {findOpen && canFind && (
+        <FindBar
+          query={query}
+          onQuery={(q) => { setQuery(q); setIdx(0); }}
+          index={idx}
+          count={findCount}
+          onNav={onNav}
+          onClose={closeFind}
+          inputRef={findInput}
+        />
+      )}
+      {state === "loaded" && mode === "json-tree" && badJson && (
+        <div className="prv-banner" role="status">
+          Not valid JSON, showing it as text. {badJson.message} (line {badJson.line}, column {badJson.column})
+        </div>
+      )}
+      <div className={"prv-content" + (fill ? " prv-content-fill" : "")} ref={contentRef}>
         {state === "loading" && <PreviewSkeleton />}
         {state === "binary" && (
           <div className="prv-state">
@@ -517,8 +782,21 @@ function PreviewBody({ tab }: { tab: PreviewTab }) {
         {state === "loaded" && text !== "" && (
           mdTree ? (
             <div className="prv-md">{mdTree}</div>
+          ) : view === "json-tree" || view === "jsonl" || (view === "csv" && CsvTable) ? (
+            <ViewerBoundary onText={() => pick(textView)}>
+              <Suspense fallback={<PreviewSkeleton />}>
+                {view === "json-tree" && <JsonTree text={text} onInvalid={onInvalid} find={treeFind} />}
+                {view === "jsonl" && <JsonlView text={text} find={treeFind} />}
+                {view === "csv" && CsvTable && <CsvTable text={text} path={tab.path} />}
+              </Suspense>
+            </ViewerBoundary>
           ) : (
-            <CodeView text={text} path={tab.path} targetLine={tab.line} />
+            <CodeView
+              text={text}
+              path={tab.path}
+              targetLine={mode === "json-tree" && badJson ? badJson.line : tab.line}
+              wrap={wrap}
+            />
           )
         )}
       </div>
