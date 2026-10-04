@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ChatRecord } from "../chatlog";
-import { buildTurns, itemKey, callKey, isSystemPromptText, foldActivity, runningCall, changeSummary } from "./turns";
+import { buildTurns, isNarration, itemKey, callKey, isSystemPromptText, foldActivity, runningCall, changeSummary } from "./turns";
 import { buildPromptPayload, sanitizeDraft } from "./send";
 import { activityLabel, changeLabel, chipLabel, groupLabel, shortPath, subagentCounts, subagentLabel, subagentStatus } from "./chips";
 import { planFind } from "./find";
@@ -225,6 +225,19 @@ describe("system records", () => {
     const t = buildTurns([user("hi"), base({ kind: "system", text: "compact summary" }), say("x")]);
     expect(t[0].items.map((i) => i.kind)).toEqual(["text"]);
     expect(t[0].notes.map((r) => r.text)).toEqual(["compact summary"]);
+  });
+});
+
+describe("N6 isNarration questions", () => {
+  it("a paragraph ending in a question mark is not narration", () => {
+    expect(isNarration("Which package manager should I use?")).toBe(false);
+    expect(isNarration("Should I keep the old name? ")).toBe(false);
+    expect(isNarration('Did you mean "dev"?"')).toBe(false);
+    expect(isNarration("Want **both**?*")).toBe(false);
+  });
+  it("plain statements stay narration", () => {
+    expect(isNarration("Now I'll update the tests.")).toBe(true);
+    expect(isNarration("Is it there? Checking now.")).toBe(true);
   });
 });
 

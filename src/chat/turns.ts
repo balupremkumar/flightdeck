@@ -97,6 +97,8 @@ const NARRATION_MAX = 200;
 export function isNarration(text: string): boolean {
   const t = text.trim();
   if (!t || t.length > NARRATION_MAX) return false;
+  // N6: a question is addressed to the user, never narration, even mid-turn.
+  if (/\?[\s"'”’)\]*_`~]*$/.test(t)) return false;
   const blocks = parseMarkdown(t);
   return blocks.length === 1 && blocks[0].type === "paragraph";
 }
