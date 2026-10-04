@@ -104,14 +104,14 @@ const pane = page.locator(".pane").first();
 
 // Wait for the pty to exist before toggling (the chat tails by pty id).
 check(await cond((id) => window.__calls.some((x) => x.c === "pty_spawn"), paneId), "pane PTY spawned");
-check(await has(".pane .pview-seg"), "Claude pane shows the Terminal/Chat toggle");
+check(await has(".pane .pview-toggle"), "Claude pane shows the Terminal/Chat toggle");
 
 // Tag the terminal's DOM node so we can prove it survives the round trip.
 await page.evaluate(() => { document.querySelector(".pane .xterm").__fdTag = "alive"; });
 await page.evaluate(() => { window.__calls.length = 0; });
 
 // Toggle via the button.
-await pane.locator('.pview-seg button:has-text("Chat")').click();
+await pane.locator('.pview-toggle button[aria-label^="Chat"]').click();
 check(await has(".chat"), "Chat button switches the pane to chat");
 check(await has(".chat-chip"), "session records render as chips");
 await shot("chips");
@@ -185,7 +185,7 @@ await shot("permission-gate");
 await page.evaluate((id) => window.__app.getState().setPaneState(id, "waiting"), paneId);
 
 // Back to Terminal: same xterm node, no pty_kill.
-await pane.locator('.pview-seg button:has-text("Terminal")').click();
+await pane.locator('.pview-toggle button[aria-label="Terminal"]').click();
 check(await gone(".chat"), "Terminal button returns to the terminal");
 check(await page.evaluate(() => document.querySelector(".pane .xterm")?.__fdTag === "alive"), "the same xterm DOM node is still mounted");
 check((await page.evaluate(() => window.__calls.filter((x) => x.c === "pty_kill").length)) === 0, "zero pty_kill across the Terminal/Chat round trip");
@@ -201,7 +201,7 @@ check(await page.evaluate(() => document.querySelector(".pane .xterm")?.__fdTag 
 check((await page.evaluate(() => window.__calls.filter((x) => x.c === "pty_kill").length)) === 0, "still zero pty_kill after the shortcut round trip");
 
 // Exited pane: the prompt box refuses and offers Restart.
-await pane.locator('.pview-seg button:has-text("Chat")').click();
+await pane.locator('.pview-toggle button[aria-label^="Chat"]').click();
 await has(".chat");
 const exitedPty = await page.evaluate(async () => (await import("/src/paneSessions.ts")).get(window.__app.getState().workspaces[0].panes[0].id)?.ptyId);
 await page.evaluate((p) => window.__mockEmit("pty://exit", { pane_id: p, crashed: false }), exitedPty);
