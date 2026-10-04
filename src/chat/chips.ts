@@ -195,3 +195,9 @@ export function subagentLabel(l: SubagentLink): string {
   const counts = subagentCounts(l);
   return `Subagent: ${l.description || l.agentType || "agent"}${counts ? ` · ${counts}` : ""}`;
 }
+
+/** TN4: "Changed 5 files +120 -18", or "Changed src/x.ts +4 -1" for a single file. */
+export function changeLabel(files: string[], added: number, removed: number, cwd?: string): string {
+  const what = files.length === 1 ? shortPath(files[0], cwd) : `${files.length} files`;
+  return `Changed ${what}${added || removed ? ` +${added} -${removed}` : ""}`;
+}

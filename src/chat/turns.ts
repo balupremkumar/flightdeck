@@ -119,6 +119,21 @@ export function foldActivity(items: Item[], live = false): NormalItem[] {
   return out;
 }
 
+export interface ChangeSummary { files: string[]; added: number; removed: number }
+
+/** TN4: unique files and summed +/- over the turn's edit-class calls (subagent sidechains included). */
+export function changeSummary(turn: Turn): ChangeSummary {
+  let added = 0, removed = 0;
+  const walkItems = (items: Item[]) => {
+    for (const it of items) {
+      if (it.kind === "tools" && EDIT_TOOLS.has(it.name)) for (const c of it.calls) { added += c.tool.added; removed += c.tool.removed; }
+      else if (it.kind === "subagent") walkItems(it.items);
+    }
+  };
+  walkItems(turn.items);
+  return { files: turn.files, added, removed };
+}
+
 export function buildTurns(records: ChatRecord[]): Turn[] {
   const results = new Map<string, ChatRecord>();
   for (const r of records) if (r.kind === "tool_result" && r.result) results.set(r.result.tool_use_id, r);

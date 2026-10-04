@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { ChatRecord } from "../chatlog";
-import { buildTurns, itemKey, callKey, isSystemPromptText, foldActivity, runningCall } from "./turns";
+import { buildTurns, itemKey, callKey, isSystemPromptText, foldActivity, runningCall, changeSummary } from "./turns";
 import { buildPromptPayload, sanitizeDraft } from "./send";
-import { activityLabel, chipLabel, groupLabel, shortPath, subagentCounts, subagentLabel, subagentStatus } from "./chips";
+import { activityLabel, changeLabel, chipLabel, groupLabel, shortPath, subagentCounts, subagentLabel, subagentStatus } from "./chips";
 import { planFind } from "./find";
 import { appendBounded } from "./buffer";
 import { promptGate } from "./gate";
@@ -299,5 +299,21 @@ describe("TN3 subagent line", () => {
     expect(subagentStatus(link, 1_000_000 + 60_000)).toBe("running");
     expect(subagentStatus(link, 1_000_000 + 121_000)).toBe("quiet");
     expect(subagentStatus({ ...link, finished: true }, 1_000_000 + 999_000)).toBe("done");
+  });
+});
+
+describe("TN4 change row", () => {
+  it("sums +/- over edit-class calls and counts unique files", () => {
+    const t = buildTurns([
+      user("go"), use("a", "Edit", "x", ["/p/a.ts"], 10, 2), use("b", "Write", "y", ["/p/b.ts"], 100, 0),
+      use("c", "Edit", "z", ["/p/a.ts"], 10, 16), use("d", "Bash", "ls", [], 99, 99),
+    ]);
+    const c = changeSummary(t[0]);
+    expect([c.files.length, c.added, c.removed]).toEqual([2, 120, 18]);
+    expect(changeLabel(c.files, c.added, c.removed, "/p")).toBe("Changed 2 files +120 -18");
+  });
+  it("names the file when there is one, and omits a zero stat", () => {
+    expect(changeLabel(["/p/src/x.ts"], 4, 1, "/p")).toBe("Changed src/x.ts +4 -1");
+    expect(changeLabel(["/p/src/x.ts"], 0, 0, "/p")).toBe("Changed src/x.ts");
   });
 });

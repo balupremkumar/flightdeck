@@ -13,8 +13,8 @@ import { LinkifiedText } from "./LinkifiedText";
 import { useUI } from "./ui";
 import type { PaneState } from "./store";
 import { appendBounded } from "./chat/buffer";
-import { buildTurns, callKey, foldActivity, itemKey, recKey, runningCall, type Activity, type Item, type NormalItem, type ToolCall, type Turn } from "./chat/turns";
-import { CHIP_GLYPH, activityIcon, activityLabel, chipIcon, chipLabel, groupLabel, shortPath, subagentLabel, subagentStatus } from "./chat/chips";
+import { buildTurns, callKey, changeSummary, foldActivity, itemKey, recKey, runningCall, type Activity, type Item, type NormalItem, type ToolCall, type Turn } from "./chat/turns";
+import { CHIP_GLYPH, activityIcon, activityLabel, changeLabel, chipIcon, chipLabel, groupLabel, shortPath, subagentLabel, subagentStatus } from "./chat/chips";
 import { planFind } from "./chat/find";
 import { promptGate } from "./chat/gate";
 import { buildPromptPayload } from "./chat/send";
@@ -363,6 +363,7 @@ const TurnView = memo(function TurnView({ turn, ctx, index, paneId, live }: { tu
   const [filesOpen, setFilesOpen] = useState(false);
   // Normal folds each run of tool steps into one line; Verbose renders the items as built.
   const items = useMemo(() => (ctx.verbose ? turn.items : foldActivity(turn.items, live)), [turn.items, ctx.verbose, live]);
+  const change = useMemo(() => changeSummary(turn), [turn]);
   const pk = turn.prompt ? `p:${recKey(turn.prompt)}` : "";
   return (
     <section className="chat-turn" data-turn={index}>
@@ -378,14 +379,25 @@ const TurnView = memo(function TurnView({ turn, ctx, index, paneId, live }: { tu
       )}
       {turn.files.length > 0 && (
         <div className="chat-files-wrap">
-          <button
-            className="chat-files"
-            aria-expanded={turn.files.length > 1 ? filesOpen : undefined}
-            onClick={() => (turn.files.length > 1 ? setFilesOpen((o) => !o) : useUI.getState().setReviewPane(paneId, turn.files[0]))}
-            title={turn.files.map((f) => shortPath(f, ctx.cwd)).join("\n")}
-          >
-            {turn.files.length} file{turn.files.length === 1 ? "" : "s"} changed
-          </button>
+          <span className="chat-files">
+            <button
+              className="chat-files-main"
+              onClick={() => useUI.getState().setReviewPane(paneId, turn.files[0])}
+              title={turn.files.map((f) => shortPath(f, ctx.cwd)).join("\n")}
+            >
+              {changeLabel(turn.files, change.added, change.removed, ctx.cwd)}
+            </button>
+            {turn.files.length > 1 && (
+              <button
+                className="chat-files-caret"
+                aria-expanded={filesOpen}
+                aria-label={filesOpen ? "Hide changed files" : "Show changed files"}
+                onClick={() => setFilesOpen((o) => !o)}
+              >
+                <span aria-hidden>{filesOpen ? "▾" : "▸"}</span>
+              </button>
+            )}
+          </span>
           {filesOpen && turn.files.length > 1 && (
             <ul className="chat-filelist">
               {turn.files.map((f) => (

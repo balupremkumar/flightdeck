@@ -72,8 +72,11 @@
 .chat-more { background: transparent; border: 0; color: var(--accent); padding: 3px 0 0; font-size: 11.5px; text-decoration: underline; }
 
 .chat .hit { outline: 2px solid color-mix(in srgb, var(--st-waiting) 75%, transparent); outline-offset: 2px; border-radius: 6px; }
-.chat-files { margin: 4px 0 0; background: transparent; border: 1px solid var(--line); border-radius: 999px; padding: 1px 10px; font-size: 11.5px; color: var(--muted); }
-.chat-files:hover { border-color: var(--accent); color: var(--text); }
+.chat-files { display: inline-flex; margin: 4px 0 0; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; font-size: 11.5px; color: var(--muted); }
+.chat-files:hover, .chat-files:focus-within { border-color: var(--accent); }
+.chat-files button { background: transparent; border: 0; padding: 1px 10px; font-size: 11.5px; color: var(--muted); }
+.chat-files button:hover { color: var(--text); }
+.chat-files .chat-files-caret { padding: 1px 8px 1px 4px; font-size: 10px; }
 
 .chat-jump { position: absolute; left: 50%; transform: translateX(-50%); bottom: 64px; z-index: 2; padding: 4px 12px; border-radius: 999px; border: 1px solid var(--line-strong); background: var(--elevated, var(--surface-2)); box-shadow: var(--shadow-2); font-size: 12px; }
 .chat-jump:hover { border-color: var(--accent); }
