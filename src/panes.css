@@ -788,6 +788,7 @@
 .xterm .fd-fold-chev:hover { opacity: 1; color: var(--text); }
 .xterm .fd-fold-cover { display: flex; flex-direction: column; box-sizing: border-box; overflow: hidden; }
 .xterm .fd-fold-bar {
+  pointer-events: auto;
   display: flex;
   align-items: center;
   box-sizing: border-box;
