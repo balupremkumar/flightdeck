@@ -41,6 +41,12 @@ pub enum Resumed {
     Gap,
 }
 
+/// Lock the model map, surviving poisoning for the same reason as `lock_out`: a
+/// panic in one command must not wedge attach, kill and the reaper for every pane.
+pub fn lock_map(m: &Mutex<ByModel>) -> std::sync::MutexGuard<'_, ByModel> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 pub struct PaneOut {
     ring: PaneRing,
     paused: bool,
@@ -264,6 +270,20 @@ mod tests {
             out: Arc::new(Mutex::new(PaneOut::new(80, 24))),
             attached,
         }
+    }
+
+    #[test]
+    fn lock_map_survives_a_poisoned_mutex() {
+        let m = Arc::new(Mutex::new(ByModel::default()));
+        let m2 = m.clone();
+        let _ = std::thread::spawn(move || {
+            let _g = m2.lock().unwrap();
+            panic!("poison the map");
+        })
+        .join();
+        assert!(m.is_poisoned());
+        lock_map(&m).insert(1, entry(10, "claude", "c", true));
+        assert_eq!(lock_map(&m).len(), 1);
     }
 
     #[test]

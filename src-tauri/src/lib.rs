@@ -317,7 +317,7 @@ async fn pty_spawn(
     // One model, one pty. A live predecessor here means a restart whose kill has
     // not landed yet, or a stray double spawn: reap it so it cannot linger as an
     // invisible agent.
-    let superseded = reg.by_model.lock().unwrap().insert(model_id, entry);
+    let superseded = paneout::lock_map(&reg.by_model).insert(model_id, entry);
     if let Some(old) = superseded {
         applog::log(
             "warn",
@@ -379,7 +379,7 @@ async fn pty_spawn(
             panes.remove(&id);
             crashed
         };
-        reg.by_model.lock().unwrap().remove_pty(id);
+        paneout::lock_map(&reg.by_model).remove_pty(id);
         let _ = app_r.emit("pty://exit", ExitPayload { pane_id: id, crashed });
     });
 
@@ -461,7 +461,7 @@ async fn pty_attach(reg: State<'_, Registry>, model_id: u32, gen: String) -> Res
     let (req_epoch, vendor, cwd) = paneout::parse_gen(&gen);
     // Registry ids first (panes is never taken while by_model is held).
     let live: std::collections::HashSet<u32> = reg.panes.lock().unwrap().keys().copied().collect();
-    let claimed = reg.by_model.lock().unwrap().claim_live(model_id, &vendor, &cwd, req_epoch, &live);
+    let claimed = paneout::lock_map(&reg.by_model).claim_live(model_id, &vendor, &cwd, req_epoch, &live);
     let Some((pty_id, out)) = claimed else { return Ok(None) };
     // Snapshot under the PaneOut lock: any chunk is either inside it (its event
     // seq <= next_seq, which the frontend drops) or after it (delivered live).
@@ -491,7 +491,7 @@ async fn pty_attach(reg: State<'_, Registry>, model_id: u32, gen: String) -> Res
 }
 
 fn out_for_model(reg: &Registry, model_id: u32) -> Result<(u32, std::sync::Arc<Mutex<paneout::PaneOut>>), String> {
-    let bm = reg.by_model.lock().unwrap();
+    let bm = paneout::lock_map(&reg.by_model);
     bm.get(model_id)
         .map(|e| (e.pty_id, e.out.clone()))
         .ok_or_else(|| format!("no live pty for pane model {model_id}"))
@@ -538,7 +538,7 @@ async fn pane_resume(app: AppHandle, reg: State<'_, Registry>, model_id: u32) ->
 /// closed, or its workspace is gone). Safe mode never reaps.
 fn on_main_webview_load(app: &AppHandle) {
     let reg = app.state::<Registry>();
-    reg.by_model.lock().unwrap().mark_all_unattached();
+    paneout::lock_map(&reg.by_model).mark_all_unattached();
     let my_gen = reg.load_gen.fetch_add(1, Ordering::SeqCst) + 1;
     let app = app.clone();
     std::thread::spawn(move || {
@@ -553,7 +553,7 @@ fn reap_unclaimed(app: &AppHandle, my_gen: u64) {
         return; // a newer load owns the next pass
     }
     let safe = persist::safe_mode_active();
-    let unclaimed = reg.by_model.lock().unwrap().unattached();
+    let unclaimed = paneout::lock_map(&reg.by_model).unattached();
     if unclaimed.is_empty() {
         return;
     }
@@ -564,7 +564,7 @@ fn reap_unclaimed(app: &AppHandle, my_gen: u64) {
     let doc = persist::session_pane_ids(app);
     for (model_id, pty_id) in paneout::reap_targets(&unclaimed, doc.as_ref(), false) {
         // Re-check: it may have been claimed or replaced since the snapshot.
-        let still = reg.by_model.lock().unwrap().get(model_id).is_some_and(|e| e.pty_id == pty_id && !e.attached);
+        let still = paneout::lock_map(&reg.by_model).get(model_id).is_some_and(|e| e.pty_id == pty_id && !e.attached);
         if !still {
             continue;
         }
@@ -661,7 +661,7 @@ pub(crate) fn live_pane_ids(reg: &Registry) -> Vec<u32> {
 // (claude/agy/kimi) spawn children that child.kill() alone would orphan, so we
 // taskkill /T the tree. Idempotent: a pane already pruned (natural exit) is a no-op.
 pub(crate) fn reap_pane(reg: &Registry, pane_id: u32) {
-    reg.by_model.lock().unwrap().kill_pty(pane_id);
+    paneout::lock_map(&reg.by_model).kill_pty(pane_id);
     if let Some(mut p) = reg.panes.lock().unwrap().remove(&pane_id) {
         let pid = p.child.process_id();
         #[cfg(windows)]
