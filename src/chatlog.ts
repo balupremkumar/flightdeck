@@ -39,12 +39,16 @@ export interface TailResult {
   records: ChatRecord[];
   next_offset: number;
   truncated: boolean;
+  /** The tail started mid-file because the transcript was too large; older history was not read. */
+  skipped_head?: boolean;
 }
 
 export interface SessionInfo {
   session_id: string | null;
   pinned: boolean;
   jsonl_path: string | null;
+  /** The transcript file was rotated/replaced since the last call: offsets are stale. */
+  rotated?: boolean;
 }
 
 export const TAIL_MAX_RECORDS = 500;
@@ -70,6 +74,8 @@ export type TailFn = (path: string, from: number, max: number) => Promise<TailRe
  */
 export class SessionTailer {
   offset = 0;
+  /** Set when any batch since the last `reset()` reported `skipped_head`. */
+  skippedHead = false;
   constructor(
     readonly path: string,
     private tail: TailFn = sessionTail,
@@ -82,8 +88,15 @@ export class SessionTailer {
       const r = await this.tail(this.path, this.offset, TAIL_MAX_RECORDS);
       out.push(...r.records);
       this.offset = r.next_offset;
+      if (r.skipped_head) this.skippedHead = true;
       if (!r.truncated) break;
     }
     return out;
+  }
+
+  /** Forget the offset (file rotated); the next poll re-reads from the start. */
+  reset(): void {
+    this.offset = 0;
+    this.skippedHead = false;
   }
 }

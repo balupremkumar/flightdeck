@@ -17,6 +17,7 @@ import { buildTurns, callKey, itemKey, recKey, type Item, type ToolCall, type Tu
 import { CHIP_GLYPH, chipIcon, chipLabel, groupLabel, shortPath } from "./chat/chips";
 import { planFind } from "./chat/find";
 import { promptGate } from "./chat/gate";
+import { buildPromptPayload } from "./chat/send";
 import { capLines, editPairs, resultText, simpleDiff, toolInput } from "./chat/raw";
 import "./chat.css";
 
@@ -244,6 +245,12 @@ const TurnView = memo(function TurnView({ turn, ctx, index, paneId }: { turn: Tu
         <div className={"chat-user" + (ctx.hits.has(pk) ? " hit" : "")} data-ck={pk}>{turn.prompt.text}</div>
       )}
       <Items items={turn.items} ctx={ctx} />
+      {ctx.verbose && turn.notes.length > 0 && (
+        <details className="chat-sysnote">
+          <summary>System note{turn.notes.length > 1 ? ` (${turn.notes.length})` : ""}</summary>
+          {turn.notes.map((r) => <pre key={recKey(r)}>{r.text}</pre>)}
+        </details>
+      )}
       {turn.files.length > 0 && (
         <div className="chat-files-wrap">
           <button
@@ -287,6 +294,7 @@ export interface ChatViewProps {
 export default function ChatView({ paneId, cwd, epoch, paneState, exited, onRestart, active, onSwitchToTerminal }: ChatViewProps) {
   const [records, setRecords] = useState<ReturnType<typeof appendBounded>["list"]>([]);
   const [trimmed, setTrimmed] = useState(false);
+  const [skippedHead, setSkippedHead] = useState(false);
   const [info, setInfo] = useState<SessionInfo | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -318,7 +326,7 @@ export default function ChatView({ paneId, cwd, epoch, paneState, exited, onRest
   // A restart (epoch bump) means a new pty and usually a new session.
   useEffect(() => {
     tailer.current = null;
-    setRecords([]); setTrimmed(false); setInfo(null); setLoaded(false); setError(null); setOpen(new Set());
+    setRecords([]); setTrimmed(false); setSkippedHead(false); setInfo(null); setLoaded(false); setError(null); setOpen(new Set());
   }, [epoch, paneId]);
 
   tickRef.current = async () => {
@@ -335,13 +343,21 @@ export default function ChatView({ paneId, cwd, epoch, paneState, exited, onRest
         if (!si.jsonl_path) { setInfo(si); setError(null); return; }
         if (!cur || cur.t.path !== si.jsonl_path) {
           cur = tailer.current = { t: new SessionTailer(si.jsonl_path), pty, pinned: si.pinned };
-          setRecords([]); setTrimmed(false); setLoaded(false);
-        } else cur.pinned = si.pinned;
+          setRecords([]); setTrimmed(false); setSkippedHead(false); setLoaded(false);
+        } else {
+          cur.pinned = si.pinned;
+          if (si.rotated) {
+            // File replaced under us: old offsets and records are stale.
+            cur.t.reset();
+            setRecords([]); setTrimmed(false); setSkippedHead(false);
+          }
+        }
         setInfo(si);
       }
       const recs = await cur.t.poll();
       setError(null);
       setLoaded(true);
+      if (cur.t.skippedHead) setSkippedHead(true);
       if (recs.length) {
         setRecords((prev) => {
           const r = appendBounded(prev, recs);
@@ -446,18 +462,21 @@ export default function ChatView({ paneId, cwd, epoch, paneState, exited, onRest
   useEffect(() => {
     if (!active) return;
     const ae = document.activeElement as HTMLElement | null;
-    if (ae && ae !== document.body && !rootRef.current?.contains(ae)) ae.blur();
-    rootRef.current?.focus({ preventScroll: true });
+    // Only this pane's terminal: never steal from a drawer input elsewhere.
+    // The terminal is ChatView's sibling inside the same PaneView host element.
+    const host = rootRef.current?.parentElement;
+    const inTerm = !!ae && !!host && !!ae.closest(".xterm") && host.contains(ae);
+    if (inTerm) { ae!.blur(); rootRef.current?.focus({ preventScroll: true }); }
   }, [active]);
 
   const ptyId = getPaneSession(paneId)?.ptyId ?? 0;
   const gate = promptGate(paneState, ptyId > 0, !!exited);
   const send = async () => {
-    const text = draft.trim();
-    if (!text || !gate.canSend) return;
+    const data = buildPromptPayload(draft);
+    if (!data || !gate.canSend) return;
     setSendErr(null);
     try {
-      await invoke("pty_write", { paneId: ptyId, data: text + "\r" });
+      await invoke("pty_write", { paneId: ptyId, data });
       setDraft("");
       jumpLatest();
     } catch (e) {
@@ -521,6 +540,7 @@ export default function ChatView({ paneId, cwd, epoch, paneState, exited, onRest
       )}
 
       <div className="chat-scroll" ref={scrollRef} onScroll={onScroll}>
+        {skippedHead && <div className="chat-trim">Older history not loaded</div>}
         {trimmed && <div className="chat-trim">Older history trimmed</div>}
         {noPath && !error && (
           <div className="chat-empty" role="status">Waiting for the session to start</div>
