@@ -42,6 +42,8 @@ export const PREFERENCE_KEYS = [
   "flightdeck-explorer-open",
   "flightdeck-explorer-expanded",
   "flightdeck-diff-split",
+  // Phase 3 C1: Review drawer auto-collapse threshold (changed lines).
+  "flightdeck-review-autocollapse",
   "flightdeck-vendor-fonts",
   // UX-560: per-vendor "quiet before we call it waiting" default. A cosmetic
   // tuning preference, so a settings reset should clear it with the rest.
@@ -104,7 +106,14 @@ export const SESSION_KEYS = [
 /**
  * Per-repo keys, written as `<prefix><repo path>`. Also working state.
  */
-export const SESSION_KEY_PREFIXES = ["flightdeck-setup:", "flightdeck-layout:"] as const;
+export const SESSION_KEY_PREFIXES = [
+  "flightdeck-setup:",
+  "flightdeck-layout:",
+  // Phase 3 C1: Review drawer "Viewed" marks (per repo+branch) and the hide-
+  // whitespace toggle (per repo). Working state, not appearance.
+  "flightdeck-review-viewed:",
+  "flightdeck-review-nows:",
+] as const;
 
 /** Clear every preference key. Session/working state is deliberately untouched. */
 export function clearPreferences() {
