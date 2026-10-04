@@ -207,3 +207,20 @@ S8 Move-to-new-window + close-with-flush + crash re-adopt + main-close quit (one
 S9 Move-to-window, Merge all, palette entries, merge-first for snapshots/import.
 S10 attention, overlay badge, summon, notification click routing; window-state covers fw-* geometry.
 S11 flag default on after Balu's trial; S12 drag; pane tear-out to backlog.
+
+## S1-S3 red team (2026-10-04)
+
+Findings 7, 11, 13 and 15 are recorded here and not fixed in code.
+
+7. `mark_all_unattached` on a main-window reload is a flat bool.
+S7 must track `attached: Option<label>` on each entry and only clear the entries owned by the reloading label.
+Reloads of `fw-*` windows must run the reaper too.
+
+11. Emitting under the `PaneOut` lock is accepted for now.
+Revisit in S8 with a separate emit-order mutex if profiling shows stalls.
+
+13. A duplicate model id in `pty_spawn` now supersedes the live pty and reaps it, instead of refusing.
+This is the intended behaviour and replaces the refusal in addendum item 7.
+
+15. After a reload, scrollback history is the ring's 4 MiB only.
+Add a line to the release notes.
