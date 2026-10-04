@@ -142,52 +142,6 @@ fn cred_file_present(path: &std::path::Path) -> bool {
     std::fs::metadata(path).map(|m| m.is_file() && m.len() > 0).unwrap_or(false)
 }
 
-/// A2: TOML basic-string escaping (backslash and double quote).
-fn toml_escape(s: &str) -> String {
-    s.replace('\\', "\\\\").replace('"', "\\\"")
-}
-
-/// A2: the `-c key=value` override that marks `cwd` trusted for this launch
-/// only, so Codex's "Trust this folder?" screen never blocks a pane and
-/// nothing is written to the user's config.toml.
-pub fn codex_trust_override(cwd: &str) -> String {
-    format!("projects.\"{}\".trust_level=\"trusted\"", toml_escape(cwd))
-}
-
-/// Quote one argument for the Windows C runtime (CommandLineToArgvW rules):
-/// backslashes before a `"` are doubled, and the `"` itself is backslashed.
-fn win_native_quote(s: &str) -> String {
-    let mut out = String::new();
-    let mut slashes = 0usize;
-    for ch in s.chars() {
-        match ch {
-            '\\' => {
-                slashes += 1;
-                out.push('\\');
-            }
-            '"' => {
-                out.push_str(&"\\".repeat(slashes));
-                out.push_str("\\\"");
-                slashes = 0;
-            }
-            _ => {
-                slashes = 0;
-                out.push(ch);
-            }
-        }
-    }
-    out
-}
-
-/// A2: the pwsh `-Command` text for a Codex pane. `codex` is an npm `.cmd`
-/// shim, and PowerShell passes args to .cmd files in legacy mode, which strips
-/// bare double quotes (verified: `projects."C:\\x"` arrives as `projects.C:\\x`).
-/// So the TOML is native-quoted first (`\"`), then wrapped in a PowerShell
-/// single-quoted string (`'` doubled).
-pub fn codex_command_text(cwd: &str) -> String {
-    let native = win_native_quote(&codex_trust_override(cwd));
-    format!("codex -c '{}'", native.replace('\'', "''"))
-}
 
 /// A3: `codex login status` exit code to auth state. 0 signed in, 1 not.
 pub fn parse_login_status(code: Option<i32>) -> &'static str {
@@ -516,16 +470,15 @@ impl VendorAdapter for Codex {
         ("npm install -g @openai/codex", "https://developers.openai.com/codex/cli")
     }
     fn command(&self, cwd: &str) -> CommandBuilder {
-        // Via pwsh so the npm .cmd shim resolves. Trust is granted by a
-        // launch-time -c override, not by editing ~/.codex/config.toml.
+        // Via pwsh so the npm shim resolves. No trust override: Codex shows its
+        // own "Trust this folder?" prompt once per repo (see the test).
         let mut c = CommandBuilder::new("pwsh.exe");
-        c.args(["-NoLogo", "-NoProfile", "-Command"]);
-        c.arg(codex_command_text(cwd));
+        c.args(["-NoLogo", "-NoProfile", "-Command", "codex"]);
         c.cwd(cwd);
         c
     }
     fn root_exe(&self) -> &str { "pwsh.exe" }
-    fn needs_trust(&self) -> bool { true }
+    fn needs_trust(&self) -> bool { false }
     // Codex streams reasoning with pauses; same threshold as agy.
     fn quiet_seconds(&self) -> u32 { 6 }
     fn auth(&self) -> (&'static str, String) {
@@ -1073,7 +1026,7 @@ mod tests {
             }
         }
         assert!(find("agy").needs_trust(), "agy's prepare() writes trustedWorkspaces");
-        assert!(find("codex").needs_trust(), "codex launches with a trust override");
+        assert!(!find("codex").needs_trust(), "codex asks for folder trust itself");
         assert!(!find("claude").needs_trust(), "claude has no such gate");
         assert!(detect().iter().any(|v| v.needs_trust), "detect() must carry the flag");
     }
@@ -1417,38 +1370,17 @@ mod tests {
         }
     }
 
-    // --- codex (A2/A3) ------------------------------------------------------
+    // --- codex (A3) -----------------------------------------------------------
 
     #[test]
-    fn codex_trust_override_escapes_toml() {
-        assert_eq!(
-            codex_trust_override(r"C:\Users\a b\p"),
-            r#"projects."C:\\Users\\a b\\p".trust_level="trusted""#
-        );
-        assert_eq!(
-            codex_trust_override(r#"C:\we"ird"#),
-            r#"projects."C:\\we\"ird".trust_level="trusted""#
-        );
-    }
-
-    #[test]
-    fn codex_command_text_survives_pwsh_and_cmd_shim() {
-        // Sample cwd with spaces: TOML quotes are native-escaped (\") inside a
-        // PowerShell single-quoted string.
-        assert_eq!(
-            codex_command_text(r"C:\Users\a b\p"),
-            r#"codex -c 'projects.\"C:\\Users\\a b\\p\".trust_level=\"trusted\"'"#
-        );
-        // A single quote in the path is doubled for PowerShell.
-        assert!(codex_command_text("C:\\o'brien").contains("o''brien"));
-        // Trailing backslash: TOML gives 2, and the run is doubled again to 4
-        // before the closing quote's own backslash.
-        assert!(codex_command_text("C:\\dir\\").contains(r#"dir\\\\\".trust"#));
+    fn codex_launches_plain_with_no_trust_override() {
+        // 0.5.7: a -c trust override broke real codex.ps1 launches ("unknown
+        // variant") and its key match was unproven, so Codex asks "Trust this
+        // folder?" itself once per repo; the attention patterns ring the bell.
         let c = Codex.command(r"C:\a b");
         let argv: Vec<String> = c.get_argv().iter().map(|a| a.to_string_lossy().into_owned()).collect();
-        assert_eq!(&argv[..4], ["pwsh.exe", "-NoLogo", "-NoProfile", "-Command"]);
-        assert!(argv[4].starts_with("codex -c '"));
-        assert_eq!(argv.len(), 5);
+        assert_eq!(argv, ["pwsh.exe", "-NoLogo", "-NoProfile", "-Command", "codex"]);
+        assert!(!Codex.needs_trust());
     }
 
     #[test]
