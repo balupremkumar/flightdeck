@@ -51,7 +51,18 @@ fn is_under(path: &Path, root: &Path) -> bool {
     !r.is_empty() && p.len() >= r.len() && p[..r.len()] == r[..]
 }
 
+static FIXED_ROOTS: OnceLock<Vec<PathBuf>> = OnceLock::new();
+
+/// Canonicalised once (it hits the filesystem). Not cached until the data dir
+/// is known, so an early call can't freeze a list missing it.
 fn fixed_roots() -> Vec<PathBuf> {
+    if DATA_DIR.get().is_none() {
+        return compute_fixed_roots();
+    }
+    FIXED_ROOTS.get_or_init(compute_fixed_roots).clone()
+}
+
+fn compute_fixed_roots() -> Vec<PathBuf> {
     let mut v = Vec::new();
     if let Some(c) = canon(Path::new(VAULT_ROOT)) {
         v.push(c);

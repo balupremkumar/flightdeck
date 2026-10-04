@@ -451,12 +451,12 @@ fn fs_list_dir(path: String) -> Result<Vec<Entry>, String> {
 #[tauri::command(async)]
 fn fs_read_text_file(path: String) -> Result<String, String> {
     pathguard::check(&path)?;
-    readscope::check_read(std::path::Path::new(&path))?;
-    let meta = std::fs::metadata(&path).map_err(|e| e.to_string())?;
+    let canon = readscope::check_read(std::path::Path::new(&path))?;
+    let meta = std::fs::metadata(&canon).map_err(|e| e.to_string())?;
     if meta.len() > 5 * 1024 * 1024 {
         return Err("too large to preview (over 5MB)".into());
     }
-    let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+    let bytes = std::fs::read(&canon).map_err(|e| e.to_string())?;
     Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 
@@ -483,8 +483,8 @@ fn stat_of(path: &std::path::Path) -> Result<FsStat, String> {
 #[tauri::command(async)]
 fn fs_stat(path: String) -> Result<FsStat, String> {
     pathguard::check(&path)?;
-    readscope::check_read(std::path::Path::new(&path))?;
-    stat_of(std::path::Path::new(&path))
+    let canon = readscope::check_read(std::path::Path::new(&path))?;
+    stat_of(&canon)
 }
 
 // Images referenced from a previewed markdown file (UX-508), returned as base64
@@ -492,12 +492,12 @@ fn fs_stat(path: String) -> Result<FsStat, String> {
 #[tauri::command(async)]
 fn fs_read_file_base64(path: String) -> Result<String, String> {
     pathguard::check(&path)?;
-    readscope::check_read(std::path::Path::new(&path))?;
-    let meta = std::fs::metadata(&path).map_err(|e| e.to_string())?;
+    let canon = readscope::check_read(std::path::Path::new(&path))?;
+    let meta = std::fs::metadata(&canon).map_err(|e| e.to_string())?;
     if meta.len() > 10 * 1024 * 1024 {
         return Err("too large to preview (over 10MB)".into());
     }
-    let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+    let bytes = std::fs::read(&canon).map_err(|e| e.to_string())?;
     Ok(STANDARD.encode(&bytes))
 }
 
