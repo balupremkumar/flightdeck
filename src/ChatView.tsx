@@ -321,6 +321,7 @@ function ActivityItem({ item, ctx }: { item: Activity; ctx: Ctx }) {
     <div className="chat-group chat-activity" data-ck={item.key}>
       <button
         className={"chat-chip" + (failed ? " err" : "")}
+        data-running={now ? "1" : undefined}
         aria-expanded={open}
         onClick={() => ctx.toggle(item.key)}
         title={activityLabel(item.calls, item.sideSubagents, ctx.cwd)}
