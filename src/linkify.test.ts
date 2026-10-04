@@ -32,10 +32,9 @@ describe("linkify — windows absolute paths", () => {
     expect(m[0]).toMatchObject({ kind: "path", raw: "D:\\Dev\\ai\\projects\\active\\flightdeck\\src\\App.tsx" });
   });
 
-  it("detects a UNC path", () => {
+  it("does not detect a UNC path", () => {
     const m = linkify("copy \\\\server\\share\\file.txt here");
-    expect(m).toHaveLength(1);
-    expect(m[0].raw).toBe("\\\\server\\share\\file.txt");
+    expect(m).toHaveLength(0);
   });
 
   it("strips trailing sentence punctuation", () => {

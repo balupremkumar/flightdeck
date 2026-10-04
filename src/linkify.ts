@@ -32,7 +32,6 @@ const URL_BODY = `[^\\s"'<>]`;
 
 const URL_RE = new RegExp(`\\bhttps?:\\/\\/${URL_BODY}+`, "g");
 const WIN_ABS_RE = new RegExp(`(?<![A-Za-z0-9_])[A-Za-z]:[\\\\/]${BODY}*`, "g");
-const UNC_RE = new RegExp(`\\\\\\\\${BODY}+(?:\\\\${BODY}+)+`, "g");
 const POSIX_ABS_RE = new RegExp(`(?<![\\w./])\\/(?:[A-Za-z0-9_.-]+\\/)*[A-Za-z0-9_.-]+`, "g");
 const DOTREL_RE = new RegExp(`(?<![\\w./])\\.{1,2}[\\\\/]${BODY}+`, "g");
 const BARE_REL_RE = new RegExp(
@@ -94,10 +93,12 @@ function withSuffix(lineText: string, start: number, end: number, raw: string): 
 
 function collectPlainPaths(lineText: string): RawCandidate[] {
   const out: RawCandidate[] = [];
-  for (const re of [WIN_ABS_RE, UNC_RE, POSIX_ABS_RE, DOTREL_RE, BARE_REL_RE]) {
+  for (const re of [WIN_ABS_RE, POSIX_ABS_RE, DOTREL_RE, BARE_REL_RE]) {
     re.lastIndex = 0;
     for (const m of lineText.matchAll(re)) {
       if (m[0].length < 3) continue; // skip degenerate "/" / ".\" style noise
+      // Skip BARE_REL_RE matches preceded by \\ (would be a UNC path suffix).
+      if (re === BARE_REL_RE && m.index! > 0 && lineText[m.index! - 1] === "\\") continue;
       out.push(withSuffix(lineText, m.index!, m.index! + m[0].length, m[0]));
     }
   }
@@ -143,7 +144,7 @@ export function linkify(lineText: string): LinkMatch[] {
 }
 
 function isAbsolute(raw: string): boolean {
-  return /^[A-Za-z]:[\\/]/.test(raw) || /^\\\\/.test(raw) || /^\//.test(raw);
+  return /^[A-Za-z]:[\\/]/.test(raw) || /^\//.test(raw);
 }
 
 // Exported so markdown.ts can resolve relative links/images against a .md
@@ -163,10 +164,13 @@ export function normalizeSegments(parts: string[]): string[] {
 }
 
 /** Resolves a match's raw path to an absolute path against `cwd`. URLs and
- *  already-absolute paths (Windows drive, UNC, POSIX) pass through unchanged. */
+ *  already-absolute paths (Windows drive, POSIX) pass through unchanged. Do not
+ *  join a relative path to a UNC cwd — return the raw path instead. */
 export function resolvePath(match: LinkMatch, cwd: string): string {
   if (match.kind === "url") return match.raw;
   if (isAbsolute(match.raw)) return match.raw;
+  // Avoid producing a UNC result from a relative path joined to a UNC cwd.
+  if (/^\\\\/.test(cwd)) return match.raw;
 
   const isWin = /^[A-Za-z]:/.test(cwd) || cwd.includes("\\");
   const cwdSegs = cwd.split(/[\\/]+/).filter(Boolean);
