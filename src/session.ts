@@ -18,6 +18,7 @@ import { repoToplevel, closeWorkspaceWithCleanup, type WorktreeInfo } from "./wo
 import { getStartupBehavior } from "./settingsStore";
 import { lastLine } from "./attention";
 import { redactText } from "./transcript";
+import { parsePaneColors } from "./paneStyle";
 
 // UX-581: `draft` (the pane's unsent input line) isn't on persist.ts's
 // PersistedPane type yet — that file belongs to the persist.rs wiring, not
@@ -178,6 +179,16 @@ function paneChatFor(workspaces: Workspace[]): Record<number, PaneChatPref> {
   }
   return out;
 }
+// Pane colour tag (swatch id) rides in uiPrefs for the same reason.
+function paneColorFor(workspaces: Workspace[]): Record<number, string> {
+  const out: Record<number, string> = {};
+  for (const w of workspaces) for (const p of w.panes) if (p.color) out[p.id] = p.color;
+  return out;
+}
+let restoredPaneColor: Record<number, string> = {};
+export function setRestoredPaneColor(map: Record<number, string>): void {
+  restoredPaneColor = map;
+}
 let restoredPaneChat: Record<number, PaneChatPref> = {};
 export function setRestoredPaneChat(map: Record<number, PaneChatPref>): void {
   restoredPaneChat = map;
@@ -213,6 +224,7 @@ function toDraft(workspaces: Workspace[], activeId: number | null): SessionDraft
       summary: summarize(workspaces),
       scrollback: scrollbackFor(workspaces), // QL-762
       paneChat: paneChatFor(workspaces), // Phase 3: per-pane view + focus mode
+      paneColor: paneColorFor(workspaces),
     },
   };
 }
@@ -240,9 +252,10 @@ export async function lastSessionSummary(): Promise<PaneSummaryEntry[]> {
  *  testable without needing to drive the whole restore-prompt flow. */
 export function parseUiPrefs(uiPrefs: unknown): {
   groups: PaneGroup[]; summary: PaneSummaryEntry[]; scrollback: Record<number, string>; paneChat: Record<number, PaneChatPref>;
+  paneColor: Record<number, string>;
 } {
   const p = (uiPrefs && typeof uiPrefs === "object" ? uiPrefs : {}) as {
-    groups?: unknown; summary?: unknown; scrollback?: unknown; paneChat?: unknown;
+    groups?: unknown; summary?: unknown; scrollback?: unknown; paneChat?: unknown; paneColor?: unknown;
   };
   // QL-762: a doc written by hand, by an older build, or by a version that
   // capped differently is all the same case — take only numeric keys with
@@ -272,6 +285,7 @@ export function parseUiPrefs(uiPrefs: unknown): {
     summary: Array.isArray(p.summary) ? (p.summary as PaneSummaryEntry[]) : [],
     scrollback,
     paneChat,
+    paneColor: parsePaneColors(p.paneColor),
   };
 }
 
@@ -406,6 +420,7 @@ export async function hydrateFrom(persisted: PersistedWorkspace[], activeId: num
         draft: p.draft, // UX-581: the unsent line survives the restart too
         view: restoredPaneChat[p.id]?.view === "chat" ? "chat" : undefined,
         focusMode: restoredPaneChat[p.id]?.focusMode ? true : undefined,
+        color: restoredPaneColor[p.id],
       };
       const { pane, status } = await reconcilePane(model, w.root, w.setupCmd);
       panes.push(pane);
@@ -486,6 +501,7 @@ export async function offerSessionRestore() {
     // prompt leaves it staged but unused — nothing gets created to read it.
     setRestoredScrollback(prefs.scrollback);
     setRestoredPaneChat(prefs.paneChat);
+    setRestoredPaneColor(prefs.paneColor);
     if (doc.workspaces.length === 0) return;
     if (useApp.getState().workspaces.length > 0) return; // user already moving
     // Settings > Startup (91) — persisted-but-inert until now. "Reopen last

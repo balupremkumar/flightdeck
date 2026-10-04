@@ -807,3 +807,42 @@
 @media (prefers-reduced-motion: reduce) {
   .xterm .fd-fold-chev { transition: none; }
 }
+
+/* Pane colour tag: 3px bar on the header's left edge (pseudo-element so it
+   doesn't fight graphite's .phead box-shadow). The name text takes the tint
+   inline. Header content is unchanged; controls live in the pane menu. */
+.phead.tinted { position: relative; }
+.phead.tinted::before {
+  content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+  background: var(--pane-tint); pointer-events: none;
+}
+
+/* "Colour and name…" popover */
+.pstyle-scrim { position: fixed; inset: 0; z-index: var(--z-menu); }
+.pstyle { z-index: calc(var(--z-menu) + 1); padding: 10px; gap: 6px; }
+.pstyle-label { font-size: 11px; color: var(--faint); text-transform: uppercase; letter-spacing: .04em; }
+.pstyle-name {
+  font: inherit; font-size: 12px; color: var(--text); background: var(--bg);
+  border: 1px solid var(--line-strong); border-radius: 6px; padding: 5px 8px; min-width: 0;
+}
+.pstyle-name:focus-visible, .pstyle-swatch:focus-visible, .pstyle-save:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring); outline-offset: 1px;
+}
+.pstyle-swatches { display: flex; flex-wrap: wrap; gap: 6px; padding: 2px 0 4px; }
+.pstyle-swatch {
+  width: 20px; height: 20px; border-radius: 50%; padding: 0; cursor: pointer;
+  border: 2px solid transparent; background-clip: padding-box;
+  box-shadow: 0 0 0 1px var(--line-strong);
+}
+.pstyle-swatch[aria-checked="true"] { border-color: var(--elevated); box-shadow: 0 0 0 2px var(--text); }
+.pstyle-swatch.none {
+  background: linear-gradient(135deg, transparent 45%, var(--faint) 45% 55%, transparent 55%), var(--bg);
+}
+.pstyle-actions { display: flex; justify-content: flex-end; }
+.pstyle-save {
+  font: inherit; font-size: 12px; font-weight: 600; color: var(--accent); cursor: pointer;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  border-radius: 6px; padding: 3px 12px;
+}
+.pstyle-save:hover { background: color-mix(in srgb, var(--accent) 24%, transparent); }

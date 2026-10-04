@@ -20,6 +20,7 @@ import "./panes.css";
 const ChatView = lazy(() => import("./ChatView"));
 
 import { vendorShort, vendorMeta, vendorColor } from "./vendors";
+import { PANE_SWATCHES, swatchToken, normalizePaneName } from "./paneStyle";
 import { VendorGlyph } from "./VendorGlyph";
 import { closePaneWithCleanup } from "./worktrees";
 import { Transcript } from "./TranscriptView";
@@ -393,6 +394,30 @@ function PaneViewInner({
     renamePane(pane.id, draft);
     setEditing(false);
   };
+
+  // Colour and name popover (pane menu). Colour applies live; the name saves
+  // on Enter / Save, through the same renamePane path as the header rename.
+  const setPaneColor = useApp((s) => s.setPaneColor);
+  const [styleOpen, setStyleOpen] = useState(false);
+  const [styleDraft, setStyleDraft] = useState("");
+  const styleNameRef = useRef<HTMLInputElement>(null);
+  const tintToken = swatchToken(pane.color);
+  const openStyle = () => {
+    setStyleDraft(pane.title ?? "");
+    setMenuOpen(false);
+    setStyleOpen(true);
+  };
+  const closeStyle = () => setStyleOpen(false);
+  const saveStyle = () => {
+    if (normalizePaneName(styleDraft) !== pane.title) renamePane(pane.id, styleDraft);
+    setStyleOpen(false);
+  };
+  useOverlayEsc(styleOpen, closeStyle);
+  useEffect(() => {
+    if (!styleOpen) return;
+    styleNameRef.current?.focus();
+    styleNameRef.current?.select();
+  }, [styleOpen]);
 
   // Shared clipboard helper (UI-119 and friends) — one toast style for all copies.
   const copyText = async (text: string, okMsg: string) => {
@@ -869,7 +894,8 @@ function PaneViewInner({
         )}
       </div>
       <div
-        className="phead"
+        className={"phead" + (tintToken ? " tinted" : "")}
+        style={tintToken ? ({ "--pane-tint": `var(${tintToken})` } as React.CSSProperties) : undefined}
         onDoubleClick={(e) => {
           // UI-116: double-click empty header space toggles maximise (ignore
           // clicks that land on a control or the rename field).
@@ -921,7 +947,7 @@ function PaneViewInner({
             onMouseDown={(e) => e.stopPropagation()}
           />
         ) : (
-          <span className="pname" title={`${displayName} · double-click to rename`} onDoubleClick={() => setEditing(true)}>
+          <span className="pname" style={tintToken ? { color: "var(--pane-tint)" } : undefined} title={`${displayName} · double-click to rename`} onDoubleClick={() => setEditing(true)}>
             {displayName}
           </span>
         )}
@@ -1163,7 +1189,14 @@ Running low — consider /compact in this pane.` : "")
                   <span className="pmenu-path-size">isolated worktree · {bytes(wtSize)}</span>
                 )}
               </div>
+              <button className="pmenu-item" onClick={openStyle}>Colour and name…</button>
               <button className="pmenu-item" onClick={clearScrollback}>Clear scrollback</button>
+              {vendorMeta(pane.vendor).kind === "shell" && (
+                <>
+                  <button className="pmenu-item" onClick={() => { terminalRef.current?.foldAllCommands(true); closeMenu(); }}>Fold all commands</button>
+                  <button className="pmenu-item" onClick={() => { terminalRef.current?.foldAllCommands(false); closeMenu(); }}>Unfold all commands</button>
+                </>
+              )}
               <button className="pmenu-item" onClick={() => { restartPane(pane.id); closeMenu(); }}>
                 <IconRefresh size={13} /> Restart
               </button>
@@ -1302,6 +1335,58 @@ Running low — consider /compact in this pane.` : "")
                 <IconClose size={13} /> Close pane
               </button>
             </div>,
+            document.body
+          )}
+          {styleOpen && menuPos && createPortal(
+            <>
+              <div className="pstyle-scrim" onMouseDown={closeStyle} />
+              <div
+                className="pmenu pstyle"
+                role="dialog"
+                aria-label="Pane colour and name"
+                style={{ top: menuPos.top, left: menuPos.left }}
+              >
+                <label className="pstyle-label" htmlFor={`pstyle-name-${pane.id}`}>Name</label>
+                <input
+                  id={`pstyle-name-${pane.id}`}
+                  ref={styleNameRef}
+                  className="pstyle-name"
+                  value={styleDraft}
+                  maxLength={60}
+                  placeholder={vendorShort(pane.vendor)}
+                  onChange={(e) => setStyleDraft(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); saveStyle(); } }}
+                />
+                <span className="pstyle-label" id={`pstyle-col-${pane.id}`}>Colour</span>
+                <div className="pstyle-swatches" role="radiogroup" aria-labelledby={`pstyle-col-${pane.id}`}>
+                  <button
+                    type="button"
+                    role="radio"
+                    aria-checked={!pane.color}
+                    aria-label="None"
+                    title="None"
+                    className="pstyle-swatch none"
+                    onClick={() => setPaneColor(pane.id, undefined)}
+                  />
+                  {PANE_SWATCHES.map((s) => (
+                    <button
+                      key={s.id}
+                      type="button"
+                      role="radio"
+                      aria-checked={pane.color === s.id}
+                      aria-label={s.label}
+                      title={s.label}
+                      className="pstyle-swatch"
+                      style={{ background: `var(${s.token})` }}
+                      onClick={() => setPaneColor(pane.id, s.id)}
+                    />
+                  ))}
+                </div>
+                <div className="pstyle-actions">
+                  <button type="button" className="pstyle-save" onClick={saveStyle}>Save</button>
+                </div>
+              </div>
+            </>,
             document.body
           )}
         </div>

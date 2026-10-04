@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { normalizePaneName, swatchToken } from "./paneStyle";
 
 // "permission" = the agent printed an interactive approval prompt and is
 // blocked on the user (UI-2/#220) — a louder sub-case of "waiting", detected
@@ -20,7 +21,7 @@ export interface WorktreeRef { worktreePath: string; branch: string; baseBranch:
 // persisted through session.ts like everything else on PaneModel.
 /** Phase 3: which surface a Claude pane shows. Absent = "terminal". */
 export type PaneViewMode = "terminal" | "chat";
-export interface PaneModel extends Partial<WorktreeRef> { id: number; vendor: string; cwd: string; state: PaneState; epoch: number; title?: string; needsSetup?: boolean; draft?: string; view?: PaneViewMode; focusMode?: boolean; }
+export interface PaneModel extends Partial<WorktreeRef> { id: number; vendor: string; cwd: string; state: PaneState; epoch: number; title?: string; needsSetup?: boolean; draft?: string; view?: PaneViewMode; focusMode?: boolean; color?: string; }
 export interface Workspace { id: number; name: string; root: string; panes: PaneModel[]; focused: number | null; setupCmd?: string; }
 export interface NewPane extends Partial<WorktreeRef> { vendor: string; cwd: string; needsSetup?: boolean; }
 
@@ -68,6 +69,8 @@ interface AppState {
   /** Persisted Claude fullscreen opt-in; changing it restarts the pane (epoch bump). */
   setPaneFocusMode: (paneId: number, on: boolean) => void;
   renamePane: (paneId: number, title: string) => void;
+  /** Pane colour tag: a swatch id from paneStyle.ts, or undefined to clear. */
+  setPaneColor: (paneId: number, color: string | undefined) => void;
   renameWorkspace: (wsId: number, name: string) => void;
   reorderWorkspaces: (from: number, to: number) => void;
   movePane: (wsId: number, from: number, to: number) => void;
@@ -294,7 +297,15 @@ export const useApp = create<AppState>((set) => ({
     set((s) => ({
       workspaces: s.workspaces.map((w) => ({
         ...w,
-        panes: w.panes.map((p) => (p.id === paneId ? { ...p, title: title.trim().slice(0, 60) || undefined } : p)),
+        panes: w.panes.map((p) => (p.id === paneId ? { ...p, title: normalizePaneName(title) } : p)),
+      })),
+    })),
+
+  setPaneColor: (paneId, color) =>
+    set((s) => ({
+      workspaces: s.workspaces.map((w) => ({
+        ...w,
+        panes: w.panes.map((p) => (p.id === paneId ? { ...p, color: color && swatchToken(color) ? color : undefined } : p)),
       })),
     })),
 
