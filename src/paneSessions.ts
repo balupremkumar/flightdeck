@@ -82,7 +82,7 @@ export interface PaneSession {
     jumpMark: (dir: 1 | -1) => boolean;
     showHints: () => boolean;
     remeasure: () => void;
-    /** Called after every attach: the factory retries WebGL once if it was lost. */
+    /** Called after every attach: the factory re-creates WebGL only if this session's context was lost. */
     onAttach: () => void;
   };
   /** Current attach token; null while parked. */
@@ -104,6 +104,29 @@ interface Registry {
 const reg: Registry = (import.meta.hot?.data.reg as Registry | undefined) ?? { sessions: new Map(), sweepInstalled: false };
 if (import.meta.hot) import.meta.hot.data.reg = reg;
 const sessions = reg.sessions;
+
+/** A fit below this is a layout still settling (react-resizable-panels has not
+ *  sized the cell yet), never a real size. Sending it to a live agent makes it
+ *  re-render at a few columns and the re-wrapped lines stay in scrollback. */
+export const MIN_FIT_COLS = 20;
+export const MIN_FIT_ROWS = 5;
+/** Spawn size when no sane fit arrives within the grace period. */
+export const FALLBACK_COLS = 120;
+export const FALLBACK_ROWS = 30;
+
+/** fit.fit(), but only when the proposed size is sane. Returns whether it fit.
+ *  A skipped fit leaves the terminal (and so the PTY) at its last good size;
+ *  the ResizeObserver fits again once the layout settles. */
+export function fitIfSane(fit: Pick<FitAddon, "fit" | "proposeDimensions">): boolean {
+  try {
+    const d = fit.proposeDimensions();
+    if (!d || !(d.cols >= MIN_FIT_COLS && d.rows >= MIN_FIT_ROWS)) return false;
+    fit.fit();
+    return true;
+  } catch {
+    return false; // not measured yet, or mid-teardown
+  }
+}
 
 let factory: SessionFactory | null = null;
 export function setSessionFactory(f: SessionFactory): void {
@@ -170,9 +193,7 @@ export function attach(modelId: number, container: HTMLElement): symbol | null {
   s.host.style.cssText = "width:100%;height:100%;";
   if (s.host.parentElement !== container) moveInto(container, s.host);
   const r = container.getBoundingClientRect();
-  if (r.width >= 24 && r.height >= 24) {
-    try { s.fit.fit(); } catch { /* not measured yet */ }
-  }
+  if (r.width >= 24 && r.height >= 24) fitIfSane(s.fit);
   try {
     s.term.refresh(0, s.term.rows - 1);
     if (s.saved.atBottom) s.term.scrollToBottom();

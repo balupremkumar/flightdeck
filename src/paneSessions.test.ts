@@ -46,7 +46,7 @@ function fakeSession(modelId: number, gen: string, spec: { vendor: string }, con
     buffer: { active: { viewportY: 3, baseY: 10 } },
   };
   const s = {
-    modelId, gen, term, host, fit: { fit: vi.fn() }, search: {}, serialize: null, ligatures: null, ptyId: 40 + modelId,
+    modelId, gen, term, host, fit: { fit: vi.fn(), proposeDimensions: () => ({ cols: 80, rows: 24 }) }, search: {}, serialize: null, ligatures: null, ptyId: 40 + modelId,
     handlers: {}, live: {}, theme: { current: {} },
     api: { jumpMark: () => false, showHints: () => false, remeasure: () => {}, onAttach: vi.fn() },
     owner: null, saved: { viewportY: 0, atBottom: true, hadFocus: false }, disposers, disposed: false,
@@ -185,5 +185,20 @@ describe("paneSessions", () => {
       closeWorkspaceWithCleanup({ id: 1, panes: [mkPane(1), mkPane(2), mkPane(3)] });
       expect(kills().map(([, a]) => (a as { paneId: number }).paneId).sort()).toEqual([41, 42, 43]);
     });
+  });
+});
+
+describe("fitIfSane", () => {
+  const mk = (d: { cols: number; rows: number } | undefined) => ({ fit: vi.fn(), proposeDimensions: () => d });
+  it("fits only when the proposed size is sane", async () => {
+    const ps = await import("./paneSessions");
+    const ok = mk({ cols: 80, rows: 24 });
+    expect(ps.fitIfSane(ok)).toBe(true);
+    expect(ok.fit).toHaveBeenCalledTimes(1);
+    for (const d of [{ cols: 2, rows: 47 }, { cols: 13, rows: 5 }, { cols: 80, rows: 2 }, undefined]) {
+      const bad = mk(d);
+      expect(ps.fitIfSane(bad)).toBe(false);
+      expect(bad.fit).not.toHaveBeenCalled();
+    }
   });
 });

@@ -24,7 +24,7 @@ import { linkify, resolvePath, type LinkMatch } from "./linkify";
 import { openInEditor } from "./editor";
 import { useUI } from "./ui";
 import {
-  acquire, attach, detach, get as getSession, setSessionFactory,
+  acquire, attach, detach, get as getSession, setSessionFactory, fitIfSane, FALLBACK_COLS, FALLBACK_ROWS,
   type PaneHandlers, type PaneSession, type SessionLive, type SpawnSpec,
 } from "./paneSessions";
 
@@ -512,18 +512,24 @@ interface TerminalProps {
 // avoids both wasted xterm writes while invisible and an unbounded memory grow.
 const HIDDEN_BUFFER_CAP = 262144; // 256KB
 
+type WebglRef = { current: WebglAddon | null; lost: boolean };
+
 /** QL-736: GPU renderer. Activation throws where WebGL2 isn't available —
  *  not fatal, xterm keeps the DOM renderer. Context loss (driver reset, GPU
  *  sleep) disposes the addon and falls back. R1: a parked / moved pane may
- *  also lose its context to Chromium's per-page cap, so attach retries ONCE. */
-function loadWebgl(term: XTerm, ref: { current: WebglAddon | null }): void {
+ *  also lose its context to Chromium's per-page cap, so attach re-creates it after a loss. */
+function loadWebgl(term: XTerm, ref: WebglRef): void {
   const webgl = new WebglAddon();
-  webgl.onContextLoss(() => { webgl.dispose(); if (ref.current === webgl) ref.current = null; });
+  webgl.onContextLoss(() => { webgl.dispose(); if (ref.current === webgl) { ref.current = null; ref.lost = true; } });
   term.loadAddon(webgl);
   ref.current = webgl;
 }
-function loadWebglOnce(term: XTerm, ref: { current: WebglAddon | null }): void {
-  if (ref.current) return;
+/** Attach hook: a session creates its WebGL context once, at creation. It only
+ *  re-creates one if that context was actually lost; never a second one for a
+ *  session that has one (Chromium caps live contexts at ~16 per page). */
+function reloadWebglIfLost(term: XTerm, ref: WebglRef): void {
+  if (ref.current || !ref.lost) return;
+  ref.lost = false;
   try { loadWebgl(term, ref); } catch { /* stay on the DOM renderer */ }
 }
 
@@ -542,7 +548,7 @@ function createSession(modelId: number, gen: string, spec: SpawnSpec, handlers: 
     fontSize: { current: spec.fontSize },
     ligatures: { current: false },
   };
-  const webglRef: { current: WebglAddon | null } = { current: null };
+  const webglRef: WebglRef = { current: null, lost: false };
     // Terminal settings from Settings > Terminal (QOL 319 — they were persisted
     // but never read). fontSize stays a per-pane prop (zoom control).
     const ts = getTerminalSettings();
@@ -596,11 +602,20 @@ function createSession(modelId: number, gen: string, spec: SpawnSpec, handlers: 
     try {
       loadWebgl(term, webglRef);
     } catch { /* no WebGL2 here — DOM renderer it is */ }
-    try { fit.fit(); } catch { /* not measured yet */ }
+    // Spawn waits for the first sane fit (see below), so a cell that
+    // react-resizable-panels has not sized yet never sets the PTY's size.
+    let spawnReady!: () => void;
+    const sized = new Promise<void>((res) => { spawnReady = res; });
+    const fitSane = (): boolean => {
+      const ok = fitIfSane(fit);
+      if (ok) spawnReady();
+      return ok;
+    };
+    fitSane();
     const entry: PaneSession = {
       modelId, gen, term, host, fit, search, serialize: null, ligatures: null, ptyId: 0, handlers, live,
       theme: themeRef,
-      api: { jumpMark: () => false, showHints: () => false, remeasure: () => {}, onAttach: () => loadWebglOnce(term, webglRef) },
+      api: { jumpMark: () => false, showHints: () => false, remeasure: () => {}, onAttach: () => { fitSane(); reloadWebglIfLost(term, webglRef); } },
       owner: null, saved: { viewportY: 0, atBottom: true, hadFocus: false }, disposers: [], disposed: false,
     };
     // QL-757: starts at the spawn cwd and is replaced by every OSC 9;9 report,
@@ -1068,7 +1083,7 @@ function createSession(modelId: number, gen: string, spec: SpawnSpec, handlers: 
       const nowVisible = entries[entries.length - 1]?.isIntersecting ?? true;
       if (nowVisible === visible) return;
       visible = nowVisible;
-      if (visible) { flushHidden(); try { fit.fit(); } catch { /* mid-teardown */ } }
+      if (visible) { flushHidden(); fitSane(); }
     }, { threshold: 0 });
     io.observe(host);
 
@@ -1219,6 +1234,11 @@ function createSession(modelId: number, gen: string, spec: SpawnSpec, handlers: 
       });
 
       try {
+        // First sane fit, or after a grace period a sane default: never a
+        // degenerate size, and never hold a hidden pane's spawn forever.
+        await Promise.race([sized, new Promise<void>((res) => setTimeout(res, 500))]);
+        if (entry.disposed) return;
+        if (!fitSane()) term.resize(FALLBACK_COLS, FALLBACK_ROWS);
         paneId = await invoke<number>("pty_spawn", { vendor: spec.vendor, cwd: spec.cwd, cols: term.cols, rows: term.rows, setup: spec.setup ?? null });
         entry.ptyId = paneId;
       } catch (err) {
@@ -1290,7 +1310,7 @@ function createSession(modelId: number, gen: string, spec: SpawnSpec, handlers: 
       // Reflow moves every hint chip off its character; the sticky strip just
       // needs re-measuring against the new cell size.
       closeHints();
-      try { fit.fit(); } catch { /* mid-teardown */ }
+      fitSane();
       scheduleSticky();
     });
     ro.observe(host);
@@ -1453,7 +1473,7 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
     if (!s) return;
     s.live.fontSize.current = fontSize;
     s.term.options.fontSize = fontSize;
-    try { s.fit.fit(); } catch { /* mid-teardown */ }
+    fitIfSane(s.fit);
     s.api.remeasure(); // QL-754/755: cell size just moved
   }, [fontSize, modelId, vendor, cwd, epoch]);
 
