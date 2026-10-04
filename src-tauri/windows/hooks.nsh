@@ -72,6 +72,24 @@
   StrCmp $R0 "" 0 +2
     StrCpy $R0 "unknown"
 
+  ; The version becomes part of a folder name, and both sources are files a
+  ; user (or another program) can edit. Digits and dots only, else "unknown".
+  StrCpy $0 0
+  fd_vchk_${ID}:
+    StrCpy $1 $R0 1 $0
+    StrCmp $1 "" fd_vok_${ID}
+    StrCmp $1 "." fd_vnext_${ID}
+    StrCmp $1 "0" fd_vnext_${ID}
+    IntOp $3 $1 + 0
+    IntCmp $3 1 fd_vnext_${ID} fd_vbad_${ID}
+    IntCmp $3 9 fd_vnext_${ID} fd_vnext_${ID} fd_vbad_${ID}
+  fd_vnext_${ID}:
+    IntOp $0 $0 + 1
+    Goto fd_vchk_${ID}
+  fd_vbad_${ID}:
+    StrCpy $R0 "unknown"
+  fd_vok_${ID}:
+
   ; Local time via GetLocalTime. SYSTEMTIME is eight WORDs:
   ; year, month, day-of-week, day, hour, minute, second, milliseconds.
   System::Call '*(&i2,&i2,&i2,&i2,&i2,&i2,&i2,&i2)p.r9'
@@ -93,14 +111,39 @@
 
   ; Roaming app data, minus worktrees\, logs\ and backups\ (full paths, so a
   ; same-named folder deeper in the tree is still copied).
-  nsExec::Exec 'robocopy "$R3" "$R4\appdata" /E /R:0 /W:0 /NFL /NDL /NJH /NJS /NP /XD "$R3\worktrees" "$R3\logs" "$R3\backups"'
+  ; $R2 = "1" while every robocopy so far returned < 8 (0-7 = success flags,
+  ; 8+ = failure, typically locked files because the app is still running).
+  ; /XJ: never follow junctions.
+  StrCpy $R2 "1"
+  nsExec::Exec 'robocopy "$R3" "$R4\appdata" /E /R:0 /W:0 /NFL /NDL /NJH /NJS /NP /XJ /XD "$R3\worktrees" "$R3\logs" "$R3\backups"'
   Pop $R1
+  StrCmp $R1 "error" 0 +2
+    StrCpy $R2 "0"
+  IntCmp $R1 8 0 +2 0
+    StrCpy $R2 "0"
 
   ; Webview localStorage (every UI setting). Absent on a machine that never
-  ; ran the app; robocopy then just reports "source not found", ignored.
-  IfFileExists "${LOCALAPP}\${BUNDLEID}\EBWebView\Default\Local Storage\*.*" 0 fd_done_${ID}
-  nsExec::Exec 'robocopy "${LOCALAPP}\${BUNDLEID}\EBWebView\Default\Local Storage" "$R4\local-storage" /E /R:0 /W:0 /NFL /NDL /NJH /NJS /NP'
+  ; ran the app: skipped, not a failure.
+  IfFileExists "${LOCALAPP}\${BUNDLEID}\EBWebView\Default\Local Storage\*.*" 0 fd_marker_${ID}
+  nsExec::Exec 'robocopy "${LOCALAPP}\${BUNDLEID}\EBWebView\Default\Local Storage" "$R4\local-storage" /E /R:0 /W:0 /NFL /NDL /NJH /NJS /NP /XJ'
   Pop $R1
+  StrCmp $R1 "error" 0 +2
+    StrCpy $R2 "0"
+  IntCmp $R1 8 0 +2 0
+    StrCpy $R2 "0"
+
+  ; complete.txt only for a clean backup; tools\revert.ps1 refuses a backup
+  ; without it (unless -Force).
+  fd_marker_${ID}:
+  StrCmp $R2 "1" 0 fd_partial_${ID}
+    ClearErrors
+    FileOpen $R1 "$R4\complete.txt" w
+    IfErrors fd_done_${ID}
+    FileWrite $R1 "version=$R0$\r$\ntimestamp=$0-$1-$3 $4:$5:$6$\r$\n"
+    FileClose $R1
+    Goto fd_done_${ID}
+  fd_partial_${ID}:
+    DetailPrint "WARNING: the Flightdeck data backup is PARTIAL (some files were locked, close Flightdeck before installing). Not marked complete: $R4"
 
   fd_done_${ID}:
   Pop $R4
