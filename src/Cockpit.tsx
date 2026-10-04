@@ -1,4 +1,5 @@
-import { lazy, Suspense, useEffect, useRef, useState, type ComponentType } from "react";
+import { useEffect, useRef, useState } from "react";
+import { lazyOverlay } from "./LazyOverlay";
 import { useApp } from "./store";
 import { LeftPanel } from "./LeftPanel";
 import { PaneGrid } from "./PaneGrid";
@@ -26,17 +27,17 @@ import { attentionQueue, mostRecentOutputPane } from "./attention";
 // bundle. Ones gated on store state mount only while that state is set; the
 // three that own a global hotkey (QuickOpen, Shortcuts, SessionLauncher) mount
 // at once but load off the critical path.
-const lazyNamed = <T extends Record<string, unknown>, K extends keyof T>(load: () => Promise<T>, name: K) =>
-  lazy(() => load().then((m) => ({ default: m[name] as ComponentType<any> })));
-const Settings = lazyNamed(() => import("./Settings"), "Settings");
-const Broadcast = lazyNamed(() => import("./Broadcast"), "Broadcast");
-const Explorer = lazyNamed(() => import("./Explorer"), "Explorer");
-const Review = lazyNamed(() => import("./Review"), "Review");
-const AttentionQueue = lazyNamed(() => import("./AttentionQueue"), "AttentionQueue");
-const Shortcuts = lazyNamed(() => import("./Shortcuts"), "Shortcuts");
-const SessionLauncher = lazyNamed(() => import("./SessionLauncher"), "SessionLauncher");
-const PreviewHost = lazyNamed(() => import("./PreviewHost"), "PreviewHost");
-const QuickOpen = lazyNamed(() => import("./QuickOpenOverlay"), "QuickOpen");
+// Each gets its own Suspense + error boundary (LazyOverlay.tsx) so one failed
+// chunk load can't take the root ErrorBoundary, and the terminals, down.
+const Settings = lazyOverlay(() => import("./Settings"), "Settings", "Settings");
+const Broadcast = lazyOverlay(() => import("./Broadcast"), "Broadcast", "Broadcast");
+const Explorer = lazyOverlay(() => import("./Explorer"), "Explorer", "the file explorer");
+const Review = lazyOverlay(() => import("./Review"), "Review", "Review");
+const AttentionQueue = lazyOverlay(() => import("./AttentionQueue"), "AttentionQueue", "the attention queue");
+const Shortcuts = lazyOverlay(() => import("./Shortcuts"), "Shortcuts", "keyboard shortcuts");
+const SessionLauncher = lazyOverlay(() => import("./SessionLauncher"), "SessionLauncher", "the session launcher");
+const PreviewHost = lazyOverlay(() => import("./PreviewHost"), "PreviewHost", "the preview");
+const QuickOpen = lazyOverlay(() => import("./QuickOpenOverlay"), "QuickOpen", "quick open");
 
 export function Cockpit() {
   const workspaces = useApp((s) => s.workspaces);
@@ -400,24 +401,22 @@ export function Cockpit() {
       <ConfirmDialog />
       <ToastHost />
       <CommandPalette />
-      <Suspense fallback={null}>
-        {settingsOpen && <Settings />}
-        <QuickOpen />
-        {broadcastOpen && <Broadcast />}
-        {reviewOpen && <Review />}
-        {!splitActive && hasPreview && <PreviewHost mode="drawer" />}
-        {attentionOpen && <AttentionQueue />}
-        <Shortcuts />
+      {settingsOpen && <Settings />}
+      <QuickOpen />
+      {broadcastOpen && <Broadcast />}
+      {reviewOpen && <Review />}
+      {!splitActive && hasPreview && <PreviewHost mode="drawer" />}
+      {attentionOpen && <AttentionQueue />}
+      <Shortcuts />
       {/* QL-764: resume/fork launcher. Owns its own open state and Ctrl+Shift+R
           listener, the same way CommandPalette and Shortcuts do. */}
-        <SessionLauncher />
-      </Suspense>
+      <SessionLauncher />
       <ZoomHud />
 
       <div className="cockpit">
         <LeftPanel expanded={expanded} />
         {showExplorer && active && (
-          <Suspense fallback={null}><Explorer
+          <Explorer
             root={active.root}
             wsId={active.id}
             paneRoot={active.panes.find((p) => p.id === active.focused)?.worktreePath}
@@ -425,7 +424,7 @@ export function Cockpit() {
               const p = active.panes.find((x) => x.id === active.focused);
               return p ? (p.title || vendorShort(p.vendor)) : undefined;
             })()}
-          /></Suspense>
+          />
         )}
         <div className="main">
           {/* QL-708: the PanelGroup is ALWAYS rendered (one grid panel); only the
@@ -456,7 +455,7 @@ export function Cockpit() {
                     if (Math.abs(size - useUI.getState().previewSplitSize) >= 0.5) useUI.getState().setPreviewSplitSize(size);
                   }}
                 >
-                  <Suspense fallback={null}><PreviewHost mode="split" /></Suspense>
+                  <PreviewHost mode="split" />
                 </Panel>
               </>
             )}

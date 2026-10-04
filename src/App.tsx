@@ -8,11 +8,12 @@ import { ToastHost } from "./ToastHost";
 import { useUI } from "./ui";
 import { applyThemeForMode, isFollowingSystem, toggleThemeMode } from "./themes";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { lazy, Suspense, useEffect } from "react";
+import { useEffect } from "react";
+import { lazyOverlay } from "./LazyOverlay";
 import { logEvent } from "./applog";
 import { useWhatsNew } from "./settingsStore";
 
-const Settings = lazy(() => import("./Settings").then((m) => ({ default: m.Settings })));
+const Settings = lazyOverlay(() => import("./Settings"), "Settings", "Settings");
 
 // QL-784: "Follow Windows" (Settings > Appearance) hands the light/dark choice
 // to the OS, landing on whichever theme was last used in that mode.
@@ -67,7 +68,7 @@ function LauncherChrome() {
           {updateAvailable && <span className="tb-update-dot" />}
         </button>
       </div>
-      {settingsOpen && <Suspense fallback={null}><Settings /></Suspense>}
+      {settingsOpen && <Settings />}
       <ConfirmDialog />
       <ToastHost />
       <div className="cockpit">
