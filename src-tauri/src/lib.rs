@@ -773,6 +773,7 @@ pub fn run() {
             usage::pane_subagents,
             usage::pane_subagent_count,
             usage::pane_plans,
+            usage::plan_usage,
             persist::save_session,
             persist::load_session,
             persist::has_previous_session,

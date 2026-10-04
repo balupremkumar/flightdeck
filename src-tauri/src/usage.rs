@@ -40,6 +40,10 @@ pub struct PaneUsage {
     pub plan_resets_5h: Option<u64>,
     pub plan_used_percent_week: Option<f64>,
     pub plan_resets_week: Option<u64>,
+    /// API-equivalent cost of the session in USD, from `price_for`. Flightdeck
+    /// drives subscription CLIs, so this is what the same tokens would cost on
+    /// the API, not anything billed.
+    pub api_equiv_usd: f64,
 }
 
 /// Claude Code's project-dir slug: every non-alphanumeric byte becomes '-'
@@ -163,6 +167,23 @@ fn apply_usage(v: &serde_json::Value, u: &mut PaneUsage) {
     u.last_cache_read_tokens = n("cache_read_input_tokens");
     u.last_cache_creation_tokens = n("cache_creation_input_tokens");
     u.last_output_tokens = n("output_tokens");
+    // Cost: priced on this line's own model, else the last one seen.
+    let line_model = v.get("message").and_then(|m| m.get("model")).and_then(|m| m.as_str());
+    if let Some(p) = line_model.or(u.model.as_deref()).and_then(price_for) {
+        let w1h = usage
+            .get("cache_creation")
+            .and_then(|c| c.get("ephemeral_1h_input_tokens"))
+            .and_then(|x| x.as_u64())
+            .unwrap_or(0)
+            .min(n("cache_creation_input_tokens"));
+        let w5m = n("cache_creation_input_tokens") - w1h;
+        u.api_equiv_usd += (n("input_tokens") as f64 * p.input
+            + n("output_tokens") as f64 * p.output
+            + w5m as f64 * p.cache_write_5m
+            + w1h as f64 * p.cache_write_1h
+            + n("cache_read_input_tokens") as f64 * p.cache_read)
+            / 1_000_000.0;
+    }
     // QL-766: last-seen model. Only overwritten when the line carries one, so a
     // usage block without a model can't blank an already-known value.
     if let Some(m) = v.get("message").and_then(|m| m.get("model")).and_then(|m| m.as_str()) {
@@ -1282,6 +1303,340 @@ pub fn search_claude_sessions(cwd: String, query: String) -> SearchResults {
     search_sessions(&Path::new(&home).join(".claude").join("projects"), &cwd, &query)
 }
 
+// ---------------------------------------------------------------------------
+// Pricing (API-equivalent cost).
+//
+// Source: https://platform.claude.com/docs/en/about-claude/pricing and
+// https://platform.claude.com/docs/en/models/overview, checked 2026-10-04.
+// USD per million tokens. Context: Opus 5.5 / Sonnet 5.5 / Fable are 1M,
+// Opus and Sonnet 4.6+ are 1M at standard price, Haiku 4.5 and earlier 200K
+// (the window lives in SessionLauncher.tsx's contextWindowFor).
+// Opus 5.5 and Fable 5.1 cache reads are 0.05x / 0.025x input, not 0.1x.
+// Haiku 3 and Opus 3 are no longer on the page (old list prices, kept so old
+// transcripts still price).
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Price {
+    pub input: f64,
+    pub output: f64,
+    pub cache_write_5m: f64,
+    pub cache_write_1h: f64,
+    pub cache_read: f64,
+}
+
+const fn price(input: f64, output: f64, cache_read: f64) -> Price {
+    Price { input, output, cache_write_5m: input * 1.25, cache_write_1h: input * 2.0, cache_read }
+}
+
+/// (family, major, minor) from a model id: "claude-opus-5-5" -> ("opus", 5, 5),
+/// "claude-3-5-haiku-20241022" -> ("haiku", 3, 5), "claude-opus-4-1-20250805"
+/// -> ("opus", 4, 1). A trailing "[1m]" or "-1m" is ignored.
+fn model_key(model: &str) -> Option<(String, u32, u32)> {
+    let lower = model.to_lowercase();
+    let parts: Vec<&str> = lower
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|t| !t.is_empty())
+        .collect();
+    let fam = parts.iter().position(|p| matches!(*p, "opus" | "sonnet" | "haiku" | "fable" | "mythos"))?;
+    // A date stamp is 8 digits and "1m" is not all digits, so neither lands here.
+    let is_gen = |t: &&&str| t.chars().all(|c| c.is_ascii_digit()) && t.len() <= 2;
+    let after: Vec<u32> = parts[fam + 1..].iter().filter(is_gen).filter_map(|t| t.parse().ok()).collect();
+    let before: Vec<u32> = parts[..fam].iter().filter(is_gen).filter_map(|t| t.parse().ok()).collect();
+    let gen = if !after.is_empty() { after } else { before };
+    Some((parts[fam].to_string(), *gen.first()?, gen.get(1).copied().unwrap_or(0)))
+}
+
+/// Per-model price, None for ids this table does not know (shown without cost).
+pub fn price_for(model: &str) -> Option<Price> {
+    let (fam, major, minor) = model_key(model)?;
+    let at_least = |a: u32, b: u32| (major, minor) >= (a, b);
+    Some(match fam.as_str() {
+        "fable" | "mythos" => price(10.0, 50.0, if at_least(5, 1) { 0.25 } else { 1.0 }),
+        "opus" if at_least(5, 5) => price(4.0, 20.0, 0.20),
+        "opus" if at_least(4, 5) => price(5.0, 25.0, 0.50),
+        "opus" => price(15.0, 75.0, 1.50), // Opus 4, 4.1, 3
+        "sonnet" if at_least(5, 0) => price(2.0, 10.0, 0.20),
+        "sonnet" => price(3.0, 15.0, 0.30), // 4.x, 3.7, 3.5
+        "haiku" if at_least(4, 5) => price(1.0, 5.0, 0.10),
+        "haiku" if at_least(3, 5) => price(0.80, 4.0, 0.08),
+        "haiku" => price(0.25, 1.25, 0.03),
+        _ => return None,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Plan quota gauge: the subscription's 5-hour and weekly windows.
+//
+// Data source, in order of truthfulness:
+//  1. Claude Code writes a `quotaLimits` object on the synthetic assistant line
+//     it records when a request is rejected ("You've hit your session limit"):
+//     status, rateLimitType ("five_hour" / "seven_day"), resetsAt (epoch s).
+//     That is Claude's own reset time, so when one is still in the future it
+//     is used and the source is "claude-reported". It only exists after a hit.
+//  2. Otherwise tokens are summed from every session transcript (parents and
+//     subagents, deduplicated by message+request id): the 5-hour window is the
+//     block that began at the hour of the first message after the previous
+//     block ended (the same rule ccusage uses), the weekly window the last
+//     7 days. source = "estimated". Anthropic publishes no token caps, so pct
+//     exists only for the 5-hour window, and only once a past rejection shows
+//     what that account actually hit (largest token total at a rejection).
+//
+// Transcripts are read by offset per file (new bytes only). The first sight of
+// a file reads it whole, once, off the UI thread.
+// ---------------------------------------------------------------------------
+
+const FIVE_H_MS: u64 = 5 * 3_600_000;
+const WEEK_MS: u64 = 7 * 24 * 3_600_000;
+const HOUR_MS: u64 = 3_600_000;
+/// Per-file first read ceiling (tail), so one monster transcript can't stall a poll.
+const QUOTA_FIRST_READ_CAP: u64 = 64 * 1024 * 1024;
+
+#[derive(Clone, Serialize, Default, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct QuotaWindow {
+    pub used_tokens: u64,
+    /// Epoch ms.
+    pub window_start: u64,
+    pub resets_at: Option<u64>,
+    /// 0.0..=1.0+, None when no cap is known.
+    pub pct: Option<f64>,
+}
+
+#[derive(Clone, Serialize, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanUsage {
+    pub five_hour: QuotaWindow,
+    pub weekly: QuotaWindow,
+    /// "claude-reported" | "estimated"
+    pub source: &'static str,
+}
+
+/// A rejection record: when it was written, the window it names, its reset (ms).
+#[derive(Clone, Debug, PartialEq)]
+pub struct LimitHit {
+    pub at_ms: u64,
+    pub five_hour: bool,
+    pub resets_at_ms: u64,
+}
+
+/// Counted tokens of one turn: input + output + cache writes. Cache reads are
+/// excluded (they are what makes a long session cheap, and counting them
+/// would swamp the number).
+fn quota_tokens(usage: &serde_json::Value) -> u64 {
+    let n = |k: &str| usage.get(k).and_then(|x| x.as_u64()).unwrap_or(0);
+    n("input_tokens") + n("output_tokens") + n("cache_creation_input_tokens")
+}
+
+/// Start of the 5-hour block that `events` (sorted by time) place `t` in.
+fn block_start_for(events: &[(u64, u64)], t: u64) -> u64 {
+    let mut start: Option<u64> = None;
+    for &(ts, _) in events {
+        if ts > t {
+            break;
+        }
+        match start {
+            Some(s) if ts < s + FIVE_H_MS => {}
+            _ => start = Some(ts - ts % HOUR_MS),
+        }
+    }
+    start.unwrap_or(t - t % HOUR_MS)
+}
+
+/// Pure window computation. `events` = (timestamp ms, tokens), any order.
+/// None when there is nothing in the last 7 days (the gauge hides itself).
+pub fn compute_plan_usage(events: &[(u64, u64)], hits: &[LimitHit], now: u64) -> Option<PlanUsage> {
+    let mut ev: Vec<(u64, u64)> = events.iter().copied().filter(|e| e.0 <= now).collect();
+    ev.sort_unstable();
+    let week_start = now.saturating_sub(WEEK_MS);
+    let weekly_tokens: u64 = ev.iter().filter(|e| e.0 > week_start).map(|e| e.1).sum();
+    let reported_5h = hits.iter().filter(|h| h.five_hour && h.resets_at_ms > now).map(|h| h.resets_at_ms).max();
+    let reported_wk = hits.iter().filter(|h| !h.five_hour && h.resets_at_ms > now).map(|h| h.resets_at_ms).max();
+    if weekly_tokens == 0 && reported_5h.is_none() && reported_wk.is_none() {
+        return None;
+    }
+
+    // Active 5h block: the block `now` falls in, if any turn started it.
+    let block = block_start_for(&ev, now);
+    let in_block = now < block + FIVE_H_MS && ev.iter().any(|e| e.0 >= block);
+    let (b_start, b_used, b_reset) = if in_block {
+        let used = ev.iter().filter(|e| e.0 >= block && e.0 < block + FIVE_H_MS).map(|e| e.1).sum();
+        (block, used, Some(block + FIVE_H_MS))
+    } else {
+        (now - now % HOUR_MS, 0, None)
+    };
+
+    // Cap: largest token total seen at a past 5h rejection.
+    let cap = hits
+        .iter()
+        .filter(|h| h.five_hour)
+        .map(|h| {
+            let s = block_start_for(&ev, h.at_ms);
+            ev.iter().filter(|e| e.0 >= s && e.0 <= h.at_ms).map(|e| e.1).sum::<u64>()
+        })
+        .max()
+        .filter(|c| *c > 0);
+
+    let mut five = QuotaWindow {
+        used_tokens: b_used,
+        window_start: b_start,
+        resets_at: b_reset,
+        pct: cap.map(|c| b_used as f64 / c as f64),
+    };
+    let mut weekly = QuotaWindow { used_tokens: weekly_tokens, window_start: week_start, resets_at: None, pct: None };
+    if let Some(r) = reported_5h {
+        five.resets_at = Some(r);
+        five.window_start = r.saturating_sub(FIVE_H_MS);
+        five.pct = Some(1.0); // rejected: the window is full
+    }
+    if let Some(r) = reported_wk {
+        weekly.resets_at = Some(r);
+        weekly.window_start = r.saturating_sub(WEEK_MS);
+        weekly.pct = Some(1.0);
+    }
+    let source = if reported_5h.is_some() || reported_wk.is_some() { "claude-reported" } else { "estimated" };
+    Some(PlanUsage { five_hour: five, weekly, source })
+}
+
+#[derive(Default)]
+struct QuotaFile {
+    offset: u64,
+    carry: String,
+}
+
+#[derive(Default)]
+struct QuotaState {
+    files: HashMap<PathBuf, QuotaFile>,
+    events: Vec<(u64, u64)>,
+    seen: std::collections::HashSet<u64>,
+    hits: Vec<LimitHit>,
+}
+
+fn quota_state() -> &'static Mutex<QuotaState> {
+    static S: OnceLock<Mutex<QuotaState>> = OnceLock::new();
+    S.get_or_init(|| Mutex::new(QuotaState::default()))
+}
+
+fn hash_ids(a: &str, b: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    a.hash(&mut h);
+    b.hash(&mut h);
+    h.finish()
+}
+
+fn quota_line(line: &str, st: &mut QuotaState, cutoff: u64) {
+    if !line.contains("\"usage\"") && !line.contains("quotaLimits") {
+        return;
+    }
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else { return };
+    let Some(ts) = v.get("timestamp").and_then(|t| t.as_str()).and_then(iso_ms) else { return };
+    if ts < cutoff {
+        return;
+    }
+    if let Some(q) = v.get("quotaLimits").filter(|q| q.is_object()) {
+        if q.get("status").and_then(|s| s.as_str()) == Some("rejected") {
+            if let Some(r) = q.get("resetsAt").and_then(|r| r.as_u64()) {
+                let five = q.get("rateLimitType").and_then(|t| t.as_str()) == Some("five_hour");
+                let h = LimitHit { at_ms: ts, five_hour: five, resets_at_ms: r * 1000 };
+                if !st.hits.contains(&h) {
+                    st.hits.push(h);
+                }
+            }
+        }
+    }
+    let Some(msg) = v.get("message") else { return };
+    let Some(usage) = msg.get("usage").filter(|u| u.is_object()) else { return };
+    let tokens = quota_tokens(usage);
+    if tokens == 0 {
+        return;
+    }
+    // Resumed/forked sessions replay history; the same turn must count once.
+    let id = msg.get("id").and_then(|x| x.as_str()).unwrap_or("");
+    let req = v.get("requestId").and_then(|x| x.as_str()).unwrap_or("");
+    if !id.is_empty() && !st.seen.insert(hash_ids(id, req)) {
+        return;
+    }
+    st.events.push((ts, tokens));
+}
+
+fn quota_scan_file(path: &Path, st: &mut QuotaState, cutoff: u64) {
+    let Ok(meta) = std::fs::metadata(path) else { return };
+    let len = meta.len();
+    let mut f = st.files.remove(path).unwrap_or_else(|| QuotaFile {
+        offset: len.saturating_sub(QUOTA_FIRST_READ_CAP),
+        carry: String::new(),
+    });
+    if len < f.offset {
+        f = QuotaFile::default();
+    }
+    if len > f.offset {
+        if let Ok(mut file) = std::fs::File::open(path) {
+            if file.seek(SeekFrom::Start(f.offset)).is_ok() {
+                let mut buf = Vec::new();
+                if file.read_to_end(&mut buf).is_ok() {
+                    f.offset = f.offset + buf.len() as u64;
+                    let chunk = std::mem::take(&mut f.carry) + &String::from_utf8_lossy(&buf);
+                    let upto = chunk.rfind('\n').map(|i| i + 1).unwrap_or(0);
+                    for line in chunk[..upto].lines() {
+                        quota_line(line, st, cutoff);
+                    }
+                    f.carry = chunk[upto..].to_string();
+                }
+            }
+        }
+    }
+    st.files.insert(path.to_path_buf(), f);
+}
+
+/// Every *.jsonl under the projects root (parents, and <session>/subagents/*)
+/// modified inside the weekly window. Depth-bounded.
+fn quota_files(dir: &Path, depth: u32, min_mtime: std::time::SystemTime, out: &mut Vec<PathBuf>) {
+    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    for e in rd.filter_map(|e| e.ok()) {
+        let p = e.path();
+        let Ok(ft) = e.file_type() else { continue };
+        if ft.is_dir() {
+            if depth < 4 {
+                quota_files(&p, depth + 1, min_mtime, out);
+            }
+        } else if p.extension().map(|x| x == "jsonl").unwrap_or(false)
+            && std::fs::metadata(&p).and_then(|m| m.modified()).map(|m| m >= min_mtime).unwrap_or(false)
+        {
+            out.push(p);
+        }
+    }
+}
+
+fn plan_usage_with(st: &mut QuotaState, projects_root: &Path, now: u64) -> Option<PlanUsage> {
+    let cutoff = now.saturating_sub(WEEK_MS);
+    let min_mtime = std::time::UNIX_EPOCH + std::time::Duration::from_millis(cutoff);
+    let mut files = Vec::new();
+    quota_files(projects_root, 0, min_mtime, &mut files);
+    for f in &files {
+        quota_scan_file(f, st, cutoff);
+    }
+    // Prune what has left the weekly window.
+    st.events.retain(|e| e.0 >= cutoff);
+    st.hits.retain(|h| h.at_ms >= cutoff);
+    compute_plan_usage(&st.events, &st.hits, now)
+}
+
+pub fn plan_usage_at(projects_root: &Path, now: u64) -> Option<PlanUsage> {
+    plan_usage_with(&mut quota_state().lock().unwrap(), projects_root, now)
+}
+
+#[tauri::command]
+pub async fn plan_usage() -> Option<PlanUsage> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let home = std::env::var("USERPROFILE").ok()?;
+        plan_usage_at(&Path::new(&home).join(".claude").join("projects"), now_ms())
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2039,5 +2394,147 @@ mod tests {
         assert!(check_staged("codex", &["resume".into(), cx::ID_A.into(), "--fork-session".into()]).is_err());
         assert!(check_staged("codex", &["--yolo".into()]).is_err());
         assert!(check_staged("claude", &["--resume".into(), "anything".into()]).is_ok());
+    }
+
+    // ---- pricing -----------------------------------------------------------
+
+    #[test]
+    fn prices_current_models_from_the_published_table() {
+        let p = price_for("claude-opus-5-5").unwrap();
+        assert_eq!((p.input, p.output, p.cache_read), (4.0, 20.0, 0.20));
+        assert_eq!((p.cache_write_5m, p.cache_write_1h), (5.0, 8.0));
+        let s = price_for("claude-sonnet-5-5").unwrap();
+        assert_eq!((s.input, s.output), (2.0, 10.0));
+        assert_eq!(price_for("claude-sonnet-5"), Some(s));
+        let h = price_for("claude-haiku-4-5-20251001").unwrap();
+        assert_eq!((h.input, h.output, h.cache_read), (1.0, 5.0, 0.10));
+        assert_eq!(price_for("claude-fable-5-1").unwrap().cache_read, 0.25);
+        assert_eq!(price_for("claude-fable-5").unwrap().cache_read, 1.0);
+    }
+
+    #[test]
+    fn prices_older_models_and_ignores_dates_and_1m_suffixes() {
+        assert_eq!(price_for("claude-opus-4-1-20250805").unwrap().input, 15.0);
+        assert_eq!(price_for("claude-opus-4-20250514").unwrap().output, 75.0);
+        assert_eq!(price_for("claude-opus-4-5-20251101").unwrap().input, 5.0);
+        assert_eq!(price_for("claude-opus-4-8").unwrap().output, 25.0);
+        assert_eq!(price_for("claude-sonnet-4-5-20250929[1m]").unwrap().input, 3.0);
+        assert_eq!(price_for("claude-sonnet-4-1m").unwrap().output, 15.0);
+        assert_eq!(price_for("claude-3-5-haiku-20241022").unwrap().input, 0.80);
+        assert_eq!(price_for("claude-3-opus-20240229").unwrap().input, 15.0);
+        assert_eq!(price_for("<synthetic>"), None);
+        assert_eq!(price_for("gpt-9"), None);
+    }
+
+    #[test]
+    fn accumulates_api_equivalent_cost_per_turn() {
+        let mut u = PaneUsage::default();
+        let line = r#"{"message":{"model":"claude-opus-5-5","usage":{"input_tokens":1000000,"output_tokens":1000000,"cache_read_input_tokens":1000000,"cache_creation_input_tokens":1000000,"cache_creation":{"ephemeral_1h_input_tokens":400000}}}}"#;
+        apply_line(line, &mut u);
+        // 4 + 20 + 0.2 + 0.6M*5 + 0.4M*8 = 4 + 20 + 0.2 + 3 + 3.2
+        assert!((u.api_equiv_usd - 30.4).abs() < 1e-9, "{}", u.api_equiv_usd);
+    }
+
+    // ---- plan quota --------------------------------------------------------
+
+    const H: u64 = 3_600_000;
+    // 2026-10-05 00:00:00 UTC, an exact hour boundary.
+    const T0: u64 = 1_791_158_400_000;
+
+    #[test]
+    fn five_hour_block_starts_at_the_first_message_hour_and_rolls_over() {
+        // First turn at T0+0:20, another at +4:50 (same block), one at +5:10 (new block).
+        let ev = [(T0 + 20 * 60_000, 100), (T0 + 4 * H + 50 * 60_000, 50), (T0 + 5 * H + 10 * 60_000, 7)];
+        let mid = compute_plan_usage(&ev, &[], T0 + 4 * H + 55 * 60_000).unwrap();
+        assert_eq!(mid.five_hour.window_start, T0);
+        assert_eq!(mid.five_hour.used_tokens, 150);
+        assert_eq!(mid.five_hour.resets_at, Some(T0 + 5 * H));
+        assert_eq!(mid.source, "estimated");
+        assert_eq!(mid.five_hour.pct, None);
+        let next = compute_plan_usage(&ev, &[], T0 + 5 * H + 30 * 60_000).unwrap();
+        assert_eq!(next.five_hour.window_start, T0 + 5 * H);
+        assert_eq!(next.five_hour.used_tokens, 7);
+        assert_eq!(next.weekly.used_tokens, 157);
+    }
+
+    #[test]
+    fn idle_past_the_block_reports_an_empty_five_hour_window() {
+        let ev = [(T0 + 10 * 60_000, 100)];
+        let p = compute_plan_usage(&ev, &[], T0 + 6 * H).unwrap();
+        assert_eq!(p.five_hour.used_tokens, 0);
+        assert_eq!(p.five_hour.resets_at, None);
+        assert_eq!(p.weekly.used_tokens, 100);
+    }
+
+    #[test]
+    fn weekly_window_is_exactly_seven_days() {
+        let now = T0 + 10 * 24 * H;
+        let ev = [(now - 7 * 24 * H, 1000), (now - 7 * 24 * H + 1, 10), (now - H, 5)];
+        let p = compute_plan_usage(&ev, &[], now).unwrap();
+        assert_eq!(p.weekly.used_tokens, 15, "the turn exactly 7 days old has aged out");
+        assert_eq!(p.weekly.window_start, now - 7 * 24 * H);
+        assert!(compute_plan_usage(&[(now - 8 * 24 * H, 5)], &[], now).is_none(), "nothing recent hides the gauge");
+    }
+
+    #[test]
+    fn a_future_rejection_is_claudes_own_reset_and_a_past_one_calibrates_the_cap() {
+        let ev = [(T0 + 10 * 60_000, 600), (T0 + 2 * H, 400)];
+        let past = LimitHit { at_ms: T0 + 2 * H, five_hour: true, resets_at_ms: T0 + 5 * H };
+        // After the reset: estimated, with a cap of 1000 learned from the hit.
+        let later = [(T0 + 6 * H, 250)];
+        let all: Vec<_> = ev.iter().chain(later.iter()).copied().collect();
+        let p = compute_plan_usage(&all, &[past.clone()], T0 + 6 * H + 60_000).unwrap();
+        assert_eq!(p.source, "estimated");
+        assert_eq!(p.five_hour.pct, Some(0.25));
+        // While the rejection is still in force: reported, full.
+        let q = compute_plan_usage(&ev, &[past], T0 + 3 * H).unwrap();
+        assert_eq!(q.source, "claude-reported");
+        assert_eq!(q.five_hour.resets_at, Some(T0 + 5 * H));
+        assert_eq!(q.five_hour.pct, Some(1.0));
+    }
+
+    fn quota_asst(ts: &str, id: &str, input: u64, output: u64) -> String {
+        format!(
+            r#"{{"type":"assistant","timestamp":"{ts}","requestId":"r-{id}","message":{{"id":"{id}","usage":{{"input_tokens":{input},"output_tokens":{output},"cache_read_input_tokens":99999}}}}}}"#
+        )
+    }
+
+    #[test]
+    fn scans_incrementally_dedupes_replays_and_reads_subagents() {
+        let root = temp_root();
+        let proj = root.join("D--x");
+        std::fs::create_dir_all(proj.join("s1").join("subagents")).unwrap();
+        let main = proj.join("s1.jsonl");
+        let now = iso_ms("2026-10-05T01:00:00.000Z").unwrap();
+        std::fs::write(&main, format!("{}\n{}\n", quota_asst("2026-10-05T00:10:00.000Z", "a", 10, 5), "not json")).unwrap();
+        let mut st = QuotaState::default();
+        let p = plan_usage_with(&mut st, &root, now).unwrap();
+        assert_eq!(p.five_hour.used_tokens, 15, "cache reads are not counted");
+        let off1 = st.files[&main].offset;
+
+        // Append a partial line, then finish it: only complete lines count.
+        let b = quota_asst("2026-10-05T00:20:00.000Z", "b", 100, 0);
+        let (head, tail) = b.split_at(40);
+        let mut f = std::fs::OpenOptions::new().append(true).open(&main).unwrap();
+        use std::io::Write;
+        write!(f, "{head}").unwrap();
+        assert_eq!(plan_usage_with(&mut st, &root, now).unwrap().five_hour.used_tokens, 15);
+        writeln!(f, "{tail}").unwrap();
+        writeln!(f, "{}", quota_asst("2026-10-05T00:10:00.000Z", "a", 10, 5)).unwrap(); // replayed turn
+        assert_eq!(plan_usage_with(&mut st, &root, now).unwrap().five_hour.used_tokens, 115);
+        assert!(st.files[&main].offset > off1, "continued from the offset, not from zero");
+
+        // A subagent transcript counts toward the same window.
+        std::fs::write(proj.join("s1").join("subagents").join("agent-1.jsonl"), format!("{}\n", quota_asst("2026-10-05T00:30:00.000Z", "c", 1, 1))).unwrap();
+        assert_eq!(plan_usage_with(&mut st, &root, now).unwrap().five_hour.used_tokens, 117);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn reads_the_rejection_record_claude_code_writes() {
+        let line = r#"{"type":"assistant","timestamp":"2026-10-05T00:30:00.000Z","message":{"id":"m","model":"<synthetic>","usage":{"input_tokens":0,"output_tokens":0}},"quotaLimits":{"status":"rejected","resetsAt":1790999999,"rateLimitType":"five_hour"}}"#;
+        let mut st = QuotaState::default();
+        quota_line(line, &mut st, 0);
+        assert_eq!(st.hits, vec![LimitHit { at_ms: iso_ms("2026-10-05T00:30:00.000Z").unwrap(), five_hour: true, resets_at_ms: 1_790_999_999_000 }]);
     }
 }
