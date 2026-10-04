@@ -7,7 +7,7 @@ import { relTime, timeTitle, tailEllipsis } from "./format";
 import { vendorShort } from "./vendors";
 import "./leftpanel.css";
 import "./overlays.css";
-import { canResume, supportsFork, listCommandFor, supportsDeepSearch, OPEN_EVENT, ClaudeSession, sessionWeight, modelShort, filterSessions, SessionSearchResults, MIN_SEARCH_CHARS, SEARCH_DEBOUNCE_MS, groupHits, highlightParts, launchResume } from "./sessionLauncherLogic";
+import { hitCwd, canResume, supportsFork, listCommandFor, supportsDeepSearch, OPEN_EVENT, ClaudeSession, sessionWeight, modelShort, filterSessions, SessionSearchResults, MIN_SEARCH_CHARS, SEARCH_DEBOUNCE_MS, groupHits, highlightParts, launchResume } from "./sessionLauncherLogic";
 export * from "./sessionLauncherLogic";
 
 export function SessionLauncher() {
@@ -21,6 +21,9 @@ export function SessionLauncher() {
   // QL-771: deep (full-text) mode and its own request state. Kept separate from
   // the list's, so flipping back to titles never re-reads the folder.
   const [deep, setDeep] = useState(false);
+  // Scope ("This folder" / "All projects") and regex are part of the query.
+  const [allProjects, setAllProjects] = useState(false);
+  const [useRegex, setUseRegex] = useState(false);
   const [search, setSearch] = useState<SessionSearchResults | null>(null);
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
@@ -124,7 +127,7 @@ export function SessionLauncher() {
     let cancelled = false;
     setSearching(true);
     const t = setTimeout(() => {
-      invoke<SessionSearchResults>("search_claude_sessions", { cwd: pane.cwd, query: trimmed })
+      invoke<SessionSearchResults>("search_claude_sessions", { cwd: pane.cwd, query: trimmed, allProjects, regex: useRegex })
         .then((r) => {
           if (cancelled) return;
           setSearch(r);
@@ -133,13 +136,13 @@ export function SessionLauncher() {
         })
         .catch((e) => {
           if (cancelled) return;
-          setSearch({ hits: [], truncated: false, sessionsSearched: 0 });
+          setSearch({ hits: [], truncated: false, sessionsSearched: 0, partial: false });
           setSearchError(String(e));
           setSearching(false);
         });
     }, SEARCH_DEBOUNCE_MS);
     return () => { cancelled = true; clearTimeout(t); };
-  }, [open, pane?.cwd, deep, trimmed, reloadTick]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [open, pane?.cwd, deep, trimmed, allProjects, useRegex, reloadTick]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const forkable = !!pane && supportsFork(pane.vendor);
   const deepOk = !!pane && supportsDeepSearch(pane.vendor);
@@ -155,11 +158,11 @@ export function SessionLauncher() {
   const rowCount = deep ? hits.length : results.length;
 
   const run = useCallback(
-    async (sessionId: string, fork: boolean) => {
+    async (sessionId: string, fork: boolean, cwd?: string) => {
       if (!pane || !target) return;
       fork = fork && supportsFork(pane.vendor);
       close();
-      const ok = await launchResume(target.wsId, pane, sessionId, fork);
+      const ok = await launchResume(target.wsId, pane, sessionId, fork, cwd);
       if (!ok) { pushToast("error", "Couldn’t stage the resume — no pane was opened."); return; }
       pushToast(
         "success",
@@ -183,12 +186,12 @@ export function SessionLauncher() {
       else if (e.key === "Enter") {
         e.preventDefault();
         const id = deep ? hits[index]?.sessionId : results[index]?.id;
-        if (id) void run(id, e.shiftKey);
+        if (id) void run(id, e.shiftKey, deep ? hitCwd(hits[index], pane?.cwd ?? "") : undefined);
       }
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [open, deepOk, results, hits, deep, index, rowCount, run]);
+  }, [open, deepOk, results, hits, deep, index, rowCount, run, pane?.cwd]);
 
   if (!open || !pane) return null;
 
@@ -201,7 +204,7 @@ export function SessionLauncher() {
             className="cmdp-input"
             placeholder={
               deep
-                ? `Search what was said in ${pane.cwd}…`
+                ? `Search what was said in ${allProjects ? "all projects" : pane.cwd}${useRegex ? " (regex)" : ""}…`
                 : `Resume a past ${vendorShort(pane.vendor)} session in ${pane.cwd}…`
             }
             value={query}
@@ -222,6 +225,28 @@ export function SessionLauncher() {
             Search content
           </button>
           )}
+          {deepOk && deep && (
+            <>
+              <button
+                className={"agent-chip" + (allProjects ? " ok" : "")}
+                aria-pressed={allProjects}
+                onClick={() => setAllProjects((a) => !a)}
+                title={allProjects ? "Searching every project (click for this folder only)" : "Searching this folder only (click for every project)"}
+              >
+                {allProjects ? "All projects" : "This folder"}
+              </button>
+              <button
+                className={"agent-chip" + (useRegex ? " ok" : "")}
+                aria-pressed={useRegex}
+                aria-label="Regular expression"
+                onClick={() => setUseRegex((r) => !r)}
+                title={useRegex ? "Query is a regular expression (case-insensitive)" : "Treat the query as a regular expression"}
+                style={{ fontFamily: "var(--mono, monospace)" }}
+              >
+                .*
+              </button>
+            </>
+          )}
           <button className="ov-x" onClick={() => setReloadTick((t) => t + 1)} title="Re-read the transcripts">
             <IconRefresh size={15} />
           </button>
@@ -233,7 +258,7 @@ export function SessionLauncher() {
               filter is untouched), nothing said matches. */}
           {deep && trimmed.length < MIN_SEARCH_CHARS && (
             <div className="cmdp-empty">
-              Search what was said in this folder’s sessions.
+              Search what was said in {allProjects ? "every project’s" : "this folder’s"} sessions.
               <span className="cmdp-empty-hint">
                 Type at least {MIN_SEARCH_CHARS} characters. Prompts and replies are searched; tool
                 output and sub-agent turns are not.
@@ -241,7 +266,13 @@ export function SessionLauncher() {
             </div>
           )}
           {deep && trimmed.length >= MIN_SEARCH_CHARS && searching && hits.length === 0 && (
-            <div className="cmdp-empty">Reading this folder’s transcripts…</div>
+            <div className="cmdp-empty">Reading {allProjects ? "transcripts across all projects" : "this folder’s transcripts"}…</div>
+          )}
+          {deep && trimmed.length >= MIN_SEARCH_CHARS && !searching && !searchError && search?.error && (
+            <div className="cmdp-empty">
+              That isn’t a valid regular expression.
+              <span className="cmdp-empty-hint">{search.error}</span>
+            </div>
           )}
           {deep && trimmed.length >= MIN_SEARCH_CHARS && !searching && searchError && (
             <div className="cmdp-empty">
@@ -253,11 +284,11 @@ export function SessionLauncher() {
               </span>
             </div>
           )}
-          {deep && trimmed.length >= MIN_SEARCH_CHARS && !searching && !searchError && hits.length === 0 && search !== null && (
+          {deep && trimmed.length >= MIN_SEARCH_CHARS && !searching && !searchError && !search?.error && hits.length === 0 && search !== null && (
             <div className="cmdp-empty">
-              Nothing said in this folder matches "{trimmed}".
+              Nothing said {allProjects ? "in any project" : "in this folder"} matches "{trimmed}".
               <span className="cmdp-empty-hint">
-                {search.sessionsSearched} transcript{search.sessionsSearched === 1 ? "" : "s"} searched.
+                {search.sessionsSearched} transcript{search.sessionsSearched === 1 ? "" : "s"} searched{search.partial ? " (partial: stopped early, narrow the search)" : ""}.
                 Tool output, file contents and sub-agent turns are deliberately left out.
               </span>
             </div>
@@ -271,6 +302,14 @@ export function SessionLauncher() {
                     <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                       {s?.title || g.sessionId.slice(0, 8)}
                     </span>
+                    {allProjects && g.cwd && (
+                      <span
+                        style={{ flex: "none", maxWidth: "45%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textTransform: "none", letterSpacing: 0 }}
+                        title={g.cwd}
+                      >
+                        {tailEllipsis(g.cwd, 32)}
+                      </span>
+                    )}
                     <span style={{ flex: "none", textTransform: "none", letterSpacing: 0 }}>
                       {g.count} hit{g.count === 1 ? "" : "s"}
                       {s ? ` · ${relTime(s.modifiedMs)}` : ""}
@@ -286,8 +325,8 @@ export function SessionLauncher() {
                         className={"cmdp-item" + (isActive ? " active" : "")}
                         style={{ alignItems: "flex-start" }}
                         onMouseEnter={() => setIndex(i)}
-                        onClick={(e) => void run(h.sessionId, e.shiftKey)}
-                        title={`${s?.title || h.sessionId}\n${h.sessionId}\nClick to resume, Shift+click to fork`}
+                        onClick={(e) => void run(h.sessionId, e.shiftKey, hitCwd(h, pane.cwd))}
+                        title={`${s?.title || h.sessionId}\n${h.cwd ? h.cwd + "\n" : ""}${h.sessionId}\nClick to resume, Shift+click to fork`}
                       >
                         <span
                           className="cmdp-hint"
@@ -307,7 +346,7 @@ export function SessionLauncher() {
                             lineHeight: 1.45,
                           }}
                         >
-                          {highlightParts(h.snippet, trimmed).map((p, pi) =>
+                          {highlightParts(h.snippet, trimmed, useRegex).map((p, pi) =>
                             p.hit ? (
                               <mark
                                 key={pi}
@@ -334,9 +373,11 @@ export function SessionLauncher() {
                 </div>
               );
             })}
-          {deep && search?.truncated && hits.length > 0 && (
+          {deep && (search?.truncated || search?.partial) && hits.length > 0 && (
             <div className="cmdp-empty" style={{ padding: "10px" }}>
-              Showing the first {hits.length} hits — narrow the search to see the rest.
+              {search?.partial ? "Partial results: the search stopped early. " : ""}
+              {search?.truncated ? `Showing the first ${hits.length} hits. ` : ""}
+              Narrow the search to see the rest.
             </div>
           )}
 

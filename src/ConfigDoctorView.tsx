@@ -28,7 +28,8 @@
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { homeDir } from "@tauri-apps/api/path";
+import { homeDir, appDataDir } from "@tauri-apps/api/path";
+import { collectReadRoots, alwaysAllowedRoots, isInReadScope } from "./readscope";
 import { useApp } from "./store";
 import { useUI } from "./ui";
 import { useVendors } from "./vendors";
@@ -434,18 +435,12 @@ export function uniquePaneTargets(panes: Array<{ vendor: string; cwd: string }>)
   return out;
 }
 
-function normPath(p: string): string {
-  return p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
-}
-
-/** Preview reads are scoped to the workspace root and below; anything above it
- *  (parent folders, ~/.claude) would fail with outside-read-scope, so those rows
- *  are listed but not clickable. */
-export function canPreviewInstruction(f: InstructionFile, root: string | null): boolean {
-  if (!f.exists || !root) return false;
-  const r = normPath(root);
-  const p = normPath(f.path);
-  return p === r || p.startsWith(r + "/");
+/** Preview reads follow the backend read scope (readscope.rs): workspace roots,
+ *  pane cwds and worktrees, the vault, ~/.claude and app data. `roots` is
+ *  collectReadRoots(...) and `fixed` the always-allowed set; anything outside
+ *  would fail with outside-read-scope, so only existing in-scope rows click. */
+export function canPreviewInstruction(f: InstructionFile, roots: string[], fixed?: string[]): boolean {
+  return f.exists && isInReadScope(f.path, roots, fixed);
 }
 
 export function instructionSummary(files: InstructionFile[]): { present: number; bytes: number; large: number } {
@@ -471,7 +466,16 @@ function InstructionFilesSection() {
   const vendors = useVendors((s) => s.vendors);
   const openPreview = useUI((s) => s.openPreview);
   const ws = workspaces.find((w) => w.id === activeId) ?? null;
-  const root = ws?.root ?? null;
+  const readRoots = useMemo(() => collectReadRoots(workspaces), [workspaces]);
+  // ~/.claude and app data are always in read scope; resolved once. Until they
+  // resolve (or if they can't) those rows simply stay unclickable.
+  const [fixedRoots, setFixedRoots] = useState<string[]>(() => alwaysAllowedRoots(null, null));
+  useEffect(() => {
+    let live = true;
+    void Promise.all([homeDir().catch(() => null), appDataDir().catch(() => null)])
+      .then(([h, a]) => { if (live) setFixedRoots(alwaysAllowedRoots(h, a)); });
+    return () => { live = false; };
+  }, []);
   const targets = useMemo(() => {
     const kindOf = (id: string) => vendors.find((v) => v.id === id)?.kind;
     return uniquePaneTargets((ws?.panes ?? []).filter((p) => kindOf(p.vendor) !== "shell"));
@@ -503,7 +507,7 @@ function InstructionFilesSection() {
           <span className="set-row-name">Instruction files</span>
           <span className="set-row-sub">
             What each agent pane will read, in load order. Sizes only; contents aren’t read here.
-            {" "}Files above the workspace folder are listed but can’t be previewed.
+            {" "}Files outside the folders Flightdeck may read are listed but can’t be previewed.
           </span>
         </div>
       </div>
@@ -525,7 +529,7 @@ function InstructionFilesSection() {
                   <span>Scope</span><span>Path</span><span>Size</span><span>Modified</span>
                 </div>
                 {g.files.map((f) => {
-                  const clickable = canPreviewInstruction(f, root);
+                  const clickable = canPreviewInstruction(f, readRoots, fixedRoots);
                   const large = f.exists && isLargeInstruction(f.size);
                   return (
                     <div className="diag-tr" role="row" key={f.path} style={{ ...INSTR_COLS, opacity: f.exists ? 1 : 0.55 }}>
@@ -537,7 +541,7 @@ function InstructionFilesSection() {
                           onClick={() => openPreview(f.path)}
                         >{f.path}</button>
                       ) : (
-                        <span className="diag-proc" title={f.exists ? `${f.path} (outside the workspace folder, can’t be previewed)` : f.path}>{f.path}</span>
+                        <span className="diag-proc" title={f.exists ? `${f.path} (outside the folders Flightdeck may read, can’t be previewed)` : f.path}>{f.path}</span>
                       )}
                       <span className={large ? "diag-warn" : ""} title={large ? "Over 40 KB: costs a lot of context every session" : undefined}>
                         {f.exists ? formatBytes(f.size) : "none"}{large ? " ⚠" : ""}

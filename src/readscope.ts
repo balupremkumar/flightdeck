@@ -30,6 +30,44 @@ export function collectReadRoots(workspaces: Workspace[]): string[] {
   return out;
 }
 
+/** Always-allowed vault; mirrors VAULT_ROOT in readscope.rs. */
+export const VAULT_ROOT = "D:\\Dev\\ai";
+
+/** Lexical normal form for containment: forward slashes, `.`/`..` resolved,
+ *  trailing separators dropped, lower-cased (Windows). Rust canonicalises on
+ *  disk; this cannot see junctions, so it is a UI hint, never the gate. */
+function scopeKey(p: string): string {
+  const parts: string[] = [];
+  for (const seg of p.replace(/\\/g, "/").split("/")) {
+    if (seg === "" || seg === ".") continue;
+    if (seg === "..") parts.pop();
+    else parts.push(seg.toLowerCase());
+  }
+  return parts.join("/");
+}
+
+/** The roots Rust always allows besides the workspace set: the vault, plus
+ *  `~/.claude` and the app data dir when known. */
+export function alwaysAllowedRoots(home: string | null, appData: string | null): string[] {
+  const out = [VAULT_ROOT];
+  if (home) out.push(home.replace(/[\\/]+$/, "") + "\\.claude");
+  if (appData) out.push(appData);
+  return out;
+}
+
+/** Mirrors readscope.rs `check_read`: true when `path` equals or sits under one
+ *  of `roots` (from collectReadRoots) or the always-allowed set. Pass
+ *  `alwaysAllowedRoots(home, appData)` as `fixed` to include ~/.claude and app
+ *  data; the vault is always included. */
+export function isInReadScope(path: string, roots: string[], fixed: string[] = alwaysAllowedRoots(null, null)): boolean {
+  const p = scopeKey(path);
+  if (!p) return false;
+  return [...roots, ...fixed].some((r) => {
+    const k = scopeKey(r);
+    return !!k && (p === k || p.startsWith(k + "/"));
+  });
+}
+
 const DEBOUNCE_MS = 200;
 
 /** Push the roots to Rust whenever the set changes. Call once at startup;
