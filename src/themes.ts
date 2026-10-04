@@ -37,6 +37,12 @@ export const THEMES: ThemeMeta[] = [
   { id: "gruvbox", label: "Gruvbox Dark", mode: "dark", swatch: ["#282828", "#3C3836", "#FE8019"] },
   { id: "nord", label: "Nord", mode: "dark", swatch: ["#2E3440", "#3B4252", "#88C0D0"] },
   { id: "high-contrast", label: "High Contrast", mode: "dark", swatch: ["#000000", "#141414", "#FFD400"], fixedAccent: "Fixed by High Contrast for accessibility" },
+  // Presets (palette sources are cited in theme.css / terminal-theme.ts).
+  { id: "github-dark", label: "GitHub Dark", mode: "dark", swatch: ["#0D1117", "#161B22", "#4493F8"] },
+  { id: "github-light", label: "GitHub Light", mode: "light", swatch: ["#FFFFFF", "#F6F8FA", "#0969DA"] },
+  { id: "github-dark-hc", label: "GitHub Dark High Contrast", mode: "dark", swatch: ["#0A0C10", "#151B23", "#71B7FF"], fixedAccent: "Fixed by GitHub Dark High Contrast for accessibility" },
+  { id: "one-dark-pro", label: "One Dark Pro", mode: "dark", swatch: ["#282C34", "#2C313A", "#61AFEF"] },
+  { id: "tokyo-night", label: "Tokyo Night", mode: "dark", swatch: ["#1A1B26", "#1F2335", "#7AA2F7"] },
 ];
 
 // QL-792: Graphite is this install's default dark theme. Only reached on a
@@ -269,6 +275,10 @@ export function applyColorBlindSafe(on: boolean, mode: "dark" | "light" = "dark"
 export function applyTheme(themeId: string) {
   const t = findTheme(themeId);
   const el = document.documentElement;
+  // Leaving an imported theme: its tokens sit as inline overrides on <html>
+  // (importThemeJson) and would beat the next theme's stylesheet block.
+  // Callers re-apply accent and colour-blind overrides after this.
+  if (el.getAttribute("data-theme") === "custom") clearInlineThemeTokens();
   if (t.id === "dark") el.removeAttribute("data-theme");
   else el.setAttribute("data-theme", t.id);
   try {
@@ -434,12 +444,29 @@ function isLikelyLight(hex: string): boolean {
 // ---------------------------------------------------------------------
 export const THEME_TOKENS = [
   "--abyss", "--bg", "--bg-2", "--surface", "--surface-2", "--elevated",
-  "--line", "--line-strong", "--text", "--muted", "--faint",
+  "--line", "--line-strong", "--on-accent", "--on-warn", "--text", "--muted", "--faint",
   "--ice", "--azure", "--aqua", "--deepblue", "--red", "--accent",
   "--st-starting", "--st-running", "--st-waiting", "--st-idle", "--st-error", "--st-exited",
   "--agent-claude", "--agent-codex", "--accent-grad", "--glow", "--shadow-lg",
   "--font-sans", "--font-mono", "--ease-out", "--ease-soft",
 ];
+
+function clearInlineThemeTokens() {
+  const el = document.documentElement;
+  for (const t of THEME_TOKENS) el.style.removeProperty(t);
+}
+
+/** A complete theme as the VS Code importer produces it. `tokens` is the subset
+ *  of THEME_TOKENS the importer can derive; `terminal` is a full xterm palette;
+ *  `diff` is the added/removed line tint (diffEditor.* in VS Code, falling back
+ *  to the ANSI green/red), kept for the review view to adopt. */
+export interface FlightdeckTheme {
+  name: string;
+  mode: "dark" | "light";
+  tokens: Record<string, string>;
+  terminal: Record<string, string>;
+  diff: { added: string; removed: string };
+}
 
 export function exportThemeJson(name = "Flightdeck custom theme"): string {
   const cs = getComputedStyle(document.documentElement);
@@ -460,6 +487,7 @@ export function importThemeJson(json: string): boolean {
   }
   if (!parsed.tokens || typeof parsed.tokens !== "object") return false;
   const el = document.documentElement;
+  clearInlineThemeTokens(); // a token the file omits must not keep the previous import's value
   for (const t of THEME_TOKENS) {
     const v = parsed.tokens[t];
     if (v) el.style.setProperty(t, v);

@@ -344,6 +344,82 @@
   --shadow-lg:0 0 0 1px rgba(255,255,255,0.40), 0 30px 70px -20px rgba(0,0,0,0.90);
 }
 
+/* ------------------------------------------------------------------
+   Preset themes (QL p6). Palettes follow the upstream projects:
+   - GitHub Dark / Light / Dark High Contrast: GitHub Primer primitives
+     (primer/primitives, primer/github-vscode-theme) canvas/fg/border/accent.
+   - One Dark Pro: Binaryify/OneDark-Pro (editor #282c34, fg #abb2bf).
+   - Tokyo Night (night): enkia/tokyo-night-vscode-theme.
+   Muted/faint inks are lifted off the upstream comment greys where those
+   fail WCAG AA on the main background (themes.test.ts enforces 4.5:1 for
+   text/muted/accent on --bg). Terminal palettes live in terminal-theme.ts.
+   ------------------------------------------------------------------ */
+
+:root[data-theme="github-dark"] {
+  --abyss:#010409; --bg:#0D1117; --bg-2:#0B0F14; --surface:#161B22; --surface-2:#1C2128; --elevated:#21262D;
+  --line:rgba(240,246,252,0.12); --line-strong:rgba(240,246,252,0.24);
+  --text:#E6EDF3; --muted:#9198A1; --faint:#7D8590;
+  --ice:#79C0FF; --azure:#58A6FF; --aqua:#56D4DD; --deepblue:#1F6FEB; --red:#F85149; --accent:#4493F8;
+  --st-starting:#58A6FF; --st-running:#3FB950; --st-waiting:#D29922; --st-idle:#7D8590; --st-error:#F85149; --st-exited:#56D4DD;
+  --agent-claude:#BC8CFF;
+  --on-accent:#010409; --on-warn:#1A1400;
+  --accent-grad:linear-gradient(125deg,#79C0FF 0%,#4493F8 48%,#1F6FEB 100%);
+  --glow:0 0 0 1px rgba(68,147,248,0.22), 0 8px 40px rgba(68,147,248,0.18);
+  --shadow-lg:0 30px 70px -20px rgba(1,4,9,0.85);
+}
+
+:root[data-theme="github-light"] {
+  --abyss:#EAEEF2; --bg:#FFFFFF; --bg-2:#FAFBFC; --surface:#F6F8FA; --surface-2:#EAEEF2; --elevated:#FFFFFF;
+  --line:rgba(31,35,40,0.15); --line-strong:rgba(31,35,40,0.30);
+  --text:#1F2328; --muted:#59636E; --faint:#6E7781;
+  --ice:#0969DA; --azure:#0969DA; --aqua:#1B7C83; --deepblue:#0550AE; --red:#CF222E; --accent:#0969DA;
+  --st-starting:#0969DA; --st-running:#1A7F37; --st-waiting:#9A6700; --st-idle:#6E7781; --st-error:#CF222E; --st-exited:#1B7C83;
+  --agent-claude:#8250DF;
+  --on-accent:#FFFFFF; --on-warn:#FFFFFF;
+  --accent-grad:linear-gradient(125deg,#218BFF 0%,#0969DA 48%,#0550AE 100%);
+  --glow:0 0 0 1px rgba(9,105,218,0.22), 0 8px 40px rgba(9,105,218,0.14);
+  --shadow-lg:0 24px 60px -22px rgba(31,35,40,0.28);
+}
+
+:root[data-theme="github-dark-hc"] {
+  --abyss:#010409; --bg:#0A0C10; --bg-2:#0E1116; --surface:#151B23; --surface-2:#212830; --elevated:#262C36;
+  --line:rgba(158,167,179,0.50); --line-strong:rgba(158,167,179,0.80);
+  --text:#F0F3F6; --muted:#D9DEE3; --faint:#B7BDC8;
+  --ice:#91CBFF; --azure:#71B7FF; --aqua:#56D4DD; --deepblue:#409EFF; --red:#FF9492; --accent:#71B7FF;
+  --st-starting:#71B7FF; --st-running:#26CD4D; --st-waiting:#F0B72F; --st-idle:#9EA7B3; --st-error:#FF9492; --st-exited:#56D4DD;
+  --agent-claude:#CB9EFF;
+  --on-accent:#010409; --on-warn:#1A1400;
+  --accent-grad:linear-gradient(125deg,#91CBFF 0%,#71B7FF 48%,#409EFF 100%);
+  --glow:0 0 0 2px var(--accent), 0 0 0 1px var(--abyss);
+  --shadow-lg:0 0 0 1px rgba(158,167,179,0.45), 0 30px 70px -20px rgba(0,0,0,0.90);
+}
+
+:root[data-theme="one-dark-pro"] {
+  --abyss:#1B1F27; --bg:#282C34; --bg-2:#21252B; --surface:#2C313A; --surface-2:#323842; --elevated:#3A404C;
+  --line:rgba(171,178,191,0.14); --line-strong:rgba(171,178,191,0.28);
+  --text:#ABB2BF; --muted:#9DA5B4; --faint:#7F848E;
+  --ice:#7EC0F5; --azure:#61AFEF; --aqua:#56B6C2; --deepblue:#4D78CC; --red:#E06C75; --accent:#61AFEF;
+  --st-starting:#61AFEF; --st-running:#98C379; --st-waiting:#E5C07B; --st-idle:#7F848E; --st-error:#E06C75; --st-exited:#56B6C2;
+  --agent-claude:#C678DD;
+  --on-accent:#1B1F27; --on-warn:#1A1400;
+  --accent-grad:linear-gradient(125deg,#7EC0F5 0%,#61AFEF 48%,#C678DD 100%);
+  --glow:0 0 0 1px rgba(97,175,239,0.22), 0 8px 40px rgba(97,175,239,0.18);
+  --shadow-lg:0 30px 70px -20px rgba(0,0,0,0.75);
+}
+
+:root[data-theme="tokyo-night"] {
+  --abyss:#13141C; --bg:#1A1B26; --bg-2:#16161E; --surface:#1F2335; --surface-2:#24283B; --elevated:#292E42;
+  --line:rgba(169,177,214,0.14); --line-strong:rgba(169,177,214,0.28);
+  --text:#C0CAF5; --muted:#A9B1D6; --faint:#737AA2;
+  --ice:#7DCFFF; --azure:#7AA2F7; --aqua:#73DACA; --deepblue:#3D59A1; --red:#F7768E; --accent:#7AA2F7;
+  --st-starting:#7DCFFF; --st-running:#9ECE6A; --st-waiting:#E0AF68; --st-idle:#737AA2; --st-error:#F7768E; --st-exited:#73DACA;
+  --agent-claude:#BB9AF7;
+  --on-accent:#13141C; --on-warn:#1A1400;
+  --accent-grad:linear-gradient(125deg,#7DCFFF 0%,#7AA2F7 48%,#BB9AF7 100%);
+  --glow:0 0 0 1px rgba(122,162,247,0.22), 0 8px 40px rgba(122,162,247,0.18);
+  --shadow-lg:0 30px 70px -20px rgba(0,0,0,0.80);
+}
+
 /* QL-792: Graphite. The DEFAULT dark theme (themes.ts DEFAULT_THEME_ID).
    Owner feedback: the Kove blue chrome "doesn't look the best on here; needs
    to be darker, more chrome". So: a near-black charcoal floor, neutral cool

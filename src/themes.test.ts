@@ -111,3 +111,88 @@ describe("terminal palettes", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------
+// Presets + contrast. Tokens are read from the real theme.css so the check
+// covers what actually ships, not a copy.
+// ---------------------------------------------------------------------
+const { readFileSync } = await import("node:fs");
+const { join } = await import("node:path");
+const { THEMES, THEME_TOKENS } = await import("./themes");
+const { contrastRatio } = await import("./vscodeTheme");
+
+const css = readFileSync(join(process.cwd(), "src", "theme.css"), "utf8");
+
+function blockTokens(selectorRe: RegExp): Record<string, string> | null {
+  const m = selectorRe.exec(css);
+  if (!m) return null;
+  const body = css.slice(m.index + m[0].length, css.indexOf("\n}", m.index + m[0].length));
+  const out: Record<string, string> = {};
+  for (const d of body.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/(--[a-z0-9-]+)\s*:\s*([^;]+);/g)) out[d[1]] = d[2].trim();
+  return out;
+}
+const baseTokens = blockTokens(/^:root \{/m)!;
+function themeTokens(id: string): Record<string, string> {
+  if (id === "dark") return baseTokens;
+  const own = blockTokens(new RegExp(`:root\\[data-theme="${id}"\\] \\{`));
+  return { ...baseTokens, ...(own ?? {}) };
+}
+
+const PRESET_IDS = ["github-dark", "github-light", "github-dark-hc", "one-dark-pro", "tokyo-night"];
+// Every token a preset must define in its own block (not inherited from the
+// Deep Cove base, which would silently leak blue into the preset).
+const PRESET_REQUIRED = THEME_TOKENS.filter((t) => !/^--(font-|ease-)/.test(t));
+const ANSI = [
+  "black", "red", "green", "yellow", "blue", "magenta", "cyan", "white",
+  "brightBlack", "brightRed", "brightGreen", "brightYellow", "brightBlue", "brightMagenta", "brightCyan", "brightWhite",
+];
+
+describe("preset themes", () => {
+  it("registers every preset with the right mode and a swatch matching its --bg", () => {
+    for (const id of PRESET_IDS) {
+      const t = THEMES.find((x) => x.id === id);
+      expect(t, id).toBeDefined();
+      expect(t!.swatch[0].toLowerCase(), `${id} swatch bg`).toBe(themeTokens(id)["--bg"].toLowerCase());
+      expect(t!.mode).toBe(id === "github-light" ? "light" : "dark");
+    }
+  });
+
+  it("defines every app token in the preset's own CSS block", () => {
+    for (const id of PRESET_IDS) {
+      const own = blockTokens(new RegExp(`:root\\[data-theme="${id}"\\] \\{`));
+      expect(own, `${id} block`).not.toBeNull();
+      expect(PRESET_REQUIRED.filter((t) => !(t in own!)), `${id} missing tokens`).toEqual([]);
+    }
+  });
+
+  it("defines a complete terminal palette (16 ANSI + cursor + selection)", () => {
+    for (const id of PRESET_IDS) {
+      const t = terminalThemeFor(id) as Record<string, string>;
+      expect(t, id).not.toBe(terminalThemeFor("custom"));
+      for (const k of [...ANSI, "background", "foreground", "cursor", "cursorAccent", "selectionBackground"]) {
+        expect(typeof t[k], `${id}.${k}`).toBe("string");
+      }
+    }
+  });
+});
+
+// Existing themes that fail a pair are recorded here with the measured reason
+// rather than silently edited (owner decides). A pair listed here must still
+// FAIL; if someone fixes the theme the test goes red until the entry is removed.
+// Deep Cove Light: --accent #1C72D0 on --bg #EFF3F8 measures 4.32:1 (needs 4.5).
+const KNOWN_FAILS: Record<string, string[]> = { light: ["--accent"] };
+
+describe("WCAG AA contrast (4.5:1 on --bg) for every theme", () => {
+  const pairs = ["--text", "--muted", "--accent"];
+  for (const { id } of THEMES) {
+    for (const fg of pairs) {
+      const tk = themeTokens(id);
+      const ratio = contrastRatio(tk[fg], tk["--bg"]);
+      if ((KNOWN_FAILS[id] ?? []).includes(fg)) {
+        it(`${id} ${fg} on --bg is a known failure (${ratio.toFixed(2)}:1)`, () => expect(ratio).toBeLessThan(4.5));
+      } else {
+        it(`${id} ${fg} on --bg >= 4.5 (${ratio.toFixed(2)}:1)`, () => expect(ratio).toBeGreaterThanOrEqual(4.5));
+      }
+    }
+  }
+});

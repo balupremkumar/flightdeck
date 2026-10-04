@@ -179,7 +179,51 @@ const graphiteTerminalTheme: ITheme = {
   brightWhite: "#E8EAED",
 };
 
+// Preset palettes (QL p6). Sources: GitHub Primer / github-vscode-theme,
+// Binaryify/OneDark-Pro, enkia/tokyo-night-vscode-theme terminal.ansi* values.
+const githubDarkTerminalTheme: ITheme = {
+  background: "#0D1117", foreground: "#E6EDF3", cursor: "#2F81F6", cursorAccent: "#0D1117",
+  selectionBackground: "rgba(56,139,253,0.40)",
+  black: "#484F58", red: "#FF7B72", green: "#3FB950", yellow: "#D29922",
+  blue: "#58A6FF", magenta: "#BC8CFF", cyan: "#39C5CF", white: "#B1BAC4",
+  brightBlack: "#6E7681", brightRed: "#FFA198", brightGreen: "#56D364", brightYellow: "#E3B341",
+  brightBlue: "#79C0FF", brightMagenta: "#D2A8FF", brightCyan: "#56D4DD", brightWhite: "#F0F6FC",
+};
+
+const githubDarkHcTerminalTheme: ITheme = {
+  background: "#0A0C10", foreground: "#F0F3F6", cursor: "#71B7FF", cursorAccent: "#0A0C10",
+  selectionBackground: "rgba(113,183,255,0.40)",
+  black: "#7A828E", red: "#FF9492", green: "#26CD4D", yellow: "#F0B72F",
+  blue: "#71B7FF", magenta: "#CB9EFF", cyan: "#39C5CF", white: "#D9DEE3",
+  brightBlack: "#9EA7B3", brightRed: "#FFB1AF", brightGreen: "#4AE168", brightYellow: "#F7C843",
+  brightBlue: "#91CBFF", brightMagenta: "#DBB7FF", brightCyan: "#56D4DD", brightWhite: "#FFFFFF",
+};
+
+const oneDarkProTerminalTheme: ITheme = {
+  background: "#282C34", foreground: "#ABB2BF", cursor: "#528BFF", cursorAccent: "#282C34",
+  selectionBackground: "rgba(62,68,81,0.85)",
+  black: "#3F4451", red: "#E06C75", green: "#98C379", yellow: "#E5C07B",
+  blue: "#61AFEF", magenta: "#C678DD", cyan: "#56B6C2", white: "#D7DAE0",
+  brightBlack: "#4F5666", brightRed: "#FF616E", brightGreen: "#A5E075", brightYellow: "#F0A45D",
+  brightBlue: "#4DC4FF", brightMagenta: "#DE73FF", brightCyan: "#4CD1E0", brightWhite: "#E6E6E6",
+};
+
+const tokyoNightTerminalTheme: ITheme = {
+  background: "#1A1B26", foreground: "#C0CAF5", cursor: "#C0CAF5", cursorAccent: "#1A1B26",
+  selectionBackground: "rgba(51,70,124,0.70)",
+  black: "#15161E", red: "#F7768E", green: "#9ECE6A", yellow: "#E0AF68",
+  blue: "#7AA2F7", magenta: "#BB9AF7", cyan: "#7DCFFF", white: "#A9B1D6",
+  brightBlack: "#414868", brightRed: "#F7768E", brightGreen: "#9ECE6A", brightYellow: "#E0AF68",
+  brightBlue: "#7AA2F7", brightMagenta: "#BB9AF7", brightCyan: "#7DCFFF", brightWhite: "#C0CAF5",
+};
+
 const TERMINAL_THEMES: Record<string, ITheme> = {
+  "github-dark": githubDarkTerminalTheme,
+  // Kove rule: terminal stays dark in a light app theme (flagged for design).
+  "github-light": githubDarkTerminalTheme,
+  "github-dark-hc": githubDarkHcTerminalTheme,
+  "one-dark-pro": oneDarkProTerminalTheme,
+  "tokyo-night": tokyoNightTerminalTheme,
   graphite: graphiteTerminalTheme,
   dark: flightdeckTerminalTheme,
   light: flightdeckTerminalTheme, // Kove rule: terminal stays dark in light mode too
@@ -189,9 +233,30 @@ const TERMINAL_THEMES: Record<string, ITheme> = {
   "high-contrast": highContrastTerminalTheme,
 };
 
+/** An imported VS Code theme carries its own `terminal` palette inside the saved
+ *  `flightdeck-theme-custom` JSON (see vscodeTheme.ts). A Flightdeck token-only
+ *  export has none, so it still falls back to Deep Cove. Accepted only when it
+ *  has all 16 ANSI colours plus background/foreground, so a partial palette can't
+ *  yield illegible output. */
+function customTerminalTheme(): ITheme | null {
+  try {
+    const raw = localStorage.getItem("flightdeck-theme-custom");
+    if (!raw) return null;
+    const t = JSON.parse(raw)?.terminal as Record<string, unknown> | undefined;
+    if (!t || typeof t !== "object") return null;
+    const need = ["background", "foreground", "black", "red", "green", "yellow", "blue", "magenta", "cyan", "white",
+      "brightBlack", "brightRed", "brightGreen", "brightYellow", "brightBlue", "brightMagenta", "brightCyan", "brightWhite"];
+    if (!need.every((k) => typeof t[k] === "string")) return null;
+    return t as ITheme;
+  } catch {
+    return null;
+  }
+}
+
 /** Resolves an app theme id (from `data-theme`) to an xterm ITheme. Unknown
- *  ids — including `custom`, whose palette can't be trusted to yield a
- *  legible ANSI 16 — fall back to Deep Cove dark. */
+ *  ids fall back to Deep Cove dark; `custom` uses the imported palette when it
+ *  has a complete one. */
 export function terminalThemeFor(themeId: string): ITheme {
+  if (themeId === "custom") return customTerminalTheme() ?? flightdeckTerminalTheme;
   return TERMINAL_THEMES[themeId] ?? flightdeckTerminalTheme;
 }
