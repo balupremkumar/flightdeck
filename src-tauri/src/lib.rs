@@ -138,6 +138,7 @@ fn build_command(
     cwd: &str,
     setup: Option<&str>,
     focus_mode: bool,
+    claude_theme: Option<&str>,
 ) -> (CommandBuilder, chatlog::SessionPlan) {
     let adapter = vendors::find(vendor);
     // QL-764: one-shot args staged by the session launcher for this exact spawn
@@ -159,7 +160,7 @@ fn build_command(
             a == "--settings" || a.starts_with("--settings=")
         });
         if !has_settings {
-            if let Some(args) = chatlog::view_settings_args(focus_mode) {
+            if let Some(args) = chatlog::view_settings_args(focus_mode, claude_theme) {
                 base.args(args);
             }
         }
@@ -205,6 +206,7 @@ async fn pty_spawn(
     rows: u16,
     setup: Option<String>,
     focus_mode: Option<bool>,
+    claude_theme: Option<String>,
 ) -> Result<u32, String> {
     crate::pathguard::check(&cwd)?;
     // prepare() reads/parses/rewrites a vendor config (e.g. codex config.toml),
@@ -229,7 +231,7 @@ async fn pty_spawn(
 
     let adapter = vendors::find(&vendor);
     let spawn_ms = now_ms();
-    let (cmd, plan) = build_command(&vendor, &cwd, setup.as_deref(), focus_mode.unwrap_or(false));
+    let (cmd, plan) = build_command(&vendor, &cwd, setup.as_deref(), focus_mode.unwrap_or(false), claude_theme.as_deref());
     let child = pair
         .slave
         .spawn_command(cmd)
@@ -1152,15 +1154,15 @@ mod tests {
 
     #[test]
     fn claude_spawn_env_follows_focus_mode() {
-        let (c, _) = build_command("claude", "D:\\t", None, false);
+        let (c, _) = build_command("claude", "D:\\t", None, false, None);
         assert_eq!(env_of(&c, "CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN").as_deref(), Some("1"));
         assert_eq!(env_of(&c, "CLAUDE_CODE_NO_FLICKER"), None);
-        let (c, _) = build_command("claude", "D:\\t", None, true);
+        let (c, _) = build_command("claude", "D:\\t", None, true, None);
         assert_eq!(env_of(&c, "CLAUDE_CODE_NO_FLICKER").as_deref(), Some("1"));
         assert_eq!(env_of(&c, "CLAUDE_CODE_DISABLE_MOUSE").as_deref(), Some("1"));
         assert_eq!(env_of(&c, "CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN"), None);
         // Other vendors never get the claude env.
-        let (c, plan) = build_command("pwsh", "D:\\t", None, false);
+        let (c, plan) = build_command("pwsh", "D:\\t", None, false, None);
         assert_eq!(env_of(&c, "CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN"), None);
         assert!(plan.session_id.is_none());
     }
@@ -1180,7 +1182,7 @@ mod tests {
     fn claude_gets_exactly_one_view_settings_arg() {
         init_test_view_dir();
         for focus in [true, false] {
-            let (c, _) = build_command("claude", "D:\\t-tn5-a", None, focus);
+            let (c, _) = build_command("claude", "D:\\t-tn5-a", None, focus, None);
             let argv = argv_of(&c);
             assert_eq!(argv.iter().filter(|a| *a == "--settings").count(), 1, "{argv:?}");
             let i = argv.iter().position(|a| a == "--settings").unwrap();
@@ -1188,20 +1190,30 @@ mod tests {
             assert!(argv[i + 1].starts_with('\'') && argv[i + 1].ends_with(&format!("{want}'")), "{argv:?}");
         }
         // Non-claude vendors never get it.
-        let (c, _) = build_command("pwsh", "D:\\t-tn5-a", None, true);
+        let (c, _) = build_command("pwsh", "D:\\t-tn5-a", None, true, None);
         assert!(!argv_of(&c).iter().any(|a| a == "--settings"));
+    }
+
+    #[test]
+    fn claude_theme_goes_in_the_single_settings_file() {
+        init_test_view_dir();
+        let (c, _) = build_command("claude", "D:\\t-f3", None, false, Some("dark-daltonized"));
+        let argv = argv_of(&c);
+        assert_eq!(argv.iter().filter(|a| *a == "--settings").count(), 1, "{argv:?}");
+        let i = argv.iter().position(|a| a == "--settings").unwrap();
+        assert!(argv[i + 1].ends_with("claude-view-default-dark-daltonized.json'"), "{argv:?}");
     }
 
     #[test]
     fn user_supplied_settings_is_not_doubled() {
         init_test_view_dir();
         usage::stage_launch_args("claude".into(), "D:\\t-tn5-user".into(), vec!["--settings".into(), "C:\\mine.json".into()]).unwrap();
-        let (c, _) = build_command("claude", "D:\\t-tn5-user", None, true);
+        let (c, _) = build_command("claude", "D:\\t-tn5-user", None, true, None);
         let argv = argv_of(&c);
         assert_eq!(argv.iter().filter(|a| *a == "--settings").count(), 1, "{argv:?}");
         assert!(argv.iter().any(|a| a == "C:\\mine.json"));
         usage::stage_launch_args("claude".into(), "D:\\t-tn5-user2".into(), vec!["--settings=C:\\mine.json".into()]).unwrap();
-        let (c, _) = build_command("claude", "D:\\t-tn5-user2", None, false);
+        let (c, _) = build_command("claude", "D:\\t-tn5-user2", None, false, None);
         assert!(!argv_of(&c).iter().any(|a| a == "--settings"));
     }
 
@@ -1209,10 +1221,10 @@ mod tests {
     fn view_settings_files_and_quoting() {
         let dir = std::env::temp_dir().join(format!("fd tn5 o'brien {}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        let focus = chatlog::view_settings_args_in(&dir, true).unwrap();
-        let classic = chatlog::view_settings_args_in(&dir, false).unwrap();
+        let focus = chatlog::view_settings_args_in(&dir, true, None).unwrap();
+        let classic = chatlog::view_settings_args_in(&dir, false, None).unwrap();
         // Idempotent re-run.
-        assert_eq!(chatlog::view_settings_args_in(&dir, true).unwrap(), focus);
+        assert_eq!(chatlog::view_settings_args_in(&dir, true, None).unwrap(), focus);
         assert_eq!(std::fs::read_to_string(dir.join("claude-view-focus.json")).unwrap(), "{\"viewMode\":\"focus\"}");
         assert_eq!(std::fs::read_to_string(dir.join("claude-view-default.json")).unwrap(), "{\"viewMode\":\"default\"}");
         assert_eq!(focus[0], "--settings");
@@ -1220,12 +1232,18 @@ mod tests {
         assert_eq!(focus[1], want);
         assert!(focus[1].contains("o''brien") && focus[1].contains("fd tn5"));
         assert!(classic[1].ends_with("claude-view-default.json'"));
+        // F3: the theme rides in the same file; unknown values are dropped.
+        let themed = chatlog::view_settings_args_in(&dir, true, Some("light-daltonized")).unwrap();
+        assert!(themed[1].ends_with("claude-view-focus-light-daltonized.json'"));
+        assert_eq!(std::fs::read_to_string(dir.join("claude-view-focus-light-daltonized.json")).unwrap(), "{\"viewMode\":\"focus\",\"theme\":\"light-daltonized\"}");
+        let bad = chatlog::view_settings_args_in(&dir, false, Some("x\",\"evil\":\"1")).unwrap();
+        assert_eq!(bad, classic);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn fresh_claude_spawn_pins_a_session_id_arg() {
-        let (c, plan) = build_command("claude", "D:\\t", None, false);
+        let (c, plan) = build_command("claude", "D:\\t", None, false, None);
         let argv: Vec<String> = c.get_argv().iter().map(|a| a.to_string_lossy().into_owned()).collect();
         let i = argv.iter().position(|a| a == "--session-id").expect("--session-id missing");
         assert_eq!(Some(&argv[i + 1]), plan.session_id.as_ref());

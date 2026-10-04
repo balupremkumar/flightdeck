@@ -26,7 +26,7 @@ import {
   THEMES, ACCENTS, findTheme, findAccent, CUSTOM_ACCENT_ID, customAccentHex, setCustomAccent,
   applyTheme, applyAccent, setAccent,
   currentThemeId, currentAccentId,
-  isColorBlindSafe, setColorBlindSafe, applyColorBlindSafe,
+  isColorBlindSafe, setColorBlindSafe, applyColorBlindSafe, isClaudeThemeMatch, setClaudeThemeMatch,
   isReducedMotion, setReducedMotion,
   exportThemeJson, importThemeJson,
   DEFAULT_THEME_ID, DEFAULT_ACCENT_ID,
@@ -828,6 +828,7 @@ export function Settings() {
   const [accentId, setAccentId] = useState(currentAccentId());
   const [customHex, setCustomHex] = useState(customAccentHex());
   const [cbSafe, setCbSafe] = useState(isColorBlindSafe());
+  const [claudeMatch, setClaudeMatch] = useState(isClaudeThemeMatch());
   const [reducedMotion, setReducedMotionOn] = useState(isReducedMotion());
   const uiZoom = useUI((s) => s.uiZoom);
   const setUiZoom = useUI((s) => s.setUiZoom);
@@ -1593,6 +1594,11 @@ export function Settings() {
             <div className="set-row">
               <div className="set-row-t"><span className="set-row-name">Colour-blind-safe status colours</span><span className="set-row-sub">Blue / amber / vermillion instead of red / green</span></div>
               <button className={"toggle" + (cbSafe ? " on" : "")} role="switch" aria-checked={cbSafe} onClick={toggleCbSafe}><span /></button>
+            </div>
+
+            <div className="set-row">
+              <div className="set-row-t"><span className="set-row-name">Match Claude's colours to the app theme</span><span className="set-row-sub">Light or dark (daltonized if colour-blind-safe is on) for Claude's diffs. Applies to new or restarted Claude panes.</span></div>
+              <button className={"toggle" + (claudeMatch ? " on" : "")} role="switch" aria-checked={claudeMatch} aria-label="Match Claude's colours to the app theme" onClick={() => { const n = !claudeMatch; setClaudeThemeMatch(n); setClaudeMatch(n); }}><span /></button>
             </div>
 
             <div className="set-row">

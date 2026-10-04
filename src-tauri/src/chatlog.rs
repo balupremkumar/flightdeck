@@ -84,27 +84,34 @@ pub fn write_view_settings(dir: &std::path::Path) {
     }
 }
 
-/// Ensure the view settings file for `focus` exists in `dir` and return its path.
-pub fn view_settings_file(dir: &std::path::Path, focus: bool) -> std::io::Result<std::path::PathBuf> {
-    let (name, body) = if focus {
-        ("claude-view-focus.json", "{\"viewMode\":\"focus\"}")
-    } else {
-        ("claude-view-default.json", "{\"viewMode\":\"default\"}")
+/// F3: the Claude Code `theme` values Flightdeck may pass (verified against
+/// claude 2.1.289). Anything else is dropped so a bad value can't break launch.
+pub const CLAUDE_THEMES: [&str; 6] = ["dark", "light", "dark-daltonized", "light-daltonized", "dark-ansi", "light-ansi"];
+
+/// Ensure the view settings file for `focus` (and optional Claude `theme`)
+/// exists in `dir` and return its path. One file per combination, so panes
+/// with different choices never rewrite each other's file.
+pub fn view_settings_file(dir: &std::path::Path, focus: bool, theme: Option<&str>) -> std::io::Result<std::path::PathBuf> {
+    let theme = theme.filter(|t| CLAUDE_THEMES.contains(t));
+    let view = if focus { "focus" } else { "default" };
+    let (name, body) = match theme {
+        Some(t) => (format!("claude-view-{view}-{t}.json"), format!("{{\"viewMode\":\"{view}\",\"theme\":\"{t}\"}}")),
+        None => (format!("claude-view-{view}.json"), format!("{{\"viewMode\":\"{view}\"}}")),
     };
     let path = dir.join(name);
-    write_if_changed(&path, body)?;
+    write_if_changed(&path, &body)?;
     Ok(path)
 }
 
 /// The args to append to a claude launch: `--settings` plus the file path
 /// quoted for the `pwsh -Command claude ...` wrapper (single quotes, embedded
 /// quotes doubled). None if the view dir is unset or the file can't be written.
-pub fn view_settings_args(focus: bool) -> Option<[String; 2]> {
-    view_settings_args_in(VIEW_DIR.get()?, focus)
+pub fn view_settings_args(focus: bool, theme: Option<&str>) -> Option<[String; 2]> {
+    view_settings_args_in(VIEW_DIR.get()?, focus, theme)
 }
 
-pub fn view_settings_args_in(dir: &std::path::Path, focus: bool) -> Option<[String; 2]> {
-    let path = view_settings_file(dir, focus).ok()?;
+pub fn view_settings_args_in(dir: &std::path::Path, focus: bool, theme: Option<&str>) -> Option<[String; 2]> {
+    let path = view_settings_file(dir, focus, theme).ok()?;
     let p = path.to_string_lossy();
     Some(["--settings".to_string(), format!("'{}'", p.replace('\'', "''"))])
 }

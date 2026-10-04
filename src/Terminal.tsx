@@ -21,6 +21,7 @@ import { listen } from "@tauri-apps/api/event";
 import { OutputPipe, attachFirst, attachPlan, isRestoredPane, type OutputEvt } from "./ptyAttach";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { terminalThemeFor } from "./terminal-theme";
+import { claudeThemeForSpawn } from "./themes";
 import { getTerminalSettings, terminalReadabilityOptions } from "./settingsStore";
 import { shouldCopyOnSelect } from "./terminalMouse";
 import { isOscBusy, nextOscBusy, type OscBusy } from "./oscBusy";
@@ -1577,7 +1578,7 @@ function createSession(modelId: number, gen: string, spec: SpawnSpec, handlers: 
           await Promise.race([sized, new Promise<void>((res) => setTimeout(res, 500))]);
           if (entry.disposed) return;
           if (!fitSane()) term.resize(FALLBACK_COLS, FALLBACK_ROWS);
-          paneId = await invoke<number>("pty_spawn", { modelId, gen, vendor: spec.vendor, cwd: spec.cwd, cols: term.cols, rows: term.rows, setup: spec.setup ?? null, focusMode: !!spec.focusMode });
+          paneId = await invoke<number>("pty_spawn", { modelId, gen, vendor: spec.vendor, cwd: spec.cwd, cols: term.cols, rows: term.rows, setup: spec.setup ?? null, focusMode: !!spec.focusMode, claudeTheme: spec.vendor === "claude" ? claudeThemeForSpawn() : null });
           entry.ptyId = paneId;
           earlyOut = pipe.bind(paneId);
         }

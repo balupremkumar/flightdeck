@@ -21,6 +21,7 @@ export const PREFERENCE_KEYS = [
   "flightdeck-accent-custom",
   "flightdeck-vendor-accents",
   "flightdeck-cb-safe",
+  "flightdeck-claude-theme-match",
   "flightdeck-reduced-motion",
   "flightdeck-uiscale",
   "flightdeck-terminal-settings",

@@ -43,6 +43,7 @@ export const THEMES: ThemeMeta[] = [
   { id: "github-dark-hc", label: "GitHub Dark High Contrast", mode: "dark", swatch: ["#0A0C10", "#151B23", "#71B7FF"], fixedAccent: "Fixed by GitHub Dark High Contrast for accessibility" },
   { id: "one-dark-pro", label: "One Dark Pro", mode: "dark", swatch: ["#282C34", "#2C313A", "#61AFEF"] },
   { id: "tokyo-night", label: "Tokyo Night", mode: "dark", swatch: ["#1A1B26", "#1F2335", "#7AA2F7"] },
+  { id: "catppuccin-mocha", label: "Catppuccin Mocha", mode: "dark", swatch: ["#1E1E2E", "#242438", "#89B4FA"] },
 ];
 
 // QL-792: Graphite is this install's default dark theme. Only reached on a
@@ -389,6 +390,28 @@ export function isColorBlindSafe(): boolean {
 export function setColorBlindSafe(on: boolean) {
   try { localStorage.setItem("flightdeck-cb-safe", on ? "1" : "0"); } catch { /* non-persistent */ }
   applyColorBlindSafe(on, currentMode());
+}
+
+// F3: opt-in. When on, new/restarted Claude panes get a `theme` in the
+// Flightdeck-owned --settings file so Claude's diff colours match the app.
+const CLAUDE_THEME_MATCH_KEY = "flightdeck-claude-theme-match";
+
+/** Claude Code `theme` value for an app mode + colour-blind setting. */
+export function claudeThemeFor(mode: "dark" | "light", colorBlind: boolean): string {
+  return colorBlind ? `${mode}-daltonized` : mode;
+}
+
+export function isClaudeThemeMatch(): boolean {
+  try { return localStorage.getItem(CLAUDE_THEME_MATCH_KEY) === "1"; } catch { return false; }
+}
+
+export function setClaudeThemeMatch(on: boolean) {
+  try { localStorage.setItem(CLAUDE_THEME_MATCH_KEY, on ? "1" : "0"); } catch { /* non-persistent */ }
+}
+
+/** What to pass to pty_spawn as `claudeTheme`: null unless the opt-in is on. */
+export function claudeThemeForSpawn(): string | null {
+  return isClaudeThemeMatch() ? claudeThemeFor(currentMode(), isColorBlindSafe()) : null;
 }
 
 /** The mode the CVD palette and accent variants key off. Custom themes infer

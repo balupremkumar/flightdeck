@@ -28,6 +28,7 @@ const {
   applyTheme, rememberedThemeId, applyThemeForMode, toggleThemeMode,
   appearanceMode, setAppearanceMode, isFollowingSystem,
   currentThemeId, currentMode, DEFAULT_THEME_ID, DEFAULT_LIGHT_THEME_ID,
+  claudeThemeFor, claudeThemeForSpawn, setClaudeThemeMatch, setColorBlindSafe,
 } = await import("./themes");
 const { terminalThemeFor } = await import("./terminal-theme");
 
@@ -35,6 +36,28 @@ beforeEach(() => {
   store.clear();
   attrs.clear();
   props.clear();
+});
+
+describe("Claude theme match (F3)", () => {
+  it("maps app mode and colour-blind setting to a Claude theme", () => {
+    expect(claudeThemeFor("dark", false)).toBe("dark");
+    expect(claudeThemeFor("light", false)).toBe("light");
+    expect(claudeThemeFor("dark", true)).toBe("dark-daltonized");
+    expect(claudeThemeFor("light", true)).toBe("light-daltonized");
+  });
+
+  it("passes nothing unless opted in, then follows the live theme", () => {
+    applyTheme("light");
+    expect(claudeThemeForSpawn()).toBeNull();
+    setClaudeThemeMatch(true);
+    expect(claudeThemeForSpawn()).toBe("light");
+    setColorBlindSafe(true);
+    expect(claudeThemeForSpawn()).toBe("light-daltonized");
+    applyTheme("nord");
+    expect(claudeThemeForSpawn()).toBe("dark-daltonized");
+    setClaudeThemeMatch(false);
+    expect(claudeThemeForSpawn()).toBeNull();
+  });
 });
 
 describe("light/dark memory (QL-784)", () => {
@@ -138,7 +161,7 @@ function themeTokens(id: string): Record<string, string> {
   return { ...baseTokens, ...(own ?? {}) };
 }
 
-const PRESET_IDS = ["github-dark", "github-light", "github-dark-hc", "one-dark-pro", "tokyo-night"];
+const PRESET_IDS = ["github-dark", "github-light", "github-dark-hc", "one-dark-pro", "tokyo-night", "catppuccin-mocha"];
 // Every token a preset must define in its own block (not inherited from the
 // Deep Cove base, which would silently leak blue into the preset).
 const PRESET_REQUIRED = THEME_TOKENS.filter((t) => !/^--(font-|ease-)/.test(t));
