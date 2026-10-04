@@ -702,6 +702,9 @@ pub fn run() {
         // Flight recorder first, so everything after this line — including a
         // panic in any later setup step or command — leaves a durable trace.
         applog::init(data_dir.join("logs"), &app.package_info().version.to_string());
+        // Marker for the installer's pre-install backup hook (it names the
+        // backup after the version whose state it is copying).
+        let _ = updates::write_last_version(&data_dir, &app.package_info().version.to_string());
         if let Some(note) = &canary_note {
             applog::log("info", "canary", note);
         }

@@ -179,6 +179,18 @@ impl UpdateCheckResult {
     }
 }
 
+/// File the installer's pre-install hook (src-tauri/windows/hooks.nsh) and
+/// tools/backup-now.ps1 read to learn which version last ran, so a backup can
+/// be named for the version whose state it holds.
+pub const LAST_VERSION_FILE: &str = "last-version.txt";
+
+/// Records the running version in the app-data dir on every startup. Best
+/// effort: a failure only means the next backup is labelled "unknown".
+pub fn write_last_version(data_dir: &Path, version: &str) -> std::io::Result<()> {
+    std::fs::create_dir_all(data_dir)?;
+    std::fs::write(data_dir.join(LAST_VERSION_FILE), version)
+}
+
 /// The releases folder always arrives as an argument (Settings > Updates
 /// persists it on the frontend). There is deliberately no baked-in default:
 /// a developer's checkout path must not ship in the binary.
@@ -980,6 +992,17 @@ mod tests {
         assert!(!res.available);
         assert!(res.error.is_some());
         assert_eq!(res.error_kind.as_deref(), Some("manifest-unreadable"));
+    }
+
+    #[test]
+    fn last_version_marker_is_written_bare_and_overwritten() {
+        let dir = std::env::temp_dir().join("flightdeck-last-version-test").join("nested");
+        let _ = std::fs::remove_dir_all(dir.parent().unwrap());
+        write_last_version(&dir, "0.5.4").unwrap();
+        assert_eq!(std::fs::read_to_string(dir.join(LAST_VERSION_FILE)).unwrap(), "0.5.4");
+        write_last_version(&dir, "0.6.0").unwrap();
+        assert_eq!(std::fs::read_to_string(dir.join(LAST_VERSION_FILE)).unwrap(), "0.6.0");
+        let _ = std::fs::remove_dir_all(dir.parent().unwrap());
     }
 
     #[test]
