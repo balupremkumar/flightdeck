@@ -32,6 +32,18 @@ Each phase's red team adds its items here; the final release note links this fil
 - [ ] An MCP elicitation ("An MCP server needs your input") shows as needs-you.
 - [ ] A long command that prints progress (winget, a build showing a taskbar progress bar) keeps the pane "running", not "waiting".
 
+## Phase 6 red team hand checks
+
+- [ ] Hooks installed: a permission prompt still appears (relay never answers) and the delay before it is barely noticeable.
+- [ ] Real MCP input dialog: the pane shows needs-you (the dialog's last line may be its options, not the prompt text).
+- [ ] MCP disconnect chip clears when the pane restarts.
+- [ ] A user `~/.claude/settings.json` viewMode does not override the pane's `--settings` view.
+- [ ] `npm ci` in a pwsh pane with a 4 s+ stall: pane stays Running while the progress bar shows.
+- [ ] Session search, All projects + regex `(`: error shown, no hang; `.*` returns within about 2 s.
+- [ ] Chat Normal: Claude asks a short question then calls AskUserQuestion: the question is readable without expanding.
+- [ ] Three subagent lines open, window minimised 30 s: no polling; close the pane while expanded: polling stops.
+- [ ] Right-click a Focus pane sitting on a permission prompt with "1" on the clipboard: a confirm appears, nothing is answered.
+
 ## Phase 6 copy and paste (H2)
 
 - [ ] Select text in a pane, paste in Notepad: it matches.
