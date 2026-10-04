@@ -67,9 +67,12 @@ export default defineConfig(async () => ({
       : undefined,
     watch: {
       // 3. tell Vite to ignore watching `src-tauri`
-      // Agent worktrees under .claude/ are whole repo copies; watching them made
-      // their edits full-reload this server's pages mid-e2e.
-      ignored: ["**/src-tauri/**", "**/.claude/**"],
+      // Agent worktrees under this checkout's .claude/ are whole repo copies;
+      // watching them made their edits full-reload this server's pages mid-e2e.
+      // Anchored to the root so a server started inside a worktree (whose own
+      // path contains .claude/) still watches its own files.
+      // @ts-expect-error process is a nodejs global
+      ignored: ["**/src-tauri/**", `${process.cwd().replace(/\\/g, "/")}/.claude/**`],
     },
   },
 
