@@ -163,6 +163,10 @@ function registerPathLinks(term: XTerm, pane: PaneLinkCtx): { dispose(): void } 
     tip.style.display = "block";
   };
   const hideTip = () => { tip.style.display = "none"; };
+  // Export so LinkMenu can hide the tooltip when opening
+  if (typeof window !== "undefined") {
+    (window as any).__hideLinkTooltip = hideTip;
+  }
 
   interface Cand { m: LinkMatch; range: Range; hard: boolean }
 
@@ -213,8 +217,8 @@ function registerPathLinks(term: XTerm, pane: PaneLinkCtx): { dispose(): void } 
         hover: (event) => {
           pane.hover.current = resolver;
           showTip(event, hit.isDir
-            ? "Click — reveal in Explorer   ·   Right-click — more"
-            : "Click — preview   ·   Ctrl+click — open in editor   ·   Right-click — more");
+            ? "Click: reveal in Explorer · Right-click: more"
+            : "Click: preview · Ctrl+click: editor · Right-click: more");
         },
         leave: () => { if (pane.hover.current === resolver) pane.hover.current = null; hideTip(); },
       };
@@ -238,7 +242,10 @@ function registerPathLinks(term: XTerm, pane: PaneLinkCtx): { dispose(): void } 
     e.stopPropagation();
     const { clientX: x, clientY: y } = e;
     void resolve().then((t) => {
-      if (t) openLinkMenu({ modelId: pane.modelId, x, y, items: linkMenuItems(t, pane.menuDeps()) });
+      if (t) {
+        hideTip();
+        openLinkMenu({ modelId: pane.modelId, x, y, items: linkMenuItems(t, pane.menuDeps()), target: t });
+      }
     });
   };
   const el = term.element;

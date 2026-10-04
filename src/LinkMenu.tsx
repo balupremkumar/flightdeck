@@ -26,6 +26,20 @@ function copy(text: string, what: string) {
   );
 }
 
+/** Get the header text: last path segment for paths, hostname for URLs. */
+function getHeaderText(target: LinkTarget): string {
+  if (target.kind === "url") {
+    try {
+      return new URL(target.url).hostname;
+    } catch {
+      return target.url;
+    }
+  }
+  // Last path segment (file or folder name)
+  const lastSlash = Math.max(target.path.lastIndexOf("/"), target.path.lastIndexOf("\\"));
+  return lastSlash >= 0 ? target.path.slice(lastSlash + 1) : target.path;
+}
+
 /** The menu's entries for a target. Folders skip the preview/editor rows: a
  *  folder opens in the Explorer panel, never in a viewer. */
 export function linkMenuItems(t: LinkTarget, d: LinkMenuDeps): LinkMenuItem[] {
@@ -50,7 +64,7 @@ export function linkMenuItems(t: LinkTarget, d: LinkMenuDeps): LinkMenuItem[] {
   return items;
 }
 
-interface MenuState { modelId: number; x: number; y: number; items: LinkMenuItem[] }
+interface MenuState { modelId: number; x: number; y: number; items: LinkMenuItem[]; target: LinkTarget }
 let state: MenuState | null = null;
 const subs = new Set<() => void>();
 const emit = () => subs.forEach((f) => f());
@@ -73,11 +87,18 @@ export function LinkMenuHost({ modelId }: { modelId: number }) {
     const el = ref.current;
     const w = el?.offsetWidth ?? 0;
     const h = el?.offsetHeight ?? 0;
+    let left = mine.x + 2;
+    let top = mine.y + 6;
+    // Flip above if overflows bottom, shift left if overflows right
+    if (top + h > window.innerHeight) top = mine.y - h;
+    if (left + w > window.innerWidth) left = mine.x - w;
     setPos({
-      left: Math.max(4, Math.min(mine.x, window.innerWidth - w - 4)),
-      top: Math.max(4, Math.min(mine.y, window.innerHeight - h - 4)),
+      left: Math.max(4, left),
+      top: Math.max(4, top),
     });
-    el?.querySelector<HTMLElement>("button")?.focus();
+    // Focus first actionable button (skip header)
+    const btns = el?.querySelectorAll<HTMLElement>("button[role='menuitem']");
+    btns?.[0]?.focus();
   }, [mine]);
 
   useEffect(() => {
@@ -96,7 +117,7 @@ export function LinkMenuHost({ modelId }: { modelId: number }) {
   if (!mine) return null;
 
   const onKeyDown = (e: React.KeyboardEvent) => {
-    const btns = Array.from(ref.current?.querySelectorAll<HTMLElement>("button") ?? []);
+    const btns = Array.from(ref.current?.querySelectorAll<HTMLElement>("button[role='menuitem']") ?? []);
     const i = btns.indexOf(document.activeElement as HTMLElement);
     const go = (n: number) => { e.preventDefault(); btns[(n + btns.length) % btns.length]?.focus(); };
     if (e.key === "ArrowDown") go(i + 1);
@@ -105,6 +126,9 @@ export function LinkMenuHost({ modelId }: { modelId: number }) {
     else if (e.key === "End") go(btns.length - 1);
     else if (e.key === "Tab") { e.preventDefault(); closeLinkMenu(); }
   };
+
+  const headerText = getHeaderText(mine.target);
+  const fullPath = mine.target.kind === "url" ? mine.target.url : mine.target.path;
 
   return createPortal(
     <div
@@ -116,7 +140,14 @@ export function LinkMenuHost({ modelId }: { modelId: number }) {
       onKeyDown={onKeyDown}
       onContextMenu={(e) => e.preventDefault()}
     >
-      {mine.items.map((it) => (
+      <div className="lm-header" title={fullPath}>{headerText}</div>
+      {mine.items.slice(0, mine.target.kind === "url" ? 1 : 3).map((it) => (
+        <button key={it.id} type="button" role="menuitem" className="lm-item" onClick={() => { closeLinkMenu(); it.run(); }}>
+          {it.label}
+        </button>
+      ))}
+      <div className="lm-divider" role="separator" />
+      {mine.items.slice(mine.target.kind === "url" ? 1 : 3).map((it) => (
         <button key={it.id} type="button" role="menuitem" className="lm-item" onClick={() => { closeLinkMenu(); it.run(); }}>
           {it.label}
         </button>

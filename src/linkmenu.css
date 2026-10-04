@@ -4,6 +4,12 @@
   background: var(--elevated); border: 1px solid var(--line-strong);
   border-radius: var(--r-md); box-shadow: var(--shadow-3); padding: 4px;
 }
+.lm-header {
+  display: block; width: 100%; text-align: left;
+  font: inherit; font-size: 11px; color: var(--muted);
+  padding: 4px 9px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  pointer-events: none;
+}
 .lm-item {
   display: block; width: 100%; text-align: left;
   font: inherit; font-size: 12px; color: var(--text);
@@ -15,3 +21,6 @@
   outline: none;
 }
 .lm-item:focus-visible { box-shadow: inset 0 0 0 1px var(--accent); }
+.lm-divider {
+  height: 1px; background: var(--line-strong); margin: 4px 4px; pointer-events: none;
+}
