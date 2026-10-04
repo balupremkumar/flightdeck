@@ -197,6 +197,29 @@ fn codex_login_status_code() -> Option<i32> {
     }
 }
 
+/// Replace `path` atomically: write `<file>.tmp` beside it, flush + fsync, then
+/// rename over the original (std::fs::rename replaces on Windows). A failure at
+/// any step leaves the original untouched; the tmp is cleaned up best-effort.
+/// Callers hold the relevant trust lock, so the single tmp name is not contended.
+fn atomic_write(path: &std::path::Path, contents: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut name = path.file_name().map(|n| n.to_os_string()).unwrap_or_default();
+    name.push(".tmp");
+    let tmp = path.with_file_name(name);
+    let res = (|| {
+        let mut f = std::fs::File::create(&tmp)?;
+        f.write_all(contents)?;
+        f.flush()?;
+        f.sync_all()?;
+        drop(f);
+        std::fs::rename(&tmp, path)
+    })();
+    if res.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    res
+}
+
 fn read_trust_doc(path: &std::path::Path) -> serde_json::Value {
     let mut val: serde_json::Value = std::fs::read_to_string(path)
         .ok()
@@ -213,7 +236,7 @@ fn write_trust_doc(path: &std::path::Path, val: &serde_json::Value) {
         let _ = std::fs::create_dir_all(parent);
     }
     if let Ok(s) = serde_json::to_string_pretty(val) {
-        let _ = std::fs::write(path, s);
+        let _ = atomic_write(path, s.as_bytes());
     }
 }
 
@@ -295,12 +318,47 @@ fn codex_trust_save(path: &std::path::Path, doc: &toml_edit::DocumentMut) -> Res
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    std::fs::write(path, doc.to_string()).map_err(|e| format!("{}: {e}", path.display()))
+    atomic_write(path, doc.to_string().as_bytes()).map_err(|e| format!("{}: {e}", path.display()))
+}
+
+/// Canonical form of a Windows path for use as a Codex `projects` key: backslash
+/// separators, `.`/`..` resolved lexically, no trailing backslash (a bare drive
+/// root keeps `C:\`), original case kept (Codex matches case-insensitively, see
+/// codex-rs config/src/project_trust.rs). A UNC `\\` prefix is preserved.
+fn normalise_codex_key(cwd: &str) -> String {
+    let p = cwd.trim().replace('/', "\\");
+    let (prefix, rest) = match p.strip_prefix("\\\\") {
+        Some(r) => ("\\\\", r.to_string()),
+        None => ("", p.clone()),
+    };
+    let floor = if prefix.is_empty() { 0 } else { 1 };
+    let mut parts: Vec<&str> = Vec::new();
+    for seg in rest.split('\\') {
+        match seg {
+            "" | "." => {}
+            ".." => {
+                // Never pop a drive ("C:") or the first UNC segment.
+                if parts.len() > floor && parts.last().map(|l| !l.ends_with(':')).unwrap_or(false) {
+                    parts.pop();
+                }
+            }
+            s => parts.push(s),
+        }
+    }
+    let joined = parts.join("\\");
+    if prefix.is_empty() && parts.len() == 1 && parts[0].ends_with(':') {
+        format!("{joined}\\")
+    } else {
+        format!("{prefix}{joined}")
+    }
 }
 
 /// Set `projects.'<cwd>'.trust_level = "trusted"`. Idempotent; an existing
 /// different level for that exact key is upgraded, everything else preserved.
+/// The key is normalised first (see `normalise_codex_key`).
 pub fn codex_trust_add(path: &std::path::Path, cwd: &str) -> Result<(), String> {
+    let key = normalise_codex_key(cwd);
+    let cwd = key.as_str();
     let mut doc = codex_trust_load(path)?;
     let root = doc.as_table_mut();
     if !root.contains_key("projects") {
@@ -1505,6 +1563,45 @@ mod tests {
         assert!(text.contains("trust_level = \"trusted\""), "{text}");
         let doc: toml_edit::DocumentMut = text.parse().unwrap();
         assert_eq!(doc["projects"][r"C:\Users\me\repo"]["trust_level"].as_str(), Some("trusted"));
+    }
+
+    #[test]
+    fn codex_key_normalisation_table() {
+        for (input, want) in [
+            (r"C:\Users\me\repo", r"C:\Users\me\repo"),
+            (r"C:\Users\me\repo\", r"C:\Users\me\repo"),
+            ("C:/Users/Me/Repo", r"C:\Users\Me\Repo"),
+            (r"C:\Users\me\.\repo", r"C:\Users\me\repo"),
+            (r"C:\Users\me\x\..\repo", r"C:\Users\me\repo"),
+            (r"C:\Users\..\..\..\a", r"C:\a"),
+            (r"C:\", r"C:\"),
+            ("C:", r"C:\"),
+            (r"C:\a\\b", r"C:\a\b"),
+            (r"\\srv\share\x\", r"\\srv\share\x"),
+            (r"\\srv\share\..\..\..", r"\\srv"),
+        ] {
+            assert_eq!(normalise_codex_key(input), want, "input {input}");
+        }
+        let p = codex_tmp("norm");
+        codex_trust_add(&p, r"C:\Work\Repo\..\Repo\").unwrap();
+        let text = std::fs::read_to_string(&p).unwrap();
+        assert!(text.contains(r"[projects.'C:\Work\Repo']"), "{text}");
+    }
+
+    #[test]
+    fn atomic_write_failure_leaves_original_intact() {
+        let p = codex_tmp("atomic");
+        std::fs::write(&p, "model = \"keep\"\n").unwrap();
+        // Make the tmp path a directory so File::create fails.
+        let tmp = p.with_file_name("config.toml.tmp");
+        std::fs::create_dir_all(&tmp).unwrap();
+        assert!(codex_trust_add(&p, r"C:\a").is_err());
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), "model = \"keep\"\n");
+        std::fs::remove_dir(&tmp).unwrap();
+        // Normal path: replaces, no tmp left behind.
+        codex_trust_add(&p, r"C:\a").unwrap();
+        assert!(std::fs::read_to_string(&p).unwrap().contains("trust_level"));
+        assert!(!tmp.exists());
     }
 
     #[test]
