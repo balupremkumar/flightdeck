@@ -149,8 +149,12 @@ impl ByModel {
     /// `live` is the set of pty ids still in the pane registry; a mapping whose
     /// pty is not in it is a dead entry (child died before it was registered) and
     /// is dropped instead of being attached to.
-    pub fn claim_live(&mut self, model_id: u32, vendor: &str, cwd: &str, live: &HashSet<u32>) -> Option<(u32, Arc<Mutex<PaneOut>>)> {
-        let e = self.live.get(&model_id).filter(|e| e.vendor == vendor && e.cwd == cwd)?;
+    ///
+    /// `req_epoch` is the requester's restart epoch. A request newer than the
+    /// entry's means a Restart: the entry is the pty being replaced and must not
+    /// be attached. A reload resets the epoch to 0, so `<=` still attaches.
+    pub fn claim_live(&mut self, model_id: u32, vendor: &str, cwd: &str, req_epoch: u64, live: &HashSet<u32>) -> Option<(u32, Arc<Mutex<PaneOut>>)> {
+        let e = self.live.get(&model_id).filter(|e| e.vendor == vendor && e.cwd == cwd && req_epoch <= e.epoch)?;
         if !live.contains(&e.pty_id) {
             self.live.remove(&model_id);
             return None;
@@ -271,12 +275,26 @@ mod tests {
         let mut m = ByModel::default();
         m.insert(7, entry(100, "claude", "c", false));
         let none: HashSet<u32> = HashSet::new();
-        assert!(m.claim_live(7, "claude", "c", &none).is_none(), "dead pty must not attach");
+        assert!(m.claim_live(7, "claude", "c", 0, &none).is_none(), "dead pty must not attach");
         assert!(m.get(7).is_none(), "dead entry is pruned");
         m.insert(8, entry(101, "claude", "c", false));
         let live: HashSet<u32> = [101].into_iter().collect();
-        assert_eq!(m.claim_live(8, "claude", "c", &live).map(|x| x.0), Some(101));
+        assert_eq!(m.claim_live(8, "claude", "c", 0, &live).map(|x| x.0), Some(101));
         assert!(m.get(8).unwrap().attached);
+    }
+
+    #[test]
+    fn claim_live_refuses_a_newer_epoch_restart() {
+        let mut m = ByModel::default();
+        let mut e = entry(100, "claude", "c", false);
+        e.epoch = 2;
+        m.insert(7, e);
+        let live: HashSet<u32> = [100].into_iter().collect();
+        assert!(m.claim_live(7, "claude", "c", 3, &live).is_none(), "restart epoch must spawn, not attach");
+        assert!(m.get(7).is_some(), "the dying pty's entry is left for its kill");
+        assert!(!m.get(7).unwrap().attached);
+        assert!(m.claim_live(7, "claude", "c", 0, &live).is_some(), "reload resets epoch to 0 and attaches");
+        assert!(m.claim_live(7, "claude", "c", 2, &live).is_some());
     }
 
     #[test]

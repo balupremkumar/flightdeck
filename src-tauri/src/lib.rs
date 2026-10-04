@@ -458,10 +458,10 @@ struct AttachInfo {
 /// Async so a 4 MiB snapshot never runs on the main thread.
 #[tauri::command]
 async fn pty_attach(reg: State<'_, Registry>, model_id: u32, gen: String) -> Result<Option<AttachInfo>, String> {
-    let (_, vendor, cwd) = paneout::parse_gen(&gen);
+    let (req_epoch, vendor, cwd) = paneout::parse_gen(&gen);
     // Registry ids first (panes is never taken while by_model is held).
     let live: std::collections::HashSet<u32> = reg.panes.lock().unwrap().keys().copied().collect();
-    let claimed = reg.by_model.lock().unwrap().claim_live(model_id, &vendor, &cwd, &live);
+    let claimed = reg.by_model.lock().unwrap().claim_live(model_id, &vendor, &cwd, req_epoch, &live);
     let Some((pty_id, out)) = claimed else { return Ok(None) };
     // Snapshot under the PaneOut lock: any chunk is either inside it (its event
     // seq <= next_seq, which the frontend drops) or after it (delivered live).
