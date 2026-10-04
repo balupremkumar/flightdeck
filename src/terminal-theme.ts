@@ -217,7 +217,17 @@ const tokyoNightTerminalTheme: ITheme = {
   brightBlue: "#7AA2F7", brightMagenta: "#BB9AF7", brightCyan: "#7DCFFF", brightWhite: "#C0CAF5",
 };
 
+const catppuccinMochaTerminalTheme: ITheme = {
+  background: "#1E1E2E", foreground: "#CDD6F4", cursor: "#F5E0DC", cursorAccent: "#1E1E2E",
+  selectionBackground: "rgba(88,91,112,0.60)",
+  black: "#45475A", red: "#F38BA8", green: "#A6E3A1", yellow: "#F9E2AF",
+  blue: "#89B4FA", magenta: "#F5C2E7", cyan: "#94E2D5", white: "#BAC2DE",
+  brightBlack: "#585B70", brightRed: "#F38BA8", brightGreen: "#A6E3A1", brightYellow: "#F9E2AF",
+  brightBlue: "#89B4FA", brightMagenta: "#F5C2E7", brightCyan: "#94E2D5", brightWhite: "#A6ADC8",
+};
+
 const TERMINAL_THEMES: Record<string, ITheme> = {
+  "catppuccin-mocha": catppuccinMochaTerminalTheme,
   "github-dark": githubDarkTerminalTheme,
   // Kove rule: terminal stays dark in a light app theme (flagged for design).
   "github-light": githubDarkTerminalTheme,

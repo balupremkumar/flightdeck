@@ -425,6 +425,21 @@
   --shadow-lg:0 30px 70px -20px rgba(0,0,0,0.80);
 }
 
+/* Catppuccin Mocha: catppuccin/catppuccin palette (base, mantle, crust, surface0-2, text, subtext, overlay). */
+:root[data-theme="catppuccin-mocha"] {
+  --abyss:#11111B; --bg:#1E1E2E; --bg-2:#181825; --surface:#242438; --surface-2:#313244; --elevated:#3A3B50;
+  --line:rgba(205,214,244,0.14); --line-strong:rgba(205,214,244,0.28);
+  --text:#CDD6F4; --muted:#BAC2DE; --faint:#9399B2;
+  --ice:#89DCEB; --azure:#89B4FA; --aqua:#94E2D5; --deepblue:#585B70; --red:#F38BA8; --accent:#89B4FA;
+  --st-starting:#89DCEB; --st-running:#A6E3A1; --st-waiting:#F9E2AF; --st-idle:#9399B2; --st-error:#F38BA8; --st-exited:#94E2D5;
+  --agent-claude:#CBA6F7;
+  --agent-codex:#FAB387;
+  --on-accent:#11111B; --on-warn:#1A1400;
+  --accent-grad:linear-gradient(125deg,#89DCEB 0%,#89B4FA 48%,#CBA6F7 100%);
+  --glow:0 0 0 1px rgba(137,180,250,0.22), 0 8px 40px rgba(137,180,250,0.18);
+  --shadow-lg:0 30px 70px -20px rgba(0,0,0,0.80);
+}
+
 /* QL-792: Graphite. The DEFAULT dark theme (themes.ts DEFAULT_THEME_ID).
    Owner feedback: the Kove blue chrome "doesn't look the best on here; needs
    to be darker, more chrome". So: a near-black charcoal floor, neutral cool
