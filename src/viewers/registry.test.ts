@@ -8,12 +8,12 @@ function fakeStore(init: Record<string, string> = {}) {
 
 describe("registry", () => {
   it("maps extensions to ordered viewers, default first", () => {
-    expect(viewersForExt("json", { csv: true })).toEqual(["json-tree", "text"]);
+    expect(viewersForExt("json", { csv: true })).toEqual(["json-tree", "code", "text"]);
     expect(viewersForExt("JSONL", { csv: true })).toEqual(["jsonl", "text"]);
     expect(viewersForExt("ndjson", { csv: true })).toEqual(["jsonl", "text"]);
     expect(viewersForExt("tsv", { csv: true })).toEqual(["csv", "text"]);
     expect(viewersForExt("md", { csv: true })).toEqual(["rendered", "raw"]);
-    expect(viewersForExt("rs", { csv: true })).toEqual(["text"]);
+    expect(viewersForExt("rs", { csv: true })).toEqual(["code", "text"]);
     expect(viewersForExt("", { csv: true })).toEqual(["text"]);
   });
   it("drops the table viewer while CsvTable does not exist", () => {
