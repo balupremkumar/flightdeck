@@ -99,10 +99,42 @@ fn sanitize_roots(roots: Vec<String>) -> Vec<PathBuf> {
     out
 }
 
+/// Roots in `next` that are not already in `granted` (pure; unit-tested).
+fn newly_granted(granted: &[PathBuf], next: &[PathBuf]) -> Vec<PathBuf> {
+    next.iter().filter(|r| !granted.contains(r)).cloned().collect()
+}
+
+/// Everything ever granted to the asset protocol this run. Tauri's FsScope has
+/// no revoke: `forbid_*` is permanent and beats allow, so a removed-then-re-added
+/// root would stay blocked. We are therefore allow-only: a root dropped from
+/// the workspace keeps its asset grant until restart (it was a root the user
+/// opened this session). Reads via `check_read` DO revoke immediately.
+static ASSET_GRANTED: RwLock<Vec<PathBuf>> = RwLock::new(Vec::new());
+
+/// Grants the asset protocol the given (already canonical, non-UNC) roots.
+/// Only local directories are ever pushed, so a `\\server\..` path can never
+/// match an allowed pattern, and the handler canonicalises before matching.
+pub fn grant_asset_roots<R: tauri::Runtime>(app: &tauri::AppHandle<R>, roots: &[PathBuf]) {
+    use tauri::Manager;
+    let Ok(mut granted) = ASSET_GRANTED.write() else { return };
+    let scope = app.asset_protocol_scope();
+    for r in newly_granted(&granted, roots) {
+        if scope.allow_directory(&r, true).is_ok() {
+            granted.push(r);
+        }
+    }
+}
+
+/// Grants the always-allowed roots (vault, ~/.claude, app data). Call from setup.
+pub fn grant_fixed_asset_roots<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    grant_asset_roots(app, &fixed_roots());
+}
+
 /// Replaces the workspace roots. Unsafe or non-existent entries are dropped.
 #[tauri::command(async)]
-pub fn set_read_roots(roots: Vec<String>) -> Result<(), String> {
+pub fn set_read_roots(app: tauri::AppHandle, roots: Vec<String>) -> Result<(), String> {
     let clean = sanitize_roots(roots);
+    grant_asset_roots(&app, &clean);
     *WORKSPACE_ROOTS.write().map_err(|e| e.to_string())? = clean;
     Ok(())
 }
@@ -218,6 +250,26 @@ mod tests {
             d.join("missing").to_string_lossy().into_owned(),
         ]);
         assert_eq!(out.len(), 1);
+    }
+
+    #[test]
+    fn newly_granted_adds_only_unseen_roots() {
+        let (a, b, c) = (PathBuf::from(r"C:\a"), PathBuf::from(r"C:\b"), PathBuf::from(r"C:\c"));
+        assert_eq!(newly_granted(&[], &[a.clone(), b.clone()]), vec![a.clone(), b.clone()]);
+        assert_eq!(newly_granted(&[a.clone(), b.clone()], &[b.clone(), c.clone()]), vec![c]);
+        // removed root: nothing new, nothing revoked (allow-only)
+        assert!(newly_granted(&[a.clone(), b], &[a]).is_empty());
+    }
+
+    #[test]
+    fn unc_roots_never_reach_the_grant_list() {
+        let d = tmp("uncgrant");
+        let out = sanitize_roots(vec![
+            r"\\server\share".into(),
+            "//server/share".into(),
+            d.to_string_lossy().into_owned(),
+        ]);
+        assert_eq!(out, vec![canon(&d).unwrap()]);
     }
 
     #[test]

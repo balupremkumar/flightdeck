@@ -725,6 +725,7 @@ pub fn run() {
     // dropped JSON file becomes a launchable agent — no recompile.
     if let Ok(data_dir) = app.handle().path().app_data_dir() {
         readscope::set_data_dir(data_dir.clone());
+        readscope::grant_fixed_asset_roots(app.handle());
         // Flight recorder first, so everything after this line — including a
         // panic in any later setup step or command — leaves a durable trace.
         applog::init(data_dir.join("logs"), &app.package_info().version.to_string());
