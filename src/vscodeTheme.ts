@@ -257,6 +257,9 @@ export function importVsCodeTheme(json: string): FlightdeckTheme {
     "--st-error": toHex(red),
     "--st-exited": toHex(cyan),
     "--agent-claude": toHex(magenta),
+    // Codex is the warm-orange agent everywhere; the ANSI yellow is the closest
+    // warm slot a VS Code theme always defines.
+    "--agent-codex": toHex(yellow),
     "--accent-grad": `linear-gradient(125deg,${toHex(ice)} 0%,${accentCss} 48%,${toHex(blue)} 100%)`,
     "--glow": `0 0 0 1px rgba(${glowA},0.22), 0 8px 40px rgba(${glowA},0.${mode === "light" ? "14" : "20"})`,
     "--shadow-lg": mode === "light" ? "0 24px 60px -22px rgba(20,40,70,0.28)" : "0 30px 70px -20px rgba(0,0,0,0.75)",

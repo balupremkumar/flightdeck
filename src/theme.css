@@ -362,6 +362,7 @@
   --ice:#79C0FF; --azure:#58A6FF; --aqua:#56D4DD; --deepblue:#1F6FEB; --red:#F85149; --accent:#4493F8;
   --st-starting:#58A6FF; --st-running:#3FB950; --st-waiting:#D29922; --st-idle:#7D8590; --st-error:#F85149; --st-exited:#56D4DD;
   --agent-claude:#BC8CFF;
+  --agent-codex:#FFA657;
   --on-accent:#010409; --on-warn:#1A1400;
   --accent-grad:linear-gradient(125deg,#79C0FF 0%,#4493F8 48%,#1F6FEB 100%);
   --glow:0 0 0 1px rgba(68,147,248,0.22), 0 8px 40px rgba(68,147,248,0.18);
@@ -375,6 +376,7 @@
   --ice:#0969DA; --azure:#0969DA; --aqua:#1B7C83; --deepblue:#0550AE; --red:#CF222E; --accent:#0969DA;
   --st-starting:#0969DA; --st-running:#1A7F37; --st-waiting:#9A6700; --st-idle:#6E7781; --st-error:#CF222E; --st-exited:#1B7C83;
   --agent-claude:#8250DF;
+  --agent-codex:#BC4C00;
   --on-accent:#FFFFFF; --on-warn:#FFFFFF;
   --accent-grad:linear-gradient(125deg,#218BFF 0%,#0969DA 48%,#0550AE 100%);
   --glow:0 0 0 1px rgba(9,105,218,0.22), 0 8px 40px rgba(9,105,218,0.14);
@@ -388,6 +390,7 @@
   --ice:#91CBFF; --azure:#71B7FF; --aqua:#56D4DD; --deepblue:#409EFF; --red:#FF9492; --accent:#71B7FF;
   --st-starting:#71B7FF; --st-running:#26CD4D; --st-waiting:#F0B72F; --st-idle:#9EA7B3; --st-error:#FF9492; --st-exited:#56D4DD;
   --agent-claude:#CB9EFF;
+  --agent-codex:#FFB757;
   --on-accent:#010409; --on-warn:#1A1400;
   --accent-grad:linear-gradient(125deg,#91CBFF 0%,#71B7FF 48%,#409EFF 100%);
   --glow:0 0 0 2px var(--accent), 0 0 0 1px var(--abyss);
@@ -401,6 +404,7 @@
   --ice:#7EC0F5; --azure:#61AFEF; --aqua:#56B6C2; --deepblue:#4D78CC; --red:#E06C75; --accent:#61AFEF;
   --st-starting:#61AFEF; --st-running:#98C379; --st-waiting:#E5C07B; --st-idle:#7F848E; --st-error:#E06C75; --st-exited:#56B6C2;
   --agent-claude:#C678DD;
+  --agent-codex:#D19A66;
   --on-accent:#1B1F27; --on-warn:#1A1400;
   --accent-grad:linear-gradient(125deg,#7EC0F5 0%,#61AFEF 48%,#C678DD 100%);
   --glow:0 0 0 1px rgba(97,175,239,0.22), 0 8px 40px rgba(97,175,239,0.18);
@@ -414,6 +418,7 @@
   --ice:#7DCFFF; --azure:#7AA2F7; --aqua:#73DACA; --deepblue:#3D59A1; --red:#F7768E; --accent:#7AA2F7;
   --st-starting:#7DCFFF; --st-running:#9ECE6A; --st-waiting:#E0AF68; --st-idle:#737AA2; --st-error:#F7768E; --st-exited:#73DACA;
   --agent-claude:#BB9AF7;
+  --agent-codex:#FF9E64;
   --on-accent:#13141C; --on-warn:#1A1400;
   --accent-grad:linear-gradient(125deg,#7DCFFF 0%,#7AA2F7 48%,#BB9AF7 100%);
   --glow:0 0 0 1px rgba(122,162,247,0.22), 0 8px 40px rgba(122,162,247,0.18);
