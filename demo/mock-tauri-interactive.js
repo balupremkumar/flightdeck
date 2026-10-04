@@ -716,7 +716,8 @@ index 3c92f1a..7d40b2e 100644
       if (cmd === "plugin:event|unlisten") return Promise.resolve();
       if (String(cmd).startsWith("plugin:")) return Promise.resolve(null);
 
-      const fn = handlers[cmd];
+      // e2e hook: a test can replace or add any command via window.__mockOverrides.
+      const fn = window.__mockOverrides?.[cmd] ?? handlers[cmd];
       if (!fn) {
         console.warn("[fd-demo] unhandled command:", cmd, args);
         return Promise.reject(new Error(`mock: no handler for ${cmd}`));
