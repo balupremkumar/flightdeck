@@ -33,7 +33,9 @@ const open = async (file) => {
   await page.waitForTimeout(1200);
 };
 const shot = (name) => page.screenshot({ path: path.join(shots, `viewer-${name}.png`) });
-const has = (sel, timeout = 6000) => page.waitForSelector(sel, { timeout, state: "visible" }).then(() => true, () => false);
+// Cold dev server: Vite compiles each lazy chunk on first request, so waits
+// are condition-based with generous ceilings, never fixed sleeps.
+const has = (sel, timeout = 15000) => page.waitForSelector(sel, { timeout, state: "visible" }).then(() => true, () => false);
 
 // JSON tree
 await open(VFX + "data.json");
@@ -80,7 +82,7 @@ await shot("jsonl");
 // CSV
 await open(VFX + "table.csv");
 check(await has(".csv-th-wrap"), "CSV: header cells render");
-check((await page.locator(".csv-th-wrap").count()) >= 3, "CSV: three header cells");
+check(await page.waitForFunction(() => document.querySelectorAll(".csv-th-wrap").length >= 3, null, { timeout: 15000 }).then(() => true, () => false), "CSV: three header cells");
 const priceTh = page.locator(".csv-th-wrap", { hasText: "price" });
 await priceTh.locator(".csv-th").click();
 await page.waitForTimeout(300);
@@ -97,7 +99,7 @@ await shot("csv");
 await open(VFX + "doc.md");
 check(await has(".prv-toc"), "Markdown: Contents/TOC renders");
 check(/contents/i.test((await page.locator(".prv-toc").textContent()) ?? ""), "Markdown: TOC is labelled Contents");
-check(await has(".mermaid-svg svg", 15000), "Markdown: mermaid fence renders an <svg>");
+check(await has(".mermaid-svg svg", 45000), "Markdown: mermaid fence renders an <svg>");
 await shot("markdown-mermaid");
 
 // Code view

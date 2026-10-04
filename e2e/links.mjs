@@ -146,6 +146,9 @@ const items = ["Open in preview", "Open in editor", "Reveal in Explorer", "Copy 
   await page.mouse.click(p.x, p.y, { button: "right" });
   await page.waitForTimeout(500);
   const menu = page.locator(".lm-menu");
+  // Menu items arrive after the link target resolves (async): wait for them
+  // instead of a fixed sleep (flaked on a cold dev server).
+  await page.waitForFunction(() => document.querySelectorAll(".lm-menu .lm-item").length >= 5, null, { timeout: 15000 }).catch(() => {});
   check(await menu.isVisible().catch(() => false), "(f) LinkMenu is visible after right-click");
   const got = (await menu.locator(".lm-item").allTextContents()).map((s) => s.trim());
   check(items.every((n) => got.some((g) => g.startsWith(n))), `(f) LinkMenu has all five items (got ${JSON.stringify(got)})`);
