@@ -653,6 +653,7 @@ function PaneViewInner({
     contextWindow?: number | null;
     planUsedPercent5h?: number | null;
     planUsedPercentWeek?: number | null;
+    apiEquivUsd?: number;
   }
   const [usage, setUsage] = useState<PaneUsage | null>(null);
   usePoll(async () => {
@@ -1028,6 +1029,8 @@ function PaneViewInner({
 5h plan limit: ${Math.round(usage.planUsedPercent5h)}% used` : "") +
                 (usage.planUsedPercentWeek != null ? `
 weekly plan limit: ${Math.round(usage.planUsedPercentWeek)}% used` : "") +
+                (usage.apiEquivUsd ? `
+API-equivalent cost: $${usage.apiEquivUsd.toFixed(2)} (what these tokens would cost on the API; not billed on a subscription)` : "") +
                 (level ? `
 
 Running low — consider /compact in this pane.` : "")

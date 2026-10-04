@@ -103,15 +103,23 @@ export function modelShort(model: string | null | undefined): string {
 }
 
 /** QL-765: context window used for the "% of window" reading.
- *  ASSUMPTION: every current Claude model is a 200k-token window; the 1M-token
- *  variants advertise themselves in the model id ("[1m]" / "-1m"). Nothing in
- *  the transcript states the window, so this is the one inferred number in the
- *  chip — every other figure in the tooltip is read straight off the file. */
+ *  Claude transcripts don't state the window, so for Claude this is the one
+ *  inferred number in the chip. Per https://platform.claude.com/docs/en/models/overview
+ *  (checked 2026-10-04): Fable, Opus 5.5 and Sonnet 5.5 are 1M, Opus and
+ *  Sonnet 4.6 and later are 1M at standard price, everything older (Haiku 4.5,
+ *  Opus/Sonnet 4.5 and before) is 200k. The "[1m]" / "-1m" variants of older
+ *  models still advertise themselves in the id. */
 export const DEFAULT_CONTEXT_WINDOW = 200_000;
+export const LONG_CONTEXT_WINDOW = 1_000_000;
 export function contextWindowFor(model: string | null | undefined, reported?: number | null): number {
   // Codex rollouts state their own window (model_context_window): trust it.
   if (reported && reported > 0) return reported;
-  return model && /(\[1m\]|-1m\b)/i.test(model) ? 1_000_000 : DEFAULT_CONTEXT_WINDOW;
+  if (!model) return DEFAULT_CONTEXT_WINDOW;
+  if (/(\[1m\]|-1m\b)/i.test(model)) return LONG_CONTEXT_WINDOW;
+  const [fam, major = "0", minor = "0"] = modelShort(model).split(/[ .]/);
+  if (fam === "fable" || fam === "mythos") return LONG_CONTEXT_WINDOW;
+  if ((fam === "opus" || fam === "sonnet") && Number(major) * 100 + Number(minor) >= 406) return LONG_CONTEXT_WINDOW;
+  return DEFAULT_CONTEXT_WINDOW;
 }
 
 /** Substring filter over the fields a row actually shows. Order is preserved

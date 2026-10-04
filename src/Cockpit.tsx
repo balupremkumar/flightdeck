@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { lazyOverlay } from "./LazyOverlay";
 import { useApp } from "./store";
 import { LeftPanel } from "./LeftPanel";
@@ -38,6 +38,8 @@ const Shortcuts = lazyOverlay(() => import("./Shortcuts"), "Shortcuts", "keyboar
 const SessionLauncher = lazyOverlay(() => import("./SessionLauncher"), "SessionLauncher", "the session launcher");
 const PreviewHost = lazyOverlay(() => import("./PreviewHost"), "PreviewHost", "the preview");
 const QuickOpen = lazyOverlay(() => import("./QuickOpenOverlay"), "QuickOpen", "quick open");
+// Own chunk: keeps the gauge out of the main bundle.
+const QuotaGauge = lazy(() => import("./QuotaGauge"));
 
 export function Cockpit() {
   const workspaces = useApp((s) => s.workspaces);
@@ -369,6 +371,7 @@ export function Cockpit() {
           </div>
         )}
         <span className="sp" />
+        <Suspense fallback={null}><QuotaGauge /></Suspense>
         <Notifications />
         <button
           className={"tb-ic" + (showExplorer ? " on" : "")}

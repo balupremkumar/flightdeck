@@ -1,0 +1,12 @@
+.quota-gauge { display: inline-flex; flex-direction: column; justify-content: center; gap: 2px; margin-right: 6px; font-size: 10.5px; line-height: 1; color: var(--tmuted); cursor: default; font-variant-numeric: tabular-nums; position: relative; }
+.quota-gauge .qg-row { display: flex; align-items: center; gap: 5px; }
+.quota-gauge .qg-label { width: 16px; }
+.quota-gauge .qg-track { width: 54px; height: 4px; border-radius: 2px; background: color-mix(in srgb, var(--text) 10%, transparent); overflow: hidden; }
+.quota-gauge .qg-fill { display: block; height: 100%; background: var(--accent); }
+.quota-gauge .qg-row.warn .qg-fill { background: var(--st-waiting); }
+.quota-gauge .qg-row.crit .qg-fill { background: var(--st-error); }
+.quota-gauge .qg-row.warn .qg-val { color: var(--st-waiting); }
+.quota-gauge .qg-row.crit .qg-val { color: var(--st-error); }
+.quota-gauge .qg-val { min-width: 28px; text-align: right; }
+.quota-gauge .qg-reset { opacity: .8; }
+@media (max-width: 900px) { .quota-gauge .qg-reset { display: none; } }

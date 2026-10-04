@@ -105,6 +105,20 @@ describe("contextWindowFor (QL-765)", () => {
     expect(contextWindowFor("claude-sonnet-4-5-20250929[1m]")).toBe(1_000_000);
     expect(contextWindowFor("claude-sonnet-4-1m")).toBe(1_000_000);
   });
+
+  it("gives the 5.x generation and Opus/Sonnet 4.6+ the 1M ceiling, dated variants included", () => {
+    for (const id of [
+      "claude-opus-5-5", "claude-opus-5-5-20260922", "claude-sonnet-5-5", "claude-sonnet-5",
+      "claude-opus-5", "claude-fable-5-1", "claude-opus-4-6", "claude-sonnet-4-6",
+    ]) expect(contextWindowFor(id), id).toBe(1_000_000);
+  });
+
+  it("keeps 200k for Haiku 4.5 and for Opus/Sonnet before 4.6", () => {
+    for (const id of [
+      "claude-haiku-4-5-20251001", "claude-opus-4-5-20251101", "claude-sonnet-4-5-20250929",
+      "claude-3-5-haiku-20241022", "claude-opus-4-1-20250805",
+    ]) expect(contextWindowFor(id), id).toBe(200_000);
+  });
 });
 
 describe("sessionWeight (QL-764)", () => {
