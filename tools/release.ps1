@@ -76,6 +76,14 @@ function Set-TsAppVersion([string]$path, [string]$version) {
 Write-Host "Flightdeck release: v$Version" -ForegroundColor Green
 Write-Host $Notes
 
+# Fail fast, before anything is bumped or built: an archived version is
+# immutable (releases\archive is kept forever, see archive-installers.ps1).
+$archiveDir = Join-Path (Join-Path $root "releases\archive") $Version
+if (Test-Path -LiteralPath $archiveDir) {
+    Write-Host "STOP: v$Version is already archived at $archiveDir. Archives are never overwritten. Pick a new version." -ForegroundColor Red
+    exit 1
+}
+
 # ---------------------------------------------------------------------------
 # 1. Bump the five version sites
 # ---------------------------------------------------------------------------
@@ -294,16 +302,30 @@ Step "Publish + verify canary installer" {
     Write-Host "  $canaryName -> $releasesDir"
 }
 
+# ---------------------------------------------------------------------------
+# 9. Archive both installers forever: releases\archive\<version>\. Last on
+#    purpose (after every gate), refuses to overwrite, never deletes. This is
+#    what tools/revert.ps1 installs from.
+# ---------------------------------------------------------------------------
+Step "Archive installers" {
+    $releasesDir = Join-Path $root "releases"
+    & (Join-Path $root "tools\archive-installers.ps1") -ReleasesDir $releasesDir -Version $Version -Installer @(
+        (Join-Path $releasesDir "Flightdeck_${Version}_x64-setup.exe"),
+        (Join-Path $releasesDir "Flightdeck Canary_${Version}_x64-setup.exe")
+    )
+}
+
 Write-Host ""
 Write-Host "== Release v$Version ready ==" -ForegroundColor Green
 Write-Host "  releases\Flightdeck_${Version}_x64-setup.exe          (stable - the promotion artifact)"
 Write-Host "  releases\Flightdeck Canary_${Version}_x64-setup.exe   (canary - install THIS first)"
 Write-Host "  releases\latest.json"
+Write-Host "  releases\archive\$Version\                            (both installers, kept forever)"
 Write-Host ""
 Write-Host "Manual next steps:" -ForegroundColor Yellow
 Write-Host "  1. Install the CANARY installer - it lands beside the stable install, never over it,"
 Write-Host "     and on first boot clones a copy of stable's state (worktrees excluded by design)."
 Write-Host "  2. Trial canary. Broken? Delete it; stable was never touched. Good? Promote:"
-Write-Host "     install stable v$Version by hand, or let the running stable offer it (Settings > About)."
+Write-Host "     install stable v$Version by hand from outside Flightdeck (Settings > Updates only tells you it is there)."
 Write-Host "  3. Commit the version bump (package.json, Cargo.toml, Cargo.lock, tauri.conf.json, Settings.tsx, version.ts)."
-Write-Host "  4. If a stable in-app update fails, the installer is in releases\ and runs by hand (docs/SIGNING.md)."
+Write-Host "  4. Something wrong after install? pwsh tools\revert.ps1 -To <old version> (see docs/RELEASING.md)."
