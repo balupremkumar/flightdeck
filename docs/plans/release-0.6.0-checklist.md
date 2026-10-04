@@ -44,6 +44,18 @@ Each phase's red team adds its items here; the final release note links this fil
 - [ ] Three subagent lines open, window minimised 30 s: no polling; close the pane while expanded: polling stops.
 - [ ] Right-click a Focus pane sitting on a permission prompt with "1" on the clipboard: a confirm appears, nothing is answered.
 
+## Phase 6 F3, H4, H6
+
+- [ ] Settings > Appearance "Match Claude's colours" on, restart a Claude pane: `<app-data>\claude-view\claude-view-*-<theme>.json` exists and Claude's diff colours follow the app's light/dark; colour-blind-safe on gives the daltonized variant.
+- [ ] Catppuccin Mocha looks right in the theme picker.
+- [ ] Chat pane mid-turn: type and press Enter: "1 queued" shows and clears only when Claude picks the prompt up (not straight away).
+- [ ] Chat pane mid-turn while a permission prompt is just appearing: the queued text does not answer the prompt.
+- [ ] `npm run dev` in a pane: "localhost:5173 · node" chip within about 10 s; click opens the browser; × confirms, stops it, chip goes.
+- [ ] A port opened outside the panes never shows a chip.
+- [ ] Branch with a PR and running CI: chip says "checks running"; when CI ends exactly one toast, no bell.
+- [ ] No gh, logged out, or no PR: no chip, no error.
+- [ ] Long workspace name plus several ports: the topbar chip row clips cleanly.
+
 ## Phase 6 copy and paste (H2)
 
 - [ ] Select text in a pane, paste in Notepad: it matches.
