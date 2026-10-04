@@ -60,11 +60,13 @@ jobs:
         working-directory: demo
         run: node pane-smoke.mjs
 
-      # R1 fix pending; remove when qol/p0-r1 merges
       - name: Reflow keeps agents (R1)
-        continue-on-error: true
         working-directory: e2e
         run: node reflow-keeps-agents.mjs
+
+      - name: Draft survives restart
+        working-directory: e2e
+        run: node draft-survives-restart.mjs
 
   backend:
     name: Backend (Cargo)
