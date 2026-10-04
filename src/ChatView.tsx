@@ -236,6 +236,7 @@ function Items({ items, ctx, side }: { items: Item[]; ctx: Ctx; side?: boolean }
 }
 
 const TurnView = memo(function TurnView({ turn, ctx, index, paneId }: { turn: Turn; ctx: Ctx; index: number; paneId: number }) {
+  const [filesOpen, setFilesOpen] = useState(false);
   const pk = turn.prompt ? `p:${recKey(turn.prompt)}` : "";
   return (
     <section className="chat-turn" data-turn={index}>
@@ -244,13 +245,23 @@ const TurnView = memo(function TurnView({ turn, ctx, index, paneId }: { turn: Tu
       )}
       <Items items={turn.items} ctx={ctx} />
       {turn.files.length > 0 && (
-        <button
-          className="chat-files"
-          onClick={() => useUI.getState().setReviewPane(paneId)}
-          title={turn.files.map((f) => shortPath(f, ctx.cwd)).join("\n")}
-        >
-          {turn.files.length} file{turn.files.length === 1 ? "" : "s"} changed
-        </button>
+        <div className="chat-files-wrap">
+          <button
+            className="chat-files"
+            aria-expanded={turn.files.length > 1 ? filesOpen : undefined}
+            onClick={() => (turn.files.length > 1 ? setFilesOpen((o) => !o) : useUI.getState().setReviewPane(paneId, turn.files[0]))}
+            title={turn.files.map((f) => shortPath(f, ctx.cwd)).join("\n")}
+          >
+            {turn.files.length} file{turn.files.length === 1 ? "" : "s"} changed
+          </button>
+          {filesOpen && turn.files.length > 1 && (
+            <ul className="chat-filelist">
+              {turn.files.map((f) => (
+                <li key={f}><button className="chat-link" onClick={() => useUI.getState().setReviewPane(paneId, f)}>{shortPath(f, ctx.cwd)}</button></li>
+              ))}
+            </ul>
+          )}
+        </div>
       )}
     </section>
   );
@@ -265,12 +276,15 @@ export interface ChatViewProps {
   cwd: string;
   epoch: number;
   paneState: PaneState;
+  /** The pty exited in this epoch (PaneView tracks it; "idle" cannot tell). */
+  exited?: boolean;
+  onRestart?: () => void;
   /** Visible and chat selected: polling runs only while true. */
   active: boolean;
   onSwitchToTerminal: () => void;
 }
 
-export default function ChatView({ paneId, cwd, epoch, paneState, active, onSwitchToTerminal }: ChatViewProps) {
+export default function ChatView({ paneId, cwd, epoch, paneState, exited, onRestart, active, onSwitchToTerminal }: ChatViewProps) {
   const [records, setRecords] = useState<ReturnType<typeof appendBounded>["list"]>([]);
   const [trimmed, setTrimmed] = useState(false);
   const [info, setInfo] = useState<SessionInfo | null>(null);
@@ -437,7 +451,7 @@ export default function ChatView({ paneId, cwd, epoch, paneState, active, onSwit
   }, [active]);
 
   const ptyId = getPaneSession(paneId)?.ptyId ?? 0;
-  const gate = promptGate(paneState, ptyId > 0);
+  const gate = promptGate(paneState, ptyId > 0, !!exited);
   const send = async () => {
     const text = draft.trim();
     if (!text || !gate.canSend) return;
@@ -529,6 +543,11 @@ export default function ChatView({ paneId, cwd, epoch, paneState, active, onSwit
           <div className="chat-gate" role="status">
             <span>{gate.message}</span>
             <button onClick={onSwitchToTerminal}>Switch to Terminal</button>
+          </div>
+        ) : gate.reason === "exited" ? (
+          <div className="chat-gate" role="status">
+            <span>{gate.message}</span>
+            {onRestart && <button onClick={onRestart}>Restart</button>}
           </div>
         ) : (
           <>

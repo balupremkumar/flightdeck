@@ -88,3 +88,5 @@
 @media (prefers-reduced-motion: no-preference) {
   .chat-jump { transition: border-color var(--t-fast, .12s); }
 }
+.chat-filelist { list-style: none; margin: 4px 0 0; padding: 0 0 0 4px; font-size: 12px; }
+.chat-filelist .chat-link { margin-left: 0; }

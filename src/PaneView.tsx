@@ -557,6 +557,8 @@ function PaneViewInner({
   const [progress, setProgress] = useState<number | null>(null);
   // UI-125: how the process ended, so Restart can say what it's recovering from.
   const [lastExit, setLastExit] = useState<string | null>(null);
+  // Epoch in which the process exited: "idle" alone cannot tell exited from waiting.
+  const [exitEpoch, setExitEpoch] = useState<number | null>(null);
   const bellTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const pulseBell = () => {
     setBell(true);
@@ -1362,6 +1364,7 @@ Running low — consider /compact in this pane.` : "")
           quietThresholdMs={quietSec * 1000}
           onExit={(crashed) => {
             setLastExit(crashed ? "crashed" : "exited cleanly");
+            setExitEpoch(pane.epoch);
             setPaneState(pane.id, crashed ? "error" : "idle");
           }}
           onState={(st) => setPaneState(pane.id, st as PaneState)}
@@ -1378,6 +1381,8 @@ Running low — consider /compact in this pane.` : "")
               cwd={pane.cwd}
               epoch={pane.epoch}
               paneState={pane.state}
+              exited={exitEpoch === pane.epoch}
+              onRestart={() => restartPane(pane.id)}
               active={paneVisible}
               onSwitchToTerminal={() => switchView("terminal")}
             />

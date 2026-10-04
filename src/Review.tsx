@@ -129,6 +129,8 @@ export function Review() {
     return null;
   }, [workspaces, paneId]);
 
+  // Chat view asks Review to open at a file (absolute or relative path).
+  const wantFileRef = useRef<string | null>(null);
   const [summary, setSummary] = useState<DiffSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
@@ -233,7 +235,10 @@ export function Review() {
         .then(setCtx)
         .catch(() => setCtx(null));
       // Keep the selection if the file is still changed; else pick the first.
-      setSelected((sel) => (sel && s.files.some((f) => f.path === sel) ? sel : s.files[0]?.path ?? null));
+      const want = wantFileRef.current?.replace(/\\/g, "/").toLowerCase() ?? null;
+      wantFileRef.current = null;
+      const wanted = want ? s.files.find((f) => want === f.path.toLowerCase() || want.endsWith("/" + f.path.toLowerCase()))?.path ?? null : null;
+      setSelected((sel) => wanted ?? (sel && s.files.some((f) => f.path === sel) ? sel : s.files[0]?.path ?? null));
       // Drop deselections for files that no longer appear in the diff (e.g.
       // the agent reverted them) — a stale checkbox state shouldn't outlive
       // the file it refers to.
@@ -268,7 +273,11 @@ export function Review() {
     }
   }, [pane?.cwd, pane?.baseBranch, pane?.epoch]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => { if (paneId != null) void load(); }, [paneId, load]);
+  useEffect(() => {
+    if (paneId == null) return;
+    wantFileRef.current = useUI.getState().reviewFile;
+    void load();
+  }, [paneId, load]);
 
   // UI-170: the agent keeps working while the drawer is open, so a static diff
   // goes stale in front of you. Poll quietly and flag that it moved.

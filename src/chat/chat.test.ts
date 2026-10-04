@@ -144,6 +144,12 @@ describe("promptGate", () => {
     expect(promptGate("starting", true).canSend).toBe(false);
     expect(promptGate("waiting", false).canSend).toBe(false);
   });
+  it("refuses an exited pane even when state is idle", () => {
+    const g = promptGate("idle", true, true);
+    expect(g.canSend).toBe(false);
+    expect(g.reason).toBe("exited");
+    expect(g.message).toMatch(/Restart it to continue/);
+  });
   it("explains the permission block", () => {
     const g = promptGate("permission", true);
     expect(g.canSend).toBe(false);

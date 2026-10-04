@@ -162,7 +162,9 @@ interface UIState {
   // null when closed. Store-level so the pane header, command palette, and
   // future board cards can all open it.
   reviewPaneId: number | null;
-  setReviewPane: (paneId: number | null) => void;
+  /** Optional file: Review selects it on open (chat view "N files changed"). */
+  reviewFile: string | null;
+  setReviewPane: (paneId: number | null, file?: string) => void;
 
   // File preview drawer (UX-505/513): read-only tabs opened by clicking a
   // linkified path in a terminal. Store-level for the same reason as the
@@ -386,7 +388,8 @@ export const useUI = create<UIState>((set, get) => ({
   }),
 
   reviewPaneId: null,
-  setReviewPane: (reviewPaneId) => set({ reviewPaneId }),
+  reviewFile: null,
+  setReviewPane: (reviewPaneId, file) => set({ reviewPaneId, reviewFile: reviewPaneId == null ? null : file ?? null }),
 
   previewTabs: [],
   activePreviewId: null,
