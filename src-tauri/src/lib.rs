@@ -150,6 +150,19 @@ fn build_command(
     for a in &plan.extra_args {
         base.arg(a);
     }
+    // TN5: pin Claude's view (focus vs default) via a Flightdeck-owned settings
+    // file. Skipped if the launch already carries its own --settings.
+    if vendor == "claude" {
+        let has_settings = base.get_argv().iter().any(|a| {
+            let a = a.to_string_lossy();
+            a == "--settings" || a.starts_with("--settings=")
+        });
+        if !has_settings {
+            if let Some(args) = chatlog::view_settings_args(focus_mode) {
+                base.args(args);
+            }
+        }
+    }
     let mut cmd = match setup.map(str::trim).filter(|s| !s.is_empty()) {
         // Worktree setup phase (Tier 0 follow-up): run e.g. `npm ci` in the
         // fresh worktree, then launch the vendor; failure never starts the agent.
@@ -1002,6 +1015,8 @@ pub fn run() {
             applog::log("info", "canary", note);
         }
         vendors::set_manifest_dir(data_dir.join("vendors"));
+        // TN5: Claude view settings files (--settings), written on demand too.
+        chatlog::set_view_dir(data_dir.join("claude-view"));
         // QL-752: (re)write the PowerShell shell-integration preamble that
         // interactive pwsh panes dot-source at spawn. Rewritten every launch so
         // it can't go stale; if the write fails, panes simply launch without
@@ -1090,6 +1105,64 @@ mod tests {
         let (c, plan) = build_command("pwsh", "D:\\t", None, false);
         assert_eq!(env_of(&c, "CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN"), None);
         assert!(plan.session_id.is_none());
+    }
+
+    fn argv_of(cmd: &CommandBuilder) -> Vec<String> {
+        cmd.get_argv().iter().map(|a| a.to_string_lossy().into_owned()).collect()
+    }
+
+    fn init_test_view_dir() -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("fd-tn5-view-{}", std::process::id()));
+        chatlog::set_view_dir(dir.clone());
+        // set_view_dir is first-writer-wins; return whatever is actually set.
+        dir
+    }
+
+    #[test]
+    fn claude_gets_exactly_one_view_settings_arg() {
+        init_test_view_dir();
+        for focus in [true, false] {
+            let (c, _) = build_command("claude", "D:\\t-tn5-a", None, focus);
+            let argv = argv_of(&c);
+            assert_eq!(argv.iter().filter(|a| *a == "--settings").count(), 1, "{argv:?}");
+            let i = argv.iter().position(|a| a == "--settings").unwrap();
+            let want = if focus { "claude-view-focus.json" } else { "claude-view-default.json" };
+            assert!(argv[i + 1].starts_with('\'') && argv[i + 1].ends_with(&format!("{want}'")), "{argv:?}");
+        }
+        // Non-claude vendors never get it.
+        let (c, _) = build_command("pwsh", "D:\\t-tn5-a", None, true);
+        assert!(!argv_of(&c).iter().any(|a| a == "--settings"));
+    }
+
+    #[test]
+    fn user_supplied_settings_is_not_doubled() {
+        init_test_view_dir();
+        usage::stage_launch_args("claude".into(), "D:\\t-tn5-user".into(), vec!["--settings".into(), "C:\\mine.json".into()]).unwrap();
+        let (c, _) = build_command("claude", "D:\\t-tn5-user", None, true);
+        let argv = argv_of(&c);
+        assert_eq!(argv.iter().filter(|a| *a == "--settings").count(), 1, "{argv:?}");
+        assert!(argv.iter().any(|a| a == "C:\\mine.json"));
+        usage::stage_launch_args("claude".into(), "D:\\t-tn5-user2".into(), vec!["--settings=C:\\mine.json".into()]).unwrap();
+        let (c, _) = build_command("claude", "D:\\t-tn5-user2", None, false);
+        assert!(!argv_of(&c).iter().any(|a| a == "--settings"));
+    }
+
+    #[test]
+    fn view_settings_files_and_quoting() {
+        let dir = std::env::temp_dir().join(format!("fd tn5 o'brien {}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let focus = chatlog::view_settings_args_in(&dir, true).unwrap();
+        let classic = chatlog::view_settings_args_in(&dir, false).unwrap();
+        // Idempotent re-run.
+        assert_eq!(chatlog::view_settings_args_in(&dir, true).unwrap(), focus);
+        assert_eq!(std::fs::read_to_string(dir.join("claude-view-focus.json")).unwrap(), "{\"viewMode\":\"focus\"}");
+        assert_eq!(std::fs::read_to_string(dir.join("claude-view-default.json")).unwrap(), "{\"viewMode\":\"default\"}");
+        assert_eq!(focus[0], "--settings");
+        let want = format!("'{}'", dir.join("claude-view-focus.json").to_string_lossy().replace('\'', "''"));
+        assert_eq!(focus[1], want);
+        assert!(focus[1].contains("o''brien") && focus[1].contains("fd tn5"));
+        assert!(classic[1].ends_with("claude-view-default.json'"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

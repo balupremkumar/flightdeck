@@ -723,7 +723,7 @@ function PaneViewInner({
     const on = !pane.focusMode;
     requestConfirm({
       title: on ? "Turn on Focus mode?" : "Turn off Focus mode?",
-      body: "Restarts this Claude pane. The running session ends and Claude relaunches " + (on ? "in its fullscreen renderer." : "in the classic view."),
+      body: "Restarts this Claude pane. The running session ends and Claude relaunches " + (on ? "in its quiet focus view." : "in the classic view."),
       confirmLabel: "Restart pane",
       onConfirm: () => setPaneFocusMode(pane.id, on),
     });
@@ -1201,7 +1201,7 @@ Running low — consider /compact in this pane.` : "")
                 <IconRefresh size={13} /> Restart
               </button>
               {isClaude && (
-                <button className="pmenu-item" role="menuitemcheckbox" aria-checked={!!pane.focusMode} onClick={toggleFocusMode}>
+                <button className="pmenu-item" role="menuitemcheckbox" aria-checked={!!pane.focusMode} onClick={toggleFocusMode} title="Quiet Claude view: just your prompt, a one-line summary of each turn's tool work with edit counts, and Claude's final reply. Ctrl+O shows the full transcript. Scroll with PgUp/PgDn. Restarts the pane.">
                   {pane.focusMode ? "✓ " : ""}Focus mode (Claude fullscreen)
                 </button>
               )}

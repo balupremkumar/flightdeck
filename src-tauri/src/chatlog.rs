@@ -44,6 +44,55 @@ pub fn claude_env(focus_mode: bool) -> &'static [(&'static str, &'static str)] {
     }
 }
 
+// TN5: Claude's focus view is a settings value (`viewMode`), passed per launch
+// with `--settings <file>` so nothing under ~/.claude is touched. Classic panes
+// are pinned to "default" so a global `/focus` can't change them.
+
+static VIEW_DIR: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+
+/// Called once from setup with `<app-data>/claude-view`. Later calls are ignored.
+pub fn set_view_dir(dir: std::path::PathBuf) {
+    let _ = VIEW_DIR.set(dir);
+}
+
+/// Write `contents` to `path` unless it already holds exactly that (tmp + rename).
+fn write_if_changed(path: &std::path::Path, contents: &str) -> std::io::Result<()> {
+    if std::fs::read_to_string(path).map(|c| c == contents).unwrap_or(false) {
+        return Ok(());
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, contents)?;
+    std::fs::rename(&tmp, path)
+}
+
+/// Ensure the view settings file for `focus` exists in `dir` and return its path.
+pub fn view_settings_file(dir: &std::path::Path, focus: bool) -> std::io::Result<std::path::PathBuf> {
+    let (name, body) = if focus {
+        ("claude-view-focus.json", "{\"viewMode\":\"focus\"}")
+    } else {
+        ("claude-view-default.json", "{\"viewMode\":\"default\"}")
+    };
+    let path = dir.join(name);
+    write_if_changed(&path, body)?;
+    Ok(path)
+}
+
+/// The args to append to a claude launch: `--settings` plus the file path
+/// quoted for the `pwsh -Command claude ...` wrapper (single quotes, embedded
+/// quotes doubled). None if the view dir is unset or the file can't be written.
+pub fn view_settings_args(focus: bool) -> Option<[String; 2]> {
+    view_settings_args_in(VIEW_DIR.get()?, focus)
+}
+
+pub fn view_settings_args_in(dir: &std::path::Path, focus: bool) -> Option<[String; 2]> {
+    let path = view_settings_file(dir, focus).ok()?;
+    let p = path.to_string_lossy();
+    Some(["--settings".to_string(), format!("'{}'", p.replace('\'', "''"))])
+}
+
 // ---------------------------------------------------------------------------
 // C3a: session pinning.
 // ---------------------------------------------------------------------------
