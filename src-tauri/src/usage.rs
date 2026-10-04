@@ -35,7 +35,7 @@ pub struct PaneUsage {
 
 /// Claude Code's project-dir slug: every non-alphanumeric byte becomes '-'
 /// ("D:\Dev\ai" -> "D--Dev-ai").
-fn slugify(cwd: &str) -> String {
+pub(crate) fn slugify(cwd: &str) -> String {
     cwd.chars()
         .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
         .collect()

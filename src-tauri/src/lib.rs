@@ -6,6 +6,7 @@
 
 mod applog;
 mod canary;
+mod chatlog;
 mod editor;
 mod gitstatus;
 mod health;
@@ -53,6 +54,8 @@ pub(crate) struct Pane {
     // Live foreground process name (procname.rs), kept so pane_health can
     // report it and the sampler can diff against it to avoid event spam.
     proc_name: Mutex<String>,
+    // Claude session pin/resolve state (chatlog.rs).
+    session: Mutex<chatlog::SessionState>,
 }
 
 #[derive(Default)]
@@ -115,7 +118,12 @@ fn vendors_dir() -> Option<String> {
     vendors::manifest_dir().map(|p| p.to_string_lossy().into_owned())
 }
 
-fn build_command(vendor: &str, cwd: &str, setup: Option<&str>) -> CommandBuilder {
+fn build_command(
+    vendor: &str,
+    cwd: &str,
+    setup: Option<&str>,
+    focus_mode: bool,
+) -> (CommandBuilder, chatlog::SessionPlan) {
     let adapter = vendors::find(vendor);
     // QL-764: one-shot args staged by the session launcher for this exact spawn
     // (`--resume <id>`, optionally `--fork-session`). Empty for every ordinary
@@ -123,7 +131,9 @@ fn build_command(vendor: &str, cwd: &str, setup: Option<&str>) -> CommandBuilder
     // vendor's own command BEFORE any setup wrapper, so the args reach the
     // agent rather than the pwsh wrapper.
     let mut base = adapter.command(cwd);
-    for a in usage::take_launch_args(vendor, cwd) {
+    let staged = usage::take_launch_args(vendor, cwd);
+    let plan = chatlog::plan_session(vendor, &staged, &chatlog::new_uuid_v4());
+    for a in &plan.extra_args {
         base.arg(a);
     }
     let mut cmd = match setup.map(str::trim).filter(|s| !s.is_empty()) {
@@ -147,7 +157,12 @@ fn build_command(vendor: &str, cwd: &str, setup: Option<&str>) -> CommandBuilder
     cmd.env("COLORTERM", "truecolor");
     cmd.env("FORCE_COLOR", "3");
     cmd.env("CLICOLOR_FORCE", "1");
-    cmd
+    if vendor == "claude" {
+        for (k, v) in chatlog::claude_env(focus_mode) {
+            cmd.env(k, v);
+        }
+    }
+    (cmd, plan)
 }
 
 #[tauri::command]
@@ -159,6 +174,7 @@ fn pty_spawn(
     cols: u16,
     rows: u16,
     setup: Option<String>,
+    focus_mode: Option<bool>,
 ) -> Result<u32, String> {
     crate::pathguard::check(&cwd)?;
     let pty_system = native_pty_system();
@@ -173,7 +189,8 @@ fn pty_spawn(
 
     let adapter = vendors::find(&vendor);
     adapter.prepare(&cwd);
-    let cmd = build_command(&vendor, &cwd, setup.as_deref());
+    let spawn_ms = now_ms();
+    let (cmd, plan) = build_command(&vendor, &cwd, setup.as_deref(), focus_mode.unwrap_or(false));
     let child = pair
         .slave
         .spawn_command(cmd)
@@ -309,10 +326,17 @@ fn pty_spawn(
             writer,
             child,
             vendor,
-            cwd,
+            cwd: cwd.clone(),
             last_cpu_100ns: AtomicU64::new(0),
             last_sample_ms: AtomicU64::new(0),
             proc_name: Mutex::new(root_proc_name),
+            session: Mutex::new(chatlog::SessionState {
+                session_id: plan.session_id,
+                pinned: plan.pinned,
+                needs_resolve: plan.needs_resolve,
+                spawn_ms,
+                cwd,
+            }),
         },
     );
     Ok(id)
@@ -694,6 +718,9 @@ pub fn run() {
         .manage(Registry::default())
         .invoke_handler(tauri::generate_handler![
             pty_spawn,
+            chatlog::pane_session_info,
+            chatlog::session_tail,
+            chatlog::session_record,
             pathcheck::paths_exist,
             pty_write,
             pty_resize,
@@ -841,6 +868,33 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn env_of(cmd: &CommandBuilder, k: &str) -> Option<String> {
+        cmd.get_env(k).map(|v| v.to_string_lossy().into_owned())
+    }
+
+    #[test]
+    fn claude_spawn_env_follows_focus_mode() {
+        let (c, _) = build_command("claude", "D:\\t", None, false);
+        assert_eq!(env_of(&c, "CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN").as_deref(), Some("1"));
+        assert_eq!(env_of(&c, "CLAUDE_CODE_NO_FLICKER"), None);
+        let (c, _) = build_command("claude", "D:\\t", None, true);
+        assert_eq!(env_of(&c, "CLAUDE_CODE_NO_FLICKER").as_deref(), Some("1"));
+        assert_eq!(env_of(&c, "CLAUDE_CODE_DISABLE_MOUSE").as_deref(), Some("1"));
+        assert_eq!(env_of(&c, "CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN"), None);
+        // Other vendors never get the claude env.
+        let (c, plan) = build_command("pwsh", "D:\\t", None, false);
+        assert_eq!(env_of(&c, "CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN"), None);
+        assert!(plan.session_id.is_none());
+    }
+
+    #[test]
+    fn fresh_claude_spawn_pins_a_session_id_arg() {
+        let (c, plan) = build_command("claude", "D:\\t", None, false);
+        let argv: Vec<String> = c.get_argv().iter().map(|a| a.to_string_lossy().into_owned()).collect();
+        let i = argv.iter().position(|a| a == "--session-id").expect("--session-id missing");
+        assert_eq!(Some(&argv[i + 1]), plan.session_id.as_ref());
+    }
 
     #[test]
     fn fs_commands_refuse_network_paths() {
