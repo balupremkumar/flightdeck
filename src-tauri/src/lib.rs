@@ -460,6 +460,33 @@ fn fs_read_text_file(path: String) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 
+#[derive(serde::Serialize, Debug, PartialEq)]
+struct FsStat {
+    mtime_ms: u64,
+    size: u64,
+    is_dir: bool,
+}
+
+fn stat_of(path: &std::path::Path) -> Result<FsStat, String> {
+    let meta = std::fs::metadata(path).map_err(|e| e.to_string())?;
+    let mtime_ms = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    Ok(FsStat { mtime_ms, size: meta.len(), is_dir: meta.is_dir() })
+}
+
+// Cheap change probe for the preview's "follow file" poll (QL-704): metadata
+// only, never content. Same guard + read-scope gate as the content reads.
+#[tauri::command(async)]
+fn fs_stat(path: String) -> Result<FsStat, String> {
+    pathguard::check(&path)?;
+    readscope::check_read(std::path::Path::new(&path))?;
+    stat_of(std::path::Path::new(&path))
+}
+
 // Images referenced from a previewed markdown file (UX-508), returned as base64
 // for a data: URI. Never fetched over the network.
 #[tauri::command(async)]
@@ -667,6 +694,7 @@ pub fn run() {
             fs_list_dir,
             fs_read_text_file,
             fs_read_file_base64,
+            fs_stat,
             readscope::set_read_roots,
             detect_vendors,
             vendors_dir,
@@ -816,6 +844,24 @@ mod tests {
             assert_eq!(fs_list_dir(p.into()).map(|_| ()).unwrap_err(), e, "{p}");
             assert_eq!(reveal::reveal_in_explorer(p.into()).unwrap_err(), e, "{p}");
         }
+    }
+
+    #[test]
+    fn fs_stat_guard_scope_and_shape() {
+        for p in [r"\\server\share\x", "//server/share", r"\\.\pipe\x"] {
+            assert_eq!(fs_stat(p.into()).unwrap_err(), pathguard::NETWORK_PATH_ERR, "{p}");
+        }
+        let d = std::env::temp_dir().join(format!("fd-fsstat-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        let f = d.join("a.txt");
+        std::fs::write(&f, "hello").unwrap();
+        // The temp dir is not an allowed root: refused with the scope error.
+        assert_eq!(fs_stat(f.to_string_lossy().into_owned()).unwrap_err(), readscope::OUTSIDE_SCOPE_ERR);
+        let s = stat_of(&f).unwrap();
+        assert_eq!((s.size, s.is_dir), (5, false));
+        assert!(s.mtime_ms > 0);
+        assert!(stat_of(&d).unwrap().is_dir);
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     /// Records every write/flush the PTY writer would have seen, so the tests
