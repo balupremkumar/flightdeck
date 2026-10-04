@@ -32,6 +32,15 @@ Each phase's red team adds its items here; the final release note links this fil
 - [ ] An MCP elicitation ("An MCP server needs your input") shows as needs-you.
 - [ ] A long command that prints progress (winget, a build showing a taskbar progress bar) keeps the pane "running", not "waiting".
 
+## Phase 6 copy and paste (H2)
+
+- [ ] Select text in a pane, paste in Notepad: it matches.
+- [ ] Right-click with no selection pastes; with a selection it copies and clears it.
+- [ ] Multi-line clipboard on right-click shows the confirm dialog.
+- [ ] vim with mouse on, or htop: right-click goes to the app; Shift+right-click opens the pane menu.
+- [ ] UI size not 100%: dragging a selection still lands on the dragged cells.
+- [ ] Settings > Right-click: Menu behaves exactly as before.
+
 ## TN (terminal noise)
 
 - [ ] New Claude pane opens in Chat; the folder trust prompt is reachable via "Switch to Terminal".
