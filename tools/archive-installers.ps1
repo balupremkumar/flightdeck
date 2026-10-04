@@ -49,4 +49,6 @@ if ($PSCmdlet.ShouldProcess($dest, "Create archive folder and copy $($Installer.
         }
         Write-Host "  archived $name -> $dest"
     }
+    # SHA256SUMS.txt: revert.ps1 verifies the installer against it before running it.
+    & (Join-Path $PSScriptRoot "hash-archive.ps1") -ReleasesDir $ReleasesDir -Version $Version
 }

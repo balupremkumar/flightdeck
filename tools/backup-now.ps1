@@ -29,6 +29,7 @@
 #>
 [CmdletBinding(SupportsShouldProcess)]
 param(
+    [ValidateSet('ai.flightdeck.app', 'ai.flightdeck.canary')]
     [string]$Identifier = "ai.flightdeck.app",
     [string]$AppData,
     [string]$LocalAppData,
@@ -52,6 +53,7 @@ $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
 $dest = Join-Path $paths.Backups "$version-$stamp"
 
 if ($PSCmdlet.ShouldProcess($dest, "Snapshot $($paths.Roaming) and Local Storage")) {
-    Copy-FdState -Paths $paths -Destination $dest
-    Write-Host "Backup written: $dest"
+    $complete = Copy-FdState -Paths $paths -Destination $dest
+    if ($complete) { Write-Host "Backup written: $dest" }
+    else { Write-Warning "Backup is PARTIAL (no complete.txt): $dest. Close Flightdeck and run this again." }
 }

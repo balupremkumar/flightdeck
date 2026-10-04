@@ -34,6 +34,11 @@
 .PARAMETER Silent
   Run the installer silently (/S).
 
+.PARAMETER Force
+  Escape hatch for two refusals: a backup without complete.txt (partial copy),
+  and an archive folder without SHA256SUMS.txt. A hash MISMATCH is never
+  overridden.
+
 .PARAMETER Identifier
   ai.flightdeck.app (stable, default) or ai.flightdeck.canary.
 
@@ -61,6 +66,8 @@ param(
     [string]$Backup,
     [switch]$NoRestore,
     [switch]$Silent,
+    [switch]$Force,
+    [ValidateSet('ai.flightdeck.app', 'ai.flightdeck.canary')]
     [string]$Identifier = "ai.flightdeck.app",
     [string]$ReleasesDir,
     [string]$AppData,
@@ -125,13 +132,47 @@ if (-not (Test-Path -LiteralPath $installer)) {
     if (-not $have) { $have = "none" }
     throw "No archived installer for $To at $installer. Archived versions: $have."
 }
+# Integrity: the installer must match SHA256SUMS.txt (written at archive time).
+$manifest = Join-Path (Split-Path -Parent $installer) "SHA256SUMS.txt"
+if (-not (Test-Path -LiteralPath $manifest)) {
+    if (-not $Force) {
+        throw "No SHA256SUMS.txt next to $installer, so its integrity cannot be checked. Run tools\hash-archive.ps1 if you trust the archive, or pass -Force."
+    }
+    Write-Warning "-Force: running $installer WITHOUT an integrity check (no SHA256SUMS.txt)."
+} else {
+    $leafName = Split-Path -Leaf $installer
+    $expected = $null
+    foreach ($line in Get-Content -LiteralPath $manifest) {
+        if ($line -match '^([0-9a-fA-F]{64})\s+\*?(.+?)\s*$' -and $Matches[2] -eq $leafName) { $expected = $Matches[1]; break }
+    }
+    if (-not $expected) {
+        if (-not $Force) { throw "$leafName is not listed in $manifest. Pass -Force to run it unchecked." }
+        Write-Warning "-Force: running $installer WITHOUT an integrity check (not listed in manifest)."
+    } else {
+        $actual = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash
+        if ($actual -ne $expected) {
+            throw "Installer hash MISMATCH for $installer (expected $expected, got $actual). The archived file has changed. Refusing to run it."
+        }
+        Write-Host "  installer SHA256 verified"
+    }
+}
 
 # ---- 3. Which backup --------------------------------------------------------
 $restoreFrom = $null
 if (-not $NoRestore) {
     if ($Backup) {
-        if (-not (Test-Path -LiteralPath $Backup)) { throw "Backup folder not found: $Backup" }
-        $restoreFrom = (Resolve-Path -LiteralPath $Backup).Path
+        if (-not (Test-Path -LiteralPath $Backup -PathType Container)) { throw "Backup folder not found: $Backup" }
+        $restoreFrom = (Resolve-Path -LiteralPath $Backup).Path.TrimEnd('\', '/')
+        # Must be a DIRECT child of this flavour's backups\ folder: that alone
+        # rules out Roaming itself, anything else inside Roaming, and Local Storage.
+        $backupsRoot = [System.IO.Path]::GetFullPath($paths.Backups).TrimEnd('\', '/')
+        $parent = (Split-Path -Parent $restoreFrom).TrimEnd('\', '/')
+        if (-not $parent.Equals($backupsRoot, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "-Backup must be a folder directly inside $backupsRoot (got $restoreFrom)."
+        }
+        if ((Get-Item -LiteralPath $restoreFrom -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) {
+            throw "-Backup must not be a junction or symlink: $restoreFrom"
+        }
     } else {
         $newest = @(Get-BackupsFor $To) | Select-Object -First 1
         if (-not $newest) {
@@ -142,6 +183,12 @@ if (-not $NoRestore) {
     if (-not (Test-Path -LiteralPath (Join-Path $restoreFrom "appdata")) -and
         -not (Test-Path -LiteralPath (Join-Path $restoreFrom "local-storage"))) {
         throw "$restoreFrom has neither appdata\ nor local-storage\ - not a backup folder."
+    }
+    if (-not (Test-Path -LiteralPath (Join-Path $restoreFrom "complete.txt"))) {
+        if (-not $Force) {
+            throw "$restoreFrom has no complete.txt: it was a partial copy (files were locked) or predates the marker. Restoring it could lose data. Pass -Force to use it anyway."
+        }
+        Write-Warning "-Force: restoring $restoreFrom even though it has no complete.txt. It may be INCOMPLETE."
     }
 }
 
@@ -154,16 +201,30 @@ if ($restoreFrom) {
     $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
     $aside = Join-Path $paths.Backups "pre-revert-$stamp"
     if ($PSCmdlet.ShouldProcess($aside, "Save current state here, then replace it with $restoreFrom")) {
-        # Copy first and only delete once the copy succeeded: if anything
-        # throws before Clear-FdState, current data is untouched.
-        Copy-FdState -Paths $paths -Destination $aside
+        # Copy first and only delete once the copy is verified complete and
+        # non-empty: if anything is off before Clear-FdState, current data is untouched.
+        $savedOk = Copy-FdState -Paths $paths -Destination $aside
+        if (-not $savedOk -or -not (Test-FdBackupNonEmpty -Folder $aside) -or
+            -not (Test-Path -LiteralPath (Join-Path $aside "complete.txt"))) {
+            throw "Could not save a complete copy of the current state to $aside (files locked or nothing to copy). Nothing was deleted and the installer was not run."
+        }
         Write-Host "  current state saved to $aside"
 
         $hasApp = Test-Path -LiteralPath (Join-Path $restoreFrom "appdata")
         $hasLs  = Test-Path -LiteralPath (Join-Path $restoreFrom "local-storage")
-        Clear-FdState -Paths $paths -KeepAppData:(-not $hasApp) -KeepLocalStorage:(-not $hasLs)
-        if ($hasApp) { Invoke-FdRobocopy -Source (Join-Path $restoreFrom "appdata") -Destination $paths.Roaming }
-        if ($hasLs)  { Invoke-FdRobocopy -Source (Join-Path $restoreFrom "local-storage") -Destination $paths.LocalStorage }
+        try {
+            Clear-FdState -Paths $paths -KeepAppData:(-not $hasApp) -KeepLocalStorage:(-not $hasLs)
+            if ($hasApp) { Invoke-FdRobocopy -Source (Join-Path $restoreFrom "appdata") -Destination $paths.Roaming | Out-Null }
+            if ($hasLs)  { Invoke-FdRobocopy -Source (Join-Path $restoreFrom "local-storage") -Destination $paths.LocalStorage | Out-Null }
+        } catch {
+            Write-Host ""
+            Write-Host "REVERT FAILED PART WAY: $($_.Exception.Message)" -ForegroundColor Red
+            Write-Host "Your previous state is safe in:" -ForegroundColor Red
+            Write-Host "  $aside" -ForegroundColor Red
+            Write-Host "To put it back, close Flightdeck and run:" -ForegroundColor Red
+            Write-Host "  pwsh tools\revert.ps1 -To $To -Backup '$aside'" -ForegroundColor Red
+            throw "Revert aborted before the installer ran."
+        }
         if (-not $hasLs) { Write-Warning "That backup has no local-storage\ (UI settings are left as they are now)." }
         Write-Host "  restored $restoreFrom"
     }
