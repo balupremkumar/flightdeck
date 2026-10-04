@@ -1353,3 +1353,16 @@ Order is by daily-driver value for one user running three or four agent panes in
 - [ ] N6.1 CI on GitHub Actions running the release gate (I3).
 - [ ] N6.2 Motion system and reduced-motion audit (UI-41).
 - [ ] N6.3 Onboarding, telemetry, licensing (section H).
+
+## TN. Terminal noise: tool output floods the screen (raised by Balu 2026-10-04, PRIORITY)
+
+Balu's screenshots: every file an agent creates or edits ("Created src\paneStyle.ts (+45 -0)", "Updated src\session.test.ts (+2 -2)") is printed as a full diff, line by line, plus every tool step as its own line.
+He wants all of it minimised to one line each, expandable on click when he wants detail.
+This output is Claude Code's own TUI rendering inside xterm; Flightdeck draws none of it, so the fixes are on Flightdeck's side of the display.
+
+- [ ] TN1 Chat view as the default for Claude panes: Settings > Agents "Open Claude panes in: Terminal / Chat" (default Chat once TN2-TN4 land); the terminal stays live underneath (Ctrl+Shift+M). Chat view already collapses each tool call into a chip and big diffs until clicked (Phase 3).
+- [ ] TN2 Chat view density: in Normal density, one line per tool call, consecutive calls of any kind folded into a single line per turn ("Edited 4 files, ran 3 commands, read 6 files"), diffs never shown inline until clicked; Verbose keeps today's chips.
+- [ ] TN3 Subagent activity as one line: Claude 2.1.289 writes subagent transcripts to <session>/subagents/*.jsonl; read them in chatlog.rs and show each subagent as one collapsible line ("Subagent: Phase 6 pane polish, 12 edits, 8 commands") with its own chips inside, instead of nothing (today) or floods.
+- [ ] TN4 File-change summary per turn: a single "Changed 5 files (+120 -18)" row at the end of each turn, click opens the Review drawer at that file list (Review already supports open-at-file).
+- [ ] TN5 Terminal side, for when Balu stays in Terminal view: investigate Claude Code options that shorten tool output in the classic TUI (settings / env such as verbose off, output style, any diff-collapse or condensed-tool-output setting in 2.1.289; check `claude --help`, settings reference, changelog) and expose the safe ones as a per-pane toggle. Focus mode (Claude fullscreen, opt-in per pane, Phase 3) already collapses tool results; document it in the pane menu tooltip.
+- [ ] TN6 Measure: before/after line count for the same turn (target: a multi-file edit turn fits on one screen in Chat Normal).
