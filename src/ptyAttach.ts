@@ -37,6 +37,14 @@ export interface AttachInfo {
   proc_name?: string;
 }
 
+/** Most events held before a pty id is known. Every pane's session holds every
+ *  pane's output while it waits, so this is a bound, not a budget: past it the
+ *  oldest go (a pane that waits this long is attached from its snapshot anyway). */
+export const MAX_HELD_EVENTS = 4096;
+
+/** How long attachFirst waits for pty_attach before giving up and spawning. */
+export const ATTACH_TIMEOUT_MS = 5000;
+
 /** Gate between the `pty://output` listener and the terminal. */
 export class OutputPipe<E extends { pane_id: number; seq?: number }> {
   private early: E[] = [];
@@ -47,6 +55,7 @@ export class OutputPipe<E extends { pane_id: number; seq?: number }> {
   hold(e: E): boolean {
     if (this.paneId !== 0) return false;
     this.early.push(e);
+    if (this.early.length > MAX_HELD_EVENTS) this.early.splice(0, this.early.length - MAX_HELD_EVENTS);
     return true;
   }
 
@@ -95,13 +104,22 @@ export async function attachFirst<E extends { pane_id: number; seq?: number }>(
   modelId: number,
   gen: string,
   fresh = false,
+  timeoutMs = ATTACH_TIMEOUT_MS,
 ): Promise<{ info: AttachInfo; early: E[] } | null> {
   if (fresh) return null;
   let info: AttachInfo | null;
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    info = await inv<AttachInfo | null>("pty_attach", { modelId, gen });
+    // A hung attach must never leave a pane dead: after the timeout we spawn, and
+    // the spawn supersedes whatever entry the late attach may have claimed.
+    info = await Promise.race([
+      inv<AttachInfo | null>("pty_attach", { modelId, gen }),
+      new Promise<null>((res) => { timer = setTimeout(() => res(null), timeoutMs); }),
+    ]);
   } catch {
     return null;
+  } finally {
+    clearTimeout(timer);
   }
   if (!info) return null;
   return { info, early: pipe.bind(info.pty_id, info.snapshot.next_seq) };

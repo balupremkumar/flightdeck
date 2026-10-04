@@ -654,8 +654,11 @@ fn pty_write(reg: State<Registry>, pane_id: u32, data: String) -> Result<(), Str
 
 #[tauri::command]
 fn pty_resize(reg: State<Registry>, pane_id: u32, cols: u16, rows: u16) -> Result<(), String> {
-    let panes = reg.panes.lock().unwrap();
-    if let Some(p) = panes.get(&pane_id) {
+    // Clone the PaneOut Arc out and release `panes` before locking it, so the
+    // lock-order rule in paneout.rs holds.
+    let out = {
+        let panes = reg.panes.lock().unwrap();
+        let Some(p) = panes.get(&pane_id) else { return Ok(()) };
         p.master
             .resize(PtySize {
                 rows,
@@ -664,8 +667,9 @@ fn pty_resize(reg: State<Registry>, pane_id: u32, cols: u16, rows: u16) -> Resul
                 pixel_height: 0,
             })
             .map_err(|e| e.to_string())?;
-        paneout::lock_out(&p.out).resized(cols, rows);
-    }
+        p.out.clone()
+    };
+    paneout::lock_out(&out).resized(cols, rows);
     Ok(())
 }
 

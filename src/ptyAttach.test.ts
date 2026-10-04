@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { OutputPipe, attachFirst, attachPlan, isRestoredPane, markRestoredPane, type AttachInfo, type OutputEvt } from "./ptyAttach";
+import { MAX_HELD_EVENTS, OutputPipe, attachFirst, attachPlan, isRestoredPane, markRestoredPane, type AttachInfo, type OutputEvt } from "./ptyAttach";
 
 const b64 = (s: string) => btoa(s);
 const evt = (pane_id: number, text: string, seq?: number): OutputEvt => ({ pane_id, b64: b64(text), seq });
@@ -137,5 +137,20 @@ describe("fresh panes never attach", () => {
     expect(isRestoredPane(901)).toBe(false);
     markRestoredPane(901);
     expect(isRestoredPane(901)).toBe(true);
+  });
+});
+
+describe("hold cap and attach timeout", () => {
+  it("caps the held list, dropping the oldest", () => {
+    const pipe = new OutputPipe<OutputEvt>();
+    for (let i = 1; i <= MAX_HELD_EVENTS + 10; i++) pipe.hold(evt(5, "x", i));
+    const held = pipe.bind(5);
+    expect(held.length).toBe(MAX_HELD_EVENTS);
+    expect(held[0].seq).toBe(11);
+  });
+  it("falls back to spawn when pty_attach never answers", async () => {
+    const inv = (() => new Promise(() => {})) as Parameters<typeof attachFirst>[0];
+    const pipe = new OutputPipe<OutputEvt>();
+    expect(await attachFirst(inv, pipe, 3, "0|claude|D:\\a", false, 20)).toBeNull();
   });
 });

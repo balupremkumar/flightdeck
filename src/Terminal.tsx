@@ -1280,6 +1280,7 @@ function createSession(modelId: number, gen: string, spec: SpawnSpec, handlers: 
     const pipe = new OutputPipe<OutputEvt>();
     // Same race for the spawn-time `pty://proc` root-name event.
     const earlyProc = new Map<number, string>();
+    const earlyExit = new Map<number, boolean>(); // pane_id -> crashed, held like output/proc
 
     const decodeB64 = (b64: string): Uint8Array => {
       const bin = atob(b64);
@@ -1480,16 +1481,20 @@ function createSession(modelId: number, gen: string, spec: SpawnSpec, handlers: 
         appendTail(bytes);
         if (visible) writeBytes(bytes); else pushHidden(bytes);
       });
-      unExit = await listen<{ pane_id: number; crashed: boolean }>("pty://exit", (e) => {
-        if (e.payload.pane_id !== paneId) return;
+      const handleExit = (crashed: boolean) => {
         currentlyAlive = false;
         clearQuietTimer();
         // QL-782: a finished install must not leave 87% on the taskbar forever.
         publishPaneProgress(paneId, null);
-        term.write(e.payload.crashed
+        term.write(crashed
           ? "\r\n\x1b[31m[process exited — crashed]\x1b[0m\r\n"
           : "\r\n\x1b[2m[process exited]\x1b[0m\r\n");
-        entry.handlers.onExit?.(e.payload.crashed);
+        entry.handlers.onExit?.(crashed);
+      };
+      unExit = await listen<{ pane_id: number; crashed: boolean }>("pty://exit", (e) => {
+        if (paneId === 0) { earlyExit.set(e.payload.pane_id, e.payload.crashed); return; }
+        if (e.payload.pane_id !== paneId) return;
+        handleExit(e.payload.crashed);
       });
       unState = await listen<{ pane_id: number; state: string }>("pty://state", (e) => {
         if (e.payload.pane_id !== paneId) return;
@@ -1593,6 +1598,11 @@ function createSession(modelId: number, gen: string, spec: SpawnSpec, handlers: 
       const bufferedProc = earlyProc.get(paneId);
       if (bufferedProc) entry.handlers.onProc?.(bufferedProc);
       earlyProc.clear();
+      // A child that died during the spawn window: its exit arrived before we
+      // knew the pty id. Output is already replayed above, so the order holds.
+      const diedEarly = earlyExit.get(paneId);
+      earlyExit.clear();
+      if (diedEarly !== undefined) handleExit(diedEarly);
 
       // The container may have resized during the spawn round-trip (the observer
       // fires before onResize is wired), so push the current size once.
