@@ -22,6 +22,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { terminalThemeFor } from "./terminal-theme";
 import { getTerminalSettings, terminalReadabilityOptions } from "./settingsStore";
 import { linkify, resolvePath, isRemotePath, type LinkMatch } from "./linkify";
+import { computeFoldRanges, foldAll, foldsContaining, foldSummary, pruneFolded, toggleFold, type FoldRange } from "./foldmarks";
 import { invalidatePathCache } from "./pathcheck";
 import { openInEditor } from "./editor";
 import { useUI } from "./ui";
@@ -528,6 +529,9 @@ export interface TerminalHandle {
    *  there is none that way (or the shell emits no marks at all). Same action
    *  Ctrl+Up/Ctrl+Down performs inside the pane. */
   jumpToCommandMark: (dir: 1 | -1) => boolean;
+  /** QL-763: fold (true) / unfold (false) every finished command's output.
+   *  No-op on panes that emit no command marks. */
+  foldAllCommands: (on: boolean) => void;
   /** QL-754: raise the quick-select hint overlay. False when there was nothing
    *  on screen to label. Same action Ctrl+Shift+Space performs inside the pane;
    *  exposed so the pane menu can show people the feature exists. */
@@ -951,7 +955,11 @@ function createSession(modelId: number, gen: string, spec: SpawnSpec, handlers: 
     // One entry per prompt the shell drew. `ran` means a command actually
     // executed (133;C, or a 133;D that carried an exit code) — a bare Enter
     // leaves a prompt behind and must not clutter the ruler or the jump list.
-    interface CmdMark { marker: IMarker; dec?: IDecoration; ran: boolean; exit?: number }
+    interface CmdMark {
+      marker: IMarker; dec?: IDecoration; ran: boolean; exit?: number;
+      /** QL-763: where the output began (133;C) and where it ended (cursor at 133;D). */
+      outMarker?: IMarker; endMarker?: IMarker;
+    }
     const marks: CmdMark[] = [];
     const MARK_CAP = 500; // ~a session's worth; the oldest are dropped first
     let markCarry = "";
@@ -986,8 +994,109 @@ function createSession(modelId: number, gen: string, spec: SpawnSpec, handlers: 
       const i = marks.indexOf(m);
       if (i >= 0) marks.splice(i, 1);
       m.dec?.dispose();
+      m.outMarker?.dispose();
+      m.endMarker?.dispose();
       m.marker.dispose();
     };
+
+    // --- QL-763: fold a finished command's output ---------------------------
+    // xterm can't remove rows, and rewriting the buffer would break scrollback,
+    // selection and search. So a fold is purely visual: a decoration spanning
+    // the output rows, painted in the terminal background, with one clickable
+    // summary row on top. The covered rows keep their height (see limits in the
+    // hand-off); the buffer is never touched. Chevrons sit at the prompt row's
+    // right edge. State is per pane and keyed by prompt-marker id.
+    let folded = new Set<number>();
+    let foldRanges: FoldRange[] = [];
+    let foldDecs: { dec: IDecoration; marker?: IMarker }[] = [];
+    let foldRaf = 0;
+    const clearFoldViews = () => {
+      for (const v of foldDecs) { v.dec.dispose(); v.marker?.dispose(); }
+      foldDecs = [];
+    };
+    const rowText = (line: number) => term.buffer.active.getLine(line)?.translateToString(true) ?? "";
+    const applyFolds = () => {
+      foldRaf = 0;
+      clearFoldViews();
+      const live = marks.filter((m) => m.marker.line >= 0 && !m.marker.isDisposed);
+      foldRanges = computeFoldRanges(
+        live.map((m) => ({
+          id: m.marker.id,
+          promptLine: m.marker.line,
+          outStart: m.outMarker && m.outMarker.line >= 0 ? m.outMarker.line : undefined,
+          outEnd: m.endMarker && m.endMarker.line >= 0 ? m.endMarker.line : undefined,
+          exit: m.exit,
+        })),
+        (l) => rowText(l).trim() === "",
+      );
+      folded = pruneFolded(folded, foldRanges);
+      const buf = term.buffer.active;
+      const cursorLine = buf.baseY + buf.cursorY;
+      for (const r of foldRanges) {
+        const mark = live.find((m) => m.marker.id === r.id);
+        if (!mark) continue;
+        const isFolded = folded.has(r.id);
+        const chev = term.registerDecoration({ marker: mark.marker, x: Math.max(0, term.cols - 2), width: 2 });
+        if (chev) {
+          foldDecs.push({ dec: chev });
+          chev.onRender((el) => {
+            el.classList.add("fd-fold-chev");
+            el.textContent = isFolded ? "▸" : "▾";
+            el.setAttribute("role", "button");
+            el.setAttribute("aria-label", isFolded ? "Unfold command output" : "Fold command output");
+            el.setAttribute("aria-expanded", String(!isFolded));
+            el.title = isFolded ? "Unfold output" : "Fold output";
+            el.onmousedown = (e) => { e.preventDefault(); e.stopPropagation(); };
+            el.onclick = (e) => { e.preventDefault(); e.stopPropagation(); setFold(r.id, !isFolded); };
+          });
+        }
+        if (!isFolded) continue;
+        const marker = term.registerMarker(r.start - cursorLine);
+        if (!marker) continue;
+        const dec = term.registerDecoration({ marker, x: 0, width: term.cols, height: r.lines });
+        if (!dec) { marker.dispose(); continue; }
+        foldDecs.push({ dec, marker });
+        const text = foldSummary(rowText(r.promptLine), r.lines, r.exit);
+        dec.onRender((el) => {
+          el.classList.add("fd-fold-cover");
+          el.style.background = themeRef.current.background ?? "#000";
+          el.style.pointerEvents = "none"; // selection still reaches the rows underneath
+          el.style.fontFamily = String(term.options.fontFamily ?? "");
+          el.style.fontSize = `${term.options.fontSize ?? 12}px`;
+          let bar = el.firstElementChild as HTMLElement | null;
+          if (!bar) { bar = document.createElement("div"); el.appendChild(bar); }
+          bar.className = `fd-fold-bar${r.exit === 0 ? "" : " is-err"}`;
+          bar.style.height = `${100 / r.lines}%`;
+          bar.textContent = text;
+          bar.setAttribute("role", "button");
+          bar.setAttribute("aria-label", `${text}. Unfold`);
+          bar.onmousedown = (e) => { e.preventDefault(); e.stopPropagation(); };
+          bar.onclick = (e) => { e.preventDefault(); e.stopPropagation(); setFold(r.id, false); };
+        });
+      }
+    };
+    const scheduleFolds = () => { if (!foldRaf) foldRaf = requestAnimationFrame(applyFolds); };
+    const setFold = (id: number, on: boolean) => {
+      if (folded.has(id) === on) return;
+      folded = toggleFold(folded, id);
+      applyFolds();
+      term.focus();
+    };
+    const foldAllCommands = (on: boolean) => {
+      applyFolds(); // ranges must be current before anything is folded
+      folded = on ? foldAll(foldRanges) : new Set<number>();
+      applyFolds();
+    };
+    /** Search / scroll-to landed on a buffer line: unfold whatever hides it. */
+    const revealLine = (line: number) => {
+      const ids = foldsContaining(foldRanges, folded, line);
+      if (!ids.length) return;
+      for (const id of ids) folded = toggleFold(folded, id);
+      applyFolds();
+    };
+    entry.api.revealLine = revealLine;
+    entry.api.foldAll = foldAllCommands;
+    const foldResizeDisp = term.onResize(scheduleFolds);
 
     const handleMark = (ev: ShellMarkEvent) => {
       if (ev.kind === "cwd") {
@@ -1006,6 +1115,9 @@ function createSession(modelId: number, gen: string, spec: SpawnSpec, handlers: 
           const i = marks.indexOf(mark);
           if (i >= 0) marks.splice(i, 1);
           mark.dec?.dispose();
+          mark.outMarker?.dispose();
+          mark.endMarker?.dispose();
+          scheduleFolds();
         });
         marks.push(mark);
         while (marks.length > MARK_CAP) dropMark(marks[0]);
@@ -1013,7 +1125,12 @@ function createSession(modelId: number, gen: string, spec: SpawnSpec, handlers: 
       }
       const current = marks[marks.length - 1];
       if (!current) return;
-      if (ev.kind === "output") { current.ran = true; return; }
+      if (ev.kind === "output") {
+        current.ran = true;
+        current.outMarker?.dispose();
+        current.outMarker = term.registerMarker(0);
+        return;
+      }
       // "done": the shell reports it at the NEXT prompt, so it belongs to the
       // mark opened at the previous one.
       if (ev.exit === undefined) {
@@ -1025,6 +1142,9 @@ function createSession(modelId: number, gen: string, spec: SpawnSpec, handlers: 
       current.ran = true;
       current.exit = ev.exit;
       paintMark(current);
+      current.endMarker?.dispose();
+      current.endMarker = term.registerMarker(0);
+      scheduleFolds();
     };
 
     // Ctrl+Up / Ctrl+Down jump between command marks. Checked against the
@@ -1525,7 +1645,10 @@ function createSession(modelId: number, gen: string, spec: SpawnSpec, handlers: 
       hintLayer.remove();
       hintBar.remove();
       sticky.remove();
-      for (const m of marks.splice(0)) { m.dec?.dispose(); m.marker.dispose(); }
+      if (foldRaf) cancelAnimationFrame(foldRaf);
+      foldResizeDisp.dispose();
+      clearFoldViews();
+      for (const m of marks.splice(0)) { m.dec?.dispose(); m.outMarker?.dispose(); m.endMarker?.dispose(); m.marker.dispose(); }
       scrollDisp.dispose();
       writeDisp.dispose();
       unOut?.();
@@ -1553,11 +1676,25 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
   const elRef = useRef<HTMLDivElement>(null);
   const sess = () => getSession(modelId);
 
+  // QL-763: the search addon selects the match it lands on; if that row sits
+  // inside a folded command, unfold the block so the hit is actually visible.
+  const revealSearchHit = () => {
+    const s = sess();
+    const pos = s?.term.getSelectionPosition();
+    if (pos) s?.api.revealLine?.(pos.start.y);
+  };
+
   useImperativeHandle(ref, () => ({
-    findNext: (query, opts) =>
-      sess()?.search.findNext(query, { ...opts, decorations: searchDecorations(sess()!.theme.current) } as ISearchOptions) ?? false,
-    findPrevious: (query) =>
-      sess()?.search.findPrevious(query, { decorations: searchDecorations(sess()!.theme.current) } as ISearchOptions) ?? false,
+    findNext: (query, opts) => {
+      const hit = sess()?.search.findNext(query, { ...opts, decorations: searchDecorations(sess()!.theme.current) } as ISearchOptions) ?? false;
+      revealSearchHit();
+      return hit;
+    },
+    findPrevious: (query) => {
+      const hit = sess()?.search.findPrevious(query, { decorations: searchDecorations(sess()!.theme.current) } as ISearchOptions) ?? false;
+      revealSearchHit();
+      return hit;
+    },
     clearSearch: () => sess()?.search.clearDecorations(),
     onSearchResults: (cb) => {
       const d = sess()?.search.onDidChangeResults(cb);
@@ -1583,6 +1720,7 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
     },
     paste: (text: string) => { const id = sess()?.ptyId; if (id) invoke("pty_write", { paneId: id, data: text }); },
     jumpToCommandMark: (dir) => sess()?.api.jumpMark(dir) ?? false,
+    foldAllCommands: (on) => sess()?.api.foldAll?.(on),
     showQuickHints: () => sess()?.api.showHints() ?? false,
     // QL-762: try the biggest window first and step down until the result fits
     // the per-pane byte cap — a pane whose output is mostly colour codes still

@@ -84,6 +84,9 @@ export interface PaneSession {
     jumpMark: (dir: 1 | -1) => boolean;
     showHints: () => boolean;
     remeasure: () => void;
+    /** QL-763: unfold whatever hides this buffer line / fold or unfold every finished command. */
+    revealLine?: (line: number) => void;
+    foldAll?: (on: boolean) => void;
     /** Called after every attach: the factory re-creates WebGL only if this session's context was lost. */
     onAttach: () => void;
   };

@@ -752,3 +752,43 @@
 .pview-seg button { background: transparent; border: 0; padding: 1px 8px; font-size: 11.5px; color: var(--muted); cursor: pointer; }
 .pview-seg button.on { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--text); }
 .pview-seg button:focus-visible { outline: 2px solid var(--ice); outline-offset: -2px; }
+
+/* QL-763: fold control for a finished command's output. The chevron is a
+   decoration at the prompt row's right edge: faint while the pointer is
+   anywhere in the pane, full on the control itself. */
+.xterm .fd-fold-chev {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  color: var(--muted);
+  font-family: var(--font-sans);
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  user-select: none;
+  opacity: 0;
+  transition: opacity var(--t-fast, 120ms) var(--ease-standard, ease);
+}
+.xterm:hover .fd-fold-chev { opacity: .45; }
+.xterm .fd-fold-chev:hover { opacity: 1; color: var(--text); }
+.xterm .fd-fold-cover { display: flex; flex-direction: column; box-sizing: border-box; overflow: hidden; }
+.xterm .fd-fold-bar {
+  display: flex;
+  align-items: center;
+  box-sizing: border-box;
+  padding: 0 8px;
+  color: var(--muted);
+  border-left: 2px solid var(--st-running, #52E08A);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  pointer-events: auto;
+  user-select: none;
+}
+.xterm .fd-fold-bar.is-err { border-left-color: var(--st-error, #FF5C6A); }
+.xterm .fd-fold-bar:hover { color: var(--text); background: var(--elevated); }
+@media (prefers-reduced-motion: reduce) {
+  .xterm .fd-fold-chev { transition: none; }
+}
