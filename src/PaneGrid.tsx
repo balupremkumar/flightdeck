@@ -7,25 +7,7 @@ import { closeWorkspaceGuarded, preparePanes, isolationPref, rememberedOrSuggest
 import { IconWorkspace } from "./Icons";
 import { defaultCycle } from "./vendors";
 import { spawnPane } from "./worktrees";
-
-// Arrange N panes into rows; each divider is draggable so any pane can be resized.
-function rows(n: number): number[][] {
-  switch (n) {
-    case 0: return [];
-    case 1: return [[0]];
-    case 2: return [[0, 1]];
-    case 3: return [[0, 1, 2]];
-    case 4: return [[0, 1], [2, 3]];
-    case 5: return [[0, 1, 2], [3, 4]];
-    case 6: return [[0, 1, 2], [3, 4, 5]];
-    default: {
-      const cols = Math.ceil(Math.sqrt(n));
-      const r: number[][] = [];
-      for (let i = 0; i < n; i += cols) r.push(Array.from({ length: Math.min(cols, n - i) }, (_, k) => i + k));
-      return r;
-    }
-  }
-}
+import { rows } from "./gridRows";
 
 // UI-243: the same recent-roots list New Workspace maintains, minus wherever
 // we already are.
@@ -137,14 +119,14 @@ export function PaneGrid({ ws }: { ws: Workspace }) {
       {layout.map((row, ri) => (
         <Fragment key={ri}>
           {ri > 0 && <PanelResizeHandle className="rz rz-v" />}
-          <Panel minSize={10} className="pg-row">
+          <Panel id={`row-${ri}`} order={ri} minSize={10} className="pg-row">
             <PanelGroup direction="horizontal">
               {row.map((idx, ci) => {
                 const pane = ws.panes[idx];
                 return (
                   <Fragment key={pane.id}>
                     {ci > 0 && <PanelResizeHandle className="rz rz-h" />}
-                    <Panel minSize={10} className="pg-cell">
+                    <Panel id={`pane-${pane.id}`} order={ci} minSize={10} className="pg-cell">
                       <PaneView
                         wsId={ws.id}
                         pane={pane}
