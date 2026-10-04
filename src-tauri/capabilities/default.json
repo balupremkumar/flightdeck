@@ -6,7 +6,11 @@
   "permissions": [
     "core:default",
     "opener:default",
-    "opener:allow-open-path",
+    {
+      "identifier": "opener:allow-open-path",
+      "allow": [{ "path": "**" }],
+      "deny": [{ "path": "\\\\**" }, { "path": "\\\\?\\UNC\\**" }, { "path": "//**" }]
+    },
     "dialog:allow-open",
     "dialog:allow-save",
     "core:window:allow-request-user-attention",
