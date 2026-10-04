@@ -39,7 +39,7 @@ export function linkMenuItems(t: LinkTarget, d: LinkMenuDeps): LinkMenuItem[] {
   if (!t.isDir) {
     items.push(
       { id: "preview", label: "Open in preview", run: () => useUI.getState().openPreview(t.path, { line: t.line, fontSize: d.fontSize }) },
-      { id: "editor", label: "Open in editor", run: () => { void openInEditor(t.path, t.line); } },
+      { id: "editor", label: "Open in editor", run: () => { void openInEditor(t.path, t.line, t.col); } },
     );
   }
   items.push(
