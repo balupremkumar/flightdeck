@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { useApp, type PaneState } from "./store";
 import { useUI, useOverlayEsc, setTheme } from "./ui";
 import { closePaneGuarded, spawnPane } from "./worktrees";
@@ -77,6 +78,55 @@ export function pickTaskVendor(vendors: { id: string; installed: boolean }[]): s
 // The task text names the pane (renamePane caps at 60) and the worktree branch.
 export function taskLabel(text: string): string {
   return text.trim().replace(/\s+/g, " ").slice(0, 60);
+}
+
+/** Wait cap for a freshly spawned agent to become ready for its task text. */
+export const TASK_READY_TIMEOUT_MS = 20_000;
+
+/** Resolves "ready" once the pane's agent is sitting at its prompt ("idle" or
+ *  "waiting" — the app's own quiet-after-output signals; "starting"/"running"
+ *  mean it is still booting or working, "permission" is blocked on a prompt
+ *  that typed text would wrongly answer). "gone" if the pane vanished or
+ *  errored; "timeout" after timeoutMs. Pure of the store/clock so it tests. */
+export async function waitForAgentReady(
+  getState: () => PaneState | undefined,
+  opts: { timeoutMs?: number; pollMs?: number; sleep?: (ms: number) => Promise<void> } = {}
+): Promise<"ready" | "timeout" | "gone"> {
+  const { timeoutMs = TASK_READY_TIMEOUT_MS, pollMs = 250 } = opts;
+  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  for (let waited = 0; ; waited += pollMs) {
+    const st = getState();
+    if (st === undefined || st === "error") return "gone";
+    if (st === "idle" || st === "waiting") return "ready";
+    if (waited >= timeoutMs) return "timeout";
+    await sleep(pollMs);
+  }
+}
+
+/** Sends the task text (plus Enter, as Broadcast does) once the agent is
+ *  ready. On timeout or a failed write the text goes to the clipboard instead
+ *  and the user is told to paste it. Returns what happened. */
+export async function sendTaskWhenReady(deps: {
+  text: string;
+  getState: () => PaneState | undefined;
+  write: (data: string) => Promise<unknown>;
+  copy: (text: string) => Promise<unknown>;
+  toast: (kind: "info" | "error", text: string) => void;
+  timeoutMs?: number;
+  pollMs?: number;
+  sleep?: (ms: number) => Promise<void>;
+}): Promise<"sent" | "copied" | "gone"> {
+  const ready = await waitForAgentReady(deps.getState, deps);
+  if (ready === "gone") return "gone";
+  if (ready === "ready") {
+    try {
+      await deps.write(deps.text + "\r");
+      return "sent";
+    } catch { /* fall through to the clipboard */ }
+  }
+  await deps.copy(deps.text).catch(() => { /* clipboard unavailable */ });
+  deps.toast("info", "Task text copied, paste it into the pane");
+  return "copied";
 }
 
 // Ordered-subsequence fuzzy match. Lower score = better match; null = no match.
@@ -353,12 +403,21 @@ export function CommandPalette() {
       return;
     }
     const vendor = pickTaskVendor(agentVendors());
+    const taskText = query.trim();
     setOpen(false);
     void spawnPane(activeId, vendor, ws.root, undefined, label)
       .then((paneId) => {
         if (paneId != null) {
           useApp.getState().renamePane(paneId, label);
           pushToast("success", `Started "${label}" on ${vendorShort(vendor)}`);
+          // Type the task into the agent once it is ready; never blocks the UI.
+          void sendTaskWhenReady({
+            text: taskText,
+            getState: () => useApp.getState().workspaces.flatMap((w) => w.panes).find((p) => p.id === paneId)?.state,
+            write: (data) => invoke("pty_write", { paneId, data }),
+            copy: (t) => navigator.clipboard.writeText(t),
+            toast: (kind, text) => pushToast(kind, text),
+          });
         } else pushToast("error", `Couldn’t start "${label}" — the pane didn’t start.`);
       })
       .catch((e) => pushToast("error", `Couldn’t start "${label}": ${String(e)}`));

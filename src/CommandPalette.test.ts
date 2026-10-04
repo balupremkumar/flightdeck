@@ -14,7 +14,7 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ save: vi.fn(), open: vi.fn() }));
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn() }));
 
-const { fuzzyScore, rankByRecent, buildShortcutMap, pickTaskVendor, taskLabel } = await import("./CommandPalette");
+const { fuzzyScore, rankByRecent, buildShortcutMap, pickTaskVendor, taskLabel, waitForAgentReady, sendTaskWhenReady } =await import("./CommandPalette");
 const { getShortcuts, FIXED_SHORTCUTS } = await import("./Settings");
 
 describe("fuzzyScore (command palette search matching)", () => {
@@ -87,5 +87,70 @@ describe("New task helpers", () => {
     expect(taskLabel("  fix   the\nbug ")).toBe("fix the bug");
     expect(taskLabel("x".repeat(100))).toHaveLength(60);
     expect(taskLabel("   ")).toBe("");
+  });
+});
+
+describe("New task send-when-ready", () => {
+  const noSleep = () => Promise.resolve();
+  type S = "starting" | "running" | "idle" | "waiting" | "permission" | "error";
+  // State sequence consumed one entry per poll; the last entry repeats.
+  const seq = (...states: (S | undefined)[]) => {
+    let i = 0;
+    return () => states[Math.min(i++, states.length - 1)];
+  };
+
+  it("waits through starting/running/permission, then reports ready on idle", async () => {
+    const r = await waitForAgentReady(seq("starting", "running", "permission", "idle"), { sleep: noSleep });
+    expect(r).toBe("ready");
+  });
+  it("treats waiting as ready", async () => {
+    expect(await waitForAgentReady(seq("starting", "waiting"), { sleep: noSleep })).toBe("ready");
+  });
+  it("times out when the agent never settles", async () => {
+    expect(await waitForAgentReady(seq("running"), { sleep: noSleep, timeoutMs: 1000, pollMs: 250 })).toBe("timeout");
+  });
+  it("gives up if the pane errors or disappears", async () => {
+    expect(await waitForAgentReady(seq("starting", "error"), { sleep: noSleep })).toBe("gone");
+    expect(await waitForAgentReady(seq(undefined), { sleep: noSleep })).toBe("gone");
+  });
+
+  it("writes the text plus Enter once ready", async () => {
+    const write = vi.fn().mockResolvedValue(undefined);
+    const copy = vi.fn().mockResolvedValue(undefined);
+    const toast = vi.fn();
+    const r = await sendTaskWhenReady({ text: "fix the bug", getState: seq("running", "idle"), write, copy, toast, sleep: noSleep });
+    expect(r).toBe("sent");
+    expect(write).toHaveBeenCalledWith("fix the bug\r");
+    expect(copy).not.toHaveBeenCalled();
+    expect(toast).not.toHaveBeenCalled();
+  });
+  it("on timeout leaves it unsent, copies it and toasts", async () => {
+    const write = vi.fn();
+    const copy = vi.fn().mockResolvedValue(undefined);
+    const toast = vi.fn();
+    const r = await sendTaskWhenReady({
+      text: "fix the bug", getState: seq("running"), write, copy, toast, sleep: noSleep, timeoutMs: 500, pollMs: 250,
+    });
+    expect(r).toBe("copied");
+    expect(write).not.toHaveBeenCalled();
+    expect(copy).toHaveBeenCalledWith("fix the bug");
+    expect(toast).toHaveBeenCalledWith("info", "Task text copied, paste it into the pane");
+  });
+  it("falls back to the clipboard if the write rejects", async () => {
+    const copy = vi.fn().mockResolvedValue(undefined);
+    const toast = vi.fn();
+    const r = await sendTaskWhenReady({
+      text: "t", getState: seq("idle"), write: vi.fn().mockRejectedValue(new Error("x")), copy, toast, sleep: noSleep,
+    });
+    expect(r).toBe("copied");
+    expect(copy).toHaveBeenCalledWith("t");
+  });
+  it("does nothing when the pane is gone", async () => {
+    const write = vi.fn();
+    const copy = vi.fn();
+    const r = await sendTaskWhenReady({ text: "t", getState: seq(undefined), write, copy, toast: vi.fn(), sleep: noSleep });
+    expect(r).toBe("gone");
+    expect(write).not.toHaveBeenCalled();
+    expect(copy).not.toHaveBeenCalled();
   });
 });
