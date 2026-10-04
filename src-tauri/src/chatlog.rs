@@ -152,14 +152,54 @@ pub struct SessionInfo {
     pub session_id: Option<String>,
     pub pinned: bool,
     pub jsonl_path: Option<String>,
+    /// True when `jsonl_path` is a newer file than the one first pinned/resolved
+    /// (Claude rotates to a fresh JSONL on /clear). The UI must reset its tailer.
+    pub rotated: bool,
 }
 
-fn info_from(state: &SessionState, root: &Path) -> SessionInfo {
-    let jsonl_path = state.session_id.as_ref().and_then(|id| {
+fn mtime_ms(p: &Path) -> Option<u64> {
+    let t = std::fs::metadata(p).ok()?.modified().ok()?;
+    Some(t.duration_since(UNIX_EPOCH).ok()?.as_millis() as u64)
+}
+
+/// /clear rotation. Claude 2.1.289 emits a `conversation_reset` event
+/// (trigger "clear") with a `new_conversation_id`, and writes the new
+/// conversation to a NEW `<uuid>.jsonl` in the same cwd slug (also after
+/// `--resume` + /clear). Heuristic: the newest UUID-named JSONL in the slug born
+/// at/after the pane's spawn, other than the current file, whose mtime is newer
+/// than the current file's. `exclude` holds session ids owned by other panes in
+/// the same cwd so a sibling's file is not adopted. Known limit: two panes in one
+/// cwd where the sibling's id is not yet registered could cross over.
+/// Such a file is still "not a guess" (born after spawn in our slug), so
+/// `pinned` stays as it was.
+pub fn rotated_jsonl(root: &Path, state: &SessionState, exclude: &[String]) -> Option<PathBuf> {
+    let cur_id = state.session_id.as_ref()?;
+    let dir = root.join(crate::usage::slugify(&state.cwd));
+    let cur_mtime = mtime_ms(&dir.join(format!("{cur_id}.jsonl"))).unwrap_or(0);
+    std::fs::read_dir(&dir)
+        .ok()?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().map(|x| x == "jsonl").unwrap_or(false))
+        .filter(|p| {
+            let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+            is_uuid(stem) && stem != cur_id && !exclude.iter().any(|x| x == stem)
+        })
+        .filter_map(|p| Some((file_birth_ms(&p)?, mtime_ms(&p)?, p)))
+        .filter(|(b, m, _)| *b >= state.spawn_ms && *m > cur_mtime)
+        .max_by_key(|(b, m, _)| (*m, *b))
+        .map(|(_, _, p)| p)
+}
+
+fn info_from(state: &SessionState, root: &Path, exclude: &[String]) -> SessionInfo {
+    let own = state.session_id.as_ref().and_then(|id| {
         let p = root.join(crate::usage::slugify(&state.cwd)).join(format!("{id}.jsonl"));
-        p.is_file().then(|| p.to_string_lossy().into_owned())
+        p.is_file().then_some(p)
     });
-    SessionInfo { session_id: state.session_id.clone(), pinned: state.pinned, jsonl_path }
+    let rot = if state.session_id.is_some() && state.spawn_ms > 0 { rotated_jsonl(root, state, exclude) } else { None };
+    let rotated = rot.is_some();
+    let jsonl_path = rot.or(own).map(|p| p.to_string_lossy().into_owned());
+    SessionInfo { session_id: state.session_id.clone(), pinned: state.pinned, jsonl_path, rotated }
 }
 
 /// Resolve an unknown session (fork / fallback) by polling, bounded.
@@ -198,7 +238,15 @@ pub async fn pane_session_info(app: AppHandle, pty_id: u32) -> Result<SessionInf
                 *p.session.lock().unwrap() = state.clone();
             }
         }
-        Ok(info_from(&state, &root))
+        let exclude: Vec<String> = reg
+            .panes
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(id, _)| **id != pty_id)
+            .filter_map(|(_, p)| p.session.lock().unwrap().session_id.clone())
+            .collect();
+        Ok(info_from(&state, &root, &exclude))
     })
     .await
     .map_err(|e| e.to_string())?
@@ -247,6 +295,9 @@ pub struct TailResult {
     pub records: Vec<ChatRecord>,
     pub next_offset: u64,
     pub truncated: bool,
+    /// A fresh tailer on a file over the read cap started at its tail; older
+    /// history was not loaded.
+    pub skipped_head: bool,
 }
 
 fn trunc(s: &str, max: usize) -> String {
@@ -330,6 +381,15 @@ fn result_text(content: &Value) -> String {
     }
 }
 
+const WRAPPER_TAGS: [&str; 6] =
+    ["<task-notification", "<system-reminder", "<command-name", "<local-command-stdout", "<command-message", "<command-args"];
+
+/// User text that is really harness plumbing (mirrors codexsessions::real_prompt).
+fn is_wrapper_text(s: &str) -> bool {
+    let t = s.trim_start();
+    t.starts_with('<') && WRAPPER_TAGS.iter().any(|w| t.starts_with(w))
+}
+
 /// Reduce one parsed JSONL line to records. Pure.
 pub fn reduce_line(index: u64, v: &Value) -> Vec<ChatRecord> {
     let ty = str_of(v, "type").unwrap_or("");
@@ -349,10 +409,19 @@ pub fn reduce_line(index: u64, v: &Value) -> Vec<ChatRecord> {
     match ty {
         "user" | "assistant" => {
             let content = v.get("message").and_then(|m| m.get("content"));
-            let text_kind = if ty == "user" { "user" } else { "assistant_text" };
+            let flagged = |k: &str| v.get(k).and_then(|x| x.as_bool()).unwrap_or(false);
+            let meta = ty == "user" && (flagged("isMeta") || flagged("isCompactSummary"));
+            let text_kind = if ty == "assistant" {
+                "assistant_text"
+            } else if meta {
+                "system"
+            } else {
+                "user"
+            };
+            let kind_for = |s: &str| if text_kind == "user" && is_wrapper_text(s) { "system" } else { text_kind };
             match content {
                 Some(Value::String(s)) => {
-                    let mut r = base(text_kind);
+                    let mut r = base(kind_for(s));
                     r.text = Some(trunc(s, TEXT_CAP));
                     out.push(r);
                 }
@@ -360,7 +429,7 @@ pub fn reduce_line(index: u64, v: &Value) -> Vec<ChatRecord> {
                     for b in blocks {
                         let mut r = match str_of(b, "type") {
                             Some("text") => {
-                                let mut r = base(text_kind);
+                                let mut r = base(kind_for(str_of(b, "text").unwrap_or("")));
                                 r.text = Some(trunc(str_of(b, "text").unwrap_or(""), TEXT_CAP));
                                 r
                             }
@@ -407,12 +476,36 @@ pub fn reduce_line(index: u64, v: &Value) -> Vec<ChatRecord> {
 /// Core reader. `from_offset` must be a line start (as returned by a previous
 /// call's `next_offset`, or 0).
 pub fn tail_file(path: &Path, from_offset: u64, max_records: u32) -> Result<TailResult, String> {
+    if from_offset == 0 {
+        let len = std::fs::metadata(path).map_err(|e| e.to_string())?.len();
+        if len > MAX_READ_BYTES {
+            let start = skip_to_line_start(path, len - MAX_READ_BYTES)?;
+            let mut r = tail_from(path, start, max_records)?;
+            r.skipped_head = true;
+            return Ok(r);
+        }
+    }
+    tail_from(path, from_offset, max_records)
+}
+
+/// First line start at or after `pos` (pos lands mid-line, so drop the partial).
+fn skip_to_line_start(path: &Path, pos: u64) -> Result<u64, String> {
+    let mut f = std::fs::File::open(path).map_err(|e| e.to_string())?;
+    // Byte before `pos` being a newline means pos is already a line start.
+    f.seek(SeekFrom::Start(pos - 1)).map_err(|e| e.to_string())?;
+    let mut rd = BufReader::new(f);
+    let mut sink: Vec<u8> = Vec::new();
+    let n = (&mut rd).take(MAX_READ_BYTES).read_until(b'\n', &mut sink).map_err(|e| e.to_string())?;
+    Ok(pos - 1 + n as u64)
+}
+
+fn tail_from(path: &Path, from_offset: u64, max_records: u32) -> Result<TailResult, String> {
     let max_records = max_records.clamp(1, MAX_RECORDS_CAP) as usize;
     let mut f = std::fs::File::open(path).map_err(|e| e.to_string())?;
     let len = f.metadata().map_err(|e| e.to_string())?.len();
     if from_offset > len {
         // File was replaced/truncated under us: nothing to read, resync to end.
-        return Ok(TailResult { records: Vec::new(), next_offset: len, truncated: false });
+        return Ok(TailResult { records: Vec::new(), next_offset: len, truncated: false, skipped_head: false });
     }
     f.seek(SeekFrom::Start(from_offset)).map_err(|e| e.to_string())?;
     let mut rd = BufReader::new(f);
@@ -478,7 +571,7 @@ pub fn tail_file(path: &Path, from_offset: u64, max_records: u32) -> Result<Tail
         records.extend(produced);
         offset += consumed;
     }
-    Ok(TailResult { records, next_offset: offset, truncated })
+    Ok(TailResult { records, next_offset: offset, truncated, skipped_head: false })
 }
 
 /// Canonicalise and require the file to live under `root` and be a .jsonl.
@@ -716,7 +809,8 @@ mod tests {
         std::fs::write(&f, format!("{}{}", huge, user("after"))).unwrap();
         // The skipped line spends the whole byte budget, so the next line
         // arrives on the following call (truncated tells the caller to loop).
-        let r = tail_file(&f, 0, 10).unwrap();
+        // (tail_from: a from-0 tail_file on a >4 MB file now starts at the tail.)
+        let r = tail_from(&f, 0, 10).unwrap();
         assert_eq!(r.records.len(), 1);
         assert_eq!(r.records[0].kind, "other");
         assert!(r.truncated);
@@ -773,7 +867,88 @@ mod tests {
         resolve_blocking(&mut st, &root, Duration::from_millis(0));
         assert_eq!(st.session_id.as_deref(), Some(old));
         assert!(!st.pinned);
-        let info = info_from(&st, &root);
+        let info = info_from(&st, &root, &[]);
         assert!(info.jsonl_path.unwrap().ends_with(&format!("{old}.jsonl")));
+    }
+
+    #[test]
+    fn meta_and_wrapper_users_are_system() {
+        let mk = |extra: Value, text: &str| {
+            let mut v = json!({"type":"user","uuid":"u","message":{"role":"user","content":text}});
+            if let (Some(o), Some(e)) = (v.as_object_mut(), extra.as_object()) {
+                o.extend(e.clone());
+            }
+            reduce_line(0, &v)
+        };
+        assert_eq!(mk(json!({"isMeta":true}), "hello")[0].kind, "system");
+        assert_eq!(mk(json!({"isCompactSummary":true}), "summary")[0].kind, "system");
+        for tag in ["<task-notification>x", "<system-reminder>x", "<command-name>/clear", "<local-command-stdout>", "<command-message>m", "<command-args>a", "  <system-reminder>x"] {
+            assert_eq!(mk(json!({}), tag)[0].kind, "system", "{tag}");
+        }
+        assert_eq!(mk(json!({}), "<b>real</b> question")[0].kind, "user");
+        assert_eq!(mk(json!({}), "fix the bug")[0].kind, "user");
+        // array-block shape too
+        let v = json!({"type":"user","isMeta":true,"message":{"content":[{"type":"text","text":"hi"}]}});
+        assert_eq!(reduce_line(0, &v)[0].kind, "system");
+        let v = json!({"type":"user","message":{"content":[{"type":"text","text":"<command-name>/x"}]}});
+        assert_eq!(reduce_line(0, &v)[0].kind, "system");
+        // assistant text never reclassified
+        let v = json!({"type":"assistant","isMeta":true,"message":{"content":"<system-reminder>"}});
+        assert_eq!(reduce_line(0, &v)[0].kind, "assistant_text");
+    }
+
+    #[test]
+    fn huge_file_starts_at_tail() {
+        let d = tmp("huge");
+        let f = d.join("s.jsonl");
+        let l = user(&"x".repeat(1000));
+        let n = (MAX_READ_BYTES as usize / l.len()) + 50;
+        std::fs::write(&f, l.repeat(n)).unwrap();
+        let len = std::fs::metadata(&f).unwrap().len();
+        assert!(len > MAX_READ_BYTES);
+        let a = tail_file(&f, 0, 500).unwrap();
+        assert!(a.skipped_head);
+        assert!(!a.records.is_empty());
+        let first = a.records[0].index;
+        assert!(first >= len - MAX_READ_BYTES && first % l.len() as u64 == 0, "line aligned, within cap");
+        // a follow-up read is not flagged
+        let b = tail_file(&f, a.next_offset, 500).unwrap();
+        assert!(!b.skipped_head);
+        // small file: not flagged
+        let s = d.join("small.jsonl");
+        std::fs::write(&s, user("a")).unwrap();
+        assert!(!tail_file(&s, 0, 10).unwrap().skipped_head);
+    }
+
+    #[test]
+    fn clear_rotation_adopts_newer_file() {
+        let root = tmp("rot");
+        let cwd = r"C:\work\proj";
+        let dir = root.join(crate::usage::slugify(cwd));
+        std::fs::create_dir_all(&dir).unwrap();
+        let spawn_ms = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64;
+        std::thread::sleep(Duration::from_millis(30));
+        let a = "11111111-1111-4111-8111-111111111111";
+        let b = "22222222-2222-4222-8222-222222222222";
+        let c = "33333333-3333-4333-8333-333333333333";
+        std::fs::write(dir.join(format!("{a}.jsonl")), user("one")).unwrap();
+        let st = SessionState { session_id: Some(a.into()), pinned: true, needs_resolve: false, spawn_ms, cwd: cwd.into() };
+        let i = info_from(&st, &root, &[]);
+        assert!(!i.rotated && i.pinned && i.jsonl_path.unwrap().ends_with(&format!("{a}.jsonl")));
+        std::thread::sleep(Duration::from_millis(30));
+        std::fs::write(dir.join(format!("{b}.jsonl")), user("after clear")).unwrap();
+        let i = info_from(&st, &root, &[]);
+        assert!(i.rotated && i.pinned);
+        assert!(i.jsonl_path.unwrap().ends_with(&format!("{b}.jsonl")));
+        // a sibling pane's file is excluded
+        assert!(!info_from(&st, &root, &[b.to_string()]).rotated);
+        // non-uuid and pre-spawn files are ignored
+        std::fs::write(dir.join("notes.jsonl"), "x").unwrap();
+        let late = SessionState { spawn_ms: spawn_ms + 3_600_000, ..st.clone() };
+        assert!(!info_from(&late, &root, &[]).rotated);
+        // newest wins across two rotations
+        std::thread::sleep(Duration::from_millis(30));
+        std::fs::write(dir.join(format!("{c}.jsonl")), user("again")).unwrap();
+        assert!(info_from(&st, &root, &[]).jsonl_path.unwrap().ends_with(&format!("{c}.jsonl")));
     }
 }
