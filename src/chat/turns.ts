@@ -214,3 +214,25 @@ export function buildTurns(records: ChatRecord[]): Turn[] {
   }
   return turns;
 }
+
+/** Minimal shape placeUnlinked needs from a subagent link. */
+export interface Placeable { id: string; startedMs?: number }
+
+/**
+ * Unlinked subagents (their Agent/Task call is not in the loaded records) go to
+ * the last turn that began at or before their start time. Those with no start
+ * time, or that began before the first loaded turn, stay in `rest`.
+ */
+export function placeUnlinked<L extends Placeable>(turns: Turn[], links: L[]): { byTurn: Map<number, L[]>; rest: L[] } {
+  const starts = turns.map((t) => { const ms = t.prompt?.timestamp ? Date.parse(t.prompt.timestamp) : NaN; return Number.isFinite(ms) ? ms : null; });
+  const byTurn = new Map<number, L[]>();
+  const rest: L[] = [];
+  for (const l of links) {
+    let at = -1;
+    if (l.startedMs) for (let i = 0; i < starts.length; i++) if (starts[i] !== null && starts[i]! <= l.startedMs) at = i;
+    if (at < 0) { rest.push(l); continue; }
+    const g = byTurn.get(at);
+    if (g) g.push(l); else byTurn.set(at, [l]);
+  }
+  return { byTurn, rest };
+}

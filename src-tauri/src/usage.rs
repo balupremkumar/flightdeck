@@ -861,6 +861,7 @@ pub struct SubagentLink {
     pub other: u64,
     pub finished: bool,
     pub last_activity_ms: u64,
+    pub started_ms: u64,
 }
 
 /// `parent` is the already-validated parent transcript path (not canonicalised,
@@ -894,6 +895,7 @@ pub fn subagent_links_for(parent: &Path) -> Vec<SubagentLink> {
                     other: c.other,
                     finished: info.finished,
                     last_activity_ms: info.last_activity_ms,
+                    started_ms: info.started_ms,
                 },
             ))
         })

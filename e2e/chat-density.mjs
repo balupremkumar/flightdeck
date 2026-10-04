@@ -130,7 +130,7 @@ const normalRows = await rowsBelowPrompt();
 check(normalRows <= 5, `Normal renders the whole turn in at most 5 rows below the prompt (got ${normalRows})`);
 check((await page.locator(".chat-diff").count()) === 0, "no diff is inline in Normal");
 const label = (await page.locator(".chat-activity > .chat-chip .chat-chip-text").first().textContent())?.trim();
-check(label === "Edited 4 files, ran 3 commands, read 8 files +3 more", `activity label is verb first, fixed order, capped at 3 segments (got "${label}")`);
+check(label === "Edited 4 files, ran 3 commands, read 8 files +3 other", `activity label is verb first, fixed order, capped at 3 segments (got "${label}")`);
 check((await page.locator(".chat-activity > .chat-chip").first().getAttribute("aria-expanded")) === "false", "activity line is a collapsed button (aria-expanded=false)");
 const changeRow = (await page.locator(".chat-files-main").first().textContent())?.trim();
 check(changeRow === "Changed 4 files +74 -13", `change row sums +/- over the turn's edits (got "${changeRow}")`);
@@ -147,6 +147,7 @@ check((await page.locator(".chat-activity > .chat-chip").first().getAttribute("a
 check((await page.locator(".chat-activity-body .chat-narr").count()) === 4, "expanded line interleaves the 4 narration sentences with the chips");
 const order = await page.evaluate(() => [...document.querySelectorAll(".chat-activity-body > *")].slice(0, 3).map((e) => e.classList.contains("chat-narr") ? "narr" : "step"));
 check(order[0] === "narr", "narration sits in original order (the opening sentence comes first)");
+check((await page.locator(".chat-activity-body .chat-result").count()) === 0, "expanded Normal hides bare ok result lines");
 await shot("normal-expanded");
 await page.locator(".chat-activity-body .chat-call", { hasText: "Edited src/a.ts" }).locator(".chat-chip").click();
 check(await has(".chat-diff"), "clicking a chip shows its diff");
@@ -166,7 +167,7 @@ check((await page.locator(".chat-sub-body .chat-subprompt").count()) === 1, "sub
 await shot("normal-subagent");
 check((await page.locator(".chat-unlinked .chat-sub").count()) === 1, "an unlinked subagent is listed once at the end");
 const orphan = (await page.locator(".chat-unlinked .chat-chip").textContent())?.replace(/\s+/g, " ").trim() ?? "";
-check(/Orphan check · 2 commands\s*· quiet/.test(orphan), `unlinked subagent that went quiet says so (got "${orphan}")`);
+check(/Orphan check · 2 commands\s*· idle/.test(orphan), `unlinked subagent that went idle says so (got "${orphan}")`);
 
 // --- Find opens the activity line --------------------------------------------
 await page.locator(".chat-activity > .chat-chip").first().click();
@@ -217,8 +218,9 @@ await shot("verbose");
   await p2.evaluate((id) => window.__app.getState().setPaneState(id, "permission"), id2);
   const msg = await p2.waitForSelector(".chat-empty", { timeout: 15000, state: "visible" }).then(() => true, () => false);
   check(msg && /Claude is asking something in the terminal/.test((await p2.locator(".chat-empty").textContent()) ?? ""), "no session + permission state: Chat says Claude is asking something in the terminal");
+  check((await p2.getByRole("button", { name: "Switch to Terminal" }).count()) === 1, "empty-asking state has a single Switch to Terminal button");
   await p2.screenshot({ path: path.join(shots, "chat-density-empty-asking.png") });
-  await p2.locator(".chat-empty-btn", { hasText: "Switch to Terminal" }).click();
+  await p2.locator(".chat-gate button", { hasText: "Switch to Terminal" }).click();
   check(await p2.waitForSelector(".chat", { timeout: 15000, state: "detached" }).then(() => true, () => false), "Switch to Terminal leaves Chat for the terminal");
   await p2.close();
 }

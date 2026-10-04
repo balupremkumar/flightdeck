@@ -14,8 +14,8 @@ import { useUI } from "./ui";
 import { getAgentSettings } from "./settingsStore";
 import type { PaneState } from "./store";
 import { appendBounded } from "./chat/buffer";
-import { buildTurns, callKey, changeSummary, foldActivity, itemKey, recKey, runningCall, type Activity, type Item, type NormalItem, type ToolCall, type Turn } from "./chat/turns";
-import { CHIP_GLYPH, activityIcon, activityLabel, changeLabel, chipIcon, chipLabel, groupLabel, shortPath, subagentLabel, subagentStatus } from "./chat/chips";
+import { buildTurns, callKey, changeSummary, foldActivity, itemKey, placeUnlinked, recKey, runningCall, type Activity, type Item, type NormalItem, type ToolCall, type Turn } from "./chat/turns";
+import { CHIP_GLYPH, activityIcon, activityLabel, changeLabel, chipIcon, chipLabel, groupLabel, isBareOk, shortPath, subagentLabel, subagentStatus } from "./chat/chips";
 import { planFind } from "./chat/find";
 import { promptGate } from "./chat/gate";
 import { buildPromptPayload } from "./chat/send";
@@ -284,7 +284,7 @@ function CallChip({ call, ctx, nested }: { call: ToolCall; ctx: Ctx; nested?: bo
         <span className="chat-chip-text">{chipLabel(call.tool, ctx.cwd)}</span>
         {failed && <span className="chat-badge">failed</span>}
       </button>
-      {call.result?.summary && (failed || !expanded || !ctx.path) && (
+      {call.result?.summary && (failed || !expanded || !ctx.path) && (failed || ctx.verbose || !isBareOk(call.result.summary)) && (
         <div className={"chat-result" + (failed ? " err" : "")}>{call.result.summary}</div>
       )}
       {expanded && ctx.path && <CallDetail path={ctx.path} call={call} />}
@@ -318,7 +318,12 @@ function ActivityItem({ item, ctx }: { item: Activity; ctx: Ctx }) {
   const latest = item.narration[item.narration.length - 1];
   return (
     <div className="chat-group chat-activity" data-ck={item.key}>
-      <button className={"chat-chip" + (failed ? " err" : "")} aria-expanded={open} onClick={() => ctx.toggle(item.key)}>
+      <button
+        className={"chat-chip" + (failed ? " err" : "")}
+        aria-expanded={open}
+        onClick={() => ctx.toggle(item.key)}
+        title={activityLabel(item.calls, item.sideSubagents, ctx.cwd)}
+      >
         <span className="chat-glyph" aria-hidden>{CHIP_GLYPH[activityIcon(item.calls, item.sideSubagents)]}</span>
         <span className="chat-chip-text">{activityLabel(item.calls, item.sideSubagents, ctx.cwd)}</span>
         {failed && <span className="chat-badge">failed</span>}
@@ -362,7 +367,7 @@ function Items({ items, ctx, side, narr }: { items: NormalItem[]; ctx: Ctx; side
   );
 }
 
-const TurnView = memo(function TurnView({ turn, ctx, index, paneId, live }: { turn: Turn; ctx: Ctx; index: number; paneId: number; live: boolean }) {
+const TurnView = memo(function TurnView({ turn, ctx, index, paneId, live, extraSubs }: { turn: Turn; ctx: Ctx; index: number; paneId: number; live: boolean; extraSubs?: SubagentLink[] }) {
   const [filesOpen, setFilesOpen] = useState(false);
   // Normal folds each run of tool steps into one line; Verbose renders the items as built.
   const items = useMemo(() => (ctx.verbose ? turn.items : foldActivity(turn.items, live)), [turn.items, ctx.verbose, live]);
@@ -374,6 +379,7 @@ const TurnView = memo(function TurnView({ turn, ctx, index, paneId, live }: { tu
         <div className={"chat-user" + (ctx.hits.has(pk) ? " hit" : "")} data-ck={pk}>{turn.prompt.text}</div>
       )}
       <Items items={items} ctx={ctx} />
+      {extraSubs?.map((l) => <SubagentLine key={l.id} link={l} ctx={ctx} />)}
       {ctx.verbose && turn.notes.length > 0 && (
         <details className="chat-sysnote">
           <summary>System note{turn.notes.length > 1 ? ` (${turn.notes.length})` : ""}</summary>
@@ -561,6 +567,8 @@ export default function ChatView({ paneId, cwd, epoch, paneState, exited, onRest
     for (const r of records) if (r.kind === "tool_use" && r.tool) ids.add(r.tool.id);
     return subLinks.filter((l) => !l.toolUseId || !ids.has(l.toolUseId));
   }, [subLinks, records]);
+  // Each one sits in the turn that was running when it started; only the rest get the "Other subagents" list.
+  const placed = useMemo(() => placeUnlinked(turns, unlinked), [turns, unlinked]);
   const ctx: Ctx = useMemo(
     () => ({ cwd, path, verbose, open: openAll, toggle, hits, active: polling, subs }),
     [cwd, path, verbose, openAll, toggle, hits, polling, subs],
@@ -710,8 +718,7 @@ export default function ChatView({ paneId, cwd, epoch, paneState, exited, onRest
         {noPath && !error && (paneState === "permission" || paneState === "waiting") && (
           // TN1: no session yet and the agent is asking something (e.g. the folder trust prompt): never strand the user here.
           <div className="chat-empty" role="status">
-            Claude is asking something in the terminal
-            <div><button className="chat-empty-btn" onClick={onSwitchToTerminal}>Switch to Terminal</button></div>
+            Claude is asking something in the terminal.
           </div>
         )}
         {noPath && !error && paneState !== "permission" && paneState !== "waiting" && (
@@ -721,12 +728,12 @@ export default function ChatView({ paneId, cwd, epoch, paneState, exited, onRest
         {!noPath && loaded && turns.length === 0 && <div className="chat-empty" role="status">No messages yet</div>}
         {turns.map((t, i) => (
           <Fragment key={t.key}>
-            <TurnView turn={t} ctx={ctx} index={i} paneId={paneId} live={i === turns.length - 1} />
+            <TurnView turn={t} ctx={ctx} index={i} paneId={paneId} live={i === turns.length - 1} extraSubs={verbose ? undefined : placed.byTurn.get(i)} />
           </Fragment>
         ))}
-        {!verbose && unlinked.length > 0 && (
+        {!verbose && placed.rest.length > 0 && (
           <div className="chat-unlinked">
-            {unlinked.map((l) => <SubagentLine key={l.id} link={l} ctx={ctx} />)}
+            {placed.rest.map((l) => <SubagentLine key={l.id} link={l} ctx={ctx} />)}
           </div>
         )}
       </div>

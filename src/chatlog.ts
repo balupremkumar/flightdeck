@@ -80,6 +80,8 @@ export interface SubagentLink {
   other: number;
   finished: boolean;
   lastActivityMs: number;
+  /** First record time of the subagent (ms since epoch); 0 or absent when unknown. */
+  startedMs?: number;
 }
 
 export function sessionSubagents(jsonlPath: string): Promise<SubagentLink[]> {

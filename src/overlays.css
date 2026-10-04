@@ -54,7 +54,7 @@
 
 /* ---------- Settings modal ---------- */
 .set-modal {
-  width: 560px; max-width: calc(100% - 32px); max-height: 86vh;
+  width: 560px; max-width: calc(100% - 32px); height: min(640px, 86vh); max-height: 86vh;
   display: flex; flex-direction: column;
   background: var(--elevated); border: 1px solid var(--line-strong); border-radius: 16px;
   box-shadow: var(--shadow-lg); overflow: hidden;
@@ -445,13 +445,15 @@ button.agent-chip:hover { filter: brightness(1.15); }
 .set-hit-top { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 .set-hit-name { font-size: 14.5px; font-weight: 500; }
 .set-hit-sec { flex: none; font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--azure); }
-.set-hit-sub { font-size: 12px; color: var(--faint); }
+.set-hit-sub { font-size: 12px; color: var(--muted); }
 .set-mark { background: color-mix(in srgb, var(--accent) 34%, transparent); color: inherit; border-radius: 3px; padding: 0 1px; }
-.set-flash { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: var(--r-md); }
+.set-flash { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: var(--r-md); background: color-mix(in srgb, var(--accent) 10%, transparent); }
 
 /* ---------- Updates (About section) ---------- */
 .set-releases-dir { width: 300px; font-family: var(--font-mono); font-size: 11.5px; }
 .set-noresults { padding: 24px 4px; font-size: 12.5px; color: var(--muted); text-align: center; }
+.set-results, .set-noresults { flex: 1; }
+.set-noresults { display: grid; place-items: center; }
 
 /* UI-239: per-vendor test launch */
 button.agent-chip.agent-test { color: var(--faint); }
@@ -468,13 +470,8 @@ button.agent-chip.agent-test:hover { color: var(--accent); border-color: var(--a
 .kbd-conflict b { color: var(--text); font-weight: 600; }
 .kbd-conflict-actions { display: inline-flex; gap: 8px; margin-left: auto; }
 
-/* UI-19: scroll-fade cue — a cut-off list should look cut off */
+/* UI-19: scroll-fade cue. The mask above is the only fade; a second ::after gradient stacked and darkened the edge. */
 .set-body { position: relative; }
-.set-body::after {
-  content: ""; position: sticky; bottom: 0; left: 0; right: 0; display: block;
-  height: 22px; margin-top: -22px; pointer-events: none;
-  background: linear-gradient(to bottom, transparent, var(--elevated));
-}
 
 /* ---------- Agent install/sign-in popover (UI-9 / UI-111) ----------
    One popover per chip: what's wrong, the fix, and — for sign-in — the note

@@ -54,7 +54,7 @@
 .chat-group, .chat-call, .chat-sub { margin: 3px 0; }
 .chat-chip { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 2px 9px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface-2); font-size: 12px; color: var(--muted); }
 .chat-chip:hover { border-color: var(--line-strong); color: var(--text); }
-.chat-chip.err { border-color: color-mix(in srgb, var(--st-error) 55%, transparent); color: var(--st-error); }
+.chat-chip.err { border-color: color-mix(in srgb, var(--st-error) 55%, transparent); color: var(--chat-err-ink); }
 .chat-chip-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 11.5px; }
 .chat-glyph { font-size: 11px; opacity: .85; }
 .chat-badge { font-size: 10.5px; text-transform: uppercase; letter-spacing: .04em; }
@@ -64,20 +64,20 @@
 .chat-narr { font-size: 12px; color: var(--muted); }
 .chat-narr .chat-prose p { margin: 0; }
 .chat-result { margin: 3px 0 3px 10px; font-size: 11.5px; color: var(--muted); font-family: var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
-.chat-result.err { color: var(--st-error); }
+.chat-result.err { color: var(--chat-err-ink); }
 .chat-detail { margin: 4px 0 6px 10px; font-size: 12px; }
 .chat-detail.dim { color: var(--muted); }
-.chat-detail.err { color: var(--st-error); }
+.chat-detail.err { color: var(--chat-err-ink); }
 .chat-cmd, .chat-diff, .chat-out { margin: 0 0 4px; padding: 6px 9px; overflow-x: auto; background: var(--bg-2, var(--surface-2)); border: 1px solid var(--line); border-radius: 7px; font-family: var(--mono); font-size: 11.5px; line-height: 1.4; }
-.chat-diff .add { color: var(--st-running, #3fb950); background: color-mix(in srgb, var(--st-running, #3fb950) 10%, transparent); }
-.chat-diff .del { color: var(--st-error); background: color-mix(in srgb, var(--st-error) 10%, transparent); }
+.chat-diff .add { color: var(--chat-add-ink); background: color-mix(in srgb, var(--st-running, #3fb950) 10%, transparent); }
+.chat-diff .del { color: var(--chat-err-ink); background: color-mix(in srgb, var(--st-error) 10%, transparent); }
 .chat-out.err { border-color: color-mix(in srgb, var(--st-error) 45%, transparent); }
 .chat-more { background: transparent; border: 0; color: var(--accent); padding: 3px 0 0; font-size: 11.5px; text-decoration: underline; }
 
 .chat .hit { outline: 2px solid color-mix(in srgb, var(--st-waiting) 75%, transparent); outline-offset: 2px; border-radius: 6px; }
-.chat-files { display: inline-flex; margin: 4px 0 0; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; font-size: 11.5px; color: var(--muted); }
+.chat-files { display: inline-flex; margin: 6px 0 0; border: 1px solid var(--line-strong); border-radius: 6px; overflow: hidden; font-size: 11.5px; color: var(--text); }
 .chat-files:hover, .chat-files:focus-within { border-color: var(--accent); }
-.chat-files button { background: transparent; border: 0; padding: 1px 10px; font-size: 11.5px; color: var(--muted); }
+.chat-files button { background: transparent; border: 0; padding: 1px 10px; font-size: 11.5px; color: inherit; }
 .chat-files button:hover { color: var(--text); }
 .chat-files .chat-files-caret { padding: 1px 8px 1px 4px; font-size: 10px; }
 
@@ -86,7 +86,8 @@
 
 .chat-input { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 10px; border-top: 1px solid var(--line); background: var(--surface-2); }
 .chat-input textarea { flex: 1; min-width: 0; resize: none; max-height: 120px; background: var(--surface); color: var(--text); border: 1px solid var(--line-strong); border-radius: 8px; padding: 6px 9px; font: inherit; }
-.chat-input textarea:disabled { opacity: .6; }
+.chat-input textarea::placeholder { color: var(--muted); opacity: 1; }
+.chat-input textarea:disabled { opacity: 1; background: var(--surface-2); border-color: var(--line); }
 .chat-input > button, .chat-gate button { border: 1px solid var(--line-strong); background: var(--surface); border-radius: 8px; padding: 4px 12px; }
 .chat-input > button:disabled { opacity: .5; cursor: default; }
 .chat-gate { flex: 1; display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--st-waiting); font-size: 12.5px; }
@@ -100,8 +101,17 @@
 .chat-sysnote { margin: 4px 0; font-size: 11.5px; color: var(--muted); }
 .chat-sysnote summary { cursor: pointer; }
 .chat-sysnote pre { margin: 4px 0 0; white-space: pre-wrap; word-break: break-word; max-height: 160px; overflow: auto; font: inherit; }
-.chat-unlinked { margin-top: 6px; }
+.chat-unlinked { margin-top: 14px; padding-top: 8px; border-top: 1px solid var(--line); }
+.chat-unlinked::before { content: "Other subagents"; display: block; margin-bottom: 4px; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
 .chat-subturn + .chat-subturn { margin-top: 6px; }
-.chat-empty-btn { margin-top: 10px; border: 1px solid var(--line-strong); background: var(--surface-2); border-radius: 8px; padding: 4px 12px; color: var(--text); }
-.chat-empty-btn:hover { border-color: var(--accent); }
 .chat-chip.sub .chat-now { flex-shrink: 0; }
+
+/* Phase 6 design critique */
+.chat { --chat-err-ink: color-mix(in srgb, var(--st-error) 80%, var(--text)); --chat-add-ink: color-mix(in srgb, var(--st-running) 55%, var(--text)); }
+/* 4: the counts are the scan target; the dim narration gives way first. */
+.chat-activity > .chat-chip .chat-chip-text { flex: 0 1 auto; font-family: inherit; font-size: 12px; }
+.chat-activity > .chat-chip .chat-narr-last { flex: 1 1 0; }
+.chat-activity > .chat-chip .chat-now { flex: 0 1 auto; }
+/* 6, 8: the change row is the one squared, brighter object; keep its focus ring inside the clip. */
+.chat-files-main { font-weight: 500; }
+.chat-files button:focus-visible { outline-offset: -2px; border-radius: inherit; }

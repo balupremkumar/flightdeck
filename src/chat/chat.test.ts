@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { ChatRecord } from "../chatlog";
-import { buildTurns, isNarration, itemKey, callKey, isSystemPromptText, foldActivity, runningCall, changeSummary } from "./turns";
+import { buildTurns, isNarration, placeUnlinked, itemKey, callKey, isSystemPromptText, foldActivity, runningCall, changeSummary } from "./turns";
 import { buildPromptPayload, sanitizeDraft } from "./send";
-import { activityLabel, changeLabel, chipLabel, groupLabel, shortPath, subagentCounts, subagentLabel, subagentStatus } from "./chips";
+import { activityLabel, changeLabel, chipLabel, groupLabel, isBareOk, shortPath, subagentCounts, subagentLabel, subagentStatus } from "./chips";
 import { planFind } from "./find";
 import { appendBounded } from "./buffer";
 import { promptGate } from "./gate";
@@ -264,14 +264,14 @@ describe("TN2 activity folding", () => {
     expect(activityLabel(a.calls, 0)).toBe("Edited 2 files, ran 2 commands, read 2 files");
   });
 
-  it("caps at three segments with +N more, and counts subagents", () => {
+  it("caps at three segments with +N other, and counts subagents", () => {
     const t = buildTurns([
       user("go"), use("e", "Edit", "a", ["/a"]), use("b", "Bash", "x"), use("r", "Read", "y", ["/y"]),
       use("g", "Grep", "z"), use("w", "WebFetch", "u"), use("ag", "Agent", "sub"),
     ]);
     const a = foldActivity(t[0].items)[0];
     if (a.kind !== "activity") throw new Error("not activity");
-    expect(activityLabel(a.calls, 0)).toBe("Edited 1 file, ran 1 command, read 1 file +3 more");
+    expect(activityLabel(a.calls, 0)).toBe("Edited 1 file, ran 1 command, read 1 file +3 other");
     expect(activityLabel([a.calls[5]], 1)).toBe("Ran 2 subagents");
   });
 
@@ -336,9 +336,9 @@ describe("TN3 subagent line", () => {
     expect(subagentLabel(link)).toBe("Subagent: Build element 11 · 4 edits, 25 commands");
     expect(subagentLabel({ ...link, description: null, edits: 0, commands: 0 })).toBe("Subagent: fork");
   });
-  it("is running, quiet after 2 minutes idle, done when finished", () => {
+  it("is running, idle after 2 minutes without activity, done when finished", () => {
     expect(subagentStatus(link, 1_000_000 + 60_000)).toBe("running");
-    expect(subagentStatus(link, 1_000_000 + 121_000)).toBe("quiet");
+    expect(subagentStatus(link, 1_000_000 + 121_000)).toBe("idle");
     expect(subagentStatus({ ...link, finished: true }, 1_000_000 + 999_000)).toBe("done");
   });
 });
@@ -388,6 +388,31 @@ describe("TN6 density measure", () => {
     expect(rows(t, false)).toBeGreaterThan(rows(t, true));
     const a = foldActivity(t.items)[0];
     expect(a.kind === "activity" && a.narration.length).toBe(4);
-    expect(a.kind === "activity" && activityLabel(a.calls, 0)).toBe("Edited 4 files, ran 3 commands, read 8 files +3 more");
+    expect(a.kind === "activity" && activityLabel(a.calls, 0)).toBe("Edited 4 files, ran 3 commands, read 8 files +3 other");
+  });
+});
+
+describe("design critique helpers", () => {
+  it("isBareOk only matches a bare success word", () => {
+    for (const s of ["ok", "OK", " ok. ", "done", "success"]) expect(isBareOk(s)).toBe(true);
+    for (const s of ["ok, 3 files", "error: ok", "12 passed", ""]) expect(isBareOk(s)).toBe(false);
+  });
+  it("placeUnlinked puts a subagent in the turn running at its start, else the leftover list", () => {
+    const at = (iso: string) => ({ timestamp: iso });
+    const t = buildTurns([
+      user("one", at("2026-10-04T01:00:00Z")), say("a"),
+      user("two", at("2026-10-04T02:00:00Z")), say("b"),
+    ]);
+    const ms = (iso: string) => Date.parse(iso);
+    const links = [
+      { id: "in-first", startedMs: ms("2026-10-04T01:30:00Z") },
+      { id: "in-second", startedMs: ms("2026-10-04T02:10:00Z") },
+      { id: "before-all", startedMs: ms("2026-10-04T00:10:00Z") },
+      { id: "unknown" },
+    ];
+    const r = placeUnlinked(t, links);
+    expect(r.byTurn.get(0)?.map((l) => l.id)).toEqual(["in-first"]);
+    expect(r.byTurn.get(1)?.map((l) => l.id)).toEqual(["in-second"]);
+    expect(r.rest.map((l) => l.id)).toEqual(["before-all", "unknown"]);
   });
 });

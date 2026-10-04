@@ -147,7 +147,7 @@ export function activityLabel(calls: ToolCall[], sideSubagents = 0, cwd?: string
   });
   const shown = segs.slice(0, MAX_SEGMENTS).map((s) => s.text).join(", ");
   const rest = segs.slice(MAX_SEGMENTS).reduce((n, s) => n + s.calls, 0);
-  const label = rest ? `${shown} +${rest} more` : shown;
+  const label = rest ? `${shown} +${rest} other` : shown;
   return label.charAt(0).toUpperCase() + label.slice(1);
 }
 
@@ -185,10 +185,15 @@ export function subagentCounts(l: Pick<SubagentLink, "edits" | "commands" | "rea
 }
 
 export const SUBAGENT_QUIET_MS = 2 * 60 * 1000;
-export type SubagentStatus = "running" | "done" | "quiet";
+export type SubagentStatus = "running" | "done" | "idle";
 export function subagentStatus(l: Pick<SubagentLink, "finished" | "lastActivityMs">, now: number): SubagentStatus {
   if (l.finished) return "done";
-  return now - l.lastActivityMs > SUBAGENT_QUIET_MS ? "quiet" : "running";
+  return now - l.lastActivityMs > SUBAGENT_QUIET_MS ? "idle" : "running";
+}
+
+/** A result summary that only says "it worked" adds a row and no information. */
+export function isBareOk(summary: string | undefined | null): boolean {
+  return /^\s*(ok|done|success|succeeded)\.?\s*$/i.test(summary ?? "");
 }
 
 export function subagentLabel(l: SubagentLink): string {
