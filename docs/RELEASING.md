@@ -42,7 +42,7 @@ Placeholder, to be written once the checklist is agreed.
 3. It replaces the old version in place (same app, same folder), and keeps your data.
 4. Just before it copies anything, the installer saves a backup of your data (see below).
 
-Settings > Updates has a "Check for updates" button.
+Settings > About has a "Check for updates" button.
 It reads `latest.json` in your releases folder and tells you if a newer version exists.
 It only tells you. It never installs anything.
 
@@ -100,6 +100,6 @@ Each backup holds `appdata\` (everything in the app data folder except `worktree
 The installer makes one automatically before every install.
 To take one yourself, run `pwsh tools\backup-now.ps1`.
 
-The releases folder is a setting (Settings > Updates > Releases folder).
+The releases folder is a setting (Settings > About > Releases folder).
 A dev build suggests the repo's `releases\` folder, and any build also honours the `FLIGHTDECK_RELEASES_DIR` environment variable.
 The revert script uses the same order, then falls back to `releases\` in the repo.
