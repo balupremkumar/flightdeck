@@ -29,6 +29,18 @@ pub fn lock_out(m: &Mutex<PaneOut>) -> std::sync::MutexGuard<'_, PaneOut> {
     m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
+/// Outcome of `PaneOut::resume`.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Resumed {
+    /// Not paused, or nothing arrived while paused.
+    Nothing,
+    /// What arrived while paused, and the seq after it: emit as one catch-up chunk.
+    Bytes(Vec<u8>, u64),
+    /// The paused-at point was evicted: the gap cannot be replayed, the caller
+    /// must hand the frontend a full snapshot instead.
+    Gap,
+}
+
 pub struct PaneOut {
     ring: PaneRing,
     paused: bool,
@@ -67,10 +79,14 @@ impl PaneOut {
 
     /// pty_resize: remember the size and drop pre-resize history (bytes written
     /// at another width would replay into nonsense).
+    /// While paused the ring is not trimmed: `resume` needs every byte since
+    /// `paused_at` to still be there.
     pub fn resized(&mut self, cols: u16, rows: u16) {
         self.cols = cols;
         self.rows = rows;
-        self.ring.truncate_to_resize();
+        if !self.paused {
+            self.ring.truncate_to_resize();
+        }
     }
 
     /// Switch to buffer-only. Returns the seq at which live emits stopped.
@@ -83,17 +99,16 @@ impl PaneOut {
         self.paused_at
     }
 
-    /// Back to live emits. Returns whatever was buffered while paused (bytes and
-    /// the seq after them) so the caller can emit it as one catch-up chunk.
-    /// None if not paused, nothing arrived, or the bytes were already evicted.
-    pub fn resume(&mut self) -> Option<(Vec<u8>, u64)> {
+    /// Back to live emits. See `Resumed`.
+    pub fn resume(&mut self) -> Resumed {
         if !self.paused {
-            return None;
+            return Resumed::Nothing;
         }
         self.paused = false;
         match self.ring.bytes_since(self.paused_at) {
-            Some((b, next)) if !b.is_empty() => Some((b, next)),
-            _ => None,
+            Some((b, next)) if !b.is_empty() => Resumed::Bytes(b, next),
+            Some(_) => Resumed::Nothing,
+            None => Resumed::Gap,
         }
     }
 
@@ -429,21 +444,46 @@ mod tests {
         assert_eq!(o.push(b"hidden1\r\n"), None);
         assert_eq!(o.push(b"hidden2\r\n"), None);
         assert_eq!(o.pause(), 6, "second pause keeps the first seq");
-        let (bytes, next) = o.resume().unwrap();
+        let Resumed::Bytes(bytes, next) = o.resume() else { panic!("expected bytes") };
         assert_eq!(bytes, b"hidden1\r\nhidden2\r\n");
         assert_eq!(next, o.seq());
         assert!(!o.is_paused());
         assert_eq!(o.push(b"again\r\n"), Some(o.seq()));
-        assert!(o.resume().is_none(), "not paused any more");
+        assert_eq!(o.resume(), Resumed::Nothing, "not paused any more");
     }
 
     #[test]
-    fn resume_with_nothing_buffered_is_none() {
+    fn resume_with_nothing_buffered_is_nothing() {
         let mut o = PaneOut::new(80, 24);
         o.push(b"x\r\n");
         o.pause();
-        assert!(o.resume().is_none());
+        assert_eq!(o.resume(), Resumed::Nothing);
         assert!(!o.is_paused());
+    }
+
+    #[test]
+    fn resume_reports_a_gap_when_the_paused_point_was_evicted() {
+        let mut o = PaneOut::with_capacity(64);
+        o.push(b"before\r\n");
+        o.pause();
+        for _ in 0..50 {
+            o.push(b"0123456789abcdef0123456789\r\n");
+        }
+        assert_eq!(o.resume(), Resumed::Gap);
+        assert!(!o.is_paused());
+    }
+
+    #[test]
+    fn resize_while_paused_keeps_the_gap_replayable() {
+        let mut o = PaneOut::new(80, 24);
+        o.push(b"live\r\n");
+        o.pause();
+        o.push(b"hidden1\r\n");
+        o.resized(100, 30);
+        o.push(b"hidden2\r\n");
+        assert_eq!((o.cols, o.rows), (100, 30));
+        let Resumed::Bytes(bytes, _) = o.resume() else { panic!("expected bytes, not a gap") };
+        assert_eq!(bytes, b"hidden1\r\nhidden2\r\n");
     }
 
     #[test]

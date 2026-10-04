@@ -507,15 +507,29 @@ async fn pane_pause(reg: State<'_, Registry>, model_id: u32) -> Result<u64, Stri
 }
 
 /// Undo pane_pause: live emits resume, preceded by one catch-up chunk holding
-/// whatever arrived while paused.
+/// whatever arrived while paused. If the gap was evicted from the ring it cannot
+/// be replayed; the full snapshot comes back instead and the caller repaints from
+/// it (None means the live stream is complete).
 #[tauri::command]
-async fn pane_resume(app: AppHandle, reg: State<'_, Registry>, model_id: u32) -> Result<(), String> {
+async fn pane_resume(app: AppHandle, reg: State<'_, Registry>, model_id: u32) -> Result<Option<AttachSnapshot>, String> {
     let (pty_id, out) = out_for_model(reg.inner(), model_id)?;
     let mut o = paneout::lock_out(&out);
-    if let Some((bytes, seq)) = o.resume() {
-        let _ = app.emit("pty://output", OutputPayload { pane_id: pty_id, b64: STANDARD.encode(&bytes), seq });
+    match o.resume() {
+        paneout::Resumed::Bytes(bytes, seq) => {
+            let _ = app.emit("pty://output", OutputPayload { pane_id: pty_id, b64: STANDARD.encode(&bytes), seq });
+            Ok(None)
+        }
+        paneout::Resumed::Gap => {
+            let snap = o.snapshot();
+            Ok(Some(AttachSnapshot {
+                head: STANDARD.encode(&snap.head),
+                body: STANDARD.encode(&snap.body),
+                start_seq: snap.start_seq,
+                next_seq: snap.next_seq,
+            }))
+        }
+        paneout::Resumed::Nothing => Ok(None),
     }
-    Ok(())
 }
 
 /// Called on every main-webview load. A fresh load has no frontend attached to
