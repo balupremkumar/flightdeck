@@ -22,7 +22,10 @@ const pageErrors = [];
 page.on("pageerror", (e) => pageErrors.push(e.message));
 await page.addInitScript(boot + "\n" + mock + "\n" + wrap);
 await page.goto(URL, { waitUntil: "networkidle" });
-await page.waitForTimeout(3500);
+// Wait for the panes to actually spawn (a cold Vite can take longer than any
+// fixed sleep to serve the lazy chunks), then let layout settle.
+await page.waitForFunction(() => (window.__spawned ?? []).length > 0, null, { timeout: 30000 }).catch(() => {});
+await page.waitForTimeout(1000);
 
 const spawned = await page.evaluate(() => window.__spawned.slice());
 console.log(`spawned: [${spawned}]`);
