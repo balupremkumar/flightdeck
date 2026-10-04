@@ -18,6 +18,7 @@ import {
   type AttentionItem,
   type AttentionKind,
 } from "./attention";
+import { isMcpInputPrompt } from "./mcphealth";
 import { usePaneProgress, type PaneProgress } from "./Terminal";
 import { timeTitle, bytes } from "./format";
 import { vendorShort } from "./vendors";
@@ -237,8 +238,13 @@ export const HOOK_PANE_STATE: Record<HookKind, PaneState> = {
 export function classifyHookEvent(e: HookEventPayload | null | undefined): HookKind | null {
   const name = e?.event || e?.payload?.hook_event_name || "";
   if (name === "Stop") return "stop";
+  // G3: PermissionRequest fires as the approval dialog opens, so it is the exact
+  // signal (no message to regex). Observer only; the relay never answers it.
+  if (name === "PermissionRequest") return "permission";
   if (name !== "Notification") return null; // SubagentStop, PreToolUse, … aren't ours
   const msg = (e?.payload?.message ?? "").toLowerCase();
+  // G2: "An MCP server needs your input" is a dialog Claude is blocked on.
+  if (isMcpInputPrompt(msg)) return "permission";
   return /permission|approve|approval|allow/.test(msg) ? "permission" : "idle";
 }
 

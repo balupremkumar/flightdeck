@@ -378,6 +378,7 @@
 }
 .phead .pattn.permission { color: var(--st-waiting); }
 .phead .pattn.error { color: var(--st-error); animation: none; }
+.phead .pattn.mcp { color: var(--muted); animation: none; cursor: help; }
 @keyframes pattn-pulse { 0%,100% { opacity: 1; } 50% { opacity: .55; } }
 /* UI-127: setup command shown inline in the launching overlay. */
 .plaunching code {

@@ -231,6 +231,11 @@ describe("classifyHookEvent (QL-720)", () => {
     expect(classifyHookEvent(ev("Notification", "Claude is waiting for your input"))).toBe("idle");
   });
 
+  it("reads PermissionRequest and the MCP input dialog as approvals (G3, G2)", () => {
+    expect(classifyHookEvent(ev("PermissionRequest"))).toBe("permission");
+    expect(classifyHookEvent(ev("Notification", "An MCP server needs your input"))).toBe("permission");
+  });
+
   it("treats an unrecognised Notification as idle, never as an approval", () => {
     // An unknown message must not be able to invent a chime out of nothing.
     expect(classifyHookEvent(ev("Notification", "something new in a future release"))).toBe("idle");

@@ -10,6 +10,7 @@
 // as context and nothing more. attentionQueue is the union of the two and is
 // for navigation call sites only.
 import type { PaneModel, PaneState, Workspace } from "./store";
+import { isMcpInputPrompt } from "./mcphealth";
 
 /** UX-601 (owner ruling 2026-08-01): the three things that genuinely need a
  *  HUMAN. Everything else — including a pane that has merely gone quiet — is
@@ -119,6 +120,9 @@ export function isOpenQuestion(text: string | undefined): boolean {
 export function attentionKind(p: PaneModel): AttentionKind | null {
   if (p.state === "permission") return "permission";
   if (p.state === "error") return "error";
+  // G2: a quiet pane sitting on Claude's "An MCP server needs your input" dialog
+  // is blocked on a human exactly like an approval. A mere disconnect is not.
+  if (p.state === "waiting" && isMcpInputPrompt(lastLine.get(p.id))) return "permission";
   if (p.state === "waiting" && isOpenQuestion(lastLine.get(p.id))) return "question";
   return null;
 }

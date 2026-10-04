@@ -13,6 +13,7 @@ import {
 import type { DiffSummary } from "./worktrees";
 import { cachedInvoke, usePoll, useVisible, usePaneMemory } from "./poll";
 import { compact, num, duration, bytes, relTime, tailEllipsis } from "./format";
+import { mcpChip, noteMcpLine } from "./mcphealth";
 import { stateSince, lastLine, isOpenQuestion, STATE_LABEL as STATE_TITLE } from "./attention";
 import "./panes.css";
 
@@ -239,6 +240,7 @@ function PaneViewInner({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(pane.title ?? "");
   const [menuOpen, setMenuOpen] = useState(false);
+  const [, bumpMcp] = useState(0); // G2: re-render when an MCP notice lands
   const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
   // UI-140: font zoom is a per-agent habit (agy's TUI runs denser than
   // claude's), so remember it per vendor rather than resetting every pane.
@@ -1026,6 +1028,10 @@ function PaneViewInner({
             {pane.state === "permission" ? "needs you" : openQuestion ? "has a question" : "error"}
           </span>
         )}
+        {(() => {
+          const chip = mcpChip(pane.id);
+          return chip ? <span className="pattn mcp" title={chip.title}>{chip.label}</span> : null;
+        })()}
         {usage && (() => {
           // UI-231: a raw token count doesn't tell you when you're in trouble.
           // Colour it against the model's context window so "compact soon" is
@@ -1472,7 +1478,7 @@ Running low — consider /compact in this pane.` : "")
           onState={(st) => setPaneState(pane.id, st as PaneState)}
           onProc={setProcName}
           onBell={pulseBell}
-          onLine={(l) => { lastLine.set(pane.id, l); recordActivity(); }}
+          onLine={(l) => { lastLine.set(pane.id, l); if (noteMcpLine(pane.id, l)) bumpMcp((n) => n + 1); recordActivity(); }}
           onScrollAway={setBehind}
           onProgress={setProgress}
         />

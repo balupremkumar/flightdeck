@@ -15,6 +15,7 @@ mod health;
 mod hooks;
 mod job;
 mod orphans;
+mod oscprogress;
 mod outbuf;
 mod paneout;
 mod pathcheck;
@@ -271,6 +272,10 @@ async fn pty_spawn(
     let last = std::sync::Arc::new(AtomicU64::new(now_ms()));
     let waiting = std::sync::Arc::new(AtomicU8::new(0)); // 0 = running, 1 = waiting
     let alive = std::sync::Arc::new(AtomicBool::new(true));
+    // OSC 9;4 progress (G3): a program advertising progress is busy, so the quiet
+    // timer must not call it "waiting". Holds an expiry (ms epoch), 0 = clear; the
+    // expiry means a program that dies mid-progress can't pin the pane busy forever.
+    let osc_busy_until = std::sync::Arc::new(AtomicU64::new(0));
     // UX-594: output coalescing/backpressure — see outbuf.rs. The reader only
     // buffers; a separate flusher thread (below) is what actually emits.
     let coalescer = std::sync::Arc::new(outbuf::OutputCoalescer::new());
@@ -279,10 +284,18 @@ async fn pty_spawn(
     // Reader thread: blocking read -> coalescer, plus activity bookkeeping.
     // Emitting the output event is the flusher thread's job now, so a flood
     // of small reads can't turn into a flood of IPC events.
-    let (app_r, last_r, waiting_r, alive_r, coal_r, out_r) =
-        (app.clone(), last.clone(), waiting.clone(), alive.clone(), coalescer.clone(), out.clone());
+    let (app_r, last_r, waiting_r, alive_r, coal_r, out_r, osc_r) = (
+        app.clone(),
+        last.clone(),
+        waiting.clone(),
+        alive.clone(),
+        coalescer.clone(),
+        out.clone(),
+        osc_busy_until.clone(),
+    );
     std::thread::spawn(move || {
         let mut buf = [0u8; 8192];
+        let mut osc = oscprogress::ProgressScanner::default();
         loop {
             match reader.read(&mut buf) {
                 Ok(0) => break,
@@ -290,6 +303,9 @@ async fn pty_spawn(
                     last_r.store(now_ms(), Ordering::Relaxed);
                     if waiting_r.swap(0, Ordering::Relaxed) != 0 {
                         let _ = app_r.emit("pty://state", StatePayload { pane_id: id, state: "running".into() });
+                    }
+                    if let Some(p) = osc.feed(&buf[..n]) {
+                        osc_r.store(if p.busy { now_ms() + 60_000 } else { 0 }, Ordering::Relaxed);
                     }
                     coal_r.push(&buf[..n]);
                 }
@@ -322,7 +338,8 @@ async fn pty_spawn(
     });
 
     // Monitor thread: emit "waiting" once output has been quiet past the threshold.
-    let (app_m, last_m, waiting_m, alive_m) = (app.clone(), last.clone(), waiting.clone(), alive.clone());
+    let (app_m, last_m, waiting_m, alive_m, osc_m) =
+        (app.clone(), last.clone(), waiting.clone(), alive.clone(), osc_busy_until.clone());
     std::thread::spawn(move || {
         const QUIET_MS: u64 = 3000;
         loop {
@@ -331,7 +348,8 @@ async fn pty_spawn(
                 break;
             }
             let quiet_for = now_ms().saturating_sub(last_m.load(Ordering::Relaxed));
-            if quiet_for > QUIET_MS && waiting_m.swap(1, Ordering::Relaxed) == 0 {
+            let osc_busy = osc_m.load(Ordering::Relaxed) > now_ms();
+            if quiet_for > QUIET_MS && !osc_busy && waiting_m.swap(1, Ordering::Relaxed) == 0 {
                 let _ = app_m.emit("pty://state", StatePayload { pane_id: id, state: "waiting".into() });
             }
         }
