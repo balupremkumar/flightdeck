@@ -13,7 +13,7 @@ const mock = readFileSync(path.join(here, "..", "demo", "mock-tauri-interactive.
 const shots = path.join(here, "shots");
 mkdirSync(shots, { recursive: true });
 const boot = `localStorage.setItem("flightdeck-startup","reopen");`;
-const URL = "http://localhost:1420";
+const URL = process.env.FD_URL ?? "http://localhost:1420";
 const VFX = "D:\\Dev\\ai\\vfx\\";
 const failures = [];
 const check = (ok, msg) => { if (!ok) { failures.push(msg); console.error("FAIL: " + msg); } else console.log("ok: " + msg); };
