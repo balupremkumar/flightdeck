@@ -632,7 +632,12 @@ function UpdatesBlock() {
           )}
           <div className="set-row-sub">Close Flightdeck, then run the installer. Installing from inside the app would end every running pane.</div>
           <div className="set-update-failure-actions">
-            <button className="set-btn" onClick={() => { if (effectiveDir) void revealPath(`${effectiveDir}\\latest.json`); }}>
+            <button
+              className="set-btn"
+              disabled={!effectiveDir}
+              title={effectiveDir ? undefined : "Set a releases folder first"}
+              onClick={() => { if (effectiveDir) void revealPath(`${effectiveDir}\\latest.json`); }}
+            >
               Open releases folder
             </button>
             <button
@@ -654,7 +659,12 @@ function UpdatesBlock() {
           <code className="set-releases-dir">{REVERT_COMMAND}</code>
         </div>
         <button className="set-btn" onClick={() => copyText(REVERT_COMMAND, "Revert command copied.")}>Copy command</button>
-        <button className="set-btn" onClick={() => { if (effectiveDir) void revealPath(`${effectiveDir}\\archive`); }}>
+        <button
+          className="set-btn"
+          disabled={!effectiveDir}
+          title={effectiveDir ? undefined : "Set a releases folder first"}
+          onClick={() => { if (effectiveDir) void revealPath(`${effectiveDir}\\archive`); }}
+        >
           Open releases archive
         </button>
       </div>
