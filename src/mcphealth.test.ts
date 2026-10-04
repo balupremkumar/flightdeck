@@ -31,6 +31,11 @@ describe("SF4 anchoring and TTL", () => {
   it("accepts leading whitespace", () => {
     expect(scanMcpLine('  MCP server "github" disconnected')).toEqual({ kind: "disconnected", server: "github" });
   });
+  it("accepts TUI chrome before the notice (box border, bullet, warning glyph)", () => {
+    expect(isMcpInputPrompt("│ An MCP server needs your input")).toBe(true);
+    expect(scanMcpLine('⚠ MCP server "github" disconnected · open /mcp')).toEqual({ kind: "disconnected", server: "github" });
+    expect(scanMcpLine('● MCP server "x" needs you to sign in again')).toEqual({ kind: "auth", server: "x" });
+  });
   it("re-feeding the same notice does not refresh its TTL", () => {
     const line = 'MCP server "github" disconnected · open /mcp to reconnect';
     noteMcpLine(7, line, 0);

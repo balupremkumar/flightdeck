@@ -18,9 +18,12 @@ export type McpSignal =
 
 // SF4: anchored to the line start (the caller strips ANSI first), so Claude
 // quoting or discussing these strings mid-sentence never raises the chip.
-const DISCONNECTED_RE = /^\s*MCP server "([^"]+)" disconnected/i;
-const AUTH_RE = /^\s*MCP server "([^"]+)" needs you to sign in/i;
-export const MCP_INPUT_RE = /^\s*an mcp server needs your input/i;
+// The lead may also be TUI chrome (box border, bullet, warning glyph), since
+// Claude draws dialogs and toasts inside frames.
+const LEAD = String.raw`^[\s│┃|╭╰╮╯─━•●○◦⎿▶►>*⚠✗✘!]*`;
+const DISCONNECTED_RE = new RegExp(LEAD + String.raw`MCP server "([^"]+)" disconnected`, "i");
+const AUTH_RE = new RegExp(LEAD + String.raw`MCP server "([^"]+)" needs you to sign in`, "i");
+export const MCP_INPUT_RE = new RegExp(LEAD + "an mcp server needs your input", "i");
 
 /** Classify one line of pane output, or null when it is not an MCP notice. */
 export function scanMcpLine(line: string | undefined | null): McpSignal | null {
