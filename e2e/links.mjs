@@ -14,7 +14,7 @@ const mock = readFileSync(path.join(here, "..", "demo", "mock-tauri-interactive.
 const shots = path.join(here, "shots");
 mkdirSync(shots, { recursive: true });
 const boot = `localStorage.setItem("flightdeck-startup","reopen");`;
-const wrap = `(()=>{const T=window.__TAURI_INTERNALS__;const inv=T.invoke;window.__spawned=[];window.__size={};window.__writes=[];T.invoke=(c,a)=>{if(c==="pty_resize")window.__size[a.paneId]={cols:a.cols,rows:a.rows};if(c==="pty_write")window.__writes.push({id:a.paneId,data:a.data});const r=inv(c,a);if(c==="pty_spawn"){Promise.resolve(r).then(id=>{window.__spawned.push(id);window.__size[id]={cols:a.cols,rows:a.rows};});}return r;};})();`;
+const wrap = `(()=>{const T=window.__TAURI_INTERNALS__;const inv=T.invoke;window.__spawned=[];window.__size={};window.__writes=[];window.__pathsExist=[];T.invoke=(c,a)=>{if(c==="paths_exist")window.__pathsExist.push(JSON.stringify(a));if(c==="pty_resize")window.__size[a.paneId]={cols:a.cols,rows:a.rows};if(c==="pty_write")window.__writes.push({id:a.paneId,data:a.data});const r=inv(c,a);if(c==="pty_spawn"){Promise.resolve(r).then(id=>{window.__spawned.push(id);window.__size[id]={cols:a.cols,rows:a.rows};});}return r;};})();`;
 
 const URL = "http://localhost:1420";
 const failures = [];
@@ -30,8 +30,10 @@ const LINES = [
   ["dir: ", "D:\\Dev\\ai\\research\\"],
   ["url: (see ", "https://example.com/x)"],
   ["unc: ", "\\\\server\\share\\a.txt"],
+  ["mixed: ", '"/\\localhost/c$/Windows/win.ini"'],
+  ["bslash: `", "\\/server/share/x.txt`"],
 ];
-const ROW = Object.fromEntries(["spaced", "rel", "home", "wiki", "dir", "url", "unc"].map((k, i) => [k, i]));
+const ROW = Object.fromEntries(["spaced", "rel", "home", "wiki", "dir", "url", "unc", "mixed", "bslash"].map((k, i) => [k, i]));
 
 const browser = await chromium.launch();
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
@@ -89,6 +91,13 @@ const clearOverlays = async () => { await page.mouse.move(2, 2); await page.keyb
 {
   await hover("unc", 6);
   check(!(await pointer()), "(e) hovering the UNC path shows no pointer");
+  await hover("mixed", 6);
+  check(!(await pointer()), "(e2) hovering the mixed-slash UNC path shows no pointer");
+  await hover("bslash", 6);
+  check(!(await pointer()), "(e3) hovering the backslash-slash UNC path shows no pointer");
+  const probed = await page.evaluate(() => window.__pathsExist.join("\n"));
+  console.log("paths_exist log:", probed.slice(0, 1500));
+  check(!/localhost|server|srv/i.test(probed), "(e4) no paths_exist call received a UNC-shaped path");
 }
 
 // (b) click spaced path -> Preview with STATE.md

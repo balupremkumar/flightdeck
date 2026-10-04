@@ -20,7 +20,8 @@ import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { terminalThemeFor } from "./terminal-theme";
 import { getTerminalSettings, terminalReadabilityOptions } from "./Settings";
-import { linkify, resolvePath, type LinkMatch } from "./linkify";
+import { linkify, resolvePath, isRemotePath, type LinkMatch } from "./linkify";
+import { invalidatePathCache } from "./pathcheck";
 import { openInEditor } from "./editor";
 import { useUI } from "./ui";
 import { resolveCandidates } from "./termlinkResolve";
@@ -107,7 +108,7 @@ interface PaneLinkCtx {
    *  this provider, WebLinksAddon and OSC 8. */
   hover: { current: (() => Promise<LinkTarget | null>) | null };
   /** Click behaviour (dedupe + preview/editor/explorer/browser). */
-  open: (t: LinkTarget, e: { ctrlKey: boolean; metaKey: boolean }) => void;
+  open: (t: LinkTarget, e: { ctrlKey: boolean; metaKey: boolean; button?: number }) => void;
   menuDeps: () => Parameters<typeof linkMenuItems>[1];
 }
 
@@ -170,12 +171,13 @@ function registerPathLinks(term: XTerm, pane: PaneLinkCtx): { dispose(): void } 
 
   interface Cand { m: LinkMatch; range: Range; hard: boolean }
 
+  const getRow = (yy: number): RowInfo | undefined => {
+    const l = term.buffer.active.getLine(yy - 1);
+    return l ? { text: l.translateToString(false), wrapped: l.isWrapped } : undefined;
+  };
+
   const buildLinks = async (y: number): Promise<ILink[] | undefined> => {
     const buf = term.buffer.active;
-    const getRow = (yy: number): RowInfo | undefined => {
-      const l = buf.getLine(yy - 1);
-      return l ? { text: l.translateToString(false), wrapped: l.isWrapped } : undefined;
-    };
     const logical = stitchLogical(getRow, y);
     if (!logical) return undefined;
     const cands: Cand[] = [];
@@ -198,6 +200,9 @@ function registerPathLinks(term: XTerm, pane: PaneLinkCtx): { dispose(): void } 
     // Wikilinks ([[projects/x/STATE|alias]]) name a vault note: .md is implied;
     // the vault is the last base paneBases supplies.
     const rawOf = (m: Cand["m"]) => (m.kind === "wikilink" && !/\.[A-Za-z0-9]{1,10}$/.test(m.raw) ? m.raw + ".md" : m.raw);
+    // UNC / device paths in any spelling are never resolved, so never probed.
+    for (let i = cands.length - 1; i >= 0; i--) if (isRemotePath(rawOf(cands[i].m))) cands.splice(i, 1);
+    if (!cands.length) return undefined;
     const hits = await resolveCandidates(cands.map((c) => rawOf(c.m)), await paneBases(pane.modelId, pane.cwdRef.current));
     const resolved = cands.flatMap((c, i) => (hits[i] ? [{ c, hit: hits[i]! }] : []));
     // A joined (hard-wrapped) path supersedes any partial match inside it.
@@ -228,7 +233,13 @@ function registerPathLinks(term: XTerm, pane: PaneLinkCtx): { dispose(): void } 
 
   const provider: ILinkProvider = {
     provideLinks(bufferLineNumber, callback) {
-      buildLinks(bufferLineNumber).then(callback, () => callback(undefined));
+      // xterm cannot cancel a provider call: if the rows changed while the
+      // disk check ran, the ranges belong to old text, so drop the reply.
+      const before = stitchLogical(getRow, bufferLineNumber)?.text;
+      buildLinks(bufferLineNumber).then(
+        (links) => callback(stitchLogical(getRow, bufferLineNumber)?.text === before ? links : undefined),
+        () => callback(undefined)
+      );
     },
   };
   const disp = term.registerLinkProvider(provider);
@@ -238,14 +249,15 @@ function registerPathLinks(term: XTerm, pane: PaneLinkCtx): { dispose(): void } 
   const onContextMenu = (e: MouseEvent) => {
     const resolve = pane.hover.current;
     if (!resolve) return;
+    // Only hover sources that always resolve (paths, http, file://) register a
+    // resolver, so the native menu is suppressed only when ours will show.
     e.preventDefault();
     e.stopPropagation();
     const { clientX: x, clientY: y } = e;
     void resolve().then((t) => {
-      if (t) {
-        hideTip();
-        openLinkMenu({ modelId: pane.modelId, x, y, items: linkMenuItems(t, pane.menuDeps()), target: t });
-      }
+      if (!t) { useUI.getState().pushToast("info", "File not found"); return; }
+      hideTip();
+      openLinkMenu({ modelId: pane.modelId, x, y, items: linkMenuItems(t, pane.menuDeps()), target: t });
     });
   };
   const el = term.element;
@@ -640,11 +652,12 @@ function createSession(modelId: number, gen: string, spec: SpawnSpec, handlers: 
     let urlHover: (() => Promise<LinkTarget | null>) | null = null;
     const dedupe = createDedupe(); // 1.3e: Claude Code fullscreen fires one OSC 8 activation twice
     const openTarget: PaneLinkCtx["open"] = (t, e) => {
-      if (!dedupe(t.kind === "url" ? t.url : `${t.path}:${t.line ?? ""}`)) return;
+      const mod = `${e.ctrlKey || e.metaKey ? "c" : "-"}${e.button ?? 0}`;
+      if (!dedupe(t.kind === "url" ? `${t.url}:${mod}` : `${t.path}:${t.line ?? ""}:${mod}`)) return;
       if (t.kind === "url") { openTerminalUrl(t.url); return; }
       if (t.isDir) { requestReveal(t.path); return; } // 1.4a
       if (e.ctrlKey || e.metaKey) { void openInEditor(t.path, t.line, t.col); return; }
-      useUI.getState().openPreview(t.path, { line: t.line, fontSize: live.fontSize.current });
+      useUI.getState().openPreview(t.path, { line: t.line });
     };
     // Terminal settings from Settings > Terminal (QOL 319 — they were persisted
     // but never read). fontSize stays a per-pane prop (zoom control).
@@ -674,9 +687,14 @@ function createSession(modelId: number, gen: string, spec: SpawnSpec, handlers: 
         allowNonHttpProtocols: true,
         activate: (e, uri) => {
           if (e.button !== 0) return;
-          void resolveOscLink(uri).then((t) => { if (t) openTarget(t, e); });
+          void resolveOscLink(uri).then((t) => {
+            if (t) openTarget(t, e);
+            else useUI.getState().pushToast("info", /^file:/i.test(uri) ? "File not found" : "That link type isn’t opened from Flightdeck");
+          });
         },
         hover: (_e, uri) => {
+          // Only http(s) and file:// can ever open, so only they claim right-click.
+          if (!/^(https?|file):/i.test(uri)) return;
           const resolver = () => resolveOscLink(uri);
           hoverRef.current = resolver;
           oscHover = resolver;
@@ -745,10 +763,17 @@ function createSession(modelId: number, gen: string, spec: SpawnSpec, handlers: 
       hover: hoverRef,
       open: openTarget,
       menuDeps: () => ({
-        fontSize: live.fontSize.current,
         openUrl: openTerminalUrl,
         // 1.4c: types into THIS pane's PTY, no Enter.
         sendToPane: (text) => {
+          // A pane blocked on a permission prompt (or still booting) reads typed
+          // text as an answer: a digit in the path could pick an option.
+          const st = useApp.getState().workspaces.flatMap((w) => w.panes).find((p) => p.id === modelId)?.state;
+          if (st === "permission" || st === "starting") {
+            void navigator.clipboard.writeText(text).catch(() => { /* clipboard unavailable */ });
+            useUI.getState().pushToast("info", "Agent is waiting on a prompt; path copied");
+            return;
+          }
           if (!entry.ptyId) { useUI.getState().pushToast("error", "This pane isn’t running."); return; }
           void invoke("pty_write", { paneId: entry.ptyId, data: text });
           term.focus();
@@ -965,6 +990,7 @@ function createSession(modelId: number, gen: string, spec: SpawnSpec, handlers: 
       if (ev.kind === "cwd") {
         if (!ev.cwd || ev.cwd === cwdRef.current) return;
         cwdRef.current = ev.cwd;
+        invalidatePathCache();
         entry.handlers.onCwd?.(ev.cwd);
         return;
       }
