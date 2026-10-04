@@ -654,14 +654,21 @@ pub fn run() {
     let app = tauri::Builder::default()
         // Must be the first plugin. A second launch of the SAME flavour (the
         // plugin keys on the bundle identifier, so stable and canary stay
-        // separate) exits and lands here in the running instance. Surface the
-        // window without taking foreground: the owner often has a fullscreen
-        // game up, so no set_focus / SetForegroundWindow, just show +
-        // unminimise + a taskbar flash.
+        // separate) exits and lands here in the running instance.
+        // RULE: never take foreground on a background event. The owner often
+        // has a fullscreen game up, and tao's show() (SW_SHOW) and
+        // unminimize() (SW_RESTORE) both activate the window. So: a visible
+        // window (including a minimised one) only gets a taskbar flash; a
+        // hidden one is shown with WS_EX_NOACTIVATE set (set_focusable(false))
+        // so the show doesn't activate it, then made focusable again so the
+        // user can click into it. No unminimize, no set_focus.
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             if let Some(win) = app.get_webview_window("main") {
-                let _ = win.show();
-                let _ = win.unminimize();
+                if !win.is_visible().unwrap_or(false) {
+                    let _ = win.set_focusable(false);
+                    let _ = win.show();
+                    let _ = win.set_focusable(true);
+                }
                 let _ = win.request_user_attention(Some(tauri::UserAttentionType::Informational));
             }
         }))
