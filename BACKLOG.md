@@ -1366,3 +1366,7 @@ This output is Claude Code's own TUI rendering inside xterm; Flightdeck draws no
 - [x] TN4 File-change summary per turn: a single "Changed 5 files (+120 -18)" row at the end of each turn, click opens the Review drawer at that file list (Review already supports open-at-file).
 - [x] TN5 Terminal side, for when Balu stays in Terminal view: investigate Claude Code options that shorten tool output in the classic TUI (settings / env such as verbose off, output style, any diff-collapse or condensed-tool-output setting in 2.1.289; check `claude --help`, settings reference, changelog) and expose the safe ones as a per-pane toggle. Focus mode (Claude fullscreen, opt-in per pane, Phase 3) already collapses tool results; document it in the pane menu tooltip.
 - [x] TN6 Measure: before/after line count for the same turn (target: a multi-file edit turn fits on one screen in Chat Normal).
+
+## Nice to have (parked 2026-10-04)
+
+- [ ] NH1 Side-chat button for `/btw` and a task chip that spins out-of-scope work into a new worktree session (roadmap H4 part 2; source research/flightdeck-competitor-qol-2026-10/README.md lines 315, 319). Balu: no use in his workflow today.
