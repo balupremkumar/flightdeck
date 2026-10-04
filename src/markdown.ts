@@ -10,7 +10,7 @@
 // passthrough" requirement falls out of that, rather than needing a
 // sanitiser dependency).
 
-import { linkify, normalizeSegments } from "./linkify";
+import { linkify, normalizeSegments, isRemotePath } from "./linkify";
 
 /** Root that `[[wikilinks]]` resolve against. A constant for now; a future
  *  setting (phase1-links.md, vault root) replaces this. */
@@ -264,17 +264,20 @@ export function isExternalHref(href: string): boolean {
 /** A drive-absolute Windows path (`C:\x`, `C:/x`) or a POSIX absolute path.
  *  Not "external" — it is a local file, and must be treated as one. */
 export function isAbsoluteLocalPath(href: string): boolean {
-  return /^[A-Za-z]:[\\/]/.test(href) || href.startsWith("/") || href.startsWith("\\\\");
+  if (isRemotePath(href)) return false; // UNC/device in any spelling is not local
+  return /^[A-Za-z]:[\\/]/.test(href) || href.startsWith("/");
 }
 
 /** Anything with a scheme we do not trust: `javascript:`, `file:`, `data:`,
  *  `ms-msdt:` and friends. Rendered inert rather than opened. */
 export function isBlockedHref(href: string): boolean {
+  if (isRemotePath(href)) return true;
   return HAS_SCHEME.test(href) && !SAFE_LINK_SCHEMES.test(href) && !isAbsoluteLocalPath(href);
 }
 
 export function resolveMdLink(href: string, mdFilePath: string): string {
   if (isExternalHref(href) || href.startsWith("#")) return href;
+  if (isRemotePath(href)) return href; // stays remote so every reader rejects it
   // An absolute local path is already resolved; joining it onto the md file's
   // directory would produce nonsense.
   if (isAbsoluteLocalPath(href)) return safeDecode(href.split("#")[0].split("?")[0]);
@@ -344,6 +347,7 @@ export function makeSlugger(): (text: string) => string {
  *  open-in-preview route as any other local link. */
 export function parseWikilink(target: string, alias?: string): { href: string; label: string } {
   const t = target.trim();
+  if (isRemotePath(t)) return { href: "blocked:remote-path", label: alias?.trim() || "remote path" };
   const hashAt = t.indexOf("#");
   const pathPart = hashAt === -1 ? t : t.slice(0, hashAt);
   const suffix = hashAt === -1 ? "" : t.slice(hashAt);
@@ -379,7 +383,7 @@ export function autolinkInline(nodes: InlineNode[]): InlineNode[] {
         if (!isExternalHref(m.raw)) continue;
         href = m.raw;
       } else if (m.kind === "path") {
-        if (/^(\\\\|\/\/)/.test(m.raw)) continue; // UNC is never linked
+        if (isRemotePath(m.raw)) continue; // UNC/device is never linked
         if (!/[\\/]/.test(m.raw)) continue; // a lone word is not obviously a path
         href = m.raw.replace(/%/g, "%25") + (m.line ? `#L${m.line}` : "");
       } else continue;
@@ -409,6 +413,7 @@ const PATH_LINE_RE = /^(.*\.[A-Za-z0-9]+):(\d+)(?::\d+)?$/;
  *  yield `line`; any other `#fragment` yields `anchor` (percent-decoded). */
 export function parseLinkTarget(href: string, mdPath: string): LinkTarget {
   if (isExternalHref(href)) return { kind: "external", url: href };
+  if (isRemotePath(href)) return { kind: "file", path: href }; // stays remote; every reader rejects it
   const noQuery = href.split("?")[0];
   const hashAt = noQuery.indexOf("#");
   let pathPart = hashAt === -1 ? noQuery : noQuery.slice(0, hashAt);

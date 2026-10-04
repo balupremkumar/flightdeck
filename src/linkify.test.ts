@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { linkify, resolvePath } from "./linkify";
+import { linkify, resolvePath, isRemotePath, normalizeSegments } from "./linkify";
 
 describe("linkify — urls", () => {
   it("detects a bare https url", () => {
@@ -448,5 +448,45 @@ describe("linkify L1 — misc", () => {
     const t = performance.now();
     for (let i = 0; i < 2000; i++) linkify(line);
     expect(performance.now() - t).toBeLessThan(200);
+  });
+});
+
+describe("isRemotePath", () => {
+  const remote = [
+    "\\\\srv\\share\\x.txt", "//srv/share/x.txt", "/\\srv\\share\\x.txt", "\\/srv/share/x.txt",
+    "%5C%5Csrv%5Cshare", "/%5Csrv/share/x.txt", "%2F%2Fsrv/x", "\\\\?\\UNC\\srv\\share\\x", "\\\\.\\pipe\\foo",
+    "//?/UNC/srv/share", "/\\localhost/c$/Windows/win.ini", "%5c%5cSRV",
+  ];
+  for (const r of remote) it(`rejects ${r}`, () => expect(isRemotePath(r)).toBe(true));
+  const local = ["C:\\Users\\x\\a.md", "C:/Users/x", "/home/me/a.md", "src/a.ts", "~/a", ".\\a", "100%.md", "%TEMP%\\a", "\\a", "/a"];
+  for (const l of local) it(`keeps ${l}`, () => expect(isRemotePath(l)).toBe(false));
+
+  it("never links a mixed-slash UNC in quotes, ticks or angle brackets", () => {
+    for (const p of ["/\\localhost/c$/Windows/win.ini", "\\/server/share/x.txt", "%5C%5Csrv%5Cshare%5Cx.txt", "\\\\?\\UNC\\s\\sh\\x.txt", "\\\\.\\pipe\\x.log"]) {
+      for (const wrap of [`"${p}"`, `'${p}'`, `\`${p}\``, `<${p}>`, `see [x](${p}) now`]) {
+        expect(linkify(wrap).filter((m) => m.kind === "path" && isRemotePath(m.raw))).toEqual([]);
+      }
+    }
+  });
+  it("still links local paths in the same wrappers", () => {
+    expect(linkify('"C:\\a\\b.txt"')[0]?.raw).toBe("C:\\a\\b.txt");
+    expect(linkify("`/home/me/a.md`")[0]?.raw).toBe("/home/me/a.md");
+  });
+});
+
+describe("normalizeSegments drive clamp", () => {
+  it("never pops the drive", () => {
+    expect(normalizeSegments(["D:", "v", "..", "..", "..", "Windows", "win.ini"])).toEqual(["D:", "Windows", "win.ini"]);
+  });
+  it("keeps leading .. for relative paths", () => {
+    expect(normalizeSegments(["..", "a"])).toEqual(["..", "a"]);
+  });
+});
+
+describe("UNC tails are not re-linked as rooted paths", () => {
+  it("emits nothing for the tail of a mixed-slash UNC", () => {
+    for (const s of ['"/\\localhost/c$/Windows/win.ini"', "`\\/server/share/x.txt`", "x /\\srv/share/a.txt", "x \\/srv/share/a.txt"]) {
+      expect(linkify(s).map((m) => m.raw)).toEqual([]);
+    }
   });
 });

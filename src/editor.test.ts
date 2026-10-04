@@ -187,3 +187,25 @@ describe("openInEditor (UX-517)", () => {
     expect(t?.text).toContain("D:\\repo\\huge.log");
   });
 });
+
+describe("openInEditor remote-path guard", () => {
+  it("refuses UNC spellings: no editor launch, no openPath, one toast", async () => {
+    for (const p of ["\\\\srv\\share\\a.ts", "//srv/share/a.ts", "/\\srv/share/a.ts", "\\/srv/a.ts", "%5C%5Csrv%5Ca.ts", "\\\\?\\UNC\\s\\a.ts", "\\\\.\\pipe\\x"]) {
+      configureEditor('code --goto "{file}:{line}"');
+      await openInEditor(p, 3);
+      expect(lastToast().text).toBe("Network paths are not opened from Flightdeck.");
+    }
+    expect(invoke).not.toHaveBeenCalled();
+    expect(openPath).not.toHaveBeenCalled();
+  });
+  it("refuses in the fallback path too (no editor configured)", async () => {
+    configureEditor("");
+    await openInEditor("\\\\srv\\share\\a.ts");
+    expect(openPath).not.toHaveBeenCalled();
+  });
+  it("still opens a local path via the fallback", async () => {
+    configureEditor("");
+    await openInEditor("D:\\repo\\a.ts");
+    expect(openPath).toHaveBeenCalledWith("D:\\repo\\a.ts");
+  });
+});

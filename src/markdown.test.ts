@@ -322,3 +322,38 @@ describe("autolinkInline", () => {
     expect(p.children.some((n) => n.type === "code")).toBe(true);
   });
 });
+
+describe("remote / device paths (any slash spelling)", () => {
+  const forms = [
+    "\\\\srv\\share\\x.md", "//srv/share/x.md", "/\\srv\\share\\x.md", "\\/srv/share/x.md",
+    "%5C%5Csrv%5Cshare%5Cx.md", "/%5Csrv/share/x.md", "\\\\?\\UNC\\srv\\share\\x.md", "\\\\.\\pipe\\x",
+  ];
+  for (const f of forms) {
+    it(`isAbsoluteLocalPath rejects, blocks and leaves unresolved: ${f}`, () => {
+      expect(isAbsoluteLocalPath(f)).toBe(false);
+      expect(isBlockedHref(f)).toBe(true);
+      expect(resolveMdLink(f, "D:\\v\\a.md")).toBe(f);
+      expect(parseLinkTarget(f, "D:\\v\\a.md")).toMatchObject({ kind: "file", path: f });
+    });
+  }
+  it("parseWikilink never turns a remote target into a UNC href", () => {
+    for (const t of ["/\\srv/share/x", "\\/srv/share/x", "//srv/share/x", "%5C%5Csrv/share/x"]) {
+      const w = parseWikilink(t);
+      expect(w.href).toBe("blocked:remote-path");
+      expect(w.href).not.toMatch(/srv/);
+    }
+  });
+  it("autolinkInline leaves UNC text alone", () => {
+    const out = autolinkInline([{ type: "text", text: "see \\\\srv\\share\\x.txt and /\\srv/share/y.txt" }]);
+    expect(out.every((n) => n.type === "text")).toBe(true);
+  });
+  it("local paths and wikilinks still work", () => {
+    expect(isAbsoluteLocalPath("C:\\a\\b.md")).toBe(true);
+    expect(isAbsoluteLocalPath("/home/a.md")).toBe(true);
+    expect(parseWikilink("projects/x/STATE").href).toBe(`${VAULT_ROOT}\\projects\\x\\STATE.md`);
+  });
+  it("parseLinkTarget clamps .. at the drive root", () => {
+    expect(parseLinkTarget("..\\..\\..\\Windows\\win.ini", "D:\\v\\a.md")).toMatchObject({ kind: "file", path: "D:\\Windows\\win.ini" });
+    expect(parseLinkTarget("../../../Windows/win.ini", "D:\\v\\a.md")).toMatchObject({ path: "D:\\Windows\\win.ini" });
+  });
+});

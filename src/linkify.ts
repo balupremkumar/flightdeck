@@ -48,7 +48,7 @@ const URL_RE = new RegExp(`\\bhttps?:\\/\\/${URL_BODY}+`, "g");
 const WIN_ABS_RE = new RegExp(`(?<![A-Za-z0-9_])[A-Za-z]:[\\\\/]${BODY}*`, "g");
 const ENV_RE = new RegExp(`(?<![\\w%])%[A-Za-z_][A-Za-z0-9_]*%[\\\\/]${BODY}*`, "g");
 const TILDE_RE = new RegExp(`(?<![\\w.~/\\\\])~[\\\\/]${BODY}+`, "g");
-const POSIX_ABS_RE = /(?<![\w./<])\/(?:[A-Za-z0-9_.-]+\/)*[A-Za-z0-9_.-]+\/?/g;
+const POSIX_ABS_RE = /(?<![\w./<\\$%])\/(?:[A-Za-z0-9_.-]+\/)*[A-Za-z0-9_.-]+\/?/g;
 const DOTREL_RE = new RegExp(`(?<![\\w./])\\.{1,2}[\\\\/]${BODY}+`, "g");
 const BARE_REL_RE =
   /(?<![\w./\\@])@?(?:[A-Za-z0-9_.-]+[\\/])+[A-Za-z0-9_.-]+\.[A-Za-z0-9]{1,10}(?![A-Za-z0-9])/g;
@@ -80,7 +80,17 @@ const SUFFIXES: RegExp[] = [
 const INNER_SUFFIX_RE =
   /(?::(\d+)(?::(\d+))?(?:-\d+)?|\((\d+),\s*(\d+)\)|#L(\d+)(?:C(\d+))?(?:-L?\d+(?:C\d+)?)?|,\s*line\s+(\d+)(?:,?\s*col(?:umn)?\s+(\d+))?)$/i;
 
-const PUNCT_END_RE = /[.,;!?]+$/;
+/** True for a UNC / device / verbatim path in ANY spelling: after a safe
+ *  percent-decode and `/` -> backslash it starts with two backslashes (`\\srv`,
+ *  `//srv`, `/\srv`, `\/srv`, `%5C%5Csrv`, `/%5Csrv`, `\\?\UNC\`, `\\.\pipe\`).
+ *  Remote and device paths are never linked, previewed or read. */
+export function isRemotePath(s: string): boolean {
+  let d = s.trimStart();
+  try { d = decodeURIComponent(d); } catch { d = d.replace(/%5C/gi, "\\").replace(/%2F/gi, "/"); }
+  return d.replace(/\//g, "\\").startsWith("\\\\");
+}
+
+const PUNCT_END_RE =/[.,;!?]+$/;
 const PREFIX_RE = /^(?:[A-Za-z]:[\\/]|~[\\/]|\.{1,2}[\\/]|%[A-Za-z_]\w*%[\\/]|\/[^\s/])/;
 const STRONG_RE = /^(?:[A-Za-z]:[\\/]|~[\\/]|\.{1,2}[\\/]|%[A-Za-z_]\w*%[\\/])/;
 const URL_SCHEME_RE = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//;
@@ -207,7 +217,7 @@ interface Whole {
 
 /** Interpret a delimited inner string (quotes/backticks/<>/md target) as ONE path. */
 function parseWhole(inner: string, mode: "quote" | "tick" | "angle" | "md"): Whole | null {
-  if (/^\\\\/.test(inner) || URL_SCHEME_RE.test(inner)) return null;
+  if (isRemotePath(inner) || URL_SCHEME_RE.test(inner)) return null;
   let raw = inner;
   let line: number | undefined;
   let col: number | undefined;
@@ -405,7 +415,7 @@ export function linkify(lineText: string): LinkMatch[] {
   settle(bare);
 
   cands.sort((a, b) => a.start - b.start);
-  return cands.map((c) => ({
+  return cands.filter((c) => !isRemotePath(c.raw)).map((c) => ({
     kind: c.kind,
     text: lineText.slice(c.start, c.end),
     start: c.start,
@@ -429,6 +439,7 @@ export function normalizeSegments(parts: string[]): string[] {
   for (const part of parts) {
     if (part === "" || part === ".") continue;
     if (part === "..") {
+      if (out.length === 1 && /^[A-Za-z]:$/.test(out[0])) continue; // clamp at the drive, never pop it
       if (out.length && out[out.length - 1] !== "..") out.pop();
       else out.push("..");
       continue;
@@ -466,3 +477,6 @@ export function resolvePath(match: LinkMatch, cwd: string): string {
   const sep = isWin ? "\\" : "/";
   return isWin ? merged.join(sep) : "/" + merged.join(sep);
 }
+
+/** Toast for any attempt to hand a UNC / device path to the OS opener. */
+export const REMOTE_PATH_MSG = "Network paths are not opened from Flightdeck.";

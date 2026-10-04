@@ -22,6 +22,7 @@ import { useUI, useOverlayEsc } from "./ui";
 import { revealPath } from "./reveal";
 import { requestReveal } from "./revealInTree";
 import type { PreviewTab } from "./ui";
+import { isRemotePath, REMOTE_PATH_MSG } from "./linkify";
 import { parseMarkdown, isExternalHref, isBlockedHref, resolveMdLink, parseLinkTarget, makeSlugger, inlineText, slugify } from "./markdown";
 import type { BlockNode, InlineNode } from "./markdown";
 import { highlightLine, langFor } from "./diffhighlight";
@@ -207,6 +208,7 @@ function ImageNode({ src, alt, mdPath }: { src: string; alt: string; mdPath: str
     setDataUrl(null);
     setFailed(false);
     setTooBig(false);
+    if (isRemotePath(resolved)) { setFailed(true); return; } // UNC/device: never read
     invoke<string>("fs_read_file_base64", { path: resolved })
       .then((b64) => { if (!cancelled) setDataUrl(`data:${mimeFor(resolved)};base64,${b64}`); })
       .catch((e) => { if (!cancelled) { setTooBig(isTooLargeError(e)); setFailed(true); } });
@@ -393,6 +395,7 @@ function PreviewBody({ tab }: { tab: PreviewTab }) {
   const load = useCallback(() => {
     const my = ++seq.current;
     setState("loading");
+    if (isRemotePath(tab.path)) { setErrMsg("Network and device paths are not opened from Flightdeck."); setState("error"); return; }
     if (isBinaryPath(tab.path)) { setState("binary"); return; }
     invoke<string>("fs_read_text_file", { path: tab.path })
       .then((t) => {
@@ -479,7 +482,9 @@ function PreviewBody({ tab }: { tab: PreviewTab }) {
               <button
                 className="prv-retry"
                 onClick={() => {
-                  openPath(tab.path).catch((e) => useUI.getState().pushToast("error", `Couldn’t open ${baseName(tab.path)}: ${String(e)}`));
+                  isRemotePath(tab.path)
+                    ? useUI.getState().pushToast("error", REMOTE_PATH_MSG)
+                    : openPath(tab.path).catch((e) => useUI.getState().pushToast("error", `Couldn’t open ${baseName(tab.path)}: ${String(e)}`));
                 }}
               >
                 Open externally

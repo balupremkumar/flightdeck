@@ -21,6 +21,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { getEditorSettings, resolveEditorCommand } from "./Settings";
 import { useUI } from "./ui";
+import { isRemotePath, REMOTE_PATH_MSG } from "./linkify";
 
 /** Splits a command template into argv-style tokens: whitespace separates,
  *  double quotes group (and are consumed). Backslashes are literal — these are
@@ -71,6 +72,10 @@ export function editorArgv(
  *  toast and then degrades to the old behaviour, never to nothing happening.
  *  Never rejects: every call site treats this as fire-and-forget. */
 export async function openInEditor(path: string, line?: number, col?: number): Promise<void> {
+  if (isRemotePath(path)) {
+    useUI.getState().pushToast("error", REMOTE_PATH_MSG);
+    return;
+  }
   const argv = editorArgv(getEditorSettings().command, path, line, col);
   if (argv) {
     try {

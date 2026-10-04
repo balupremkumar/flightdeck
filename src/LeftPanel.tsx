@@ -12,6 +12,7 @@ import { PANE_DRAG_TYPE } from "./PaneView";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { revealItemInDir, openUrl } from "@tauri-apps/plugin-opener";
+import { isRemotePath, REMOTE_PATH_MSG } from "./linkify";
 import "./leftpanel.css";
 
 function initial(name: string): string {
@@ -355,6 +356,7 @@ export function LeftPanel({ expanded }: { expanded: boolean }) {
 
   const reveal = async (w: Workspace) => {
     setMenu(null);
+    if (isRemotePath(w.root)) { pushToast("error", REMOTE_PATH_MSG); return; }
     try { await revealItemInDir(w.root); }
     catch { pushToast("error", `Couldn’t reveal ${w.root}`); }
   };

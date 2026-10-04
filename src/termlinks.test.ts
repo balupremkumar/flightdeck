@@ -165,3 +165,26 @@ describe("createDedupe", () => {
     expect(allow("a")).toBe(false);
   });
 });
+
+describe("parseFileUri remote spellings", () => {
+  for (const u of [
+    "file:///%5Cserver/share/x.txt", "file:////server/share/x.txt", "file://server/share/x.txt",
+    "file:///%5C%5Cserver/share/x.txt", "file:///%2Fserver/share/x.txt",
+    "file:///%5C%5C%3F%5CUNC%5Cs%5Cx", "file:///%5C%5C.%5Cpipe%5Cx",
+  ]) it(`yields nothing for ${u}`, () => expect(parseFileUri(u)).toBeNull());
+  it("still parses local files", () => {
+    expect(parseFileUri("file:///C:/a/b.md")!.candidates).toEqual(["C:\\a\\b.md"]);
+    expect(parseFileUri("file:///home/me/a.md")!.candidates).toEqual(["/home/me/a.md"]);
+  });
+});
+
+describe("createDedupe keys", () => {
+  it("a plain click then a modified click are different keys", () => {
+    let t = 0;
+    const allow = createDedupe(700, () => t);
+    expect(allow("p:1:-0")).toBe(true);
+    t = 100;
+    expect(allow("p:1:c0")).toBe(true);
+    expect(allow("p:1:c0")).toBe(false);
+  });
+});

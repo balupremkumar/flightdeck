@@ -6,8 +6,13 @@
 // as a toast instead of vanishing.
 import { invoke } from "@tauri-apps/api/core";
 import { useUI } from "./ui";
+import { isRemotePath, REMOTE_PATH_MSG } from "./linkify";
 
 export function revealPath(path: string): Promise<void> {
+  if (isRemotePath(path)) {
+    useUI.getState().pushToast("error", REMOTE_PATH_MSG);
+    return Promise.resolve();
+  }
   return invoke<void>("reveal_in_explorer", { path }).catch((e) => {
     useUI.getState().pushToast("error", `Couldn't reveal ${path}: ${String(e)}`);
   });

@@ -1,7 +1,7 @@
 // termlinks.ts — Phase 1 L3: the pure half of terminal link handling. Terminal.tsx
 // owns the xterm wiring; everything here is plain data in, plain data out so it
 // can be tested without a terminal.
-import { linkify, type LinkMatch } from "./linkify";
+import { linkify, isRemotePath, type LinkMatch } from "./linkify";
 
 /** The vault root, tried LAST as a base for relative paths (only if it exists).
  *  FUTURE SETTING: when Settings grows a "link base folder" field, read it here
@@ -143,7 +143,7 @@ export function parseFileUri(uri: string): FileTarget | null {
   if (!path || path.includes("\0")) return null;
   if (/^\/[A-Za-z]:[\\/]/.test(path)) path = path.slice(1);
   if (/^[A-Za-z]:/.test(path)) path = path.replace(/\//g, "\\");
-  if (path.startsWith("\\\\") || path.startsWith("//")) return null;
+  if (isRemotePath(path)) return null; // UNC/device in any spelling (`/\srv`, `/%5Csrv`, `//srv`)
   const candidates = [path];
   let line: number | undefined;
   let col: number | undefined;
