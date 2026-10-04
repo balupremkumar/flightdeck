@@ -18,6 +18,7 @@ import { Unicode11Addon } from "@xterm/addon-unicode11";
 import "@xterm/xterm/css/xterm.css";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { OutputPipe, attachFirst, type OutputEvt } from "./ptyAttach";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { terminalThemeFor } from "./terminal-theme";
 import { getTerminalSettings, terminalReadabilityOptions } from "./settingsStore";
@@ -1273,8 +1274,10 @@ function createSession(modelId: number, gen: string, spec: SpawnSpec, handlers: 
     let unState: (() => void) | undefined;
     let unProc: (() => void) | undefined;
     // The Rust reader can emit output before pty_spawn's id round-trips back here;
-    // buffer anything that arrives while paneId is still 0, then replay it.
-    const earlyOut: { pane_id: number; b64: string }[] = [];
+    // the pipe holds anything that arrives while paneId is still 0, then hands it
+    // back on bind. It also drops events already inside a pty_attach snapshot
+    // (event.seq <= snapshot.next_seq), see ptyAttach.ts.
+    const pipe = new OutputPipe<OutputEvt>();
     // Same race for the spawn-time `pty://proc` root-name event.
     const earlyProc = new Map<number, string>();
 
@@ -1469,9 +1472,9 @@ function createSession(modelId: number, gen: string, spec: SpawnSpec, handlers: 
     }
 
     (async () => {
-      unOut = await listen<{ pane_id: number; b64: string }>("pty://output", (e) => {
-        if (paneId === 0) { earlyOut.push(e.payload); return; }
-        if (e.payload.pane_id !== paneId) return;
+      unOut = await listen<OutputEvt>("pty://output", (e) => {
+        if (pipe.hold(e.payload)) return;
+        if (!pipe.accept(e.payload)) return;
         bumpActivity();
         const bytes = decodeB64(e.payload.b64);
         appendTail(bytes);
@@ -1508,14 +1511,33 @@ function createSession(modelId: number, gen: string, spec: SpawnSpec, handlers: 
         entry.handlers.onProc?.(e.payload.name);
       });
 
-      try {
-        // First sane fit, or after a grace period a sane default: never a
-        // degenerate size, and never hold a hidden pane's spawn forever.
-        await Promise.race([sized, new Promise<void>((res) => setTimeout(res, 500))]);
-        if (entry.disposed) return;
-        if (!fitSane()) term.resize(FALLBACK_COLS, FALLBACK_ROWS);
-        paneId = await invoke<number>("pty_spawn", { vendor: spec.vendor, cwd: spec.cwd, cols: term.cols, rows: term.rows, setup: spec.setup ?? null, focusMode: !!spec.focusMode });
+      // Attach first: after a webview reload the agent is still running in Rust.
+      // Reconnect to it (snapshot, then live events past snapshot.next_seq)
+      // instead of spawning a second one.
+      const hit = await attachFirst<OutputEvt>(<T,>(c: string, a?: Record<string, unknown>) => invoke<T>(c, a), pipe, modelId, gen);
+      if (entry.disposed) {
+        if (hit) invoke("pty_kill", { paneId: hit.info.pty_id });
+        return;
+      }
+      let reattached = false;
+      let earlyOut: OutputEvt[] = [];
+      if (hit) {
+        reattached = true;
+        paneId = hit.info.pty_id;
         entry.ptyId = paneId;
+        earlyOut = hit.early;
+      }
+      try {
+        if (!hit) {
+          // First sane fit, or after a grace period a sane default: never a
+          // degenerate size, and never hold a hidden pane's spawn forever.
+          await Promise.race([sized, new Promise<void>((res) => setTimeout(res, 500))]);
+          if (entry.disposed) return;
+          if (!fitSane()) term.resize(FALLBACK_COLS, FALLBACK_ROWS);
+          paneId = await invoke<number>("pty_spawn", { modelId, gen, vendor: spec.vendor, cwd: spec.cwd, cols: term.cols, rows: term.rows, setup: spec.setup ?? null, focusMode: !!spec.focusMode });
+          entry.ptyId = paneId;
+          earlyOut = pipe.bind(paneId);
+        }
       } catch (err) {
         // UI-11: a raw error string tells the user nothing actionable. Name the
         // likely cause and the fix, keeping the technical detail underneath
@@ -1536,28 +1558,57 @@ function createSession(modelId: number, gen: string, spec: SpawnSpec, handlers: 
         entry.handlers.onState?.("error");
         return;
       }
-      if (spec.setup) entry.handlers.onSetupConsumed?.();
+      if (spec.setup && !reattached) entry.handlers.onSetupConsumed?.();
       if (entry.disposed) { entry.ptyId = 0; invoke("pty_kill", { paneId }); return; }
+
+      let attachSize: { cols: number; rows: number } | null = null;
+      if (hit) {
+        // Paint the ring into a clean terminal at the width it was written for.
+        // Straight through term.write like restored scrollback: it is history,
+        // not live output, so no bell / progress / mark parsing. Only the last
+        // ~600 bytes prime the permission-prompt tail.
+        const { cols, rows, snapshot, proc_name } = hit.info;
+        if (cols && rows && cols >= 2 && rows >= 2) { term.resize(cols, rows); attachSize = { cols, rows }; }
+        term.reset();
+        const head = decodeB64(snapshot.head);
+        const body = decodeB64(snapshot.body);
+        const replay = new Uint8Array(head.length + body.length);
+        replay.set(head, 0);
+        replay.set(body, head.length);
+        term.write(replay);
+        outTail = textDecoder.decode(replay.subarray(Math.max(0, replay.length - 600))).slice(-600);
+        bumpActivity();
+        if (proc_name) entry.handlers.onProc?.(proc_name);
+      }
 
       // Replay buffered output belonging to this pane, then go live.
       for (const p of earlyOut) {
-        if (p.pane_id !== paneId) continue;
         if (visible) writeB64(p.b64); else pushHidden(decodeB64(p.b64));
       }
-      earlyOut.length = 0;
+      earlyOut = [];
       const bufferedProc = earlyProc.get(paneId);
       if (bufferedProc) entry.handlers.onProc?.(bufferedProc);
       earlyProc.clear();
 
       // The container may have resized during the spawn round-trip (the observer
       // fires before onResize is wired), so push the current size once.
-      invoke("pty_resize", { paneId, cols: term.cols, rows: term.rows });
+      // A reattach skips it when the size already matches: every pty_resize drops
+      // the ring's history, and the replay was painted at the pty's own size.
+      if (hit) {
+        fitSane();
+        if (!attachSize || attachSize.cols !== term.cols || attachSize.rows !== term.rows) {
+          invoke("pty_resize", { paneId, cols: term.cols, rows: term.rows });
+        }
+      } else {
+        invoke("pty_resize", { paneId, cols: term.cols, rows: term.rows });
+      }
 
       // UX-581: mirror the unsent input line into the store so a restart can
       // restore it. Approximates line editing (it does not follow arrow-key
       // cursor movement), which is enough to not lose a typed-but-unsent
       // prompt. Debounced so a fast typist doesn't thrash the session save.
-      if (spec.initialDraft) invoke("pty_write", { paneId, data: spec.initialDraft });
+      // Not on a reattach: the live agent already has that text in its input line.
+      if (spec.initialDraft && !hit) invoke("pty_write", { paneId, data: spec.initialDraft });
       let draftBuf = spec.initialDraft ?? "";
       let draftTimer: ReturnType<typeof setTimeout> | undefined;
       const saveDraft = () => {
