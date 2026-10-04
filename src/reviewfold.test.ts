@@ -77,6 +77,10 @@ describe("hashPatch and viewed invalidation (QL-719)", () => {
     expect(hashPatch("+a\n")).toBe(hashPatch("+a\n"));
     expect(hashPatch("+a\n")).not.toBe(hashPatch("+b\n"));
     expect(hashPatch("")).not.toBe(hashPatch(" "));
+    // identical (capped) patch text but different full counts must differ
+    expect(hashPatch("+a\n", { added: 5, deleted: 1 })).not.toBe(hashPatch("+a\n", { added: 6, deleted: 1 }));
+    expect(hashPatch("+a\n", { added: 5, deleted: 1 })).not.toBe(hashPatch("+a\n", { added: 5, deleted: 2 }));
+    expect(hashPatch("+a\n", { added: 5, deleted: 1 })).toBe(hashPatch("+a\n", { added: 5, deleted: 1 }));
   });
   it("keeps marks whose hash is unchanged", () => {
     const r = reconcileViewed({ "a.ts": "h1" }, { "a.ts": "h1" }, new Set(["a.ts"]));

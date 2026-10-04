@@ -90,7 +90,10 @@ export function applyFolds(
 
 /** Deterministic, cheap content hash (FNV-1a 32-bit + length). Not
  *  cryptographic; it only has to notice that a patch changed. */
-export function hashPatch(patch: string): string {
+export function hashPatch(patch: string, counts?: { added: number; deleted: number }): string {
+  // The patch is capped, so an edit past the cap would not change it; the
+  // file's full added:deleted counts are hashed in so that still invalidates.
+  if (counts) patch = `${counts.added}:${counts.deleted}\n${patch}`;
   let h = 0x811c9dc5;
   for (let i = 0; i < patch.length; i++) {
     h ^= patch.charCodeAt(i);

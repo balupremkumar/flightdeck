@@ -257,7 +257,8 @@ export function Review() {
         const fresh: Record<string, string | null> = {};
         await Promise.all(Object.keys(viewedRef.current).filter((p) => present.has(p)).map(async (p) => {
           try {
-            fresh[p] = hashPatch(await invoke<string>("git_file_diff", { cwd: pane.cwd, base: pane.baseBranch ?? null, file: p, ignoreWhitespace: false }));
+            const f = s.files.find((x) => x.path === p);
+            fresh[p] = hashPatch(await invoke<string>("git_file_diff", { cwd: pane.cwd, base: pane.baseBranch ?? null, file: p, ignoreWhitespace: false }), f);
           } catch { fresh[p] = null; }
         }));
         const r = reconcileViewed(viewedRef.current, fresh, present);
@@ -396,7 +397,7 @@ export function Review() {
       const raw = path === selected && patchPath === path && !hideWs
         ? patch
         : await invoke<string>("git_file_diff", { cwd: pane.cwd, base: pane.baseBranch ?? null, file: path, ignoreWhitespace: false });
-      hash = hashPatch(raw);
+      hash = hashPatch(raw, summary?.files.find((x) => x.path === path));
     } catch (e) {
       pushToast("error", `Couldn't mark ${path} viewed.`, { detail: String(e) });
       return;
