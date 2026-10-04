@@ -19,7 +19,7 @@
 
 .PARAMETER Version
   New version, e.g. 0.3.1. Applied to package.json, src-tauri/Cargo.toml,
-  src-tauri/tauri.conf.json, src/Settings.tsx APP_VERSION, src/version.ts
+  src-tauri/tauri.conf.json, src/settingsStore.ts APP_VERSION, src/version.ts
   APP_VERSION.
 
 .PARAMETER Notes
@@ -91,9 +91,9 @@ Step "Bump versions" {
     Set-JsonVersion  "package.json"                  $Version
     Set-CargoVersion "src-tauri/Cargo.toml"           $Version
     Set-JsonVersion  "src-tauri/tauri.conf.json"      $Version
-    Set-TsAppVersion "src/Settings.tsx"               $Version
+    Set-TsAppVersion "src/settingsStore.ts"           $Version
     Set-TsAppVersion "src/version.ts"                 $Version
-    Write-Host "  package.json, Cargo.toml, tauri.conf.json, Settings.tsx, version.ts -> $Version"
+    Write-Host "  package.json, Cargo.toml, tauri.conf.json, settingsStore.ts, version.ts -> $Version"
 }
 
 # ---------------------------------------------------------------------------
@@ -333,5 +333,5 @@ Write-Host "  1. Install the CANARY installer - it lands beside the stable insta
 Write-Host "     and on first boot clones a copy of stable's state (worktrees excluded by design)."
 Write-Host "  2. Trial canary. Broken? Delete it; stable was never touched. Good? Promote:"
 Write-Host "     install stable v$Version by hand from outside Flightdeck (Settings > About only tells you it is there)."
-Write-Host "  3. Commit the version bump (package.json, Cargo.toml, Cargo.lock, tauri.conf.json, Settings.tsx, version.ts)."
+Write-Host "  3. Commit the version bump (package.json, Cargo.toml, Cargo.lock, tauri.conf.json, settingsStore.ts, version.ts)."
 Write-Host "  4. Something wrong after install? pwsh tools\revert.ps1 -To <old version> (see docs/RELEASING.md)."

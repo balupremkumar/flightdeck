@@ -1,5 +1,6 @@
 import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useSyncExternalStore } from "react";
 import { useApp } from "./store";
+import { permissionPatternsFor } from "./attention";
 import { Terminal as XTerm } from "@xterm/xterm";
 import type { ILinkProvider, ILink, ITheme, IMarker, IDecoration } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
@@ -1253,15 +1254,9 @@ function createSession(modelId: number, gen: string, spec: SpawnSpec, handlers: 
     // whether this is plain "waiting" or a blocked-on-approval "permission"
     // prompt (Warp-style badge). Patterns are vendor-agnostic v1; per-vendor
     // patterns become manifest fields later (#220 full).
-    const PERMISSION_PATTERNS = [
-      /do you want to/i,
-      /would you like to/i,
-      /\b(allow|approve|grant|trust) (this|these|it|access|edits?|command)/i,
-      /\((y\/n|yes\/no)\)|\[(y\/n|yes\/no)\]/i,
-      /❯?\s*1\.\s*yes/i,
-      /press enter to (continue|confirm|approve)/i,
-      /waiting for (your )?(approval|confirmation|permission)/i,
-    ];
+    // The shared list now lives in attention.ts (permissionPatternsFor), with
+    // Codex's extra approval strings added for that vendor only.
+    const PERMISSION_PATTERNS = permissionPatternsFor(spec.vendor);
     // CSI + OSC stripping so patterns match what the user sees, not the codes.
     const ANSI_RE = /\x1b\[[0-9;?]*[ -/]*[@-~]/g;
     const OSC_RE = /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?/g;

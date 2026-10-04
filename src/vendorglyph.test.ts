@@ -16,6 +16,10 @@ describe("vendor glyph initials (UI-236)", () => {
     expect(vendorInitials("claude")).toBe("CL");
   });
 
+  it("codex gets CO", () => {
+    expect(vendorInitials("codex")).toBe("CO");
+  });
+
   it("falls back to the id for an unknown vendor", () => {
     expect(vendorInitials("opencode-local")).toMatch(/^[A-Z]{1,2}$/);
   });

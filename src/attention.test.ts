@@ -5,6 +5,7 @@ import {
   attentionQueue,
   forMins,
   isOpenQuestion,
+  permissionPatternsFor,
   needsHumanQueue,
   stateSince,
   lastLine,
@@ -157,6 +158,29 @@ describe("needs-you gate (UX-601, owner ruling 2026-08-01)", () => {
     const snoozed = { 24: Date.now() + 60_000, 21: Date.now() + 60_000 };
     expect(needsHumanQueue([scene()], snoozed).map((x) => x.p.id)).toEqual([23, 22]);
     expect(ambientQueue([scene()], snoozed)).toHaveLength(0);
+  });
+
+  it("codex approval prompts (strings from codex.exe 0.160.0) read as permission for codex only", () => {
+    const prompts = [
+      "Would you like to run the following command?",
+      "Would you like to make the following edits?",
+      "Would you like to grant these permissions?",
+      "Do you want to approve network access to example.com?",
+      "2. Yes, and don't ask again for this command in this session",
+      "3. No, and tell Codex what to do differently",
+      "Approve app tool call?",
+      "Allow for this session",
+      "Trust this folder? Codex can read, edit, and run files here",
+    ];
+    const hits = (vendor: string, s: string) => permissionPatternsFor(vendor).some((re) => re.test(s));
+    for (const s of prompts) expect(hits("codex", s), s).toBe(true);
+    // Claude/agy keep exactly the shared list: Codex-only strings do not match.
+    for (const s of prompts.slice(4, 8)) {
+      expect(hits("claude", s), s).toBe(false);
+      expect(hits("agy", s), s).toBe(false);
+    }
+    expect(permissionPatternsFor("claude")).toEqual(permissionPatternsFor("agy"));
+    expect(hits("codex", "Reading src/main.rs and thinking")).toBe(false);
   });
 
   it("attentionQueue (navigation call sites) still sees needs-you first, then quiet", () => {

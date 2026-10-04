@@ -63,6 +63,7 @@
 
   /* agent identity (no brand token — a light-safe pair) */
   --agent-claude:#8FA2FF;
+  --agent-codex:#FF9D5C;
 
   /* gradient + depth */
   --accent-grad:linear-gradient(125deg,#9AE9FF 0%,#43A6F5 48%,#3F6BFF 100%);
@@ -258,6 +259,7 @@
   --st-exited:#0E8C66;
 
   --agent-claude:#5B63D6;
+  --agent-codex:#B4530A;
   --on-accent:#FFFFFF;
   --on-warn:#FFFFFF;
 
@@ -282,6 +284,7 @@
   --ice:#8BE9FD; --azure:#62D6F5; --aqua:#69FFC4; --deepblue:#6272A4; --red:#FF5555; --accent:#BD93F9;
   --st-starting:#8BE9FD; --st-running:#50FA7B; --st-waiting:#F1FA8C; --st-idle:#6272A4; --st-error:#FF5555; --st-exited:#69FFC4;
   --agent-claude:#BD93F9;
+  --agent-codex:#FFB86C;
   /* UI-636/638 audit: --on-accent/--on-warn weren't declared here before —
      they were silently resolving to the dark base theme's values via
      cascade (same near-black on this bright accent-grad, but undocumented
@@ -299,6 +302,7 @@
   --ice:#83A598; --azure:#458588; --aqua:#8EC07C; --deepblue:#458588; --red:#FB4934; --accent:#FE8019;
   --st-starting:#83A598; --st-running:#B8BB26; --st-waiting:#FABD2F; --st-idle:#928374; --st-error:#FB4934; --st-exited:#8EC07C;
   --agent-claude:#D3869B;
+  --agent-codex:#FE8019;
   /* UI-636/638 audit: see the same note in the dracula block above. */
   --on-accent:#05080E; --on-warn:#1a1400;
   --accent-grad:linear-gradient(125deg,#FABD2F 0%,#FE8019 48%,#D65D0E 100%);
@@ -315,6 +319,7 @@
      header, making an idle pane's dot invisible in this theme. */
   --st-starting:#88C0D0; --st-running:#A3BE8C; --st-waiting:#EBCB8B; --st-idle:#7C8AA6; --st-error:#BF616A; --st-exited:#8FBCBB;
   --agent-claude:#B48EAD;
+  --agent-codex:#D08770;
   /* UI-636/638 audit: see the same note in the dracula block above. */
   --on-accent:#05080E; --on-warn:#1a1400;
   --accent-grad:linear-gradient(125deg,#88C0D0 0%,#81A1C1 48%,#5E81AC 100%);
@@ -329,6 +334,7 @@
   --ice:#FFD400; --azure:#5AC8FA; --aqua:#00E5A0; --deepblue:#5AC8FA; --red:#FF3B30; --accent:#FFD400;
   --st-starting:#5AC8FA; --st-running:#00E5A0; --st-waiting:#FFD400; --st-idle:#8C8C8C; --st-error:#FF3B30; --st-exited:#FFFFFF;
   --agent-claude:#5AC8FA;
+  --agent-codex:#FFA05A;
   /* UI-636/637 audit: see the same note in the dracula block above (high
      contrast wants max separation anyway — near-black ink on this bright
      accent-grad/waiting-yellow is the correct call, not just a fallback). */
@@ -368,6 +374,7 @@
   --ice:#9FC1CC; --azure:#8FB2BF; --aqua:#7FBFAE; --deepblue:#7C8A96; --red:#E2707A; --accent:#AAB4BF;
   --st-starting:#8FA9BA; --st-running:#79C79A; --st-waiting:#D8B071; --st-idle:#767E86; --st-error:#E2707A; --st-exited:#7FBFAE;
   --agent-claude:#A6A9D8;
+  --agent-codex:#E8A06A;
   --on-accent:#0B0D0F; --on-warn:#1A1409;
   --accent-grad:linear-gradient(125deg,#C8D2DA 0%,#AAB4BF 48%,#7C8A96 100%);
   --glow:0 0 0 1px rgba(170,182,194,0.22), 0 8px 40px rgba(0,0,0,0.55);
