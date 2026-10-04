@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { extOf, viewersForExt, resolveViewer, rememberViewer, getWrap, setWrap, VIEWER_CHOICE_KEY } from "./registry";
+import { getFollow, setFollow, viewersFor, extOf, viewersForExt, resolveViewer, rememberViewer, getWrap, setWrap, VIEWER_CHOICE_KEY } from "./registry";
 
 function fakeStore(init: Record<string, string> = {}) {
   const m = new Map(Object.entries(init));
@@ -46,5 +46,21 @@ describe("registry", () => {
     expect(getWrap(s)).toBe(false);
     setWrap(true, s);
     expect(getWrap(s)).toBe(true);
+  });
+  it("routes code and log files", () => {
+    expect(viewersFor("/x/a.PS1")).toEqual(["code", "text"]);
+    expect(viewersFor("/x/app.log")).toEqual(["log", "text"]);
+    expect(viewersFor("/x/app.log.3")).toEqual(["log", "text"]);
+    expect(viewersFor("/x/notes.txt")).toEqual(["text"]);
+  });
+  it("follow defaults on for logs only, remembered per extension", () => {
+    const s = fakeStore();
+    expect(getFollow("a.log", s)).toBe(true);
+    expect(getFollow("a.log.2", s)).toBe(true);
+    expect(getFollow("a.ts", s)).toBe(false);
+    setFollow("a.ts", true, s);
+    setFollow("b.log.1", false, s);
+    expect(getFollow("z.ts", s)).toBe(true);
+    expect(getFollow("a.log", s)).toBe(false);
   });
 });

@@ -39,7 +39,7 @@ export const CODE_LANG: Record<string, string> = {
 };
 
 /** A log file: *.log, or a rotated *.log.N. Keyed as "log" for viewer/follow memory. */
-export const LOG_RE = /.log(.d+)?$/i;
+export const LOG_RE = /\.log(\.\d+)?$/i;
 export const isLogPath = (path: string) => LOG_RE.test(path);
 
 /** The key a path is remembered under: its extension, with rotated logs folded into "log". */

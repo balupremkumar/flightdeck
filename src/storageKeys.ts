@@ -57,6 +57,7 @@ export const PREFERENCE_KEYS = [
   // QL-708: drawer vs pinned split, and the split's width (percent).
   "flightdeck-preview-mode",
   "flightdeck-preview-split-size",
+  "flightdeck-preview-follow",
 ] as const;
 
 /**

@@ -23,6 +23,7 @@ import { revealPath } from "./reveal";
 import { requestReveal } from "./revealInTree";
 import type { PreviewTab } from "./ui";
 import { isRemotePath, REMOTE_PATH_MSG } from "./linkify";
+import { isOutsideScopeError } from "./readscope";
 import { parseMarkdown, isExternalHref, isBlockedHref, resolveMdLink, parseLinkTarget, makeSlugger, inlineText, slugify } from "./markdown";
 import type { BlockNode, InlineNode } from "./markdown";
 import { highlightLine, langFor } from "./diffhighlight";
@@ -31,8 +32,9 @@ import { useFocusTrap } from "./useFocusTrap";
 import { IconClose } from "./Icons";
 import { findTheme } from "./themes";
 import {
-  csvLoaders, mermaidLoaders, rememberViewer, resolveViewer, viewersFor, VIEWER_LABEL, getWrap, setWrap, type ViewerId,
+  csvLoaders, mermaidLoaders, rememberViewer, resolveViewer, viewersFor, VIEWER_LABEL, getWrap, setWrap, getFollow, setFollow, type ViewerId,
 } from "./viewers/registry";
+import { FOLLOW_POLL_MS, scopeRetryDelay, shouldPoll, statChanged, type FileStat } from "./viewers/previewlogic";
 import { clearDomFind, nextIndex, scanDom, type DomFind } from "./viewers/findInViewer";
 import type { JsonParseError } from "./viewers/jsonflatten";
 import "./preview.css";
@@ -48,6 +50,10 @@ const MD_RE = /\.(mdx?|markdown)$/i;
 // MermaidBlock come from a parallel stream: lazyFrom is null until the file exists.
 const JsonTree = lazy(() => import("./viewers/JsonTree"));
 const JsonlView = lazy(() => import("./viewers/JsonlView"));
+const CodeMirrorView = lazy(() => import("./viewers/CodeView"));
+const TocPanel = lazy(() => import("./viewers/TocPanel"));
+const OutsideScopePanel = lazy(() => import("./viewers/OutsideScopePanel"));
+const LogView = lazy(() => import("./viewers/LogLines"));
 function lazyFrom<P extends object>(loaders: Record<string, () => Promise<unknown>>): ComponentType<P> | null {
   const load = Object.values(loaders)[0];
   return load ? (lazy(load as () => Promise<{ default: ComponentType<P> }>) as unknown as ComponentType<P>) : null;
@@ -401,7 +407,7 @@ function renderBlocks(blocks: BlockNode[], mdPath: string, slug: (t: string) => 
 // Per-tab body: loads the file and renders raw/rendered per its state.
 // ---------------------------------------------------------------------
 
-type LoadState = "loading" | "loaded" | "error" | "binary";
+type LoadState = "loading" | "loaded" | "error" | "binary" | "outside";
 
 function guessErrorMessage(err: unknown): string {
   const raw = String(err);
@@ -521,14 +527,19 @@ function PreviewBody({ tab }: { tab: PreviewTab }) {
   // A line target (file.md#L12, path:12) only means something in the text view.
   const textView: ViewerId = isMd ? "raw" : "text";
   const viewers = useMemo(() => viewersFor(tab.path), [tab.path]);
-  const [mode, setMode] = useState<ViewerId>(() => (tab.line ? textView : resolveViewer(tab.path)));
+  // Line-aware viewers (code, log, text) honour a line target; the rest drop to text.
+  const lineMode = useCallback((): ViewerId => {
+    const r = resolveViewer(tab.path);
+    return r === "code" || r === "log" || r === "text" ? r : textView;
+  }, [tab.path, textView]);
+  const [mode, setMode] = useState<ViewerId>(() => (tab.line ? lineMode() : resolveViewer(tab.path)));
   const [wrap, setWrapState] = useState(getWrap);
   const [badJson, setBadJson] = useState<JsonParseError | null>(null);
   const seq = useRef(0);
   const wrapRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => { if (tab.line) setMode(textView); }, [tab.line, textView]);
+  useEffect(() => { if (tab.line) setMode(lineMode()); }, [tab.line, lineMode]);
 
   const pick = useCallback((id: ViewerId) => {
     setMode(id);
@@ -537,21 +548,40 @@ function PreviewBody({ tab }: { tab: PreviewTab }) {
   }, [tab.path]);
   const onInvalid = useCallback((e: JsonParseError) => setBadJson(e), []);
 
-  const load = useCallback(() => {
+  const retried = useRef(false);
+  const retryTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const loadRef = useRef<(silent?: boolean) => void>(() => {});
+  useEffect(() => () => clearTimeout(retryTimer.current), []);
+
+  // `silent` is the follow-on-disk reload: no skeleton, no error state, so the
+  // reader's scroll position and place in the view survive.
+  const load = useCallback((silent = false) => {
     const my = ++seq.current;
-    setState("loading");
+    if (!silent) setState("loading");
     if (isRemotePath(tab.path)) { setErrMsg("Network and device paths are not opened from Flightdeck."); setState("error"); return; }
     if (isBinaryPath(tab.path)) { setState("binary"); return; }
     invoke<string>("fs_read_text_file", { path: tab.path })
       .then((t) => {
         if (seq.current !== my) return;
-        if (looksBinary(t)) { setState("binary"); return; }
+        if (looksBinary(t)) { if (!silent) setState("binary"); return; }
         setText(t);
         setBadJson(null);
         setState("loaded");
       })
       .catch(async (e) => {
-        if (seq.current !== my) return;
+        if (seq.current !== my || silent) return;
+        // Roots are pushed to Rust on a 200 ms debounce, so a tab opened right
+        // at launch can be refused before they land: retry once, then explain.
+        if (isOutsideScopeError(e)) {
+          const wait = scopeRetryDelay(performance.now(), retried.current);
+          if (wait !== null) {
+            retried.current = true;
+            retryTimer.current = setTimeout(() => loadRef.current(), wait);
+            return;
+          }
+          setState("outside");
+          return;
+        }
         // A folder is not a failed file: hand it to Explorer and drop the tab.
         if (isDirReadError(e)) {
           const isDir = await invoke("fs_list_dir", { path: tab.path }).then(() => true, () => false);
@@ -568,8 +598,40 @@ function PreviewBody({ tab }: { tab: PreviewTab }) {
         setState("error");
       });
   }, [tab.path, tab.id]);
+  loadRef.current = load;
 
   useEffect(() => { load(); }, [load]);
+
+  // ---- follow file on disk (QL-704) ----
+  const [follow, setFollowOn] = useState(() => getFollow(tab.path));
+  const [justUpdated, setJustUpdated] = useState(false);
+  const lastStat = useRef<FileStat | null>(null);
+  useEffect(() => {
+    lastStat.current = null;
+    const visible = () => document.visibilityState === "visible";
+    if (!follow || state !== "loaded") return;
+    let stop = false;
+    const tick = async () => {
+      if (!shouldPoll({ follow, drawerOpen: true, windowVisible: visible(), loaded: true })) return;
+      try {
+        const s = await invoke<FileStat & { is_dir: boolean }>("fs_stat", { path: tab.path });
+        if (stop || s.is_dir) return;
+        const prev = lastStat.current;
+        lastStat.current = s;
+        if (statChanged(prev, s)) { loadRef.current(true); setJustUpdated(true); }
+      } catch { /* gone or unreadable: leave what is on screen */ }
+    };
+    void tick();
+    const id = setInterval(() => { void tick(); }, FOLLOW_POLL_MS);
+    const onVis = () => { if (visible()) void tick(); };
+    document.addEventListener("visibilitychange", onVis);
+    return () => { stop = true; clearInterval(id); document.removeEventListener("visibilitychange", onVis); };
+  }, [follow, state, tab.path]);
+  useEffect(() => {
+    if (!justUpdated) return;
+    const id = setTimeout(() => setJustUpdated(false), 6000);
+    return () => clearTimeout(id);
+  }, [justUpdated]);
 
   const blocks = useMemo(
     () => (isMd && state === "loaded" ? parseMarkdown(text) : null),
@@ -600,7 +662,7 @@ function PreviewBody({ tab }: { tab: PreviewTab }) {
 
   // Invalid JSON drops to the text view (with a banner) at the error's line.
   const view: ViewerId = mode === "json-tree" && badJson ? "text" : mode;
-  const selfFind = view === "json-tree" || view === "jsonl"; // windowed views count their own rows
+  const selfFind = view === "json-tree" || view === "jsonl" || view === "code" || view === "log"; // these count their own matches
   const fill = selfFind || view === "csv";
 
   // ---- find in viewer (Ctrl+F while focus is in this drawer) ----
@@ -650,7 +712,8 @@ function PreviewBody({ tab }: { tab: PreviewTab }) {
 
   useEffect(() => {
     const root = contentRef.current;
-    if (!findOpen || !query || !root || !canFind) {
+    // CodeView paints its own matches (its lines are virtual, a DOM scan would miss most).
+    if (!findOpen || !query || !root || !canFind || view === "code") {
       clearDomFind();
       finder.current = null;
       setDomCount(0);
@@ -693,7 +756,7 @@ function PreviewBody({ tab }: { tab: PreviewTab }) {
         {state === "loaded" && (
           <div className="prv-actions">
             {!isMd && viewers.length > 1 && <ViewMenu viewers={viewers} current={view} onPick={pick} />}
-            {(view === "text" || view === "raw") && (
+            {(view === "text" || view === "raw" || view === "code") && (
               <button
                 className="prv-copy"
                 aria-pressed={wrap}
@@ -703,6 +766,15 @@ function PreviewBody({ tab }: { tab: PreviewTab }) {
                 Wrap: {wrap ? "on" : "off"}
               </button>
             )}
+            <button
+              className="prv-copy"
+              aria-pressed={follow}
+              title="Reload when the file changes on disk"
+              onClick={() => setFollowOn((f) => { setFollow(tab.path, !f); return !f; })}
+            >
+              Follow: {follow ? "on" : "off"}
+            </button>
+            {justUpdated && <span className="prv-updated" role="status">Updated just now</span>}
             {canFind && (
               <button className="prv-copy" aria-pressed={findOpen} title="Find (Ctrl+F)" onClick={() => setFindOpen((o) => !o)}>
                 Find
@@ -739,6 +811,20 @@ function PreviewBody({ tab }: { tab: PreviewTab }) {
       )}
       <div className={"prv-content" + (fill ? " prv-content-fill" : "")} ref={contentRef}>
         {state === "loading" && <PreviewSkeleton />}
+        {state === "outside" && (
+          <Suspense fallback={<PreviewSkeleton />}>
+            <OutsideScopePanel
+              name={baseName(tab.path)}
+              onOpen={() => {
+                isRemotePath(tab.path)
+                  ? useUI.getState().pushToast("error", REMOTE_PATH_MSG)
+                  : openPath(tab.path).catch((e) => useUI.getState().pushToast("error", `Couldn’t open ${baseName(tab.path)}: ${String(e)}`));
+              }}
+              onReveal={() => { void revealPath(tab.path); }}
+              onCopy={() => copyPath(tab.path)}
+            />
+          </Suspense>
+        )}
         {state === "binary" && (
           <div className="prv-state">
             <code className="prv-icode">{baseName(tab.path)}</code>
@@ -775,18 +861,25 @@ function PreviewBody({ tab }: { tab: PreviewTab }) {
         {state === "error" && !tooLarge && (
           <div className="prv-state prv-error">
             {errMsg}
-            <button className="prv-retry" onClick={load}>Retry</button>
+            <button className="prv-retry" onClick={() => load()}>Retry</button>
           </div>
         )}
         {state === "loaded" && text === "" && <div className="prv-state">Empty file.</div>}
         {state === "loaded" && text !== "" && (
           mdTree ? (
-            <div className="prv-md">{mdTree}</div>
-          ) : view === "json-tree" || view === "jsonl" || (view === "csv" && CsvTable) ? (
+            <div className="prv-md">
+              {blocks && blocks.filter((b) => b.type === "heading").length >= 3 && (
+                <Suspense fallback={null}><TocPanel blocks={blocks} /></Suspense>
+              )}
+              {mdTree}
+            </div>
+          ) : view === "json-tree" || view === "jsonl" || view === "code" || view === "log" || (view === "csv" && CsvTable) ? (
             <ViewerBoundary onText={() => pick(textView)}>
               <Suspense fallback={<PreviewSkeleton />}>
                 {view === "json-tree" && <JsonTree text={text} onInvalid={onInvalid} find={treeFind} />}
                 {view === "jsonl" && <JsonlView text={text} find={treeFind} />}
+                {view === "code" && <CodeMirrorView text={text} path={tab.path} targetLine={tab.line} wrap={wrap} find={treeFind} />}
+                {view === "log" && <LogView text={text} targetLine={tab.line} find={treeFind} />}
                 {view === "csv" && CsvTable && <CsvTable text={text} path={tab.path} />}
               </Suspense>
             </ViewerBoundary>

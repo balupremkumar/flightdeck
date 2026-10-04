@@ -269,3 +269,35 @@ button.jt-tog:hover { background: var(--elevated); color: var(--text); }
 .jl-bad { background: color-mix(in srgb, var(--red) 8%, transparent); }
 .jl-err { flex: none; margin-right: 10px; color: var(--red); max-width: 40%; overflow: hidden; text-overflow: ellipsis; }
 .jl-bad-count { color: var(--red); }
+
+/* ---------- Outside-scope panel, follow indicator ---------- */
+.prv-state-title { color: var(--text); font-size: 13.5px; font-weight: 600; }
+.prv-note { font-size: 11.5px; color: var(--faint); line-height: 1.5; }
+.prv-updated { align-self: center; font-size: 11px; color: var(--aqua); white-space: nowrap; }
+
+/* ---------- Markdown contents (QL-703) ---------- */
+.prv-toc {
+  float: right; clear: right; width: min(260px, 45%); margin: 0 0 14px 18px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 9px;
+  font-size: 12px; line-height: 1.4;
+}
+.prv-toc > summary { cursor: pointer; padding: 7px 12px; color: var(--muted); font-weight: 600; user-select: none; }
+.prv-toc > summary:hover { color: var(--text); }
+.prv-toc[open] > summary { border-bottom: 1px solid var(--line); }
+.prv-toc ul { list-style: none; margin: 0; padding: 6px; max-height: 50vh; overflow: auto; }
+.prv-toc-item {
+  display: block; width: 100%; text-align: left; font: inherit; color: var(--muted); background: transparent;
+  border: 0; border-radius: 5px; padding: 4px 8px; cursor: pointer;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.prv-toc-item:hover, .prv-toc-item:focus-visible { background: var(--surface-2); color: var(--text); outline: none; }
+
+/* ---------- CodeMirror code view, log view ---------- */
+.cv { flex: 1; min-height: 0; overflow: hidden; }
+.lg-row { padding-left: 0; }
+.lg-row .jl-no { margin-left: 12px; }
+.lg-ts { color: var(--faint); }
+.lg-error { color: var(--red); }
+.lg-warn { color: var(--st-waiting); }
+.lg-debug { color: var(--faint); }
+.lg-hit { background: color-mix(in srgb, var(--accent) 14%, transparent); }
