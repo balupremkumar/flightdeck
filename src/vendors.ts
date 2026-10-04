@@ -37,7 +37,7 @@ export interface VendorInfo {
 const FALLBACK: VendorInfo[] = [
   { id: "claude", label: "Claude Code", short: "Claude", kind: "agent", accent: "--agent-claude", installed: false, detail: "", authState: "unknown", authDetail: "", quietSeconds: 3, installHint: "", installUrl: "", needsTrust: false },
   { id: "agy", label: "Antigravity", short: "Antigravity", kind: "agent", accent: "--accent", installed: false, detail: "", authState: "unknown", authDetail: "", quietSeconds: 3, installHint: "", installUrl: "", needsTrust: false },
-  { id: "codex", label: "Codex CLI", short: "Codex", kind: "agent", accent: "--agent-codex", installed: false, detail: "", authState: "unknown", authDetail: "", quietSeconds: 6, installHint: "npm install -g @openai/codex", installUrl: "https://developers.openai.com/codex/cli", needsTrust: false },
+  { id: "codex", label: "Codex CLI", short: "Codex", kind: "agent", accent: "--agent-codex", installed: false, detail: "", authState: "unknown", authDetail: "", quietSeconds: 6, installHint: "npm install -g @openai/codex", installUrl: "https://developers.openai.com/codex/cli", needsTrust: true },
   { id: "pwsh", label: "pwsh (shell)", short: "pwsh", kind: "shell", accent: "--aqua", installed: false, detail: "", authState: "unknown", authDetail: "", quietSeconds: 3, installHint: "", installUrl: "", needsTrust: false },
 ];
 

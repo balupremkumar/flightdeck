@@ -267,6 +267,110 @@ pub fn prune_agy_trust(dirs: &[String]) {
     }
 }
 
+// Codex records folder trust as `[projects.'<path>'] trust_level = "trusted"` in
+// `$CODEX_HOME/config.toml` (default `~/.codex`). Codex writes that file with
+// toml_edit, so a Windows path becomes a literal-quoted key (no backslash
+// doubling); we use the same crate so the key repr is byte-identical. Mirrors
+// the agy flow: ensure on spawn, prune on worktree removal, one lock around the
+// read-modify-write. A malformed config is left untouched (Codex then shows its
+// own trust prompt). Flightdeck never sets CODEX_HOME, it only reads it.
+static CODEX_TRUST_LOCK: OnceLock<std::sync::Mutex<()>> = OnceLock::new();
+
+fn codex_config_path() -> Option<std::path::PathBuf> {
+    match std::env::var("CODEX_HOME") {
+        Ok(h) if !h.trim().is_empty() => Some(std::path::PathBuf::from(h).join("config.toml")),
+        _ => Some(home_dir()?.join(".codex").join("config.toml")),
+    }
+}
+
+fn codex_trust_load(path: &std::path::Path) -> Result<toml_edit::DocumentMut, String> {
+    match std::fs::read_to_string(path) {
+        Ok(s) => s.parse::<toml_edit::DocumentMut>().map_err(|e| format!("{}: {e}", path.display())),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(toml_edit::DocumentMut::new()),
+        Err(e) => Err(format!("{}: {e}", path.display())),
+    }
+}
+
+fn codex_trust_save(path: &std::path::Path, doc: &toml_edit::DocumentMut) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    std::fs::write(path, doc.to_string()).map_err(|e| format!("{}: {e}", path.display()))
+}
+
+/// Set `projects.'<cwd>'.trust_level = "trusted"`. Idempotent; an existing
+/// different level for that exact key is upgraded, everything else preserved.
+pub fn codex_trust_add(path: &std::path::Path, cwd: &str) -> Result<(), String> {
+    let mut doc = codex_trust_load(path)?;
+    let root = doc.as_table_mut();
+    if !root.contains_key("projects") {
+        let mut t = toml_edit::Table::new();
+        t.set_implicit(true);
+        root.insert("projects", toml_edit::Item::Table(t));
+    }
+    let projects = root["projects"]
+        .as_table_mut()
+        .ok_or_else(|| format!("{}: `projects` is not a table", path.display()))?;
+    if !projects.contains_key(cwd) {
+        projects.insert(cwd, toml_edit::Item::Table(toml_edit::Table::new()));
+    }
+    let entry = projects[cwd]
+        .as_table_mut()
+        .ok_or_else(|| format!("{}: projects entry is not a table", path.display()))?;
+    if entry.get("trust_level").and_then(|v| v.as_str()) == Some("trusted") {
+        return Ok(());
+    }
+    entry["trust_level"] = toml_edit::value("trusted");
+    codex_trust_save(path, &doc)
+}
+
+/// Remove `projects` entries whose key is one of `dirs` (slash/case-insensitive).
+pub fn codex_trust_prune_at(path: &std::path::Path, dirs: &[String]) -> Result<(), String> {
+    if !path.exists() {
+        return Ok(());
+    }
+    let mut doc = codex_trust_load(path)?;
+    let Some(projects) = doc.get_mut("projects").and_then(|p| p.as_table_mut()) else {
+        return Ok(());
+    };
+    let doomed: Vec<String> = projects
+        .iter()
+        .map(|(k, _)| k.to_string())
+        .filter(|k| dirs.iter().any(|d| same_path(k, d)))
+        .collect();
+    if doomed.is_empty() {
+        return Ok(());
+    }
+    for k in doomed {
+        projects.remove(&k);
+    }
+    codex_trust_save(path, &doc)
+}
+
+fn ensure_codex_trust(cwd: &str) {
+    let lock = CODEX_TRUST_LOCK.get_or_init(|| std::sync::Mutex::new(()));
+    let _guard = lock.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(path) = codex_config_path() {
+        if let Err(e) = codex_trust_add(&path, cwd) {
+            eprintln!("codex trust: {e}");
+        }
+    }
+}
+
+/// Drop removed worktree paths from Codex's `projects` table (see agy's twin).
+pub fn prune_codex_trust(dirs: &[String]) {
+    if dirs.is_empty() {
+        return;
+    }
+    let lock = CODEX_TRUST_LOCK.get_or_init(|| std::sync::Mutex::new(()));
+    let _guard = lock.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(path) = codex_config_path() {
+        if let Err(e) = codex_trust_prune_at(&path, dirs) {
+            eprintln!("codex trust prune: {e}");
+        }
+    }
+}
+
 /// Single-quote a string for PowerShell (embedded quotes double).
 fn psq(s: &str) -> String {
     format!("'{}'", s.replace('\'', "''"))
@@ -470,15 +574,16 @@ impl VendorAdapter for Codex {
         ("npm install -g @openai/codex", "https://developers.openai.com/codex/cli")
     }
     fn command(&self, cwd: &str) -> CommandBuilder {
-        // Via pwsh so the npm shim resolves. No trust override: Codex shows its
-        // own "Trust this folder?" prompt once per repo (see the test).
+        // Via pwsh so the npm shim resolves. Trust is written to config.toml by
+        // prepare(); a `-c projects...` override broke codex.ps1 launches.
         let mut c = CommandBuilder::new("pwsh.exe");
         c.args(["-NoLogo", "-NoProfile", "-Command", "codex"]);
         c.cwd(cwd);
         c
     }
     fn root_exe(&self) -> &str { "pwsh.exe" }
-    fn needs_trust(&self) -> bool { false }
+    fn prepare(&self, cwd: &str) { ensure_codex_trust(cwd); }
+    fn needs_trust(&self) -> bool { true }
     // Codex streams reasoning with pauses; same threshold as agy.
     fn quiet_seconds(&self) -> u32 { 6 }
     fn auth(&self) -> (&'static str, String) {
@@ -1026,7 +1131,7 @@ mod tests {
             }
         }
         assert!(find("agy").needs_trust(), "agy's prepare() writes trustedWorkspaces");
-        assert!(!find("codex").needs_trust(), "codex asks for folder trust itself");
+        assert!(find("codex").needs_trust(), "codex's prepare() writes projects trust_level");
         assert!(!find("claude").needs_trust(), "claude has no such gate");
         assert!(detect().iter().any(|v| v.needs_trust), "detect() must carry the flag");
     }
@@ -1375,12 +1480,87 @@ mod tests {
     #[test]
     fn codex_launches_plain_with_no_trust_override() {
         // 0.5.7: a -c trust override broke real codex.ps1 launches ("unknown
-        // variant") and its key match was unproven, so Codex asks "Trust this
-        // folder?" itself once per repo; the attention patterns ring the bell.
+        // variant"); trust now goes through config.toml in prepare().
         let c = Codex.command(r"C:\a b");
         let argv: Vec<String> = c.get_argv().iter().map(|a| a.to_string_lossy().into_owned()).collect();
         assert_eq!(argv, ["pwsh.exe", "-NoLogo", "-NoProfile", "-Command", "codex"]);
-        assert!(!Codex.needs_trust());
+        assert!(Codex.needs_trust());
+    }
+
+    // --- codex trust (config.toml via toml_edit) ---------------------------------
+
+    fn codex_tmp(tag: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("fd-codex-trust-{}-{}", tag, std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d.join("config.toml")
+    }
+
+    #[test]
+    fn codex_trust_insert_uses_literal_windows_key_and_parses_back() {
+        let p = codex_tmp("insert");
+        codex_trust_add(&p, r"C:\Users\me\repo").unwrap();
+        let text = std::fs::read_to_string(&p).unwrap();
+        assert!(text.contains(r"[projects.'C:\Users\me\repo']"), "{text}");
+        assert!(text.contains("trust_level = \"trusted\""), "{text}");
+        let doc: toml_edit::DocumentMut = text.parse().unwrap();
+        assert_eq!(doc["projects"][r"C:\Users\me\repo"]["trust_level"].as_str(), Some("trusted"));
+    }
+
+    #[test]
+    fn codex_trust_reinsert_is_idempotent() {
+        let p = codex_tmp("idem");
+        codex_trust_add(&p, r"C:\a").unwrap();
+        let once = std::fs::read_to_string(&p).unwrap();
+        codex_trust_add(&p, r"C:\a").unwrap();
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), once);
+    }
+
+    #[test]
+    fn codex_trust_preserves_comments_and_other_content() {
+        let p = codex_tmp("keep");
+        let orig = "# my codex config\nmodel = \"gpt-6\"  # fast\n\n[projects.'C:\\old']\ntrust_level = \"untrusted\"\n\n[tui]\nnotifications = true\n";
+        std::fs::write(&p, orig).unwrap();
+        codex_trust_add(&p, r"C:\new").unwrap();
+        let text = std::fs::read_to_string(&p).unwrap();
+        for keep in ["# my codex config", "model = \"gpt-6\"  # fast", "[projects.'C:\\old']", "trust_level = \"untrusted\"", "[tui]", "notifications = true"] {
+            assert!(text.contains(keep), "lost {keep:?} in {text}");
+        }
+        assert!(text.contains(r"[projects.'C:\new']"), "{text}");
+    }
+
+    #[test]
+    fn codex_trust_prune_removes_only_matching_keys() {
+        let p = codex_tmp("prune");
+        std::fs::write(&p, "# top\nmodel = \"x\"\n").unwrap();
+        codex_trust_add(&p, r"C:\Work\wt1").unwrap();
+        codex_trust_add(&p, r"C:\Work\keep").unwrap();
+        codex_trust_prune_at(&p, &["c:/work/WT1".to_string()]).unwrap();
+        let text = std::fs::read_to_string(&p).unwrap();
+        assert!(!text.contains("wt1"), "{text}");
+        assert!(text.contains(r"[projects.'C:\Work\keep']") && text.contains("# top"), "{text}");
+        // Missing file is a no-op, not an error and not created.
+        let q = codex_tmp("prune-missing");
+        codex_trust_prune_at(&q, &[r"C:\x".to_string()]).unwrap();
+        assert!(!q.exists());
+    }
+
+    #[test]
+    fn codex_trust_malformed_config_is_left_untouched() {
+        let p = codex_tmp("bad");
+        let bad = "model = \nthis is [not toml";
+        std::fs::write(&p, bad).unwrap();
+        assert!(codex_trust_add(&p, r"C:\a").is_err());
+        assert!(codex_trust_prune_at(&p, &[r"C:\a".to_string()]).is_err());
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), bad);
+    }
+
+    /// Manual live check: writes a trusted entry into $FD_CODEX_LIVE_DIR/config.toml.
+    #[test]
+    #[ignore]
+    fn codex_trust_live_write() {
+        let dir = std::env::var("FD_CODEX_LIVE_DIR").expect("FD_CODEX_LIVE_DIR");
+        codex_trust_add(&std::path::Path::new(&dir).join("config.toml"), r"C:\Users\User\My Repo").unwrap();
     }
 
     #[test]
