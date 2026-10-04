@@ -222,8 +222,12 @@ export interface AgentSettings {
   defaultVendor: string;
   flags: Record<string, string>;
   binaryPaths: Record<string, string>;
+  /** TN: initial detail level of the Chat view's Normal/Verbose toggle. */
+  chatDetail: "normal" | "verbose";
+  /** TN1: the view NEW Claude panes open in (saved panes keep their own). */
+  openClaudeIn: "chat" | "terminal";
 }
-export const DEFAULT_AGENT_SETTINGS: AgentSettings = { defaultVendor: "claude", flags: {}, binaryPaths: {} };
+export const DEFAULT_AGENT_SETTINGS: AgentSettings = { defaultVendor: "claude", flags: {}, binaryPaths: {}, chatDetail: "normal", openClaudeIn: "chat" };
 export function getAgentSettings(): AgentSettings {
   try {
     const raw = localStorage.getItem("flightdeck-agent-settings");

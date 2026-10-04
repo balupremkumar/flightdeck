@@ -11,6 +11,7 @@ import { parseMarkdown, isExternalHref, isBlockedHref, isAbsoluteLocalPath } fro
 import type { BlockNode, InlineNode } from "./markdown";
 import { LinkifiedText } from "./LinkifiedText";
 import { useUI } from "./ui";
+import { getAgentSettings } from "./settingsStore";
 import type { PaneState } from "./store";
 import { appendBounded } from "./chat/buffer";
 import { buildTurns, callKey, changeSummary, foldActivity, itemKey, recKey, runningCall, type Activity, type Item, type NormalItem, type ToolCall, type Turn } from "./chat/turns";
@@ -436,7 +437,7 @@ export default function ChatView({ paneId, cwd, epoch, paneState, exited, onRest
   const [subLinks, setSubLinks] = useState<SubagentLink[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [verbose, setVerbose] = useState(false);
+  const [verbose, setVerbose] = useState(() => getAgentSettings().chatDetail === "verbose");
   const [open, setOpen] = useState<Set<string>>(() => new Set());
   const [findOpen, setFindOpen] = useState(false);
   const [query, setQuery] = useState("");

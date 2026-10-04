@@ -1326,7 +1326,7 @@ export function Settings() {
   function resetAgentsSection() {
     resetSection(
       "Reset agent settings?",
-      "Default vendor, extra flags, binary path overrides and per-agent colours go back to defaults.",
+      "Default vendor, chat view and detail, extra flags, binary path overrides and per-agent colours go back to defaults.",
       () => {
         saveAgentSettings(DEFAULT_AGENT_SETTINGS);
         setAgents(DEFAULT_AGENT_SETTINGS);
@@ -1883,6 +1883,26 @@ export function Settings() {
                 {vendors.map((v) => (
                   <button key={v.id} className={agents.defaultVendor === v.id ? "on" : ""} onClick={() => updateAgents({ ...agents, defaultVendor: v.id })}>
                     {v.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="set-row">
+              <div className="set-row-t"><span className="set-row-name">Open Claude panes in</span><span className="set-row-sub">The view new Claude panes start in; the terminal keeps running underneath Chat</span></div>
+              <div className="seg" role="group" aria-label="Open Claude panes in">
+                {(["chat", "terminal"] as const).map((v) => (
+                  <button key={v} className={agents.openClaudeIn === v ? "on" : ""} aria-pressed={agents.openClaudeIn === v} onClick={() => updateAgents({ ...agents, openClaudeIn: v })}>
+                    {v === "chat" ? "Chat" : "Terminal"}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="set-row">
+              <div className="set-row-t"><span className="set-row-name">Chat detail</span><span className="set-row-sub">Normal folds each run of tool steps into one line; Verbose shows every step</span></div>
+              <div className="seg" role="group" aria-label="Chat detail">
+                {(["normal", "verbose"] as const).map((v) => (
+                  <button key={v} className={agents.chatDetail === v ? "on" : ""} aria-pressed={agents.chatDetail === v} onClick={() => updateAgents({ ...agents, chatDetail: v })}>
+                    {v === "normal" ? "Normal" : "Verbose"}
                   </button>
                 ))}
               </div>
