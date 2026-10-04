@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { paneHasUnsentInput, registerPaneSend, sendToPane, unregisterPaneSend, useApp } from "./store";
 
 // The store is a singleton; reset the observable slice before each test.
@@ -339,7 +339,16 @@ describe("UX-553/554 pane send registry", () => {
 });
 
 describe("TN1 new Claude panes default view", () => {
-  beforeEach(() => { reset(); localStorage.removeItem("flightdeck-agent-settings"); });
+  let mem: Record<string, string> = {};
+  beforeEach(() => {
+    reset();
+    mem = {};
+    vi.stubGlobal("localStorage", {
+      getItem: (k: string) => (k in mem ? mem[k] : null),
+      setItem: (k: string, v: string) => { mem[k] = v; },
+      removeItem: (k: string) => { delete mem[k]; },
+    });
+  });
   const views = () => useApp.getState().workspaces[0].panes.map((p) => p.view);
 
   it("opens new Claude panes in Chat by default, other vendors in the terminal", () => {
