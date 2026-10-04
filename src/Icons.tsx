@@ -32,7 +32,11 @@ export const IconBrand = (p: IconProps) => (
 export const IconPanel = (p: IconProps) => (
   <Svg {...p}><rect x="3" y="4.5" width="14" height="11" rx="2" /><path d="M8 4.5 V15.5" /></Svg>
 );
-export const IconPlus = (p: IconProps) => (
+// QL-708: pin the preview as a right-hand split (IconPanel's divider, mirrored).
+export const IconPanelRight = (p: IconProps) => (
+  <Svg {...p}><rect x="3" y="4.5" width="14" height="11" rx="2" /><path d="M12 4.5 V15.5" /></Svg>
+);
+export const IconPlus =(p: IconProps) => (
   <Svg {...p}><path d="M10 4.5 V15.5" /><path d="M4.5 10 H15.5" /></Svg>
 );
 export const IconClose = (p: IconProps) => (

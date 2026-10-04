@@ -48,6 +48,28 @@
 }
 .prv-tab-close:hover { background: var(--elevated); color: var(--text); }
 
+/* QL-708: pin button sits at the right end of the tab strip. */
+.prv-pin {
+  flex: none; margin-left: auto; align-self: center; margin-bottom: 4px;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; border-radius: 6px; border: 0; padding: 0;
+  background: transparent; color: var(--faint); cursor: pointer;
+  transition: background var(--t-fast) ease, color var(--t-fast) ease;
+}
+.prv-pin:hover { background: var(--elevated); color: var(--text); }
+.prv-pin.on { color: var(--accent); }
+.prv-pin:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* QL-708: pinned split. Same shell as the drawer but in normal flow, filling its
+   resizable panel: no fixed width, no slide-in, no overlay shadow. */
+.prv-drawer.prv-split {
+  position: static; width: 100%; height: 100%; min-width: 0;
+  border-left: 0; box-shadow: none; animation: none;
+}
+.split-main { display: flex; min-width: 0; min-height: 0; }
+.split-main > .wsstack { flex: 1; min-width: 0; min-height: 0; }
+.split-preview { min-width: 0; min-height: 0; display: flex; }
+
 /* ---------- Toolbar ---------- */
 .prv-body-wrap { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 .prv-toolbar {

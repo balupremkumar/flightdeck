@@ -315,6 +315,7 @@ export function CommandPalette() {
       label: explorerOpen ? "Toggle file explorer (currently open)" : "Toggle file explorer (currently closed)",
       run: () => setExplorerOpen(!explorerOpen),
     });
+    list.push({ id: "act:toggle-preview-split", section: "Actions", label: "Toggle preview split", run: () => useUI.getState().togglePreviewPinned() });
     list.push({ id: "act:open-broadcast", section: "Actions", label: "Open broadcast", run: () => setBroadcastOpen(true) });
     // QL-764: the focused pane's past sessions (--resume / --fork-session).
     // The launcher itself does the Claude-only gate and says so if the focused

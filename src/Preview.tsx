@@ -808,7 +808,8 @@ function PreviewBody({ tab }: { tab: PreviewTab }) {
 // Drawer shell: tabs + the active tab's body.
 // ---------------------------------------------------------------------
 
-export function Preview() {
+export function Preview({ mode = "drawer", actions }: { mode?: "drawer" | "split"; actions?: ReactNode } = {}) {
+  const split = mode === "split";
   const tabs = useUI((s) => s.previewTabs);
   const activeId = useUI((s) => s.activePreviewId);
   const closePreview = useUI((s) => s.closePreview);
@@ -845,23 +846,22 @@ export function Preview() {
     return () => window.removeEventListener("keydown", onKey, true);
   }, [isOpen, activeId, cyclePreview, closePreview]);
 
-  useFocusTrap(drawerRef, isOpen);
+  useFocusTrap(drawerRef, isOpen && !split);
 
   // UX-542/543: was a local onKeyDown on the drawer (bubble-phase, only
   // reachable while focus was inside it) — moved onto the shared overlay
   // stack so Esc closes this the same way regardless of what has focus, and
   // only when it's the top-most overlay.
-  useOverlayEsc(isOpen, closeAllPreviews);
+  useOverlayEsc(isOpen && !split, closeAllPreviews);
 
   if (!isOpen) return null;
 
-  return (
-    <div className="prv-scrim" onMouseDown={(e) => { if (e.target === e.currentTarget) closeAllPreviews(); }}>
+  const shell = (
       <div
-        className="prv-drawer"
+        className={"prv-drawer" + (split ? " prv-split" : "")}
         ref={drawerRef}
         tabIndex={-1}
-        role="dialog"
+        role={split ? "region" : "dialog"}
         aria-label="File preview"
       >
         <div className="prv-tabs" role="tablist" aria-label="Open files">
@@ -887,9 +887,15 @@ export function Preview() {
               </button>
             </div>
           ))}
+          {actions}
         </div>
         {active && <PreviewBody key={active.id} tab={active} />}
       </div>
+  );
+  if (split) return shell;
+  return (
+    <div className="prv-scrim" onMouseDown={(e) => { if (e.target === e.currentTarget) closeAllPreviews(); }}>
+      {shell}
     </div>
   );
 }

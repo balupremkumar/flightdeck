@@ -15,7 +15,9 @@ import { Review } from "./Review";
 import { AttentionQueue } from "./AttentionQueue";
 import { Shortcuts } from "./Shortcuts";
 import { SessionLauncher } from "./SessionLauncher";
-import { Preview } from "./Preview";
+import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
+import { PreviewHost } from "./PreviewHost";
+import { isSplitActive, GRID_MIN_PCT, PREVIEW_MIN_PCT, PREVIEW_MAX_PCT } from "./previewSplit";
 import { QuickOpen } from "./QuickOpenOverlay";
 import { ZoomHud } from "./ZoomHud";
 import { useUI, closeTopOverlay } from "./ui";
@@ -35,6 +37,10 @@ export function Cockpit() {
   const active = workspaces.find((w) => w.id === activeId) ?? null;
   const vendors = useVendors((s) => s.vendors);
   const [addOpen, setAddOpen] = useState(false);
+  const splitActive = useUI((s) => isSplitActive(s.previewMode, s.previewTabs.length));
+  // Read non-reactively: only the panel's initial size, so dragging (which
+  // writes the store) must not re-render the cockpit on every pixel.
+  const splitSize = useUI.getState().previewSplitSize;
 
   const [expanded, setExpanded] = useState(true);
   const showExplorer = useUI((s) => s.explorerOpen);
@@ -387,7 +393,7 @@ export function Cockpit() {
       <QuickOpen />
       <Broadcast />
       <Review />
-      <Preview />
+      {!splitActive && <PreviewHost mode="drawer" />}
       <AttentionQueue />
       <Shortcuts />
       {/* QL-764: resume/fork launcher. Owns its own open state and Ctrl+Shift+R
@@ -409,13 +415,39 @@ export function Cockpit() {
           />
         )}
         <div className="main">
-          <div className="wsstack" style={{ display: "flex" }}>
-            {workspaces.map((w) => (
-              <div className="wsgrid" style={{ display: w.id === activeId ? "flex" : "none" }} key={w.id}>
-                <PaneGrid ws={w} />
+          {/* QL-708: the PanelGroup is ALWAYS rendered (one grid panel); only the
+              preview panel + divider come and go. That keeps the wsstack at a
+              fixed spot in the tree, so toggling the split never remounts the
+              PaneGrids (and so never touches the live terminals). */}
+          <PanelGroup direction="horizontal">
+            <Panel id="split-grid" order={0} minSize={GRID_MIN_PCT} className="split-main">
+              <div className="wsstack" style={{ display: "flex" }}>
+                {workspaces.map((w) => (
+                  <div className="wsgrid" style={{ display: w.id === activeId ? "flex" : "none" }} key={w.id}>
+                    <PaneGrid ws={w} />
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
+            </Panel>
+            {splitActive && (
+              <>
+                <PanelResizeHandle className="rz rz-h" />
+                <Panel
+                  id="split-preview"
+                  order={1}
+                  defaultSize={splitSize}
+                  minSize={PREVIEW_MIN_PCT}
+                  maxSize={PREVIEW_MAX_PCT}
+                  className="split-preview"
+                  onResize={(size) => {
+                    if (Math.abs(size - useUI.getState().previewSplitSize) >= 0.5) useUI.getState().setPreviewSplitSize(size);
+                  }}
+                >
+                  <PreviewHost mode="split" />
+                </Panel>
+              </>
+            )}
+          </PanelGroup>
         </div>
       </div>
     </div>
