@@ -31,6 +31,10 @@ import {
   DEFAULT_THEME_ID, DEFAULT_ACCENT_ID,
   appearanceMode, setAppearanceMode, applyThemeForMode, type AppearanceMode,
 } from "./themes";
+import {
+  importVsCodeTheme, themeToJson, loadImportedThemes, saveImportedTheme, deleteImportedTheme,
+  type SavedImportedTheme,
+} from "./vscodeTheme";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getName } from "@tauri-apps/api/app";
 import "./overlays.css";
@@ -848,6 +852,26 @@ export function Settings() {
   const [launchCheck, setLaunchCheck] = useState<Record<string, "testing" | "ok" | "error">>({});
   const [importError, setImportError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  // Imported VS Code themes: the saved list, which one is on screen, and the
+  // hidden picker. The picker is a webview <input type=file>: it hands us the
+  // chosen File directly, so nothing goes through fs_read_text_file (readscope.rs).
+  const vscFileRef = useRef<HTMLInputElement>(null);
+  const [importedThemes, setImportedThemes] = useState<SavedImportedTheme[]>(() => loadImportedThemes());
+  const [activeImportedId, setActiveImportedId] = useState<string | null>(() => {
+    if (currentThemeId() !== "custom") return null;
+    try {
+      const name = JSON.parse(localStorage.getItem("flightdeck-theme-custom") ?? "{}")?.name;
+      return loadImportedThemes().find((t) => t.name === name)?.id ?? null;
+    } catch { return null; }
+  });
+  // Sound when an agent needs you (the sound itself is played elsewhere).
+  const [soundOn, setSoundOn] = useState(() => { try { return localStorage.getItem("flightdeck-sound-needs-you") !== "0"; } catch { return true; } });
+  const [soundVol, setSoundVol] = useState(() => {
+    try {
+      const n = Number(localStorage.getItem("flightdeck-sound-volume") ?? "40");
+      return Number.isFinite(n) ? Math.max(0, Math.min(100, Math.round(n))) : 40;
+    } catch { return 40; }
+  });
   // UI-182: separate file + error state from the theme import above it — the
   // two imports are unrelated formats and a bad file in one shouldn't clear
   // the other's error message.
@@ -1012,6 +1036,7 @@ export function Settings() {
     if (id === "custom") return; // custom is only reached via import, not clickable directly
     applyTheme(id);
     setThemeId(id);
+    setActiveImportedId(null);
     applyAccent(accentId, findTheme(id).mode);
     // The colour-blind palette is mode-specific — reapply so a light theme
     // doesn't keep the dark-tuned values (which fail contrast on a light ground).
@@ -1069,6 +1094,37 @@ export function Settings() {
     a.click();
     URL.revokeObjectURL(url);
   }
+  function applyImportedTheme(t: SavedImportedTheme) {
+    if (!importThemeJson(themeToJson(t))) { setImportError("That saved theme couldn’t be applied."); return; }
+    setThemeId("custom");
+    setActiveImportedId(t.id);
+    setImportError(null);
+    // importThemeJson cleared inline overrides; bring the colour-blind palette back.
+    applyColorBlindSafe(isColorBlindSafe(), t.mode);
+  }
+  function handleImportVsCodeFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onerror = () => setImportError("Couldn’t read that file.");
+    reader.onload = () => {
+      try {
+        const theme = importVsCodeTheme(String(reader.result));
+        const next = saveImportedTheme(theme);
+        setImportedThemes(next);
+        applyImportedTheme(next[0]);
+        useUI.getState().pushToast("success", `Imported “${theme.name}”.`);
+      } catch (err) {
+        setImportError(err instanceof Error ? err.message : "Couldn’t import that VS Code theme.");
+      }
+    };
+    reader.readAsText(file);
+  }
+  function removeImportedTheme(t: SavedImportedTheme) {
+    setImportedThemes(deleteImportedTheme(t.id));
+    if (activeImportedId === t.id) setActiveImportedId(null); // stays applied until another theme is picked
+  }
   function handleImportFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     e.target.value = "";
@@ -1076,7 +1132,7 @@ export function Settings() {
     const reader = new FileReader();
     reader.onload = () => {
       const ok = importThemeJson(String(reader.result));
-      if (ok) { setThemeId("custom"); setImportError(null); }
+      if (ok) { setThemeId("custom"); setActiveImportedId(null); setImportError(null); }
       else setImportError("That file doesn’t look like a Flightdeck theme export.");
     };
     reader.readAsText(file);
@@ -1218,6 +1274,9 @@ export function Settings() {
         saveAgentSettings(DEFAULT_AGENT_SETTINGS);
         setAgents(DEFAULT_AGENT_SETTINGS);
         try { localStorage.removeItem("flightdeck-vendor-accents"); } catch { /* non-persistent */ }
+        try { localStorage.removeItem("flightdeck-sound-needs-you"); localStorage.removeItem("flightdeck-sound-volume"); } catch { /* non-persistent */ }
+        setSoundOn(true);
+        setSoundVol(40);
         useUI.getState().pushToast("success", "Agent settings reset.");
       }
     );
@@ -1332,7 +1391,23 @@ export function Settings() {
                   <span className="theme-tile-label">{t.label}</span>
                 </button>
               ))}
-              {themeId === "custom" && (
+              {importedThemes.map((t) => (
+                <div key={t.id} className="theme-tile-wrap">
+                  <button
+                    className={"theme-tile" + (themeId === "custom" && activeImportedId === t.id ? " on" : "")}
+                    onClick={() => applyImportedTheme(t)}
+                    title={`${t.name} (imported from VS Code)`}
+                  >
+                    <span className="theme-thumb" style={{ background: t.tokens["--bg"] }}>
+                      <i className="theme-thumb-panel" style={{ background: t.tokens["--surface"] }} />
+                      <i className="theme-thumb-accent" style={{ background: t.tokens["--accent"] }} />
+                    </span>
+                    <span className="theme-tile-label">{t.name}</span>
+                  </button>
+                  <button className="set-btn" onClick={() => removeImportedTheme(t)} aria-label={`Remove imported theme ${t.name}`} title="Remove from list">Remove</button>
+                </div>
+              ))}
+              {themeId === "custom" && !activeImportedId && (
                 <div className="theme-tile on custom" title="Imported theme">
                   <span className="theme-thumb custom" />
                   <span className="theme-tile-label">Custom (imported)</span>
@@ -1436,6 +1511,11 @@ export function Settings() {
                 <button onClick={() => fileRef.current?.click()}>Import</button>
               </div>
               <input ref={fileRef} type="file" accept="application/json" style={{ display: "none" }} onChange={handleImportFile} />
+            </div>
+            <div className="set-row">
+              <div className="set-row-t"><span className="set-row-name">VS Code theme</span><span className="set-row-sub">Import a VS Code colour theme (.json, comments allowed). It is saved to the theme list above.</span></div>
+              <button className="set-btn" onClick={() => vscFileRef.current?.click()}>Import VS Code theme…</button>
+              <input ref={vscFileRef} type="file" accept=".json,.jsonc,application/json" style={{ display: "none" }} onChange={handleImportVsCodeFile} />
             </div>
             {importError && <div className="set-error">{importError}</div>}
 
@@ -1711,6 +1791,31 @@ export function Settings() {
                   </button>
                 ))}
               </div>
+            </div>
+            <div className="set-row">
+              <div className="set-row-t"><span className="set-row-name">Sound when an agent needs you</span><span className="set-row-sub">A chime only when an agent is blocked on you, not for routine state changes</span></div>
+              <button
+                className={"toggle" + (soundOn ? " on" : "")} role="switch" aria-checked={soundOn} aria-label="Sound when an agent needs you"
+                onClick={() => {
+                  const next = !soundOn;
+                  setSoundOn(next);
+                  try { localStorage.setItem("flightdeck-sound-needs-you", next ? "1" : "0"); } catch { /* non-persistent */ }
+                }}
+              ><span /></button>
+            </div>
+            <div className="set-row">
+              <div className="set-row-t"><span className="set-row-name">Sound volume</span></div>
+              <input
+                className="set-range" type="range" aria-label="Sound volume" min={0} max={100} step={5}
+                disabled={!soundOn}
+                value={soundVol}
+                onChange={(e) => {
+                  const v = Number(e.target.value);
+                  setSoundVol(v);
+                  try { localStorage.setItem("flightdeck-sound-volume", String(v)); } catch { /* non-persistent */ }
+                }}
+              />
+              <span className="set-range-val">{soundVol}%</span>
             </div>
             <div className="agent-list">
               {vendors.map((v) => (

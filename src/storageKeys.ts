@@ -35,6 +35,12 @@ export const PREFERENCE_KEYS = [
   "flightdeck-memory-ceiling",
   "flightdeck-memory-ceiling-changed",
   "flightdeck-notify-settings",
+  // Sound when an agent needs you: on/off (default on) and volume 0-100
+  // (default 40). Read by the sound logic; written by Settings.
+  "flightdeck-sound-needs-you",
+  "flightdeck-sound-volume",
+  // Imported VS Code themes, listed beside the built-in theme tiles.
+  "flightdeck-imported-themes",
   "flightdeck-auto-queue",
   "flightdeck-follow-attention",
   "flightdeck-explorer-width",

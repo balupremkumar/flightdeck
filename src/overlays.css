@@ -141,6 +141,8 @@ kbd {
   padding: 10px 11px; cursor: pointer; text-align: left;
   transition: border-color .14s ease, box-shadow .14s ease, transform .14s ease;
 }
+.theme-tile-wrap { display: flex; flex-direction: column; gap: 4px; }
+.theme-tile-wrap .set-btn { align-self: flex-start; font-size: 11px; padding: 2px 8px; }
 .theme-tile:hover { border-color: color-mix(in srgb, var(--ice) 45%, var(--line-strong)); transform: translateY(-1px); }
 .theme-tile.on { border-color: var(--ice); box-shadow: 0 0 0 1px var(--ice); }
 .theme-tile.custom { cursor: default; }
