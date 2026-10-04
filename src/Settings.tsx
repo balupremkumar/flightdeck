@@ -1763,7 +1763,7 @@ export function Settings() {
               <button className={"toggle" + (term.copyOnSelect ? " on" : "")} role="switch" aria-checked={term.copyOnSelect} aria-label="Copy on select" onClick={() => updateTerm({ copyOnSelect: !term.copyOnSelect })}><span /></button>
             </div>
             <div className="set-row">
-              <div className="set-row-t"><span className="set-row-name">Right-click</span><span className="set-row-sub">Paste copies a selection or pastes. Shift+right-click always opens the menu</span></div>
+              <div className="set-row-t"><span className="set-row-name">Right-click</span><span className="set-row-sub">Paste copies a selection or pastes. Shift+right-click opens the pane menu</span></div>
               <div className="seg">
                 {(["paste", "menu"] as const).map((c) => (
                   <button key={c} className={term.rightClick === c ? "on" : ""} onClick={() => updateTerm({ rightClick: c })}>

@@ -14,6 +14,9 @@ export interface RightClickInput {
   /** SF2: a stray right-click paste could answer a prompt or land in the wrong
    *  pane, so it goes through the confirm dialog (see shouldConfirmPaste). */
   confirmPaste?: boolean;
+  /** SF3: agent CLIs (claude, codex, agy...) never use right-click, so mouse
+   *  tracking does not hand it to the app. Plain shells keep "app" (vim, htop). */
+  agentVendor?: boolean;
 }
 
 /** SF2: right-click paste needs a confirm when the pane is waiting on a human
@@ -29,7 +32,7 @@ export function rightClickAction(i: RightClickInput): RightClickAction {
   if (i.shift) return "menu";
   if (i.setting === "menu") return "menu";
   if (i.overLink) return "link";
-  if (i.mouseTracking) return "app";
+  if (i.mouseTracking && !i.agentVendor) return "app";
   if (i.hasSelection) return "copy";
   return i.confirmPaste ? "paste-confirm" : "paste";
 }

@@ -33,6 +33,13 @@ describe("right-click paste confirm (SF2)", () => {
   });
 });
 
+describe("agent vendors ignore mouse tracking (SF3)", () => {
+  it("an agent pane with tracking on still pastes", () => expect(rightClickAction({ ...base, mouseTracking: true, agentVendor: true })).toBe("paste"));
+  it("...and copies a selection", () => expect(rightClickAction({ ...base, mouseTracking: true, agentVendor: true, hasSelection: true })).toBe("copy"));
+  it("a shell pane with tracking keeps app", () => expect(rightClickAction({ ...base, mouseTracking: true, agentVendor: false })).toBe("app"));
+  it("the menu setting still wins for agents", () => expect(rightClickAction({ ...base, mouseTracking: true, agentVendor: true, setting: "menu" })).toBe("menu"));
+});
+
 describe("shouldCopyOnSelect", () => {
   const ok = { enabled: true, userGesture: true, changed: true, text: "x" };
   it("copies a user selection", () => expect(shouldCopyOnSelect(ok)).toBe(true));

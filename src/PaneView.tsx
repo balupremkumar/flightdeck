@@ -1413,6 +1413,7 @@ Running low — consider /compact in this pane.` : "")
           const act = rightClickAction({
             hasSelection: !!sel, overLink: false, mouseTracking: !!t?.isMouseTracking(),
             shift: e.shiftKey, setting: getTerminalSettings().rightClick,
+            agentVendor: vendorMeta(pane.vendor).kind === "agent",
             confirmPaste: shouldConfirmPaste({ attention: attentionKind(pane), focused }),
           });
           if (act === "app") return;
