@@ -99,3 +99,5 @@
 .chat-sysnote pre { margin: 4px 0 0; white-space: pre-wrap; word-break: break-word; max-height: 160px; overflow: auto; font: inherit; }
 .chat-unlinked { margin-top: 6px; }
 .chat-subturn + .chat-subturn { margin-top: 6px; }
+.chat-empty-btn { margin-top: 10px; border: 1px solid var(--line-strong); background: var(--surface-2); border-radius: 8px; padding: 4px 12px; color: var(--text); }
+.chat-empty-btn:hover { border-color: var(--accent); }

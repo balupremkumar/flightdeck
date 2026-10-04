@@ -705,7 +705,14 @@ export default function ChatView({ paneId, cwd, epoch, paneState, exited, onRest
       <div className="chat-scroll" ref={scrollRef} onScroll={onScroll}>
         {skippedHead && <div className="chat-trim">Older history not loaded</div>}
         {trimmed && <div className="chat-trim">Older history trimmed</div>}
-        {noPath && !error && (
+        {noPath && !error && (paneState === "permission" || paneState === "waiting") && (
+          // TN1: no session yet and the agent is asking something (e.g. the folder trust prompt): never strand the user here.
+          <div className="chat-empty" role="status">
+            Claude is asking something in the terminal
+            <div><button className="chat-empty-btn" onClick={onSwitchToTerminal}>Switch to Terminal</button></div>
+          </div>
+        )}
+        {noPath && !error && paneState !== "permission" && paneState !== "waiting" && (
           <div className="chat-empty" role="status">Waiting for the session to start</div>
         )}
         {!noPath && !loaded && !error && <div className="chat-empty" role="status">Loading conversation...</div>}

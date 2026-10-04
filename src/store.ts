@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { normalizePaneName, swatchToken } from "./paneStyle";
+import { getAgentSettings } from "./settingsStore";
 
 // "permission" = the agent printed an interactive approval prompt and is
 // blocked on the user (UI-2/#220) — a louder sub-case of "waiting", detected
@@ -23,6 +24,9 @@ export interface WorktreeRef { worktreePath: string; branch: string; baseBranch:
 export type PaneViewMode = "terminal" | "chat";
 export interface PaneModel extends Partial<WorktreeRef> { id: number; vendor: string; cwd: string; state: PaneState; epoch: number; title?: string; needsSetup?: boolean; draft?: string; view?: PaneViewMode; focusMode?: boolean; color?: string; }
 export interface Workspace { id: number; name: string; root: string; panes: PaneModel[]; focused: number | null; setupCmd?: string; }
+/** TN1: new Claude panes open in Chat when Settings > Agents says so; restored panes keep their saved view. */
+const newPaneView = (vendor: string): PaneViewMode | undefined =>
+  vendor === "claude" && getAgentSettings().openClaudeIn === "chat" ? "chat" : undefined;
 export interface NewPane extends Partial<WorktreeRef> { vendor: string; cwd: string; needsSetup?: boolean; }
 
 /** UX-554: a named set of panes (by id, across workspaces) so a bulk action
@@ -191,6 +195,7 @@ export const useApp = create<AppState>((set) => ({
           branch: p.branch,
           baseBranch: p.baseBranch,
           needsSetup: (p.needsSetup && !!setupCmd?.trim()) || undefined,
+          view: newPaneView(p.vendor),
         })),
         focused: null,
       };
@@ -220,7 +225,7 @@ export const useApp = create<AppState>((set) => ({
     set((s) => ({
       workspaces: s.workspaces.map((w) => {
         if (w.id !== wsId) return w;
-        const pane: PaneModel = { id: ++pseq, vendor, cwd, state: "starting", epoch: 0, needsSetup: needsSetup || undefined, ...wt };
+        const pane: PaneModel = { id: ++pseq, vendor, cwd, state: "starting", epoch: 0, needsSetup: needsSetup || undefined, view: newPaneView(vendor), ...wt };
         return { ...w, panes: [...w.panes, pane], focused: pane.id };
       }),
     })),
@@ -354,6 +359,7 @@ export const useApp = create<AppState>((set) => ({
           worktreePath: src.worktreePath,
           branch: src.branch,
           baseBranch: src.baseBranch,
+          view: newPaneView(src.vendor),
         };
         return { ...w, panes: [...w.panes, pane], focused: pane.id };
       }),

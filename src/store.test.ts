@@ -337,3 +337,22 @@ describe("UX-553/554 pane send registry", () => {
     expect(sendToPane(1, "again")).toBe(false);
   });
 });
+
+describe("TN1 new Claude panes default view", () => {
+  beforeEach(() => { reset(); localStorage.removeItem("flightdeck-agent-settings"); });
+  const views = () => useApp.getState().workspaces[0].panes.map((p) => p.view);
+
+  it("opens new Claude panes in Chat by default, other vendors in the terminal", () => {
+    useApp.getState().createWorkspace("/a", [{ vendor: "claude", cwd: "/a" }, { vendor: "codex", cwd: "/a" }]);
+    expect(views()).toEqual(["chat", undefined]);
+    const ws = useApp.getState().workspaces[0];
+    useApp.getState().addPane(ws.id, "claude", "/a");
+    expect(views()[2]).toBe("chat");
+  });
+
+  it("honours Settings > Agents > Open Claude panes in: Terminal", () => {
+    localStorage.setItem("flightdeck-agent-settings", JSON.stringify({ openClaudeIn: "terminal" }));
+    useApp.getState().createWorkspace("/a", [{ vendor: "claude", cwd: "/a" }]);
+    expect(views()).toEqual([undefined]);
+  });
+});
