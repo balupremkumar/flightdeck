@@ -11,6 +11,7 @@ import { spawnPane } from "./worktrees";
 import type { DiffFile, DiffSummary } from "./worktrees";
 import { cachedInvoke, usePoll } from "./poll";
 import { revealPath } from "./reveal";
+import { subscribeReveal, takePendingReveal } from "./revealInTree";
 import { useUI, useOverlayEsc } from "./ui";
 // Reuses the workspace-list search input's look (.lp-search) for the new
 // filter box below — same visual language, no new input styling needed.
@@ -363,6 +364,8 @@ function Node({
       if (children === null && status !== "loading") void fetchChildren();
     }
     if (path === revealTarget) {
+      // A revealed FOLDER (terminal link click) opens too; files have no children.
+      if (dir && !expanded) { setExpanded(true); rememberExpanded(expandKey, path, true); }
       rowRef.current?.scrollIntoView({ block: "center" });
       rowRef.current?.focus();
     }
@@ -637,6 +640,24 @@ export function Explorer({ root, wsId, vendor = "pwsh", paneRoot, paneLabel }: E
     setRevealTarget(activePreviewPath);
     setRevealSeq((n) => n + 1);
   };
+
+  // Terminal link click on a folder (revealInTree.ts): same reveal path as above.
+  // A path outside this explorer's folder falls back to the OS file manager.
+  const effectiveRootRef = useRef(effectiveRoot);
+  effectiveRootRef.current = effectiveRoot;
+  useEffect(() => {
+    const go = (p: string) => {
+      const r = effectiveRootRef.current;
+      if (!r) return;
+      if (!isAncestor(r, p)) { void revealPath(p); return; }
+      takePendingReveal();
+      setRevealTarget(p);
+      setRevealSeq((n) => n + 1);
+    };
+    const queued = takePendingReveal();
+    if (queued) go(queued);
+    return subscribeReveal(go);
+  }, []);
 
   // UX-534: type-to-jump within the expanded tree. DOM-based on purpose —
   // it only ever needs to know about currently-rendered (i.e. visible/
