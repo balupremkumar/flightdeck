@@ -25,6 +25,11 @@ await page.goto(URL, { waitUntil: "networkidle" });
 await page.fill(".dir .path", "C:\\Windows");
 await page.click(".btn-primary");
 await page.waitForTimeout(1500);
+// A trust-requiring vendor (agy, Codex) in the default layout asks once per
+// repo before its panes spawn: accept it like a first-run user would.
+const trust = page.getByRole("button", { name: "Trust this folder" });
+if (await trust.count()) { await trust.click(); await page.waitForTimeout(1500); }
+await page.waitForSelector(".xterm", { timeout: 15000 }).catch(() => {});
 
 const crashed = await page.getByText("Something broke in the cockpit UI").count();
 if (crashed) {
