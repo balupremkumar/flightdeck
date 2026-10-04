@@ -18,6 +18,7 @@ mod pathguard;
 mod overlay;
 mod persist;
 mod procname;
+mod readscope;
 mod reveal;
 mod shellmarks;
 mod summon;
@@ -450,6 +451,7 @@ fn fs_list_dir(path: String) -> Result<Vec<Entry>, String> {
 #[tauri::command(async)]
 fn fs_read_text_file(path: String) -> Result<String, String> {
     pathguard::check(&path)?;
+    readscope::check_read(std::path::Path::new(&path))?;
     let meta = std::fs::metadata(&path).map_err(|e| e.to_string())?;
     if meta.len() > 5 * 1024 * 1024 {
         return Err("too large to preview (over 5MB)".into());
@@ -463,6 +465,7 @@ fn fs_read_text_file(path: String) -> Result<String, String> {
 #[tauri::command(async)]
 fn fs_read_file_base64(path: String) -> Result<String, String> {
     pathguard::check(&path)?;
+    readscope::check_read(std::path::Path::new(&path))?;
     let meta = std::fs::metadata(&path).map_err(|e| e.to_string())?;
     if meta.len() > 10 * 1024 * 1024 {
         return Err("too large to preview (over 10MB)".into());
@@ -651,6 +654,7 @@ pub fn run() {
             fs_list_dir,
             fs_read_text_file,
             fs_read_file_base64,
+            readscope::set_read_roots,
             detect_vendors,
             vendors_dir,
             manifest_problems,
@@ -707,6 +711,7 @@ pub fn run() {
     // Manifest vendors (#218): point the registry at <app-data>/vendors so a
     // dropped JSON file becomes a launchable agent — no recompile.
     if let Ok(data_dir) = app.handle().path().app_data_dir() {
+        readscope::set_data_dir(data_dir.clone());
         // Flight recorder first, so everything after this line — including a
         // panic in any later setup step or command — leaves a durable trace.
         applog::init(data_dir.join("logs"), &app.package_info().version.to_string());
