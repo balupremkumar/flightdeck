@@ -28,7 +28,7 @@ v0.5.4 is the daily driver, running since 2026-08-13. v0.5.5 is pending, with th
 - 661 Vitest unit/component tests (frontend)
 - 197 Cargo tests (Rust backend)
 - 26 Playwright-driven E2E checks against the real frontend (`demo/e2e-session8.mjs`)
-- A pane-smoke boot gate (`demo/pane-smoke.mjs`) that boots the real app in Chromium and requires a mounted terminal with no error boundary before any release is cut
+- A pane-smoke boot gate (`e2e/pane-smoke.mjs`) that boots the real app in Chromium and requires a mounted terminal with no error boundary before any release is cut
 
 All four gates run before a release ships; `tools/release.ps1` wires the boot gate in between the test suites and packaging.
 

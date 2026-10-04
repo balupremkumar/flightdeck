@@ -120,9 +120,15 @@ Step "Pane-mount smoke" {
         }
     }
     try {
-        Push-Location (Join-Path $root "demo")
-        node pane-smoke.mjs
-        $smokeExit = $LASTEXITCODE
+        # e2e/ owns the browser gates (its own playwright). pane-smoke is the
+        # 0.5.3 boot-loop guard; reflow and draft guard the R1 registry.
+        Push-Location (Join-Path $root "e2e")
+        if (-not (Test-Path node_modules)) { npm install --no-audit --no-fund | Out-Null }
+        $smokeExit = 0
+        foreach ($t in "pane-smoke.mjs", "reflow-keeps-agents.mjs", "draft-survives-restart.mjs") {
+            node $t
+            if ($LASTEXITCODE -ne 0) { $smokeExit = 1; break }
+        }
         Pop-Location
     } finally {
         if ($ownServer) { taskkill /T /F /PID $ownServer.Id | Out-Null }
@@ -326,6 +332,6 @@ Write-Host "Manual next steps:" -ForegroundColor Yellow
 Write-Host "  1. Install the CANARY installer - it lands beside the stable install, never over it,"
 Write-Host "     and on first boot clones a copy of stable's state (worktrees excluded by design)."
 Write-Host "  2. Trial canary. Broken? Delete it; stable was never touched. Good? Promote:"
-Write-Host "     install stable v$Version by hand from outside Flightdeck (Settings > Updates only tells you it is there)."
+Write-Host "     install stable v$Version by hand from outside Flightdeck (Settings > About only tells you it is there)."
 Write-Host "  3. Commit the version bump (package.json, Cargo.toml, Cargo.lock, tauri.conf.json, Settings.tsx, version.ts)."
 Write-Host "  4. Something wrong after install? pwsh tools\revert.ps1 -To <old version> (see docs/RELEASING.md)."
