@@ -17,12 +17,13 @@ interface Entry<T> {
   ttl?: number;
 }
 
-/** A call that took this long (or longer) stays cached for `SLOW_CALL_TTL_FACTOR`
+/** A call that took `SLOW_CALL_MIN_MS` or longer stays cached for `SLOW_CALL_TTL_FACTOR`
  *  times its own duration, capped at `SLOW_CALL_TTL_MAX_MS`. A git diff over a
  *  folder full of media can take seconds; re-running it on the normal cadence
  *  keeps a core and the disk busy for nothing the user can act on any faster.
  *  A quick call is untouched — the factor only matters once it exceeds the
  *  caller's own TTL. */
+export const SLOW_CALL_MIN_MS = 50;
 export const SLOW_CALL_TTL_FACTOR = 20;
 export const SLOW_CALL_TTL_MAX_MS = 5 * 60_000;
 
@@ -42,7 +43,8 @@ export async function cachedInvoke<T>(cmd: string, args: Record<string, unknown>
   const p = invoke<T>(cmd, args)
     .then((value) => {
       const done = Date.now();
-      const ttl = Math.min((done - now) * SLOW_CALL_TTL_FACTOR, SLOW_CALL_TTL_MAX_MS);
+      const took = done - now;
+      const ttl = took >= SLOW_CALL_MIN_MS ? Math.min(took * SLOW_CALL_TTL_FACTOR, SLOW_CALL_TTL_MAX_MS) : 0;
       cache.set(key, { at: done, value, ttl });
       return value;
     })
