@@ -62,6 +62,30 @@ Before restoring, it saves your current data to `backups\pre-revert-<timestamp>\
 To use a specific backup, add `-Backup <folder>`.
 To install the old version and keep your current data as it is, add `-NoRestore`.
 
+## Backups and safety
+
+Backups happen at install time, by the installer's pre-install hook.
+Close Flightdeck first: if it is still running, webview files are locked and the backup comes out partial.
+A clean backup has a `complete.txt` (version and timestamp) in its folder.
+A partial one has none, the installer prints a warning, and `revert.ps1` refuses to restore it unless you pass `-Force`.
+`backup-now.ps1` and the `pre-revert-<timestamp>` copy follow the same rule.
+
+Backups are never pruned.
+They grow with every install, so delete old ones by hand.
+
+`releases\` is gitignored and lives on this disk only.
+Copy `releases\archive` somewhere else occasionally.
+
+The installer allows downgrades, so any old installer double-clicked will install over a newer version.
+The pre-install backup is the safety net.
+
+Every archive folder has a `SHA256SUMS.txt`.
+`revert.ps1` checks the installer against it and refuses on a mismatch.
+Older folders get one from `pwsh tools\hash-archive.ps1 -ReleasesDir .\releases`.
+
+`-Force` on `revert.ps1` is the escape hatch for two refusals: a backup with no `complete.txt`, and an archive with no `SHA256SUMS.txt`.
+It prints a loud warning and never overrides a hash mismatch.
+
 ## Where things live
 
 | What | Where |
