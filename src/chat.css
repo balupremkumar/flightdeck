@@ -90,6 +90,7 @@
 .chat-input textarea:disabled { opacity: 1; background: var(--surface-2); border-color: var(--line); }
 .chat-input > button, .chat-gate button { border: 1px solid var(--line-strong); background: var(--surface); border-radius: 8px; padding: 4px 12px; }
 .chat-input > button:disabled { opacity: .5; cursor: default; }
+.chat-queued { flex-basis: 100%; align-self: flex-start; width: fit-content; font-size: 11px; color: var(--muted); border: 1px solid var(--line-strong); border-radius: 999px; padding: 1px 8px; cursor: default; }
 .chat-gate { flex: 1; display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--st-waiting); font-size: 12.5px; }
 .chat-input .chat-note { flex-basis: 100%; padding: 2px 0; background: transparent; border: 0; }
 

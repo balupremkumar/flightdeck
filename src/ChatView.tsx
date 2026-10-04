@@ -19,6 +19,7 @@ import { CHIP_GLYPH, activityIcon, activityLabel, changeLabel, chipIcon, chipLab
 import { planFind } from "./chat/find";
 import { promptGate } from "./chat/gate";
 import { buildPromptPayload } from "./chat/send";
+import { canQueuePrompt, drainQueue, queueClearsOn, queuedLabel, queuedTitle } from "./chat/queue";
 import { capLines, editPairs, resultText, simpleDiff, toolInput } from "./chat/raw";
 import "./chat.css";
 
@@ -454,6 +455,7 @@ export default function ChatView({ paneId, cwd, epoch, paneState, exited, onRest
   const [sticky, setSticky] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [sendErr, setSendErr] = useState<string | null>(null);
+  const [queued, setQueued] = useState<string[]>([]);
   const [docHidden, setDocHidden] = useState(() => typeof document !== "undefined" && document.hidden);
 
   const rootRef = useRef<HTMLDivElement>(null);
@@ -519,6 +521,9 @@ export default function ChatView({ paneId, cwd, epoch, paneState, exited, onRest
       setLoaded(true);
       if (cur.t.skippedHead) setSkippedHead(true);
       if (recs.length) {
+        // H4: each new user record is Claude picking up one queued prompt.
+        const picked = recs.filter((r) => r.kind === "user" && !r.sidechain && r.text).length;
+        if (picked) setQueued((q) => drainQueue(q, picked));
         setRecords((prev) => {
           const r = appendBounded(prev, recs);
           if (r.dropped) setTrimmed(true);
@@ -644,12 +649,18 @@ export default function ChatView({ paneId, cwd, epoch, paneState, exited, onRest
 
   const ptyId = getPaneSession(paneId)?.ptyId ?? 0;
   const gate = promptGate(paneState, ptyId > 0, !!exited);
+  const canQueue = canQueuePrompt(paneState, ptyId > 0, !!exited);
+  useEffect(() => {
+    if (queueClearsOn(paneState, !!exited)) setQueued((q) => (q.length ? [] : q));
+  }, [paneState, exited]);
+  useEffect(() => { setQueued([]); }, [epoch, paneId]);
   const send = async () => {
     const data = buildPromptPayload(draft);
-    if (!data || !gate.canSend) return;
+    if (!data || !(gate.canSend || canQueue)) return;
     setSendErr(null);
     try {
       await invoke("pty_write", { paneId: ptyId, data });
+      if (!gate.canSend) setQueued((q) => [...q, draft.trim()]);
       setDraft("");
       jumpLatest();
     } catch (e) {
@@ -758,8 +769,8 @@ export default function ChatView({ paneId, cwd, epoch, paneState, exited, onRest
             <textarea
               rows={1}
               value={draft}
-              disabled={!gate.canSend}
-              placeholder={gate.canSend ? "Message the agent (Enter to send, Shift+Enter for a new line)" : gate.message}
+              disabled={!gate.canSend && !canQueue}
+              placeholder={gate.canSend ? "Message the agent (Enter to send, Shift+Enter for a new line)" : canQueue ? "Agent is working. Enter queues this message for when it finishes." : gate.message}
               aria-label="Message the agent"
               onChange={(e) => setDraft(e.target.value)}
               onKeyDown={(e) => {
@@ -767,8 +778,11 @@ export default function ChatView({ paneId, cwd, epoch, paneState, exited, onRest
                 e.stopPropagation();
               }}
             />
-            <button onClick={() => void send()} disabled={!gate.canSend || !draft.trim()}>Send</button>
+            <button onClick={() => void send()} disabled={(!gate.canSend && !canQueue) || !draft.trim()}>{gate.canSend ? "Send" : "Queue"}</button>
           </>
+        )}
+        {queued.length > 0 && (
+          <span className="chat-queued" role="status" title={queuedTitle(queued)} aria-label={`${queuedLabel(queued.length)}: ${queuedTitle(queued)}`}>{queuedLabel(queued.length)}</span>
         )}
         {sendErr && <div className="chat-note err" role="alert">{sendErr}</div>}
       </div>
