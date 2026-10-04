@@ -531,6 +531,7 @@ function DiagnosticsSection() {
       body:
         `Flightdeck will add three hooks (Notification, PermissionRequest and Stop) to ${hookStatus.settingsPath}. ` +
         `They run one small script from ${hookStatus.hooksDir}, which only appends the event to a log Flightdeck reads. ` +
+        `Each permission prompt waits for a short PowerShell start (well under a second) while the relay observes it. ` +
         `A timestamped .bak copy of settings.json is written next to it first, and your own hooks and settings are left exactly as they are. ` +
         `Uninstall removes only Flightdeck's two entries.`,
       confirmLabel: "Install hooks",
