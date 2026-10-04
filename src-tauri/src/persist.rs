@@ -18,7 +18,7 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
@@ -216,18 +216,37 @@ impl Coalescer {
         }
     }
 
-    // Blocks until any in-flight write has finished.
-    fn wait_idle(&self) {
-        drop(self.writing.lock().unwrap_or_else(|e| e.into_inner()));
+    // Blocks until any in-flight write has finished, then writes a payload
+    // that was parked behind it (its submitter may not have taken the lock
+    // yet, and the process can exit before it does).
+    fn wait_idle(&self, write: impl FnOnce(&str) -> Result<(), String>) {
+        let _w = self.writing.lock().unwrap_or_else(|e| e.into_inner());
+        let next = self.pending.lock().unwrap_or_else(|e| e.into_inner()).take();
+        if let Some(j) = next {
+            let _ = write(&j);
+        }
     }
 }
 
 static SAVER: Coalescer = Coalescer::new();
+// Set on the first save so the exit-time drain can write a parked payload.
+static SAVE_APP: OnceLock<AppHandle> = OnceLock::new();
 
-/// Called on app exit so a save still running on a pool thread lands before
-/// the process dies.
+fn write_session(app: &AppHandle, path: &Path, j: &str) -> Result<(), String> {
+    write_atomic(path, j)?;
+    snapshot(app, j)
+}
+
+/// Called on app exit so a save still running on a pool thread lands, and a
+/// payload parked behind it is written, before the process dies.
 pub fn wait_idle() {
-    SAVER.wait_idle();
+    match SAVE_APP.get() {
+        Some(app) => match session_path(app) {
+            Ok(path) => SAVER.wait_idle(|j| write_session(app, &path, j)),
+            Err(_) => SAVER.wait_idle(|_| Ok(())),
+        },
+        None => SAVER.wait_idle(|_| Ok(())),
+    }
 }
 
 #[tauri::command(async)]
@@ -236,10 +255,8 @@ pub fn save_session(app: AppHandle, mut doc: SessionDoc) -> Result<(), String> {
     doc.saved_at = now_ms();
     let json = serde_json::to_string_pretty(&doc).map_err(|e| e.to_string())?;
     let path = session_path(&app)?;
-    SAVER.submit(json, |j| {
-        write_atomic(&path, j)?;
-        snapshot(&app, j)
-    })
+    let _ = SAVE_APP.set(app.clone());
+    SAVER.submit(json, |j| write_session(&app, &path, j))
 }
 
 // Ok(None) means "nothing to restore" — either a first run or safe mode is
@@ -467,6 +484,18 @@ mod tests {
         }
         assert_eq!(*written.lock().unwrap(), vec!["first".to_string(), "p4".to_string()]);
         assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn wait_idle_writes_a_parked_save() {
+        let c = Coalescer::new();
+        *c.pending.lock().unwrap() = Some("parked".into());
+        let mut got = String::new();
+        c.wait_idle(|j| { got = j.into(); Ok(()) });
+        assert_eq!(got, "parked");
+        assert!(c.pending.lock().unwrap().is_none());
+        // Nothing parked: no write.
+        c.wait_idle(|_| panic!("unexpected write"));
     }
 
     #[test]
