@@ -243,3 +243,55 @@ describe("doctorState (the five UI states)", () => {
     expect(doctorState([bad])).toBe("partial");
   });
 });
+
+describe("instruction files helpers (G4)", async () => {
+  const {
+    INSTRUCTION_WARN_BYTES, isLargeInstruction, formatBytes, uniquePaneTargets,
+    canPreviewInstruction, instructionSummary, validateHeadline,
+  } = await import("./ConfigDoctorView");
+  const f = (path: string, size: number, exists = true) => ({ path, exists, size, mtime_ms: 1, scope: "project" as const });
+
+  it("warns only above 40 KB", () => {
+    expect(INSTRUCTION_WARN_BYTES).toBe(40960);
+    expect(isLargeInstruction(40960)).toBe(false);
+    expect(isLargeInstruction(40961)).toBe(true);
+  });
+
+  it("formats sizes", () => {
+    expect(formatBytes(512)).toBe("512 B");
+    expect(formatBytes(2048)).toBe("2.0 KB");
+    expect(formatBytes(50 * 1024)).toBe("50 KB");
+    expect(formatBytes(3 * 1024 * 1024)).toBe("3.0 MB");
+  });
+
+  it("groups panes by vendor and folder, case-insensitively", () => {
+    const g = uniquePaneTargets([
+      { vendor: "claude", cwd: "C:\\a" }, { vendor: "claude", cwd: "c:\\A" },
+      { vendor: "agy", cwd: "C:\\a" }, { vendor: "claude", cwd: "C:\\b" },
+    ]);
+    expect(g.map((x) => [x.vendor, x.count])).toEqual([["claude", 2], ["agy", 1], ["claude", 1]]);
+  });
+
+  it("previews only existing files inside the workspace root", () => {
+    const root = "C:\\Dev\\proj";
+    expect(canPreviewInstruction(f("C:\\Dev\\proj\\CLAUDE.md", 1), root)).toBe(true);
+    expect(canPreviewInstruction(f("c:/dev/proj/sub/CLAUDE.md", 1), root)).toBe(true);
+    expect(canPreviewInstruction(f("C:\\Dev\\CLAUDE.md", 1), root)).toBe(false);
+    expect(canPreviewInstruction(f("C:\\Dev\\proj-other\\CLAUDE.md", 1), root)).toBe(false);
+    expect(canPreviewInstruction(f("C:\\Dev\\proj\\CLAUDE.md", 0, false), root)).toBe(false);
+    expect(canPreviewInstruction(f("C:\\Dev\\proj\\CLAUDE.md", 1), null)).toBe(false);
+  });
+
+  it("summarises present files and large ones", () => {
+    expect(instructionSummary([f("a", 100), f("b", 50000), f("c", 0, false)])).toEqual({ present: 2, bytes: 50100, large: 1 });
+  });
+
+  it("words the validate result", () => {
+    const base = { available: true, version: "2.1.289 (Claude Code)", ok: true, timed_out: false, code: 0, output: "", message: "m" };
+    expect(validateHeadline(base)).toBe("Pass");
+    expect(validateHeadline({ ...base, ok: false, code: 1 })).toBe("Fail (exit 1)");
+    expect(validateHeadline({ ...base, ok: false, timed_out: true, code: null, message: "Timed out after 30 s" })).toBe("Timed out after 30 s");
+    expect(validateHeadline({ ...base, available: false, message: "Not available in this Claude Code version" }))
+      .toBe("Not available in this Claude Code version (2.1.289 (Claude Code))");
+  });
+});

@@ -30,6 +30,8 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSPr
 import { invoke } from "@tauri-apps/api/core";
 import { homeDir } from "@tauri-apps/api/path";
 import { useApp } from "./store";
+import { useUI } from "./ui";
+import { useVendors } from "./vendors";
 
 // ---------------------------------------------------------------------
 // Pure logic (exported for ConfigDoctorView.test.ts — no DOM, no Tauri)
@@ -392,6 +394,237 @@ export function doctorState(files: ConfigFile[]): DoctorState {
 // column counts, so each overrides just the template inline — no new CSS file
 // ownership this wave, and every colour/spacing token still comes from the
 // shared rules.
+// ---------------------------------------------------------------------
+// Instruction files + plugin validate (ledger G4). Pure helpers first.
+// ---------------------------------------------------------------------
+
+export type InstructionScope = "user" | "project" | "parent" | "local" | "memory";
+
+/** Mirrors doctor.rs `InstructionFile` (stat only, never content). */
+export interface InstructionFile {
+  path: string;
+  exists: boolean;
+  size: number;
+  mtime_ms: number | null;
+  scope: InstructionScope;
+}
+
+/** Instruction files above this cost real context on every turn. */
+export const INSTRUCTION_WARN_BYTES = 40 * 1024;
+
+export function isLargeInstruction(size: number): boolean {
+  return size > INSTRUCTION_WARN_BYTES;
+}
+
+export function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(n < 10 * 1024 ? 1 : 0)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/** Each distinct (vendor, cwd) once, in pane order; panes of one agent in one
+ *  folder read the same files, so they share a section. */
+export function uniquePaneTargets(panes: Array<{ vendor: string; cwd: string }>): Array<{ vendor: string; cwd: string; count: number }> {
+  const out: Array<{ vendor: string; cwd: string; count: number }> = [];
+  for (const p of panes) {
+    const hit = out.find((o) => o.vendor === p.vendor && o.cwd.toLowerCase() === p.cwd.toLowerCase());
+    if (hit) hit.count++;
+    else out.push({ vendor: p.vendor, cwd: p.cwd, count: 1 });
+  }
+  return out;
+}
+
+function normPath(p: string): string {
+  return p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+}
+
+/** Preview reads are scoped to the workspace root and below; anything above it
+ *  (parent folders, ~/.claude) would fail with outside-read-scope, so those rows
+ *  are listed but not clickable. */
+export function canPreviewInstruction(f: InstructionFile, root: string | null): boolean {
+  if (!f.exists || !root) return false;
+  const r = normPath(root);
+  const p = normPath(f.path);
+  return p === r || p.startsWith(r + "/");
+}
+
+export function instructionSummary(files: InstructionFile[]): { present: number; bytes: number; large: number } {
+  const present = files.filter((f) => f.exists);
+  return {
+    present: present.length,
+    bytes: present.reduce((a, f) => a + f.size, 0),
+    large: present.filter((f) => isLargeInstruction(f.size)).length,
+  };
+}
+
+const INSTR_COLS: CSSProperties = { gridTemplateColumns: "58px minmax(0,1fr) 64px 118px" };
+
+function formatMtime(ms: number | null): string {
+  return ms == null ? "—" : new Date(ms).toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" });
+}
+
+interface InstructionGroup { vendor: string; cwd: string; count: number; files: InstructionFile[]; error?: string }
+
+function InstructionFilesSection() {
+  const workspaces = useApp((s) => s.workspaces);
+  const activeId = useApp((s) => s.activeId);
+  const vendors = useVendors((s) => s.vendors);
+  const openPreview = useUI((s) => s.openPreview);
+  const ws = workspaces.find((w) => w.id === activeId) ?? null;
+  const root = ws?.root ?? null;
+  const targets = useMemo(() => {
+    const kindOf = (id: string) => vendors.find((v) => v.id === id)?.kind;
+    return uniquePaneTargets((ws?.panes ?? []).filter((p) => kindOf(p.vendor) !== "shell"));
+  }, [ws, vendors]);
+  const key = targets.map((t) => `${t.vendor}|${t.cwd}`).join("\n");
+  const [groups, setGroups] = useState<InstructionGroup[] | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    setGroups(null);
+    void Promise.all(targets.map(async (t): Promise<InstructionGroup> => {
+      try {
+        const files = await invoke<InstructionFile[]>("instruction_files", { cwd: t.cwd, vendor: t.vendor });
+        return { ...t, files };
+      } catch (e) {
+        return { ...t, files: [], error: String(e) };
+      }
+    })).then((g) => { if (live) setGroups(g); });
+    return () => { live = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
+
+  const label = (id: string) => vendors.find((v) => v.id === id)?.short ?? id;
+
+  return (
+    <>
+      <div className="set-row">
+        <div className="set-row-t">
+          <span className="set-row-name">Instruction files</span>
+          <span className="set-row-sub">
+            What each agent pane will read, in load order. Sizes only; contents aren’t read here.
+            {" "}Files above the workspace folder are listed but can’t be previewed.
+          </span>
+        </div>
+      </div>
+      {groups === null && targets.length > 0 && <div className="diag-empty">Checking instruction files…</div>}
+      {targets.length === 0 && <div className="diag-empty">No agent panes are open, so there are no instruction files to list.</div>}
+      {groups?.map((g) => {
+        const sum = instructionSummary(g.files);
+        return (
+          <Fragment key={`${g.vendor}|${g.cwd}`}>
+            <div className="diag-empty" title={g.cwd}>
+              {label(g.vendor)}{g.count > 1 ? ` × ${g.count}` : ""} · {g.cwd}
+              {!g.error && ` · ${sum.present} found, ${formatBytes(sum.bytes)} total`}
+            </div>
+            {g.error ? (
+              <div className="diag-empty diag-crit">Couldn’t check this folder: {g.error}</div>
+            ) : (
+              <div className="diag-table" role="table" aria-label={`Instruction files for ${label(g.vendor)} in ${g.cwd}`}>
+                <div className="diag-tr diag-th" role="row" style={INSTR_COLS}>
+                  <span>Scope</span><span>Path</span><span>Size</span><span>Modified</span>
+                </div>
+                {g.files.map((f) => {
+                  const clickable = canPreviewInstruction(f, root);
+                  const large = f.exists && isLargeInstruction(f.size);
+                  return (
+                    <div className="diag-tr" role="row" key={f.path} style={{ ...INSTR_COLS, opacity: f.exists ? 1 : 0.55 }}>
+                      <span>{f.scope}</span>
+                      {clickable ? (
+                        <button
+                          type="button" className="diag-proc" title={`Open ${f.path} in Preview`}
+                          style={{ background: "none", border: 0, padding: 0, font: "inherit", textAlign: "left", cursor: "pointer", textDecoration: "underline" }}
+                          onClick={() => openPreview(f.path)}
+                        >{f.path}</button>
+                      ) : (
+                        <span className="diag-proc" title={f.exists ? `${f.path} (outside the workspace folder, can’t be previewed)` : f.path}>{f.path}</span>
+                      )}
+                      <span className={large ? "diag-warn" : ""} title={large ? "Over 40 KB: costs a lot of context every session" : undefined}>
+                        {f.exists ? formatBytes(f.size) : "none"}{large ? " ⚠" : ""}
+                      </span>
+                      <span>{f.exists ? formatMtime(f.mtime_ms) : "—"}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            {sum.large > 0 && (
+              <div className="diag-empty diag-warn">
+                {sum.large} file{sum.large === 1 ? " is" : "s are"} over 40 KB. Consider trimming; they load into every session.
+              </div>
+            )}
+          </Fragment>
+        );
+      })}
+    </>
+  );
+}
+
+/** Mirrors doctor.rs `ValidateResult`. */
+export interface ValidateResult {
+  available: boolean;
+  version: string | null;
+  ok: boolean;
+  timed_out: boolean;
+  code: number | null;
+  output: string;
+  message: string;
+}
+
+export function validateHeadline(r: ValidateResult): string {
+  if (!r.available) return r.version ? `${r.message} (${r.version})` : r.message;
+  return r.timed_out ? r.message : r.ok ? "Pass" : `Fail${r.code != null ? ` (exit ${r.code})` : ""}`;
+}
+
+function PluginValidateSection({ cwd }: { cwd: string | null }) {
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<ValidateResult | null>(null);
+  const [err, setErr] = useState("");
+
+  const run = async () => {
+    if (!cwd) return;
+    setBusy(true); setErr(""); setResult(null);
+    try {
+      setResult(await invoke<ValidateResult>("plugin_validate", { cwd }));
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <div className="set-row">
+        <div className="set-row-t">
+          <span className="set-row-name">Validate plugins</span>
+          <span className="set-row-sub">
+            Runs <code>claude plugin validate</code> on the focused pane’s folder (30 s limit, never prompts, changes nothing).
+          </span>
+        </div>
+        <button className="set-btn" onClick={() => void run()} disabled={busy || !cwd}>
+          {busy ? "Validating…" : "Validate"}
+        </button>
+      </div>
+      {!cwd && <div className="diag-empty">Open a pane to choose a folder to validate.</div>}
+      {err && <div className="diag-empty diag-crit">Couldn’t run validation: {err}</div>}
+      {result && (
+        <>
+          <div className={"diag-empty " + (result.available && result.ok ? "" : result.available ? "diag-crit" : "diag-warn")} role="status">
+            {validateHeadline(result)}{result.available && result.version ? ` · ${result.version}` : ""}
+          </div>
+          {result.output && (
+            <pre
+              className="diag-empty" tabIndex={0} aria-label="Validation output"
+              style={{ maxHeight: 220, overflow: "auto", whiteSpace: "pre-wrap", margin: "0 0 10px", userSelect: "text" }}
+            >{result.output}</pre>
+          )}
+        </>
+      )}
+    </>
+  );
+}
+
 const FILE_COLS: CSSProperties = { gridTemplateColumns: "68px minmax(0,1fr) 74px 58px" };
 const NOTE_COLS: CSSProperties = { gridTemplateColumns: "minmax(0,1fr)" };
 const RULE_COLS: CSSProperties = { gridTemplateColumns: "116px minmax(0,1fr) 104px" };
@@ -690,6 +923,9 @@ export function ConfigDoctorView() {
           <div className="diag-empty">Fire history requires hook wiring, coming later.</div>
         </>
       )}
+
+      <InstructionFilesSection />
+      <PluginValidateSection cwd={cwd} />
     </>
   );
 }
