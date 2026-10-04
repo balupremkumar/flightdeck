@@ -165,6 +165,24 @@ export function restoredScrollbackFor(paneId: number): string | undefined {
   return restoredScrollback[paneId];
 }
 
+// Phase 3: per-pane `view` / `focusMode` ride in uiPrefs (opaque to persist.rs,
+// like scrollback) because PersistedPane would drop unknown fields. Only
+// non-default values are written.
+export interface PaneChatPref { view?: "chat"; focusMode?: true }
+function paneChatFor(workspaces: Workspace[]): Record<number, PaneChatPref> {
+  const out: Record<number, PaneChatPref> = {};
+  for (const w of workspaces) {
+    for (const p of w.panes) {
+      if (p.view === "chat" || p.focusMode) out[p.id] = { ...(p.view === "chat" ? { view: "chat" as const } : {}), ...(p.focusMode ? { focusMode: true as const } : {}) };
+    }
+  }
+  return out;
+}
+let restoredPaneChat: Record<number, PaneChatPref> = {};
+export function setRestoredPaneChat(map: Record<number, PaneChatPref>): void {
+  restoredPaneChat = map;
+}
+
 function toDraft(workspaces: Workspace[], activeId: number | null): SessionDraft {
   return {
     activeWorkspaceId: activeId,
@@ -194,6 +212,7 @@ function toDraft(workspaces: Workspace[], activeId: number | null): SessionDraft
       groups: useApp.getState().groups,
       summary: summarize(workspaces),
       scrollback: scrollbackFor(workspaces), // QL-762
+      paneChat: paneChatFor(workspaces), // Phase 3: per-pane view + focus mode
     },
   };
 }
@@ -220,10 +239,10 @@ export async function lastSessionSummary(): Promise<PaneSummaryEntry[]> {
  *  into offerSessionRestore) so this exact compatibility contract is unit
  *  testable without needing to drive the whole restore-prompt flow. */
 export function parseUiPrefs(uiPrefs: unknown): {
-  groups: PaneGroup[]; summary: PaneSummaryEntry[]; scrollback: Record<number, string>;
+  groups: PaneGroup[]; summary: PaneSummaryEntry[]; scrollback: Record<number, string>; paneChat: Record<number, PaneChatPref>;
 } {
   const p = (uiPrefs && typeof uiPrefs === "object" ? uiPrefs : {}) as {
-    groups?: unknown; summary?: unknown; scrollback?: unknown;
+    groups?: unknown; summary?: unknown; scrollback?: unknown; paneChat?: unknown;
   };
   // QL-762: a doc written by hand, by an older build, or by a version that
   // capped differently is all the same case — take only numeric keys with
@@ -236,10 +255,23 @@ export function parseUiPrefs(uiPrefs: unknown): {
       scrollback[id] = value.length > 1_000_000 ? value.slice(-1_000_000) : value;
     }
   }
+  const paneChat: Record<number, PaneChatPref> = {};
+  if (p.paneChat && typeof p.paneChat === "object") {
+    for (const [key, value] of Object.entries(p.paneChat as Record<string, unknown>)) {
+      const id = Number(key);
+      if (!Number.isFinite(id) || !value || typeof value !== "object") continue;
+      const v = value as { view?: unknown; focusMode?: unknown };
+      const pref: PaneChatPref = {};
+      if (v.view === "chat") pref.view = "chat";
+      if (v.focusMode === true) pref.focusMode = true;
+      if (pref.view || pref.focusMode) paneChat[id] = pref;
+    }
+  }
   return {
     groups: Array.isArray(p.groups) ? (p.groups as PaneGroup[]) : [],
     summary: Array.isArray(p.summary) ? (p.summary as PaneSummaryEntry[]) : [],
     scrollback,
+    paneChat,
   };
 }
 
@@ -372,6 +404,8 @@ export async function hydrateFrom(persisted: PersistedWorkspace[], activeId: num
         branch: p.branch,
         baseBranch: p.baseBranch,
         draft: p.draft, // UX-581: the unsent line survives the restart too
+        view: restoredPaneChat[p.id]?.view === "chat" ? "chat" : undefined,
+        focusMode: restoredPaneChat[p.id]?.focusMode ? true : undefined,
       };
       const { pane, status } = await reconcilePane(model, w.root, w.setupCmd);
       panes.push(pane);
@@ -451,6 +485,7 @@ export async function offerSessionRestore() {
     // create find their scrollback already waiting. Declining the restore
     // prompt leaves it staged but unused — nothing gets created to read it.
     setRestoredScrollback(prefs.scrollback);
+    setRestoredPaneChat(prefs.paneChat);
     if (doc.workspaces.length === 0) return;
     if (useApp.getState().workspaces.length > 0) return; // user already moving
     // Settings > Startup (91) — persisted-but-inert until now. "Reopen last

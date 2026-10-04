@@ -103,7 +103,7 @@ describe("session restore (UX-581 draft round-trip / UX-583 restore report)", ()
 // is the backward-compat contract: an OLD doc, saved before either shipped,
 // must still load with sane defaults rather than throwing.
 describe("parseUiPrefs backward compatibility (UX-554/561)", () => {
-  const empty = { groups: [], summary: [], scrollback: {} };
+  const empty = { groups: [], summary: [], scrollback: {}, paneChat: {} };
 
   it("a pre-UX-554/561 doc (uiPrefs has only a legacy board, or is entirely absent) still parses", () => {
     expect(parseUiPrefs({ board: { columns: [] } })).toEqual(empty);
@@ -123,7 +123,12 @@ describe("parseUiPrefs backward compatibility (UX-554/561)", () => {
       groups: [{ id: 1, name: "backend", paneIds: [10, 11] }],
       summary: [{ workspaceName: "ws", vendor: "claude", cwd: "D:\\proj", state: "waiting", lastLine: "done" }],
     };
-    expect(parseUiPrefs(uiPrefs)).toEqual({ ...uiPrefs, scrollback: {} });
+    expect(parseUiPrefs(uiPrefs)).toEqual({ ...uiPrefs, scrollback: {}, paneChat: {} });
+  });
+
+  it("parses per-pane chat prefs and drops junk", () => {
+    expect(parseUiPrefs({ paneChat: { 3: { view: "chat", focusMode: true }, 4: { view: "x" }, bad: { view: "chat" }, 5: 7 } }).paneChat)
+      .toEqual({ 3: { view: "chat", focusMode: true } });
   });
 
   it("tolerates groups/summary being present but the wrong shape (not an array)", () => {

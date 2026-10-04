@@ -558,6 +558,8 @@ interface TerminalProps {
   /** PaneModel.epoch: part of the session's generation, so a Restart (epoch
    *  bump) replaces the PTY while a mere remount does not. */
   epoch?: number;
+  /** Claude fullscreen opt-in; read only when the pty is spawned (an epoch bump). */
+  focusMode?: boolean;
   cwd: string;
   /** Worktree setup command to run before the agent (fresh worktrees only).
    *  Captured at mount; `onSetupConsumed` fires once the spawn has taken it so
@@ -1392,7 +1394,7 @@ function createSession(modelId: number, gen: string, spec: SpawnSpec, handlers: 
         await Promise.race([sized, new Promise<void>((res) => setTimeout(res, 500))]);
         if (entry.disposed) return;
         if (!fitSane()) term.resize(FALLBACK_COLS, FALLBACK_ROWS);
-        paneId = await invoke<number>("pty_spawn", { vendor: spec.vendor, cwd: spec.cwd, cols: term.cols, rows: term.rows, setup: spec.setup ?? null });
+        paneId = await invoke<number>("pty_spawn", { vendor: spec.vendor, cwd: spec.cwd, cols: term.cols, rows: term.rows, setup: spec.setup ?? null, focusMode: !!spec.focusMode });
         entry.ptyId = paneId;
       } catch (err) {
         // UI-11: a raw error string tells the user nothing actionable. Name the
@@ -1545,7 +1547,7 @@ setSessionFactory(createSession);
 // on unmount, so a pane changing grid row moves the same terminal instead of
 // killing and respawning the agent.
 export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Terminal(
-  { modelId, vendor, cwd, epoch = 0, setup, onSetupConsumed, initialDraft, restoredScrollback, osc52 = false, fontSize = 12.5, ligatures = false, quietThresholdMs = 3000, onExit, onState, onProc, onBell, onLine, onScrollAway, onProgress, onCwd },
+  { modelId, vendor, cwd, epoch = 0, setup, onSetupConsumed, initialDraft, restoredScrollback, osc52 = false, focusMode = false, fontSize = 12.5, ligatures = false, quietThresholdMs = 3000, onExit, onState, onProc, onBell, onLine, onScrollAway, onProgress, onCwd },
   ref
 ) {
   const elRef = useRef<HTMLDivElement>(null);
@@ -1620,7 +1622,7 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
     const el = elRef.current!;
     acquire(
       modelId,
-      { vendor, cwd, epoch, setup, initialDraft, restoredScrollback, fontSize, osc52, quietMs: quietThresholdMs },
+      { vendor, cwd, epoch, setup, focusMode, initialDraft, restoredScrollback, fontSize, osc52, quietMs: quietThresholdMs },
       handlers,
       el
     );

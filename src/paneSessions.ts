@@ -46,6 +46,8 @@ export interface SpawnSpec {
   cwd: string;
   epoch: number;
   setup?: string;
+  /** Claude fullscreen opt-in (C2b); consumed only at pty_spawn. */
+  focusMode?: boolean;
   initialDraft?: string;
   restoredScrollback?: string;
   fontSize: number;

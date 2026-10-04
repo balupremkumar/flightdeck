@@ -18,7 +18,9 @@ export interface WorktreeRef { worktreePath: string; branch: string; baseBranch:
 // into the PTY). Terminal.tsx owns reading/writing the terminal's actual
 // input buffer; this field is just where that line survives a restart —
 // persisted through session.ts like everything else on PaneModel.
-export interface PaneModel extends Partial<WorktreeRef> { id: number; vendor: string; cwd: string; state: PaneState; epoch: number; title?: string; needsSetup?: boolean; draft?: string; }
+/** Phase 3: which surface a Claude pane shows. Absent = "terminal". */
+export type PaneViewMode = "terminal" | "chat";
+export interface PaneModel extends Partial<WorktreeRef> { id: number; vendor: string; cwd: string; state: PaneState; epoch: number; title?: string; needsSetup?: boolean; draft?: string; view?: PaneViewMode; focusMode?: boolean; }
 export interface Workspace { id: number; name: string; root: string; panes: PaneModel[]; focused: number | null; setupCmd?: string; }
 export interface NewPane extends Partial<WorktreeRef> { vendor: string; cwd: string; needsSetup?: boolean; }
 
@@ -62,6 +64,9 @@ interface AppState {
    *  clears it on submit. */
   setPaneDraft: (paneId: number, draft: string) => void;
   restartPane: (paneId: number) => void;
+  setPaneView: (paneId: number, view: PaneViewMode) => void;
+  /** Persisted Claude fullscreen opt-in; changing it restarts the pane (epoch bump). */
+  setPaneFocusMode: (paneId: number, on: boolean) => void;
   renamePane: (paneId: number, title: string) => void;
   renameWorkspace: (wsId: number, name: string) => void;
   reorderWorkspaces: (from: number, to: number) => void;
@@ -261,6 +266,24 @@ export const useApp = create<AppState>((set) => ({
         ...w,
         panes: w.panes.map((p) =>
           p.id === paneId ? { ...p, epoch: p.epoch + 1, state: "starting" as PaneState } : p
+        ),
+      })),
+    })),
+
+  setPaneView: (paneId, view) =>
+    set((s) => ({
+      workspaces: s.workspaces.map((w) => ({
+        ...w,
+        panes: w.panes.map((p) => (p.id === paneId ? { ...p, view: view === "chat" ? "chat" : undefined } : p)),
+      })),
+    })),
+
+  setPaneFocusMode: (paneId, on) =>
+    set((s) => ({
+      workspaces: s.workspaces.map((w) => ({
+        ...w,
+        panes: w.panes.map((p) =>
+          p.id === paneId ? { ...p, focusMode: on || undefined, epoch: p.epoch + 1, state: "starting" as PaneState } : p
         ),
       })),
     })),
