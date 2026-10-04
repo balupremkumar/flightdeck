@@ -63,9 +63,25 @@ fn write_if_changed(path: &std::path::Path, contents: &str) -> std::io::Result<(
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let tmp = path.with_extension("json.tmp");
+    // N10: a per-call tmp name, so two spawns writing the same file at once
+    // can't rename each other's tmp out from under them.
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let tmp = path.with_extension(format!("json.{}.{n}.tmp", std::process::id()));
     std::fs::write(&tmp, contents)?;
-    std::fs::rename(&tmp, path)
+    std::fs::rename(&tmp, path).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        e
+    })
+}
+
+/// N10: write both view settings files up front (called once from setup), so
+/// the first spawns only read them. The lazy rewrite in `view_settings_file`
+/// stays, for a file deleted while the app runs.
+pub fn write_view_settings(dir: &std::path::Path) {
+    for focus in [true, false] {
+        let _ = view_settings_file(dir, focus);
+    }
 }
 
 /// Ensure the view settings file for `focus` exists in `dir` and return its path.
@@ -695,6 +711,30 @@ mod tests {
     fn assistant_blocks(blocks: Value) -> String {
         line(json!({"parentUuid":"u1","isSidechain":false,"type":"assistant","uuid":"a1","timestamp":"2026-01-01T00:00:01.000Z",
             "message":{"role":"assistant","content":blocks}}))
+    }
+
+    #[test]
+    fn write_view_settings_creates_both_files() {
+        let dir = tmp("view-both");
+        write_view_settings(&dir);
+        assert_eq!(std::fs::read_to_string(dir.join("claude-view-focus.json")).unwrap(), "{\"viewMode\":\"focus\"}");
+        assert_eq!(std::fs::read_to_string(dir.join("claude-view-default.json")).unwrap(), "{\"viewMode\":\"default\"}");
+    }
+
+    #[test]
+    fn concurrent_first_spawns_do_not_race_on_the_tmp_file() {
+        for round in 0..20 {
+            let dir = tmp(&format!("view-race-{round}"));
+            let hs: Vec<_> = (0..4)
+                .map(|_| {
+                    let d = dir.clone();
+                    std::thread::spawn(move || view_settings_file(&d, true).is_ok())
+                })
+                .collect();
+            for h in hs {
+                assert!(h.join().unwrap(), "a concurrent writer failed");
+            }
+        }
     }
 
     #[test]

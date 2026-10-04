@@ -1074,6 +1074,7 @@ pub fn run() {
         vendors::set_manifest_dir(data_dir.join("vendors"));
         // TN5: Claude view settings files (--settings), written on demand too.
         chatlog::set_view_dir(data_dir.join("claude-view"));
+        chatlog::write_view_settings(&data_dir.join("claude-view"));
         // QL-752: (re)write the PowerShell shell-integration preamble that
         // interactive pwsh panes dot-source at spawn. Rewritten every launch so
         // it can't go stale; if the write fails, panes simply launch without
