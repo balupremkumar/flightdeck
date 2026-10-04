@@ -83,7 +83,7 @@ describe("editorArgv (UX-517)", () => {
   it("splits the shipped VS Code preset into a program and an argument array", () => {
     expect(editorArgv(EDITOR_PRESETS.vscode.command, "D:\\repo\\src\\App.tsx", 42)).toEqual({
       program: "code",
-      args: ["--goto", "D:\\repo\\src\\App.tsx:42"],
+      args: ["--goto", "D:\\repo\\src\\App.tsx:42:1"],
     });
   });
 
@@ -157,7 +157,7 @@ describe("openInEditor (UX-517)", () => {
   it("uses the default preset when nothing has been configured yet", async () => {
     vi.mocked(invoke).mockResolvedValueOnce(undefined);
     await openInEditor("D:\\repo\\a.ts");
-    expect(invoke).toHaveBeenCalledWith("launch_editor", { program: "code", args: ["--goto", "D:\\repo\\a.ts:1"] });
+    expect(invoke).toHaveBeenCalledWith("launch_editor", { program: "code", args: ["--goto", "D:\\repo\\a.ts:1:1"] });
   });
 
   it("falls back to the OS hand-off when no editor command is configured", async () => {
