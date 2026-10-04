@@ -162,8 +162,9 @@ export function SessionLauncher() {
       if (!pane || !target) return;
       fork = fork && supportsFork(pane.vendor);
       close();
-      const ok = await launchResume(target.wsId, pane, sessionId, fork, cwd);
-      if (!ok) { pushToast("error", "Couldn’t stage the resume — no pane was opened."); return; }
+      const res = await launchResume(target.wsId, pane, sessionId, fork, cwd);
+      if (res === "cwd-missing") { pushToast("error", `That session’s folder no longer exists (${cwd}). No pane was opened.`); return; }
+      if (res !== "ok") { pushToast("error", "Couldn’t stage the resume — no pane was opened."); return; }
       pushToast(
         "success",
         `${fork ? "Forking" : "Resuming"} session ${sessionId.slice(0, 8)} in a new pane.`

@@ -8,6 +8,9 @@ vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn(), openPath: vi.fn(
 
 import type { ClaudeSession, SessionSearchHit } from "./SessionLauncher";
 
+const { launchResume } = await import("./sessionLauncherLogic");
+const { invoke } = await import("@tauri-apps/api/core");
+
 const {
   resumeArgs, resumeArgsFor, canResume, supportsFork, supportsDeepSearch, listCommandFor, modelShort, contextWindowFor, filterSessions, sessionWeight,
   groupHits, highlightParts, hitCwd,
@@ -241,5 +244,22 @@ describe("search knobs (QL-771)", () => {
 
   it("debounces typing", () => {
     expect(SEARCH_DEBOUNCE_MS).toBe(300);
+  });
+});
+
+describe("launchResume folder check (N9)", () => {
+  const p = { vendor: "claude", cwd: "D:\\here" } as Parameters<typeof launchResume>[1];
+  it("refuses a hit whose folder is gone and stages nothing", async () => {
+    vi.mocked(invoke).mockClear();
+    const r = await launchResume(1, p, "sid", false, "D:\\gone", async () => false);
+    expect(r).toBe("cwd-missing");
+    expect(invoke).not.toHaveBeenCalled();
+  });
+  it("does not check the pane's own folder", async () => {
+    const exists = vi.fn(async () => false);
+    vi.mocked(invoke).mockResolvedValue(undefined);
+    const r = await launchResume(1, p, "sid", false, "D:\\here", exists);
+    expect(exists).not.toHaveBeenCalled();
+    expect(r).not.toBe("cwd-missing");
   });
 });

@@ -4,6 +4,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useApp, type PaneModel } from "./store";
 import { bytes } from "./format";
+import { resolveExisting } from "./pathcheck";
 // QL-764 — resume/fork launcher.
 //
 // Claude Code keeps every past session as a transcript under
@@ -242,6 +243,16 @@ export function highlightParts(text: string, query: string, regex = false): { te
   return out;
 }
 
+export type ResumeResult = "ok" | "stage-failed" | "cwd-missing";
+
+/** N9: does this project folder still exist? Outside the Tauri host there is
+ *  nothing to ask, so assume yes rather than block every resume in a preview. */
+export async function folderExists(cwd: string): Promise<boolean> {
+  if (!("__TAURI_INTERNALS__" in globalThis)) return true;
+  const [hit] = await resolveExisting([cwd], []);
+  return !!hit?.isDir;
+}
+
 /** Stage the resume args for the next spawn in this folder, then create the
  *  pane that will consume them (usage.rs holds the staging; build_command in
  *  lib.rs applies it). Returns false when the backend refused the staging —
@@ -253,10 +264,14 @@ export async function launchResume(
   sessionId: string,
   fork: boolean,
   /** Resume in a different project folder (an all-projects search hit). */
-  cwdOverride?: string
-): Promise<boolean> {
+  cwdOverride?: string,
+  exists: (cwd: string) => Promise<boolean> = folderExists
+): Promise<ResumeResult> {
   const cwd = cwdOverride || pane.cwd;
   const elsewhere = cwd !== pane.cwd;
+  // N9: an all-projects hit can point at a folder that has since been moved or
+  // deleted; a pane spawned there would fail with no explanation.
+  if (elsewhere && !(await exists(cwd))) return "cwd-missing";
   try {
     await invoke("stage_launch_args", {
       vendor: pane.vendor,
@@ -264,7 +279,7 @@ export async function launchResume(
       args: resumeArgsFor(pane.vendor, sessionId, fork),
     });
   } catch {
-    return false;
+    return "stage-failed";
   }
   // The pane's worktree belongs to its own folder, never to another project.
   const wt =
@@ -272,6 +287,6 @@ export async function launchResume(
       ? { worktreePath: pane.worktreePath, branch: pane.branch, baseBranch: pane.baseBranch }
       : undefined;
   useApp.getState().addPane(wsId, pane.vendor, cwd, wt);
-  return true;
+  return "ok";
 }
 
