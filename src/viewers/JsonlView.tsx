@@ -109,7 +109,7 @@ export default function JsonlView({ text, find }: { text: string; find?: TreeFin
                   </button>
                   <span className="jl-no" data-nofind>{rec.line}</span>
                   {c.type && <span className="jl-chip">{c.type}</span>}
-                  {c.role && <span className="jl-chip jl-chip-role">{c.role}</span>}
+                  {c.role && c.role !== c.type && <span className="jl-chip jl-chip-role">{c.role}</span>}
                   <span className="jl-prev">{c.preview}</span>
                 </div>
               );
