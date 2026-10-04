@@ -625,6 +625,19 @@ pub fn run() {
     // summary is logged once applog is up (below).
     let canary_note = canary::prepare(&context.config().identifier);
     let app = tauri::Builder::default()
+        // Must be the first plugin. A second launch of the SAME flavour (the
+        // plugin keys on the bundle identifier, so stable and canary stay
+        // separate) exits and lands here in the running instance. Surface the
+        // window without taking foreground: the owner often has a fullscreen
+        // game up, so no set_focus / SetForegroundWindow, just show +
+        // unminimise + a taskbar flash.
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            if let Some(win) = app.get_webview_window("main") {
+                let _ = win.show();
+                let _ = win.unminimize();
+                let _ = win.request_user_attention(Some(tauri::UserAttentionType::Informational));
+            }
+        }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         // QL-779: remember where the window was and how big it was. Only the

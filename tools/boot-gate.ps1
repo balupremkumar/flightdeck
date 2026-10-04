@@ -48,10 +48,19 @@ $canaryLocal   = Join-Path $env:LOCALAPPDATA "ai.flightdeck.canary"
 $logPath       = Join-Path $canaryRoaming "logs\flightdeck.log"
 
 # Refuse to fight a live canary.
+#
+# Canary is single-instance now (tauri-plugin-single-instance, keyed on the
+# ai.flightdeck.canary identifier): a second canary launch exits at once, which
+# would look like a crash. So detect a live canary by ProductName as well as by
+# window title (a summoned-away canary has no visible window). A running STABLE
+# is fine, it uses a different identifier and a different instance lock.
 $running = Get-Process -ErrorAction SilentlyContinue | Where-Object {
-    try { $_.MainWindowTitle -like "Flightdeck Canary*" } catch { $false }
+    try {
+        ($_.MainWindowTitle -like "Flightdeck Canary*") -or
+        ($_.MainModule.FileVersionInfo.ProductName -eq "Flightdeck Canary")
+    } catch { $false }
 }
-if ($running) { throw "boot gate: a Flightdeck Canary instance is running — close it first" }
+if ($running) { throw "boot gate: a Flightdeck Canary instance is already running (PID $(($running | ForEach-Object Id) -join ', ')) — close it first. A second canary launch would hit the single-instance exit and never boot." }
 
 function Clear-CanaryState {
     foreach ($d in @($canaryRoaming, $canaryLocal)) {
@@ -71,7 +80,7 @@ if ($alive) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
 
 # Judge from the evidence, with the log tail printed on any failure.
 $failures = @()
-if (-not $alive) { $failures += "process exited before ${WaitSeconds}s" }
+if (-not $alive) { $failures += "process exited before ${WaitSeconds}s (exit code $($proc.ExitCode); if a canary was started elsewhere meanwhile, this is the single-instance exit)" }
 if ($log -notmatch "boot-ok") { $failures += "no boot-ok beacon in the flight recorder (UI never mounted — ErrorBoundary boot?)" }
 $errorLines = ($log -split "`n") | Where-Object { $_ -match "^\d{4}-\d{2}-\d{2}T\S+ E " }
 if ($errorLines) { $failures += "error entries in the flight recorder:`n    " + ($errorLines -join "`n    ") }
