@@ -20,6 +20,7 @@ import { openUrl, openPath } from "@tauri-apps/plugin-opener";
 import { openInEditor } from "./editor";
 import { useUI, useOverlayEsc } from "./ui";
 import { revealPath } from "./reveal";
+import { requestReveal } from "./revealInTree";
 import type { PreviewTab } from "./ui";
 import { parseMarkdown, isExternalHref, isBlockedHref, resolveMdLink, parseLinkTarget, makeSlugger, inlineText, slugify } from "./markdown";
 import type { BlockNode, InlineNode } from "./markdown";
@@ -407,7 +408,7 @@ function PreviewBody({ tab }: { tab: PreviewTab }) {
           const isDir = await invoke("fs_list_dir", { path: tab.path }).then(() => true, () => false);
           if (seq.current !== my) return;
           if (isDir) {
-            void revealPath(tab.path);
+            requestReveal(tab.path); // Explorer panel; falls back to the OS outside its root
             useUI.getState().closePreview(tab.id);
             return;
           }
