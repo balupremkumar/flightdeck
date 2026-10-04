@@ -145,6 +145,21 @@ impl ByModel {
         self.live.get(&model_id).filter(|e| e.vendor == vendor && e.cwd == cwd)
     }
 
+    /// Reattach claim: the live pty for (model, vendor, cwd), marked attached.
+    /// `live` is the set of pty ids still in the pane registry; a mapping whose
+    /// pty is not in it is a dead entry (child died before it was registered) and
+    /// is dropped instead of being attached to.
+    pub fn claim_live(&mut self, model_id: u32, vendor: &str, cwd: &str, live: &HashSet<u32>) -> Option<(u32, Arc<Mutex<PaneOut>>)> {
+        let e = self.live.get(&model_id).filter(|e| e.vendor == vendor && e.cwd == cwd)?;
+        if !live.contains(&e.pty_id) {
+            self.live.remove(&model_id);
+            return None;
+        }
+        let found = (e.pty_id, e.out.clone());
+        self.mark_attached(model_id);
+        Some(found)
+    }
+
     pub fn get(&self, model_id: u32) -> Option<&ModelEntry> {
         self.live.get(&model_id)
     }
@@ -249,6 +264,19 @@ mod tests {
         assert!(m.lookup(7, "claude", "D:\\b").is_none(), "cwd change must respawn");
         assert!(m.lookup(8, "claude", "D:\\a").is_none());
         assert_eq!(m.len(), 1);
+    }
+
+    #[test]
+    fn claim_live_drops_entry_whose_pty_is_not_registered() {
+        let mut m = ByModel::default();
+        m.insert(7, entry(100, "claude", "c", false));
+        let none: HashSet<u32> = HashSet::new();
+        assert!(m.claim_live(7, "claude", "c", &none).is_none(), "dead pty must not attach");
+        assert!(m.get(7).is_none(), "dead entry is pruned");
+        m.insert(8, entry(101, "claude", "c", false));
+        let live: HashSet<u32> = [101].into_iter().collect();
+        assert_eq!(m.claim_live(8, "claude", "c", &live).map(|x| x.0), Some(101));
+        assert!(m.get(8).unwrap().attached);
     }
 
     #[test]

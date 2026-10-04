@@ -281,6 +281,52 @@ async fn pty_spawn(
     let coalescer = std::sync::Arc::new(outbuf::OutputCoalescer::new());
     let out = std::sync::Arc::new(Mutex::new(paneout::PaneOut::new(cols, rows)));
 
+    // Register the pane and its model mapping BEFORE any thread starts: a child that
+    // dies instantly has its reader prune both entries, and that must find them
+    // (registering afterwards would leave a dead entry that a reload attaches to).
+    let (epoch, _, _) = paneout::parse_gen(&gen);
+    let entry = paneout::ModelEntry {
+        pty_id: id,
+        vendor: vendor.clone(),
+        cwd: cwd.clone(),
+        epoch,
+        out: out.clone(),
+        attached: true,
+    };
+    reg.panes.lock().unwrap().insert(
+        id,
+        Pane {
+            master: pair.master,
+            writer,
+            child,
+            vendor,
+            cwd: cwd.clone(),
+            out: out.clone(),
+            last_cpu_100ns: AtomicU64::new(0),
+            last_sample_ms: AtomicU64::new(0),
+            proc_name: Mutex::new(root_proc_name),
+            session: Mutex::new(chatlog::SessionState {
+                session_id: plan.session_id,
+                pinned: plan.pinned,
+                needs_resolve: plan.needs_resolve,
+                spawn_ms,
+                cwd,
+            }),
+        },
+    );
+    // One model, one pty. A live predecessor here means a restart whose kill has
+    // not landed yet, or a stray double spawn: reap it so it cannot linger as an
+    // invisible agent.
+    let superseded = reg.by_model.lock().unwrap().insert(model_id, entry);
+    if let Some(old) = superseded {
+        applog::log(
+            "warn",
+            "pty",
+            &format!("pty_spawn for model {model_id} superseded live pty {}; reaping it", old.pty_id),
+        );
+        reap_pane(reg.inner(), old.pty_id);
+    }
+
     // Reader thread: blocking read -> coalescer, plus activity bookkeeping.
     // Emitting the output event is the flusher thread's job now, so a flood
     // of small reads can't turn into a flood of IPC events.
@@ -373,48 +419,6 @@ async fn pty_spawn(
         }
     });
 
-    let (epoch, _, _) = paneout::parse_gen(&gen);
-    let entry = paneout::ModelEntry {
-        pty_id: id,
-        vendor: vendor.clone(),
-        cwd: cwd.clone(),
-        epoch,
-        out: out.clone(),
-        attached: true,
-    };
-    reg.panes.lock().unwrap().insert(
-        id,
-        Pane {
-            master: pair.master,
-            writer,
-            child,
-            vendor,
-            cwd: cwd.clone(),
-            out,
-            last_cpu_100ns: AtomicU64::new(0),
-            last_sample_ms: AtomicU64::new(0),
-            proc_name: Mutex::new(root_proc_name),
-            session: Mutex::new(chatlog::SessionState {
-                session_id: plan.session_id,
-                pinned: plan.pinned,
-                needs_resolve: plan.needs_resolve,
-                spawn_ms,
-                cwd,
-            }),
-        },
-    );
-    // One model, one pty. A live predecessor here means a restart whose kill has
-    // not landed yet, or a stray double spawn: reap it so it cannot linger as an
-    // invisible agent.
-    let superseded = reg.by_model.lock().unwrap().insert(model_id, entry);
-    if let Some(old) = superseded {
-        applog::log(
-            "warn",
-            "pty",
-            &format!("pty_spawn for model {model_id} superseded live pty {}; reaping it", old.pty_id),
-        );
-        reap_pane(reg.inner(), old.pty_id);
-    }
     Ok(id)
 }
 
@@ -455,13 +459,10 @@ struct AttachInfo {
 #[tauri::command]
 async fn pty_attach(reg: State<'_, Registry>, model_id: u32, gen: String) -> Result<Option<AttachInfo>, String> {
     let (_, vendor, cwd) = paneout::parse_gen(&gen);
-    let (pty_id, out) = {
-        let mut bm = reg.by_model.lock().unwrap();
-        let Some(e) = bm.lookup(model_id, &vendor, &cwd) else { return Ok(None) };
-        let found = (e.pty_id, e.out.clone());
-        bm.mark_attached(model_id);
-        found
-    };
+    // Registry ids first (panes is never taken while by_model is held).
+    let live: std::collections::HashSet<u32> = reg.panes.lock().unwrap().keys().copied().collect();
+    let claimed = reg.by_model.lock().unwrap().claim_live(model_id, &vendor, &cwd, &live);
+    let Some((pty_id, out)) = claimed else { return Ok(None) };
     // Snapshot under the PaneOut lock: any chunk is either inside it (its event
     // seq <= next_seq, which the frontend drops) or after it (delivered live).
     let (snap, cols, rows) = {
