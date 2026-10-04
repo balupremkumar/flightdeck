@@ -636,7 +636,7 @@ function createSession(modelId: number, gen: string, spec: SpawnSpec, handlers: 
       if (!dedupe(t.kind === "url" ? t.url : `${t.path}:${t.line ?? ""}`)) return;
       if (t.kind === "url") { openTerminalUrl(t.url); return; }
       if (t.isDir) { requestReveal(t.path); return; } // 1.4a
-      if (e.ctrlKey || e.metaKey) { void openInEditor(t.path, t.line); return; }
+      if (e.ctrlKey || e.metaKey) { void openInEditor(t.path, t.line, t.col); return; }
       useUI.getState().openPreview(t.path, { line: t.line, fontSize: live.fontSize.current });
     };
     // Terminal settings from Settings > Terminal (QOL 319 — they were persisted
@@ -876,7 +876,7 @@ function createSession(modelId: number, gen: string, spec: SpawnSpec, handlers: 
         // allowlisted opener for URLs (openTerminalUrl), the editor configured
         // in Settings for paths (editor.ts, which owns its own fallback).
         if (m.kind === "url") openTerminalUrl(m.raw);
-        else void openInEditor(resolvePath(m, cwdRef.current), m.line);
+        else void openInEditor(resolvePath(m, cwdRef.current), m.line, m.col);
         return;
       }
       const text = hintCopyText(m);

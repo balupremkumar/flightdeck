@@ -56,21 +56,22 @@ export function tokenizeCommand(command: string): string[] {
 export function editorArgv(
   template: string,
   file: string,
-  line?: number
+  line?: number,
+  col?: number
 ): { program: string; args: string[] } | null {
-  const tokens = tokenizeCommand(template).map((t) => resolveEditorCommand(t, file, line));
+  const tokens = tokenizeCommand(template).map((t) => resolveEditorCommand(t, file, line, col));
   const [program, ...args] = tokens;
   if (!program) return null;
   return { program, args };
 }
 
-/** Opens `path` (optionally at a 1-based `line`) in the editor configured in
+/** Opens `path` (optionally at a 1-based `line` and `col`) in the editor configured in
  *  Settings > Editor. Falls back to the OS default-app hand-off when no editor
  *  is configured, or when the launch fails — a failure is reported once as a
  *  toast and then degrades to the old behaviour, never to nothing happening.
  *  Never rejects: every call site treats this as fire-and-forget. */
-export async function openInEditor(path: string, line?: number): Promise<void> {
-  const argv = editorArgv(getEditorSettings().command, path, line);
+export async function openInEditor(path: string, line?: number, col?: number): Promise<void> {
+  const argv = editorArgv(getEditorSettings().command, path, line, col);
   if (argv) {
     try {
       await invoke("launch_editor", { program: argv.program, args: argv.args });

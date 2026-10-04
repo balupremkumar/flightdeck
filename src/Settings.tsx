@@ -172,15 +172,15 @@ function saveAgentSettings(next: AgentSettings) {
 // Shape: { editor: EditorId, command: string }. `command` is always the FULL
 // resolved command template (preset commands are copied in verbatim when a
 // preset is picked, so the consumer never needs its own copy of the preset
-// table) — replace the literal substrings "{file}" and "{line}" with the
+// table) — replace the literal substrings "{file}", "{line}" and "{col}" with the
 // target path and 1-based line number, then run it. Presets shell out via
 // each editor's own CLI launcher; "custom" is whatever the user typed.
 // ---------------------------------------------------------------------
 export type EditorId = "vscode" | "vscode-insiders" | "jetbrains" | "notepadpp" | "custom";
 export interface EditorSettings { editor: EditorId; command: string; }
 export const EDITOR_PRESETS: Record<Exclude<EditorId, "custom">, { label: string; command: string }> = {
-  vscode: { label: "VS Code", command: 'code --goto "{file}:{line}"' },
-  "vscode-insiders": { label: "VS Code Insiders", command: 'code-insiders --goto "{file}:{line}"' },
+  vscode: { label: "VS Code", command: 'code --goto "{file}:{line}:{col}"' },
+  "vscode-insiders": { label: "VS Code Insiders", command: 'code-insiders --goto "{file}:{line}:{col}"' },
   jetbrains: { label: "JetBrains IDE", command: 'idea64 --line {line} "{file}"' },
   notepadpp: { label: "Notepad++", command: 'notepad++ -n{line} "{file}"' },
 };
@@ -202,9 +202,12 @@ function saveEditorSettings(next: EditorSettings) {
 /** Fills a command template with a concrete file (and optional 1-based line).
  *  Pure — shared by the live preview below and by whichever call site ends up
  *  owning the actual editor launch. */
-export function resolveEditorCommand(template: string, file: string, line?: number): string {
+export function resolveEditorCommand(template: string, file: string, line?: number, col?: number): string {
   // .split().join() rather than replaceAll — this project targets ES2020.
-  return template.split("{file}").join(file).split("{line}").join(line != null ? String(line) : "1");
+  return template
+    .split("{file}").join(file)
+    .split("{line}").join(line != null ? String(line) : "1")
+    .split("{col}").join(col != null ? String(col) : "1");
 }
 
 // ---------------------------------------------------------------------

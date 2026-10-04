@@ -96,6 +96,14 @@ describe("editorArgv (UX-517)", () => {
     }
   });
 
+  it("fills {col}, defaulting to 1 when absent", () => {
+    expect(editorArgv(EDITOR_PRESETS.vscode.command, "a.ts", 42, 9)).toEqual({
+      program: "code",
+      args: ["--goto", "a.ts:42:9"],
+    });
+    expect(editorArgv("ed {file} {line} {col}", "a.ts", 5)).toEqual({ program: "ed", args: ["a.ts", "5", "1"] });
+  });
+
   it("defaults the line to 1, matching Settings' own preview", () => {
     expect(editorArgv('code --goto "{file}:{line}"', "a.ts")).toEqual({
       program: "code",
@@ -137,6 +145,13 @@ describe("openInEditor (UX-517)", () => {
       args: ["--goto", "D:\\repo\\a.ts:12"],
     });
     expect(openPath).not.toHaveBeenCalled();
+  });
+
+  it("passes the column through to {col}", async () => {
+    configureEditor('code --goto "{file}:{line}:{col}"');
+    vi.mocked(invoke).mockResolvedValueOnce(undefined);
+    await openInEditor("D:\repo\a.ts", 12, 7);
+    expect(invoke).toHaveBeenCalledWith("launch_editor", { program: "code", args: ["--goto", "D:\repo\a.ts:12:7"] });
   });
 
   it("uses the default preset when nothing has been configured yet", async () => {
