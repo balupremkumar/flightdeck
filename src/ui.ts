@@ -3,6 +3,10 @@ import { useEffect, useRef } from "react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { logEvent } from "./applog";
 import type { PaneState } from "./store";
+import {
+  loadMode, loadSplitSize, clampSplitSize, PREVIEW_MODE_KEY, PREVIEW_SPLIT_SIZE_KEY,
+  type PreviewMode,
+} from "./previewSplit";
 
 // Lightweight UI-only store (kept separate from the app/domain store): confirm
 // dialogs, transient toasts, the settings-modal flag, and notification prefs/feed.
@@ -162,6 +166,13 @@ interface UIState {
   // renders it. Multiple files stay open as tabs; Ctrl+Tab/Ctrl+W cycle and
   // close (registered by Preview itself, only while it has focus).
   previewTabs: PreviewTab[];
+  /** QL-708: "split" pins the Preview beside the pane grid (a layout, not an
+   *  overlay, so it never registers on the Esc stack); "drawer" is the overlay. */
+  previewMode: PreviewMode;
+  /** Preview's share of the width in split mode, percent (clamped 20..70). */
+  previewSplitSize: number;
+  togglePreviewPinned: () => void;
+  setPreviewSplitSize: (n: number) => void;
   activePreviewId: number | null;
   /** Opens `path` as a tab (or refocuses/updates it if already open). Also
    *  records the path into the back/forward nav stack (UX-531) unless the
@@ -324,6 +335,18 @@ export const useUI = create<UIState>((set, get) => ({
   clearFeed: () => set({ feed: [] }),
 
 
+  previewMode: loadMode(),
+  previewSplitSize: loadSplitSize(),
+  togglePreviewPinned: () => {
+    const previewMode: PreviewMode = get().previewMode === "split" ? "drawer" : "split";
+    try { localStorage.setItem(PREVIEW_MODE_KEY, previewMode); } catch { /* non-persistent */ }
+    set({ previewMode });
+  },
+  setPreviewSplitSize: (n) => {
+    const previewSplitSize = clampSplitSize(n);
+    try { localStorage.setItem(PREVIEW_SPLIT_SIZE_KEY, String(previewSplitSize)); } catch { /* non-persistent */ }
+    set({ previewSplitSize });
+  },
   explorerOpen: (() => {
     try { return localStorage.getItem("flightdeck-explorer-open") === "1"; } catch { return false; }
   })(),

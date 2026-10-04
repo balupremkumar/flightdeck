@@ -54,6 +54,9 @@ export const PREFERENCE_KEYS = [
   // Phase 2 viewers: the "View" menu pick per file extension, and the preview word-wrap toggle.
   "flightdeck-viewer-choice",
   "flightdeck-preview-wrap",
+  // QL-708: drawer vs pinned split, and the split's width (percent).
+  "flightdeck-preview-mode",
+  "flightdeck-preview-split-size",
 ] as const;
 
 /**
