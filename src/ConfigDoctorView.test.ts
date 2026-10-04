@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
-vi.mock("@tauri-apps/api/path", () => ({ homeDir: vi.fn() }));
+vi.mock("@tauri-apps/api/path", () => ({ homeDir: vi.fn(), appDataDir: vi.fn() }));
 
 import type { ConfigFile } from "./ConfigDoctorView";
 
@@ -272,14 +272,17 @@ describe("instruction files helpers (G4)", async () => {
     expect(g.map((x) => [x.vendor, x.count])).toEqual([["claude", 2], ["agy", 1], ["claude", 1]]);
   });
 
-  it("previews only existing files inside the workspace root", () => {
-    const root = "C:\\Dev\\proj";
-    expect(canPreviewInstruction(f("C:\\Dev\\proj\\CLAUDE.md", 1), root)).toBe(true);
-    expect(canPreviewInstruction(f("c:/dev/proj/sub/CLAUDE.md", 1), root)).toBe(true);
-    expect(canPreviewInstruction(f("C:\\Dev\\CLAUDE.md", 1), root)).toBe(false);
-    expect(canPreviewInstruction(f("C:\\Dev\\proj-other\\CLAUDE.md", 1), root)).toBe(false);
-    expect(canPreviewInstruction(f("C:\\Dev\\proj\\CLAUDE.md", 0, false), root)).toBe(false);
-    expect(canPreviewInstruction(f("C:\\Dev\\proj\\CLAUDE.md", 1), null)).toBe(false);
+  it("previews only existing files inside the read scope", () => {
+    const roots = ["C:\\Dev\\proj"];
+    const fixed = ["D:\\Dev\\ai", "C:\\Users\\me\\.claude"];
+    expect(canPreviewInstruction(f("C:\\Dev\\proj\\CLAUDE.md", 1), roots, fixed)).toBe(true);
+    expect(canPreviewInstruction(f("c:/dev/proj/sub/CLAUDE.md", 1), roots, fixed)).toBe(true);
+    expect(canPreviewInstruction(f("C:\\Users\\me\\.claude\\CLAUDE.md", 1), roots, fixed)).toBe(true);
+    expect(canPreviewInstruction(f("D:\\Dev\\ai\\CLAUDE.md", 1), [], fixed)).toBe(true);
+    expect(canPreviewInstruction(f("C:\\Dev\\CLAUDE.md", 1), roots, fixed)).toBe(false);
+    expect(canPreviewInstruction(f("C:\\Dev\\proj-other\\CLAUDE.md", 1), roots, fixed)).toBe(false);
+    expect(canPreviewInstruction(f("C:\\Dev\\proj\\CLAUDE.md", 0, false), roots, fixed)).toBe(false);
+    expect(canPreviewInstruction(f("C:\\Dev\\proj\\CLAUDE.md", 1), [], fixed)).toBe(false);
   });
 
   it("summarises present files and large ones", () => {

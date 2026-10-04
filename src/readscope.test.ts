@@ -3,13 +3,36 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 
-const { collectReadRoots, isOutsideScopeError, syncReadRoots } = await import("./readscope");
+const { collectReadRoots, isInReadScope, alwaysAllowedRoots, isOutsideScopeError, syncReadRoots } = await import("./readscope");
 const { useApp } = await import("./store");
 
 const ws = (id: number, root: string, cwds: Array<[string, string?]> = []) => ({
   id, name: "w", root, focused: null,
   panes: cwds.map(([cwd, worktreePath], i) => ({ id: id * 10 + i, vendor: "claude", cwd, state: "idle", epoch: 0, worktreePath })),
 }) as never;
+
+describe("isInReadScope", () => {
+  const fixed = alwaysAllowedRoots("C:\\Users\\me\\", "C:\\Users\\me\\AppData\\Roaming\\app");
+  it("allows workspace roots, the vault, ~/.claude and app data, ignoring case and slashes", () => {
+    const roots = ["D:\\Dev\\app"];
+    expect(isInReadScope("d:/dev/app/CLAUDE.md", roots, fixed)).toBe(true);
+    expect(isInReadScope("D:\\Dev\\ai\\brain\\x.md", roots, fixed)).toBe(true);
+    expect(isInReadScope("C:\\Users\\me\\.claude\\CLAUDE.md", roots, fixed)).toBe(true);
+    expect(isInReadScope("C:\\Users\\me\\AppData\\Roaming\\app\\s.json", roots, fixed)).toBe(true);
+  });
+  it("rejects siblings, parents and traversal out of a root", () => {
+    const roots = ["D:\\Dev\\app"];
+    expect(isInReadScope("D:\\Dev\\app-other\\x", roots, fixed)).toBe(false);
+    expect(isInReadScope("D:\\Dev\\x", roots, fixed)).toBe(false);
+    expect(isInReadScope("D:\\Dev\\app\\..\\secret\\x", roots, fixed)).toBe(false);
+    expect(isInReadScope("C:\\Users\\me\\notes.txt", roots, fixed)).toBe(false);
+    expect(isInReadScope("", roots, fixed)).toBe(false);
+  });
+  it("without home/app data only the vault is always allowed", () => {
+    expect(isInReadScope("C:\\Users\\me\\.claude\\x", [])).toBe(false);
+    expect(isInReadScope("D:\\Dev\\ai\\x", [])).toBe(true);
+  });
+});
 
 describe("collectReadRoots", () => {
   it("dedupes roots, cwds and worktrees ignoring case, slashes and trailing separators", () => {

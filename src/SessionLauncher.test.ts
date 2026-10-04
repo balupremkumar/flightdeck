@@ -10,7 +10,7 @@ import type { ClaudeSession, SessionSearchHit } from "./SessionLauncher";
 
 const {
   resumeArgs, resumeArgsFor, canResume, supportsFork, supportsDeepSearch, listCommandFor, modelShort, contextWindowFor, filterSessions, sessionWeight,
-  groupHits, highlightParts,
+  groupHits, highlightParts, hitCwd,
   DEFAULT_CONTEXT_WINDOW, RESUME_VENDOR, MIN_SEARCH_CHARS, SEARCH_DEBOUNCE_MS,
 } = await import("./SessionLauncher");
 
@@ -165,6 +165,7 @@ describe("groupHits (QL-771)", () => {
     role: "user",
     snippet: "…the kraken chip…",
     sessionHits: 1,
+    cwd: "",
     ...over,
   });
 
@@ -217,6 +218,19 @@ describe("highlightParts (QL-771)", () => {
     // would point at the wrong characters in the original.
     const s = "İstanbul kraken";
     expect(highlightParts(s, "kraken")).toEqual([{ text: s, hit: false }]);
+  });
+});
+
+describe("regex + scope helpers", () => {
+  it("highlights regex matches and survives a bad pattern", () => {
+    expect(highlightParts("see QL-771 and QL-9 ok", String.raw`QL-\d+`, true).filter((p) => p.hit).map((p) => p.text)).toEqual(["QL-771", "QL-9"]);
+    expect(highlightParts("a (b", "(", true)).toEqual([{ text: "a (b", hit: false }]);
+    expect(highlightParts("nothing", "zz", true)).toEqual([{ text: "nothing", hit: false }]);
+  });
+
+  it("resumes a hit in its own project folder, else the pane's", () => {
+    expect(hitCwd({ cwd: "D:\\other" }, "D:\\here")).toBe("D:\\other");
+    expect(hitCwd({ cwd: "" }, "D:\\here")).toBe("D:\\here");
   });
 });
 

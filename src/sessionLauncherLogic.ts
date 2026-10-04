@@ -153,6 +153,8 @@ export interface SessionSearchHit {
   snippet: string;
   /** Matching lines in that session (capped backend-side). */
   sessionHits: number;
+  /** Project folder the transcript belongs to; "" when the line carried none. */
+  cwd: string;
 }
 
 export interface SessionSearchResults {
@@ -160,6 +162,16 @@ export interface SessionSearchResults {
   /** A cap stopped the scan — the footer says so rather than implying totality. */
   truncated: boolean;
   sessionsSearched: number;
+  /** The time budget or file cap stopped the scan early ("partial results"). */
+  partial?: boolean;
+  /** The regex did not compile. */
+  error?: string | null;
+}
+
+/** Where a hit resumes: its own project folder when the backend reported one,
+ *  else the pane's. */
+export function hitCwd(h: Pick<SessionSearchHit, "cwd">, paneCwd: string): string {
+  return h.cwd || paneCwd;
 }
 
 /** Shorter than this isn't a search, it's a folder-wide read for no signal —
@@ -171,6 +183,7 @@ export const SEARCH_DEBOUNCE_MS = 300;
 
 export interface HitGroup {
   sessionId: string;
+  cwd: string;
   hits: SessionSearchHit[];
   /** Total in that session, which can exceed hits.length when capped. */
   count: number;
@@ -187,7 +200,7 @@ export function groupHits(hits: SessionSearchHit[]): HitGroup[] {
       last.hits.push(h);
       continue;
     }
-    out.push({ sessionId: h.sessionId, hits: [h], count: h.sessionHits });
+    out.push({ sessionId: h.sessionId, cwd: h.cwd, hits: [h], count: h.sessionHits });
   }
   return out;
 }
@@ -196,8 +209,23 @@ export function groupHits(hits: SessionSearchHit[]): HitGroup[] {
  *  case-insensitively. Bails out to a single unmatched run when lowercasing
  *  changes the string's length (a handful of Unicode cases do), since the
  *  offsets would no longer line up with the original text. */
-export function highlightParts(text: string, query: string): { text: string; hit: boolean }[] {
+export function highlightParts(text: string, query: string, regex = false): { text: string; hit: boolean }[] {
   const q = query.trim();
+  if (regex) {
+    let re: RegExp;
+    try { re = new RegExp(q, "gi"); } catch { return [{ text, hit: false }]; }
+    const runs: { text: string; hit: boolean }[] = [];
+    let at0 = 0;
+    for (const m of text.matchAll(re)) {
+      if (!m[0]) continue;
+      const at = m.index ?? 0;
+      if (at > at0) runs.push({ text: text.slice(at0, at), hit: false });
+      runs.push({ text: m[0], hit: true });
+      at0 = at + m[0].length;
+    }
+    if (at0 < text.length) runs.push({ text: text.slice(at0), hit: false });
+    return runs.length ? runs : [{ text, hit: false }];
+  }
   const hay = text.toLowerCase();
   const needle = q.toLowerCase();
   if (!needle || hay.length !== text.length) return [{ text, hit: false }];
@@ -223,22 +251,27 @@ export async function launchResume(
   wsId: number,
   pane: Pick<PaneModel, "vendor" | "cwd" | "worktreePath" | "branch" | "baseBranch">,
   sessionId: string,
-  fork: boolean
+  fork: boolean,
+  /** Resume in a different project folder (an all-projects search hit). */
+  cwdOverride?: string
 ): Promise<boolean> {
+  const cwd = cwdOverride || pane.cwd;
+  const elsewhere = cwd !== pane.cwd;
   try {
     await invoke("stage_launch_args", {
       vendor: pane.vendor,
-      cwd: pane.cwd,
+      cwd,
       args: resumeArgsFor(pane.vendor, sessionId, fork),
     });
   } catch {
     return false;
   }
+  // The pane's worktree belongs to its own folder, never to another project.
   const wt =
-    pane.worktreePath && pane.branch && pane.baseBranch
+    !elsewhere && pane.worktreePath && pane.branch && pane.baseBranch
       ? { worktreePath: pane.worktreePath, branch: pane.branch, baseBranch: pane.baseBranch }
       : undefined;
-  useApp.getState().addPane(wsId, pane.vendor, pane.cwd, wt);
+  useApp.getState().addPane(wsId, pane.vendor, cwd, wt);
   return true;
 }
 
