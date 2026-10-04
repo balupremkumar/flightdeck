@@ -67,6 +67,19 @@ function themeMode(): "light" | "dark" {
   return findTheme(document.documentElement.getAttribute("data-theme") ?? "dark").mode;
 }
 
+/** Live light/dark mode: re-renders when the app theme flips (data-theme is
+ *  set or removed on <html>), so an open mermaid diagram re-themes itself. */
+function useThemeMode(): "light" | "dark" {
+  const [mode, setMode] = useState(themeMode);
+  useEffect(() => {
+    const obs = new MutationObserver(() => setMode(themeMode()));
+    obs.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+    setMode(themeMode());
+    return () => obs.disconnect();
+  }, []);
+  return mode;
+}
+
 /** A viewer chunk that fails to load (or throws) must not take the drawer down. */
 class ViewerBoundary extends Component<{ children: ReactNode; onText?: () => void }, { failed: boolean }> {
   state = { failed: false };
@@ -205,11 +218,12 @@ const FENCE_LANG: Record<string, Lang> = {
 
 function CodeFence({ lang, code }: { lang: string; code: string }) {
   const [copied, setCopied] = useState(false);
+  const mode = useThemeMode();
   if (MermaidBlock && lang.toLowerCase() === "mermaid") {
     return (
       <ViewerBoundary>
         <Suspense fallback={<span className="prv-img-loading">Loading diagram…</span>}>
-          <MermaidBlock source={code} theme={themeMode()} />
+          <MermaidBlock source={code} theme={mode} />
         </Suspense>
       </ViewerBoundary>
     );
