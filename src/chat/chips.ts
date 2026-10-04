@@ -1,5 +1,5 @@
 // Chip text for tool calls, plus path shortening. Pure.
-import type { ChatTool } from "../chatlog";
+import type { ChatTool, SubagentLink } from "../chatlog";
 import type { ToolCall } from "./turns";
 
 /** cwd-relative path when it sits under cwd, else the last two segments. */
@@ -173,4 +173,25 @@ export function chipIcon(name: string): ChipIcon {
     case "Task": case "Agent": return "agent";
     default: return "tool";
   }
+}
+
+/** TN3: "4 edits, 25 commands"; zero counts dropped. */
+export function subagentCounts(l: Pick<SubagentLink, "edits" | "commands" | "reads" | "searches" | "other">): string {
+  const part = (n: number, one: string, many: string) => (n > 0 ? [`${n} ${n === 1 ? one : many}`] : []);
+  return [
+    ...part(l.edits, "edit", "edits"), ...part(l.commands, "command", "commands"), ...part(l.reads, "read", "reads"),
+    ...part(l.searches, "search", "searches"), ...part(l.other, "other", "other"),
+  ].join(", ");
+}
+
+export const SUBAGENT_QUIET_MS = 2 * 60 * 1000;
+export type SubagentStatus = "running" | "done" | "quiet";
+export function subagentStatus(l: Pick<SubagentLink, "finished" | "lastActivityMs">, now: number): SubagentStatus {
+  if (l.finished) return "done";
+  return now - l.lastActivityMs > SUBAGENT_QUIET_MS ? "quiet" : "running";
+}
+
+export function subagentLabel(l: SubagentLink): string {
+  const counts = subagentCounts(l);
+  return `Subagent: ${l.description || l.agentType || "agent"}${counts ? ` · ${counts}` : ""}`;
 }

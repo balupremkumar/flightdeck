@@ -6,7 +6,7 @@ import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRe
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { get as getPaneSession } from "./paneSessions";
-import { paneSessionInfo, sessionRecord, SessionTailer, type SessionInfo } from "./chatlog";
+import { paneSessionInfo, sessionRecord, sessionSubagents, SessionTailer, type ChatRecord, type SessionInfo, type SubagentLink } from "./chatlog";
 import { parseMarkdown, isExternalHref, isBlockedHref, isAbsoluteLocalPath } from "./markdown";
 import type { BlockNode, InlineNode } from "./markdown";
 import { LinkifiedText } from "./LinkifiedText";
@@ -14,7 +14,7 @@ import { useUI } from "./ui";
 import type { PaneState } from "./store";
 import { appendBounded } from "./chat/buffer";
 import { buildTurns, callKey, foldActivity, itemKey, recKey, runningCall, type Activity, type Item, type NormalItem, type ToolCall, type Turn } from "./chat/turns";
-import { CHIP_GLYPH, activityIcon, activityLabel, chipIcon, chipLabel, groupLabel, shortPath } from "./chat/chips";
+import { CHIP_GLYPH, activityIcon, activityLabel, chipIcon, chipLabel, groupLabel, shortPath, subagentLabel, subagentStatus } from "./chat/chips";
 import { planFind } from "./chat/find";
 import { promptGate } from "./chat/gate";
 import { buildPromptPayload } from "./chat/send";
@@ -22,6 +22,9 @@ import { capLines, editPairs, resultText, simpleDiff, toolInput } from "./chat/r
 import "./chat.css";
 
 const POLL_MS = 1000;
+const SUB_POLL_MS = 3000;
+const NO_SUBS = new Map<string, SubagentLink>();
+const NO_HITS = new Set<string>();
 const DIFF_CAP = 40;
 const RESULT_CAP = 30;
 
@@ -162,12 +165,112 @@ interface Ctx {
   open: Set<string>;
   toggle: (k: string) => void;
   hits: Set<string>;
+  /** Polling is live (visible and chat selected). */
+  active: boolean;
+  /** TN3: session_subagents links by the parent Agent/Task tool id. */
+  subs: Map<string, SubagentLink>;
+}
+
+/** TN3: one line per subagent; expanding tails its own transcript at the same density. */
+function SubagentLine({ link, ctx, failed }: { link: SubagentLink; ctx: Ctx; failed?: boolean }) {
+  const k = `sa:${link.id}`;
+  const open = ctx.open.has(k);
+  return (
+    <div className="chat-sub" data-ck={k}>
+      <button className={"chat-chip sub" + (failed ? " err" : "")} aria-expanded={open} onClick={() => ctx.toggle(k)}>
+        <span className="chat-glyph" aria-hidden>{CHIP_GLYPH.agent}</span>
+        <span className="chat-chip-text">{subagentLabel(link)}</span>
+        {failed && <span className="chat-badge">failed</span>}
+        <span className="chat-now">{"·"} {subagentStatus(link, Date.now())}</span>
+        <span className="chat-caret" aria-hidden>{open ? "▾" : "▸"}</span>
+      </button>
+      {open && <SubagentBody link={link} ctx={ctx} />}
+    </div>
+  );
+}
+
+function SubagentBody({ link, ctx }: { link: SubagentLink; ctx: Ctx }) {
+  const [records, setRecords] = useState<ChatRecord[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [nonce, setNonce] = useState(0);
+  const [open, setOpen] = useState<Set<string>>(() => new Set());
+  const tailer = useRef<SessionTailer | null>(null);
+  const toggle = useCallback((k: string) => setOpen((p) => {
+    const n = new Set(p);
+    if (n.has(k)) n.delete(k); else n.add(k);
+    return n;
+  }), []);
+
+  // Tailed only while this line is expanded (this component is mounted), and
+  // only keeps polling while the subagent is unfinished and the chat is live.
+  useEffect(() => {
+    if (!tailer.current || tailer.current.path !== link.jsonlPath) {
+      tailer.current = new SessionTailer(link.jsonlPath);
+      setRecords([]); setLoaded(false);
+    }
+    let live = true;
+    let busy = false;
+    const tick = async () => {
+      if (busy) return;
+      busy = true;
+      try {
+        const recs = await tailer.current!.poll();
+        if (!live) return;
+        setErr(null); setLoaded(true);
+        if (recs.length) setRecords((prev) => appendBounded(prev, recs).list);
+      } catch (e) {
+        if (live) setErr(String(e));
+      } finally {
+        busy = false;
+      }
+    };
+    void tick();
+    if (link.finished || !ctx.active) return () => { live = false; };
+    const id = setInterval(() => void tick(), POLL_MS);
+    return () => { live = false; clearInterval(id); };
+  }, [link.jsonlPath, link.finished, ctx.active, nonce]);
+
+  // Subagent transcripts mark every line sidechain; here they are the main thread.
+  const turns = useMemo(() => buildTurns(records.map((r) => (r.sidechain ? { ...r, sidechain: false } : r))), [records]);
+  const sctx: Ctx = useMemo(
+    () => ({ ...ctx, path: link.jsonlPath, open, toggle, hits: NO_HITS, subs: NO_SUBS }),
+    [ctx, link.jsonlPath, open, toggle],
+  );
+  return (
+    <div className="chat-sub-body">
+      {err && <div className="chat-detail err" role="alert">Could not read the subagent. <button className="chat-link" onClick={() => setNonce((n) => n + 1)}>Retry</button></div>}
+      {!err && !loaded && <div className="chat-detail dim" role="status">Loading subagent...</div>}
+      {!err && loaded && turns.length === 0 && <div className="chat-detail dim">No activity yet</div>}
+      {turns.map((t, i) => (
+        <SubTurn key={t.key} turn={t} ctx={sctx} live={!link.finished && i === turns.length - 1} />
+      ))}
+    </div>
+  );
+}
+
+function SubTurn({ turn, ctx, live }: { turn: Turn; ctx: Ctx; live: boolean }) {
+  const items = useMemo(() => (ctx.verbose ? turn.items : foldActivity(turn.items, live)), [turn.items, ctx.verbose, live]);
+  return (
+    <div className="chat-subturn">
+      {turn.prompt && <div className="chat-subprompt">{turn.prompt.text}</div>}
+      <Items items={items} ctx={ctx} />
+    </div>
+  );
 }
 
 function CallChip({ call, ctx, nested }: { call: ToolCall; ctx: Ctx; nested?: boolean }) {
   const k = callKey(call);
   const expanded = ctx.open.has(k);
   const failed = !!call.result?.is_error;
+  const link = ctx.verbose ? undefined : ctx.subs.get(call.tool.id);
+  if (link) {
+    return (
+      <div className={"chat-call" + (nested ? " nested" : "") + (ctx.hits.has(k) ? " hit" : "")} data-ck={k}>
+        <SubagentLine link={link} ctx={ctx} failed={failed} />
+      </div>
+    );
+  }
   return (
     <div className={"chat-call" + (nested ? " nested" : "") + (ctx.hits.has(k) ? " hit" : "")} data-ck={k}>
       <button
@@ -318,6 +421,7 @@ export default function ChatView({ paneId, cwd, epoch, paneState, exited, onRest
   const [trimmed, setTrimmed] = useState(false);
   const [skippedHead, setSkippedHead] = useState(false);
   const [info, setInfo] = useState<SessionInfo | null>(null);
+  const [subLinks, setSubLinks] = useState<SubagentLink[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [verbose, setVerbose] = useState(false);
@@ -338,6 +442,7 @@ export default function ChatView({ paneId, cwd, epoch, paneState, exited, onRest
   const tailer = useRef<{ t: SessionTailer; pty: number; pinned: boolean } | null>(null);
   const pinCheck = useRef(0);
   const busy = useRef(false);
+  const subPoll = useRef(0);
   const tickRef = useRef<() => Promise<void>>(async () => {});
 
   useEffect(() => {
@@ -349,7 +454,7 @@ export default function ChatView({ paneId, cwd, epoch, paneState, exited, onRest
   // A restart (epoch bump) means a new pty and usually a new session.
   useEffect(() => {
     tailer.current = null;
-    setRecords([]); setTrimmed(false); setSkippedHead(false); setInfo(null); setLoaded(false); setError(null); setOpen(new Set());
+    setRecords([]); setTrimmed(false); setSkippedHead(false); setInfo(null); setLoaded(false); setError(null); setOpen(new Set()); setSubLinks([]); subPoll.current = 0;
   }, [epoch, paneId]);
 
   tickRef.current = async () => {
@@ -369,7 +474,7 @@ export default function ChatView({ paneId, cwd, epoch, paneState, exited, onRest
         if (!si.jsonl_path) { setInfo(si); setError(null); return; }
         if (!cur || cur.t.path !== si.jsonl_path) {
           cur = tailer.current = { t: new SessionTailer(si.jsonl_path), pty, pinned: si.pinned };
-          setRecords([]); setTrimmed(false); setSkippedHead(false); setLoaded(false);
+          setRecords([]); setTrimmed(false); setSkippedHead(false); setLoaded(false); setSubLinks([]); subPoll.current = 0;
         } else {
           cur.pinned = si.pinned;
           // No reset on si.rotated here: the backend reports rotated for as long as a
@@ -379,6 +484,16 @@ export default function ChatView({ paneId, cwd, epoch, paneState, exited, onRest
         setInfo(si);
       }
       const recs = await cur.t.poll();
+      // TN3: subagent links ride the main tick, at most every SUB_POLL_MS.
+      const now = Date.now();
+      if (now - subPoll.current >= SUB_POLL_MS) {
+        subPoll.current = now;
+        const owner = cur;
+        sessionSubagents(owner.t.path).then((l) => {
+          if (tailer.current !== owner) return;
+          setSubLinks((prev) => (JSON.stringify(prev) === JSON.stringify(l) ? prev : l));
+        }, () => { /* best-effort: no links means plain Agent chips */ });
+      }
       setError(null);
       setLoaded(true);
       if (cur.t.skippedHead) setSkippedHead(true);
@@ -420,9 +535,20 @@ export default function ChatView({ paneId, cwd, epoch, paneState, exited, onRest
   }), []);
 
   const path = tailer.current?.t.path ?? info?.jsonl_path ?? null;
+  const subs = useMemo(() => {
+    const m = new Map<string, SubagentLink>();
+    for (const l of subLinks) if (l.toolUseId) m.set(l.toolUseId, l);
+    return m;
+  }, [subLinks]);
+  // Subagents whose Agent/Task call is not in the loaded records: listed once at the end, never guessed.
+  const unlinked = useMemo(() => {
+    const ids = new Set<string>();
+    for (const r of records) if (r.kind === "tool_use" && r.tool) ids.add(r.tool.id);
+    return subLinks.filter((l) => !l.toolUseId || !ids.has(l.toolUseId));
+  }, [subLinks, records]);
   const ctx: Ctx = useMemo(
-    () => ({ cwd, path, verbose, open: openAll, toggle, hits }),
-    [cwd, path, verbose, openAll, toggle, hits],
+    () => ({ cwd, path, verbose, open: openAll, toggle, hits, active: polling, subs }),
+    [cwd, path, verbose, openAll, toggle, hits, polling, subs],
   );
 
   // Auto-scroll only when the user is already at the bottom.
@@ -576,6 +702,11 @@ export default function ChatView({ paneId, cwd, epoch, paneState, exited, onRest
             <TurnView turn={t} ctx={ctx} index={i} paneId={paneId} live={i === turns.length - 1} />
           </Fragment>
         ))}
+        {!verbose && unlinked.length > 0 && (
+          <div className="chat-unlinked">
+            {unlinked.map((l) => <SubagentLine key={l.id} link={l} ctx={ctx} />)}
+          </div>
+        )}
       </div>
 
       {!atBottom && turns.length > 0 && (

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { ChatRecord } from "../chatlog";
 import { buildTurns, itemKey, callKey, isSystemPromptText, foldActivity, runningCall } from "./turns";
 import { buildPromptPayload, sanitizeDraft } from "./send";
-import { activityLabel, chipLabel, groupLabel, shortPath } from "./chips";
+import { activityLabel, chipLabel, groupLabel, shortPath, subagentCounts, subagentLabel, subagentStatus } from "./chips";
 import { planFind } from "./find";
 import { appendBounded } from "./buffer";
 import { promptGate } from "./gate";
@@ -284,5 +284,20 @@ describe("TN2 activity folding", () => {
     const a = foldActivity(turns[0].items)[1];
     expect(plan.keys).toContain(callKey((turns[0].items[3] as Extract<typeof turns[0]["items"][number], { kind: "tools" }>).calls[0]));
     expect(a.kind === "activity" && plan.expand.has(a.key)).toBe(true);
+  });
+});
+
+describe("TN3 subagent line", () => {
+  const link = { id: "a1", toolUseId: "t1", agentType: "fork", description: "Build element 11", jsonlPath: "/x", edits: 4, commands: 25, reads: 0, searches: 0, other: 0, finished: false, lastActivityMs: 1_000_000 };
+  it("drops zero counts and pluralises", () => {
+    expect(subagentCounts(link)).toBe("4 edits, 25 commands");
+    expect(subagentCounts({ ...link, edits: 1, commands: 0, reads: 1 })).toBe("1 edit, 1 read");
+    expect(subagentLabel(link)).toBe("Subagent: Build element 11 · 4 edits, 25 commands");
+    expect(subagentLabel({ ...link, description: null, edits: 0, commands: 0 })).toBe("Subagent: fork");
+  });
+  it("is running, quiet after 2 minutes idle, done when finished", () => {
+    expect(subagentStatus(link, 1_000_000 + 60_000)).toBe("running");
+    expect(subagentStatus(link, 1_000_000 + 121_000)).toBe("quiet");
+    expect(subagentStatus({ ...link, finished: true }, 1_000_000 + 999_000)).toBe("done");
   });
 });

@@ -65,6 +65,27 @@ export function sessionRecord(jsonlPath: string, index: number): Promise<unknown
   return invoke<unknown>("session_record", { jsonlPath, index });
 }
 
+/** TN3: one subagent transcript of a session (src-tauri session_subagents). */
+export interface SubagentLink {
+  id: string;
+  /** The parent's Agent/Task tool_use id, when the sidecar says. */
+  toolUseId: string | null;
+  agentType: string | null;
+  description: string | null;
+  jsonlPath: string;
+  edits: number;
+  commands: number;
+  reads: number;
+  searches: number;
+  other: number;
+  finished: boolean;
+  lastActivityMs: number;
+}
+
+export function sessionSubagents(jsonlPath: string): Promise<SubagentLink[]> {
+  return invoke<SubagentLink[]>("session_subagents", { jsonlPath });
+}
+
 export type TailFn = (path: string, from: number, max: number) => Promise<TailResult>;
 
 /**
