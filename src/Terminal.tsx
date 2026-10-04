@@ -176,7 +176,7 @@ function registerPathLinks(term: XTerm, pane: PaneLinkCtx): { dispose(): void } 
     if (!logical) return undefined;
     const cands: Cand[] = [];
     for (const m of linkify(logical.text)) {
-      if (m.kind !== "path") continue;
+      if (m.kind !== "path" && m.kind !== "wikilink") continue;
       const range = matchRange(logical, m.start, m.end);
       if (range && rangeTouchesRow(range, y)) cands.push({ m, range, hard: false });
     }
@@ -191,7 +191,10 @@ function registerPathLinks(term: XTerm, pane: PaneLinkCtx): { dispose(): void } 
     }
     if (!cands.length) return undefined;
 
-    const hits = await resolveCandidates(cands.map((c) => c.m.raw), await paneBases(pane.modelId, pane.cwdRef.current));
+    // Wikilinks ([[projects/x/STATE|alias]]) name a vault note: .md is implied;
+    // the vault is the last base paneBases supplies.
+    const rawOf = (m: Cand["m"]) => (m.kind === "wikilink" && !/\.[A-Za-z0-9]{1,10}$/.test(m.raw) ? m.raw + ".md" : m.raw);
+    const hits = await resolveCandidates(cands.map((c) => rawOf(c.m)), await paneBases(pane.modelId, pane.cwdRef.current));
     const resolved = cands.flatMap((c, i) => (hits[i] ? [{ c, hit: hits[i]! }] : []));
     // A joined (hard-wrapped) path supersedes any partial match inside it.
     const joined = resolved.filter((r) => r.c.hard).map((r) => r.c.range);
