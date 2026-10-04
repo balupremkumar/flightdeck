@@ -684,6 +684,7 @@ pub fn run() {
             persist::export_backup,
             persist::import_backup,
             updates::check_update,
+            updates::default_releases_dir,
             updates::install_update,
             updates::take_update_status,
             updates::list_rollback_candidates,

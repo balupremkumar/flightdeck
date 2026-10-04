@@ -13,7 +13,7 @@ import { adoptSession, lastSessionSaveAt } from "./session";
 import { clearPreferences, PREFERENCE_KEYS } from "./storageKeys";
 import {
   checkForUpdate, installUpdate, getReleasesDir, setReleasesDir,
-  getAutoUpdateCheck, setAutoUpdateCheck, DEFAULT_RELEASES_DIR,
+  getAutoUpdateCheck, setAutoUpdateCheck, resolveReleasesDir,
   getPendingReleaseNotes, clearPendingReleaseNotes, type UpdateCheckResult,
   getUpdateFailure, clearUpdateFailure,
   listRollbackCandidates, type RollbackCandidate,
@@ -540,6 +540,10 @@ function UpdatesBlock() {
   const [installError, setInstallError] = useState<string | null>(null);
   const [autoCheck, setAutoCheckState] = useState(getAutoUpdateCheck());
   const [releasesDir, setReleasesDirState] = useState(getReleasesDir());
+  // What the check uses when nothing is saved: "" on a public build (the user
+  // must pick a folder), the repo's releases\ in a dev build.
+  const [suggestedDir, setSuggestedDir] = useState("");
+  useEffect(() => { void resolveReleasesDir().then(setSuggestedDir); }, []);
   // UPD-1: an update that failed did so while the app was CLOSED, so the only
   // in-app trace was a toast the user may never have seen. Keep it here until
   // it's dismissed — "the update silently did nothing" is the failure this
@@ -759,9 +763,19 @@ function UpdatesBlock() {
         <input
           className="set-search set-releases-dir"
           value={releasesDir}
-          placeholder={DEFAULT_RELEASES_DIR}
+          placeholder={suggestedDir || "Pick the folder that contains latest.json"}
           onChange={(e) => commitReleasesDir(e.target.value)}
         />
+        <button
+          className="set-btn"
+          onClick={() => {
+            void openDialog({ directory: true, defaultPath: releasesDir || suggestedDir || undefined })
+              .then((d) => { if (typeof d === "string") commitReleasesDir(d); })
+              .catch(() => { /* dialog unavailable */ });
+          }}
+        >
+          Browse…
+        </button>
       </div>
     </>
   );

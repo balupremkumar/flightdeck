@@ -16,6 +16,7 @@ const {
   getPendingReleaseNotes, clearPendingReleaseNotes,
   asUpdateError, reportLastUpdate, takeUpdateStatus, installUpdate,
   getUpdateFailure, clearUpdateFailure, reconcileStaleUpdateFailure,
+  resolveReleasesDir, checkForUpdate,
 } = await import("./updater");
 const { APP_VERSION } = await import("./version");
 const { useUI } = await import("./ui");
@@ -79,6 +80,7 @@ describe("update failure reporting (UPD-1)", () => {
   });
 
   it("installUpdate rejects with the typed error, not a stringified object", async () => {
+    localStorage.setItem("flightdeck-releases-dir", "D:\r");
     invokeMock.mockRejectedValueOnce({ kind: "watcher-spawn-failed", message: "no powershell", manualPath: "D:\\r\\s.exe" });
     await expect(installUpdate("D:\\r\\s.exe")).rejects.toMatchObject({
       kind: "watcher-spawn-failed",
@@ -87,6 +89,7 @@ describe("update failure reporting (UPD-1)", () => {
   });
 
   it("the install error still stringifies to the message (Settings renders String(e))", async () => {
+    localStorage.setItem("flightdeck-releases-dir", "D:\rel");
     invokeMock.mockRejectedValueOnce({
       kind: "installer-truncated",
       message: "The installer is only 12 bytes. You can still update by hand: run D:\\rel\\setup.exe directly.",
@@ -195,5 +198,33 @@ describe("stale failure reconciliation", () => {
     expect(await reportLastUpdate()).toBeNull();
     expect(getUpdateFailure()).toBeNull();
     expect(useUI.getState().toasts[0]?.kind).toBe("success");
+  });
+});
+
+// 0.4b: no baked-in dev path. Saved choice wins, else Rust's suggestion, else "".
+describe("releases folder resolution", () => {
+  beforeEach(() => {
+    invokeMock.mockReset();
+    localStorage.removeItem("flightdeck-releases-dir");
+  });
+
+  it("uses the saved folder without asking Rust", async () => {
+    localStorage.setItem("flightdeck-releases-dir", "E:\rel");
+    expect(await resolveReleasesDir()).toBe("E:\rel");
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it("falls back to Rust's default_releases_dir", async () => {
+    invokeMock.mockResolvedValueOnce("F:\dev\releases");
+    expect(await resolveReleasesDir()).toBe("F:\dev\releases");
+    expect(invokeMock).toHaveBeenCalledWith("default_releases_dir");
+  });
+
+  it("is empty with no bridge, and the check then asks for a folder instead of invoking", async () => {
+    invokeMock.mockRejectedValue(new Error("no ipc"));
+    expect(await resolveReleasesDir()).toBe("");
+    const res = await checkForUpdate();
+    expect(res.errorKind).toBe("releases-dir-unset");
+    expect(invokeMock).not.toHaveBeenCalledWith("check_update", expect.anything());
   });
 });

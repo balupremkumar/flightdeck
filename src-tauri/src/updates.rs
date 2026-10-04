@@ -52,11 +52,6 @@ use tauri::{AppHandle, Manager, State};
 use crate::canary;
 use crate::{live_pane_ids, reap_pane, Registry};
 
-/// Balu's single-machine setup: build output and the running install share
-/// this box, so there's one sane default. Overridable from Settings for the
-/// rare case it moves (persisted on the frontend, passed in on every call).
-const DEFAULT_RELEASES_DIR: &str = r"D:\Dev\ai\projects\active\flightdeck\releases";
-
 /// Written by the detached watcher at every stage of the install, read once on
 /// the next boot by take_update_status. Lives in app_data_dir (alongside the
 /// session file) because the app is the only reader and the releases dir may
@@ -171,11 +166,42 @@ impl UpdateCheckResult {
     }
 }
 
-fn releases_path(dir: Option<&str>) -> PathBuf {
+/// The releases folder always arrives as an argument (Settings > Updates
+/// persists it on the frontend). There is deliberately no baked-in default:
+/// a developer's checkout path must not ship in the binary.
+fn releases_path(dir: Option<&str>) -> Result<PathBuf, UpdateError> {
     match dir.map(str::trim) {
-        Some(d) if !d.is_empty() => PathBuf::from(d),
-        _ => PathBuf::from(DEFAULT_RELEASES_DIR),
+        Some(d) if !d.is_empty() => Ok(PathBuf::from(d)),
+        _ => Err(UpdateError::new(
+            "releases-dir-unset",
+            "No releases folder is set. Pick the folder that contains latest.json in Settings > Updates.",
+        )),
     }
+}
+
+/// Pure core of `default_releases_dir`: an explicit env value wins, then the
+/// dev-checkout candidate if that folder exists, else "" (the UI then asks the
+/// user to pick one).
+fn resolve_default_releases_dir(env_val: Option<&str>, dev_candidate: Option<PathBuf>) -> String {
+    if let Some(v) = env_val.map(str::trim).filter(|v| !v.is_empty()) {
+        return v.to_string();
+    }
+    match dev_candidate {
+        Some(p) if p.is_dir() => p.display().to_string(),
+        _ => String::new(),
+    }
+}
+
+/// Suggested releases folder when the user hasn't picked one. Order:
+/// FLIGHTDECK_RELEASES_DIR, then (debug builds only) `<repo>\releases` next to
+/// this source tree if it exists. Release builds contain no dev path.
+#[tauri::command]
+pub fn default_releases_dir() -> String {
+    #[cfg(debug_assertions)]
+    let dev = Some(Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("releases"));
+    #[cfg(not(debug_assertions))]
+    let dev: Option<PathBuf> = None;
+    resolve_default_releases_dir(std::env::var("FLIGHTDECK_RELEASES_DIR").ok().as_deref(), dev)
 }
 
 /// Plain X.Y.Z compare (this project's only version shape). Missing/unparsable
@@ -334,7 +360,10 @@ pub fn check_update(app: AppHandle, releases_dir: Option<String>) -> UpdateCheck
 }
 
 pub(crate) fn check_update_inner(releases_dir: Option<String>) -> UpdateCheckResult {
-    let dir = releases_path(releases_dir.as_deref());
+    let dir = match releases_path(releases_dir.as_deref()) {
+        Ok(d) => d,
+        Err(e) => return UpdateCheckResult::err(e),
+    };
     let manifest_path = dir.join("latest.json");
     let raw = match std::fs::read_to_string(&manifest_path) {
         Ok(s) => s,
@@ -407,7 +436,7 @@ pub fn list_rollback_candidates(app: AppHandle, releases_dir: Option<String>) ->
 /// version, newest first, pre-flighted so the UI never offers a corrupt file.
 /// Canary artifacts don't parse as `Flightdeck_<ver>_` and drop out naturally.
 pub(crate) fn list_rollback_candidates_inner(releases_dir: Option<String>) -> Vec<RollbackCandidate> {
-    let dir = releases_path(releases_dir.as_deref());
+    let Ok(dir) = releases_path(releases_dir.as_deref()) else { return Vec::new() };
     let current = env!("CARGO_PKG_VERSION");
     let mut out: Vec<RollbackCandidate> = Vec::new();
     let Ok(entries) = std::fs::read_dir(&dir) else { return out };
@@ -799,7 +828,7 @@ pub fn install_update(
             "This is the Canary build — it never self-updates. When this version proves out, install the stable Flightdeck build of it; your stable install is untouched until then.",
         ));
     }
-    let dir = releases_path(releases_dir.as_deref());
+    let dir = releases_path(releases_dir.as_deref())?;
     let installer = ensure_under_releases_dir(&dir, Path::new(&installer_path)).map_err(|e| {
         UpdateError::new("installer-outside-releases", format!("Refusing to run this installer: {e}."))
             .with_detail(installer_path.clone())
@@ -938,6 +967,25 @@ mod tests {
         assert!(!res.available);
         assert!(res.error.is_some());
         assert_eq!(res.error_kind.as_deref(), Some("manifest-unreadable"));
+    }
+
+    #[test]
+    fn check_update_without_releases_dir_asks_for_one() {
+        for arg in [None, Some("   ".to_string())] {
+            let res = check_update_inner(arg);
+            assert!(!res.available);
+            assert_eq!(res.error_kind.as_deref(), Some("releases-dir-unset"));
+        }
+        assert!(list_rollback_candidates_inner(None).is_empty());
+    }
+
+    #[test]
+    fn default_releases_dir_prefers_env_then_existing_dev_folder_else_empty() {
+        let tmp = std::env::temp_dir();
+        assert_eq!(resolve_default_releases_dir(Some(r"E:\rel"), Some(tmp.clone())), r"E:\rel");
+        assert_eq!(resolve_default_releases_dir(Some("  "), Some(tmp.clone())), tmp.display().to_string());
+        assert_eq!(resolve_default_releases_dir(None, Some(tmp.join("flightdeck-no-such-dir-xyz"))), "");
+        assert_eq!(resolve_default_releases_dir(None, None), "");
     }
 
     #[test]

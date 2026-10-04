@@ -11,8 +11,6 @@ import { invoke } from "@tauri-apps/api/core";
 import { useUI, type UpdateInfo } from "./ui";
 import { APP_VERSION } from "./version";
 
-export const DEFAULT_RELEASES_DIR = String.raw`D:\Dev\ai\projects\active\flightdeck\releases`;
-
 const RELEASES_DIR_KEY = "flightdeck-releases-dir";
 const AUTO_CHECK_KEY = "flightdeck-auto-update-check";
 
@@ -25,6 +23,15 @@ export function setReleasesDir(dir: string) {
     if (v) localStorage.setItem(RELEASES_DIR_KEY, v);
     else localStorage.removeItem(RELEASES_DIR_KEY);
   } catch { /* non-persistent */ }
+}
+
+/** The folder to actually use: the user's saved choice, else whatever Rust
+ *  suggests (FLIGHTDECK_RELEASES_DIR, or the repo's releases\ in a dev build),
+ *  else "" meaning "ask the user to pick one". No dev path is baked in here. */
+export async function resolveReleasesDir(): Promise<string> {
+  const saved = getReleasesDir();
+  if (saved) return saved;
+  try { return (await invoke<string>("default_releases_dir")) ?? ""; } catch { return ""; }
 }
 
 /** Default ON — matches the brief; a first-run user gets checked without having to find the toggle. */
@@ -141,7 +148,10 @@ export function clearPendingReleaseNotes() {
  *  every trigger — startup, the command palette, the Settings button — stays
  *  in agreement). */
 export async function checkForUpdate(): Promise<UpdateCheckResult> {
-  const releasesDir = getReleasesDir();
+  const releasesDir = await resolveReleasesDir();
+  if (!releasesDir) {
+    return { available: false, error: "No releases folder is set. Pick the folder that contains latest.json.", errorKind: "releases-dir-unset" };
+  }
   let raw: RawCheckResult;
   try {
     raw = await invoke<RawCheckResult>("check_update", releasesDir ? { releasesDir } : {});
@@ -169,7 +179,7 @@ export async function checkForUpdate(): Promise<UpdateCheckResult> {
  *  anything that goes wrong AFTER the exit is reported on the next boot by
  *  reportLastUpdate(). */
 export async function installUpdate(installerPath: string): Promise<void> {
-  const releasesDir = getReleasesDir();
+  const releasesDir = await resolveReleasesDir();
   try {
     await invoke("install_update", { installerPath, ...(releasesDir ? { releasesDir } : {}) });
   } catch (e) {
@@ -181,7 +191,7 @@ export async function installUpdate(installerPath: string): Promise<void> {
 // releases folder, newest first, already pre-flighted on the Rust side.
 export interface RollbackCandidate { version: string; installerPath: string }
 export async function listRollbackCandidates(): Promise<RollbackCandidate[]> {
-  const releasesDir = getReleasesDir();
+  const releasesDir = await resolveReleasesDir();
   try {
     return await invoke<RollbackCandidate[]>("list_rollback_candidates", releasesDir ? { releasesDir } : {});
   } catch {
