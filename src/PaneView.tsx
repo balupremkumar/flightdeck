@@ -15,7 +15,7 @@ import {
 import type { DiffSummary } from "./worktrees";
 import { cachedInvoke, usePoll, useVisible, usePaneMemory } from "./poll";
 import { compact, num, duration, bytes, relTime, tailEllipsis } from "./format";
-import { mcpChip, noteMcpLine } from "./mcphealth";
+import { clearMcpNotices, mcpChip, noteMcpLine } from "./mcphealth";
 import { stateSince, lastLine, isOpenQuestion, attentionKind, STATE_LABEL as STATE_TITLE } from "./attention";
 import "./panes.css";
 
@@ -243,6 +243,8 @@ function PaneViewInner({
   const [draft, setDraft] = useState(pane.title ?? "");
   const [menuOpen, setMenuOpen] = useState(false);
   const [, bumpMcp] = useState(0); // G2: re-render when an MCP notice lands
+  // SF4: a restart (epoch bump) starts a fresh process; old notices are stale.
+  useEffect(() => () => clearMcpNotices(pane.id), [pane.id, pane.epoch]);
   const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
   // UI-140: font zoom is a per-agent habit (agy's TUI runs denser than
   // claude's), so remember it per vendor rather than resetting every pane.
@@ -1495,6 +1497,8 @@ Running low — consider /compact in this pane.` : "")
           onExit={(crashed) => {
             setLastExit(crashed ? "crashed" : "exited cleanly");
             setExitEpoch(pane.epoch);
+            clearMcpNotices(pane.id); // SF4: a dead process has no MCP servers
+            bumpMcp((n) => n + 1);
             setPaneState(pane.id, crashed ? "error" : "idle");
           }}
           onState={(st) => setPaneState(pane.id, st as PaneState)}

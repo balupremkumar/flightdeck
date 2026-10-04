@@ -20,6 +20,30 @@ describe("scanMcpLine (strings from claude 2.1.289)", () => {
   });
 });
 
+describe("SF4 anchoring and TTL", () => {
+  beforeEach(() => clearMcpNotices(7));
+  it("ignores the strings quoted mid-line", () => {
+    expect(scanMcpLine('The log said MCP server "github" disconnected earlier')).toBeNull();
+    expect(scanMcpLine('Note: MCP server "x" needs you to sign in')).toBeNull();
+    expect(scanMcpLine("Claude: an MCP server needs your input")).toBeNull();
+    expect(isMcpInputPrompt("see: An MCP server needs your input")).toBe(false);
+  });
+  it("accepts leading whitespace", () => {
+    expect(scanMcpLine('  MCP server "github" disconnected')).toEqual({ kind: "disconnected", server: "github" });
+  });
+  it("re-feeding the same notice does not refresh its TTL", () => {
+    const line = 'MCP server "github" disconnected · open /mcp to reconnect';
+    noteMcpLine(7, line, 0);
+    noteMcpLine(7, line, MCP_NOTICE_TTL_MS - 1000);
+    expect(mcpChip(7, MCP_NOTICE_TTL_MS + 1)).toBeNull();
+  });
+  it("a changed kind restarts the TTL", () => {
+    noteMcpLine(7, 'MCP server "a" disconnected', 0);
+    expect(noteMcpLine(7, 'MCP server "a" needs you to sign in', 1000)).toBe(true);
+    expect(mcpChip(7, MCP_NOTICE_TTL_MS + 500)).not.toBeNull();
+  });
+});
+
 describe("mcpChip", () => {
   beforeEach(() => clearMcpNotices(1));
   it("names the server and expires", () => {

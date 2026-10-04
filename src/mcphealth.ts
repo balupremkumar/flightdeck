@@ -16,9 +16,11 @@ export type McpSignal =
   | { kind: "auth"; server: string }
   | { kind: "input" };
 
-const DISCONNECTED_RE = /MCP server "([^"]+)" disconnected/i;
-const AUTH_RE = /MCP server "([^"]+)" needs you to sign in/i;
-export const MCP_INPUT_RE = /an mcp server needs your input/i;
+// SF4: anchored to the line start (the caller strips ANSI first), so Claude
+// quoting or discussing these strings mid-sentence never raises the chip.
+const DISCONNECTED_RE = /^\s*MCP server "([^"]+)" disconnected/i;
+const AUTH_RE = /^\s*MCP server "([^"]+)" needs you to sign in/i;
+export const MCP_INPUT_RE = /^\s*an mcp server needs your input/i;
 
 /** Classify one line of pane output, or null when it is not an MCP notice. */
 export function scanMcpLine(line: string | undefined | null): McpSignal | null {
@@ -52,8 +54,11 @@ export function noteMcpLine(paneId: number, line: string, now: number = Date.now
   let m = notices.get(paneId);
   if (!m) notices.set(paneId, (m = new Map()));
   const prev = m.get(sig.server);
+  // SF4: the tail is re-fed on every output chunk. The TTL starts at first
+  // sight; only a different kind of notice for the server restarts it.
+  if (prev && prev.kind === sig.kind) return false;
   m.set(sig.server, { kind: sig.kind, server: sig.server, at: now });
-  return !prev || prev.kind !== sig.kind;
+  return true;
 }
 
 export function clearMcpNotices(paneId: number): void {
