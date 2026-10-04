@@ -628,6 +628,7 @@ index 3c92f1a..7d40b2e 100644
     // Reattach after a webview reload. Null (spawn instead) unless a test installs
     // window.__fdMockAttach(modelId, gen) -> AttachInfo | null before page load.
     pty_attach: ({ modelId, gen }) => (typeof window.__fdMockAttach === "function" ? window.__fdMockAttach(modelId, gen) : null),
+    pty_reap_unclaimed: () => 0,
     pty_spawn: ({ vendor, cwd }) => { const id = ++nextPaneId; startPane(id, vendor, cwd); return id; },
     pty_write: ({ paneId, data }) => { handleInput(paneId, String(data ?? "")); return null; },
     pty_resize: () => null,

@@ -16,6 +16,7 @@ import {
 } from "./persist";
 import { repoToplevel, closeWorkspaceWithCleanup, type WorktreeInfo } from "./worktrees";
 import { getStartupBehavior } from "./settingsStore";
+import { markRestoredPane } from "./ptyAttach";
 import { lastLine } from "./attention";
 import { redactText } from "./transcript";
 import { parsePaneColors } from "./paneStyle";
@@ -407,6 +408,7 @@ export async function hydrateFrom(persisted: PersistedWorkspace[], activeId: num
     const panes: PaneModel[] = [];
     for (const raw of w.panes) {
       const p = raw as DraftPane;
+      markRestoredPane(p.id);
       const model: PaneModel = {
         id: p.id,
         vendor: p.vendor,
@@ -516,6 +518,9 @@ export async function offerSessionRestore() {
       body: `${doc.workspaces.length} workspace${doc.workspaces.length === 1 ? "" : "s"} with ${nPanes} pane${nPanes === 1 ? "" : "s"} from last time. Reopening relaunches each agent in its directory (isolated panes reattach their worktrees).`,
       confirmLabel: "Reopen session",
       onConfirm: () => { void hydrateFrom(doc.workspaces, doc.activeWorkspaceId); },
+      // Declined: last session's agents are still running in Rust and nobody
+      // will claim them. Kill them now rather than leaving them invisible.
+      onCancel: () => { void invoke("pty_reap_unclaimed").catch(() => {}); },
     });
   } catch {
     /* browser preview / corrupt doc — start clean, never block launch */

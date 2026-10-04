@@ -532,6 +532,25 @@ async fn pane_resume(app: AppHandle, reg: State<'_, Registry>, model_id: u32) ->
     }
 }
 
+/// The user declined to reopen last session (or started from the launcher): every
+/// pty still unclaimed is last session's agent with no pane to show it. Kill them
+/// now instead of waiting for the one-shot reaper. Returns how many were reaped.
+#[tauri::command]
+async fn pty_reap_unclaimed(reg: State<'_, Registry>) -> Result<u32, String> {
+    let unclaimed = paneout::lock_map(&reg.by_model).unattached();
+    let mut n = 0;
+    for (model_id, pty_id) in unclaimed {
+        let still = paneout::lock_map(&reg.by_model).get(model_id).is_some_and(|e| e.pty_id == pty_id && !e.attached);
+        if !still {
+            continue;
+        }
+        applog::log("info", "pty", &format!("reopen declined: killing unclaimed pty {pty_id} (pane model {model_id})"));
+        reap_pane(reg.inner(), pty_id);
+        n += 1;
+    }
+    Ok(n)
+}
+
 /// Called on every main-webview load. A fresh load has no frontend attached to
 /// anything, so mark every pty unclaimed and, after a grace period, reap the ones
 /// still unclaimed whose model is no longer in the session doc (the pane was
@@ -963,6 +982,7 @@ pub fn run() {
             pty_attach,
             pane_pause,
             pane_resume,
+            pty_reap_unclaimed,
             chatlog::pane_session_info,
             chatlog::session_tail,
             usage::session_subagents,

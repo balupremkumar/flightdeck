@@ -71,18 +71,32 @@ export class OutputPipe<E extends { pane_id: number; seq?: number }> {
   }
 }
 
+/** Pane model ids rebuilt from a session doc (hydrateFrom) in this page load. Only
+ *  those may attach to a live pty: pane ids restart at 1 per load, so a pane the
+ *  user just created can share an id with last session's agent. */
+const restoredPanes = new Set<number>();
+export function markRestoredPane(modelId: number): void {
+  restoredPanes.add(modelId);
+}
+export function isRestoredPane(modelId: number): boolean {
+  return restoredPanes.has(modelId);
+}
+
 type Invoke = <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
 
 /** Ask Rust for a live pty for this pane model. null means spawn instead; an
  *  error also means spawn (a stuck attach must never leave a pane dead). On a hit
  *  the pipe is bound to the pty, and the returned `early` events are the held
- *  ones that are NOT in the snapshot. */
+ *  ones that are NOT in the snapshot. A `fresh` pane (created this load, not
+ *  restored) never attaches: it always spawns. */
 export async function attachFirst<E extends { pane_id: number; seq?: number }>(
   inv: Invoke,
   pipe: OutputPipe<E>,
   modelId: number,
   gen: string,
+  fresh = false,
 ): Promise<{ info: AttachInfo; early: E[] } | null> {
+  if (fresh) return null;
   let info: AttachInfo | null;
   try {
     info = await inv<AttachInfo | null>("pty_attach", { modelId, gen });

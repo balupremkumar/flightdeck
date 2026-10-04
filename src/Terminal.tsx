@@ -18,7 +18,7 @@ import { Unicode11Addon } from "@xterm/addon-unicode11";
 import "@xterm/xterm/css/xterm.css";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { OutputPipe, attachFirst, attachPlan, type OutputEvt } from "./ptyAttach";
+import { OutputPipe, attachFirst, attachPlan, isRestoredPane, type OutputEvt } from "./ptyAttach";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { terminalThemeFor } from "./terminal-theme";
 import { getTerminalSettings, terminalReadabilityOptions } from "./settingsStore";
@@ -1514,7 +1514,7 @@ function createSession(modelId: number, gen: string, spec: SpawnSpec, handlers: 
       // Attach first: after a webview reload the agent is still running in Rust.
       // Reconnect to it (snapshot, then live events past snapshot.next_seq)
       // instead of spawning a second one.
-      const hit = await attachFirst<OutputEvt>(<T,>(c: string, a?: Record<string, unknown>) => invoke<T>(c, a), pipe, modelId, gen);
+      const hit = await attachFirst<OutputEvt>(<T,>(c: string, a?: Record<string, unknown>) => invoke<T>(c, a), pipe, modelId, gen, !isRestoredPane(modelId));
       if (entry.disposed) {
         if (hit) invoke("pty_kill", { paneId: hit.info.pty_id });
         return;

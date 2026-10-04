@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { OutputPipe, attachFirst, attachPlan, type AttachInfo, type OutputEvt } from "./ptyAttach";
+import { OutputPipe, attachFirst, attachPlan, isRestoredPane, markRestoredPane, type AttachInfo, type OutputEvt } from "./ptyAttach";
 
 const b64 = (s: string) => btoa(s);
 const evt = (pane_id: number, text: string, seq?: number): OutputEvt => ({ pane_id, b64: b64(text), seq });
@@ -122,5 +122,20 @@ describe("attachPlan", () => {
   it("resets a clean terminal for a real snapshot, or when nothing was restored", () => {
     expect(attachPlan(100_000, true, true)).toEqual({ reset: true, nudge: false });
     expect(attachPlan(40, false, false)).toEqual({ reset: true, nudge: false });
+  });
+});
+
+describe("fresh panes never attach", () => {
+  it("a fresh pane skips pty_attach entirely and spawns", async () => {
+    let called = false;
+    const inv = (async () => { called = true; return { pty_id: 9, snapshot: { head: "", body: "", start_seq: 0, next_seq: 0 } }; }) as Parameters<typeof attachFirst>[0];
+    const pipe = new OutputPipe<OutputEvt>();
+    expect(await attachFirst(inv, pipe, 1, "0|claude|D:\\a", true)).toBeNull();
+    expect(called).toBe(false);
+  });
+  it("only panes rebuilt from a session doc count as restored", () => {
+    expect(isRestoredPane(901)).toBe(false);
+    markRestoredPane(901);
+    expect(isRestoredPane(901)).toBe(true);
   });
 });
