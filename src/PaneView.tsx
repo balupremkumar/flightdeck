@@ -1291,6 +1291,7 @@ Running low — consider /compact in this pane.` : "")
         <Terminal
           key={pane.epoch}
           ref={terminalRef}
+          modelId={pane.id}
           vendor={pane.vendor}
           cwd={pane.cwd}
           initialDraft={pane.draft}

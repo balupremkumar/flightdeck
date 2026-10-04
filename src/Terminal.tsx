@@ -453,6 +453,9 @@ const SCROLLBACK_SAVE_STEPS = [2000, 800, 300, 100];
 const SCROLLBACK_SAVE_MAX_CHARS = 1_000_000;
 
 interface TerminalProps {
+  /** The store's PaneModel.id. NOT the Rust pty id (that is the effect-local
+   *  `paneId`): store actions such as setPaneDraft match on the model id. */
+  modelId: number;
   vendor: string;
   cwd: string;
   /** Worktree setup command to run before the agent (fresh worktrees only).
@@ -505,7 +508,7 @@ const HIDDEN_BUFFER_CAP = 262144; // 256KB
 
 // One live terminal bound to a PTY in the Rust core.
 export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Terminal(
-  { vendor, cwd, setup, onSetupConsumed, initialDraft, restoredScrollback, osc52 = false, fontSize = 12.5, ligatures = false, quietThresholdMs = 3000, onExit, onState, onProc, onBell, onLine, onScrollAway, onProgress, onCwd },
+  { modelId, vendor, cwd, setup, onSetupConsumed, initialDraft, restoredScrollback, osc52 = false, fontSize = 12.5, ligatures = false, quietThresholdMs = 3000, onExit, onState, onProc, onBell, onLine, onScrollAway, onProgress, onCwd },
   ref
 ) {
   const elRef = useRef<HTMLDivElement>(null);
@@ -1320,7 +1323,7 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
       let draftTimer: ReturnType<typeof setTimeout> | undefined;
       const saveDraft = () => {
         if (draftTimer) clearTimeout(draftTimer);
-        draftTimer = setTimeout(() => useApp.getState().setPaneDraft(paneId, draftBuf), 400);
+        draftTimer = setTimeout(() => useApp.getState().setPaneDraft(modelId, draftBuf), 400);
       };
       term.onData((d) => {
         invoke("pty_write", { paneId, data: d });
