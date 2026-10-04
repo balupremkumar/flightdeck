@@ -63,6 +63,10 @@ jobs:
         working-directory: e2e
         run: node draft-survives-restart.mjs
 
+      - name: Terminal links
+        working-directory: e2e
+        run: node links.mjs
+
   backend:
     name: Backend (Cargo)
     # The Rust crate calls Win32 APIs (Job Objects, process/thread control),

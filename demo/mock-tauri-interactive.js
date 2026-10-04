@@ -558,6 +558,36 @@ index 3c92f1a..7d40b2e 100644
     playSteps(id, banner, () => { if (isMigratePane) p.awaitingApproval = true; });
   }
 
+  // --- Path-link fixtures (paths_exist / fs_read_text_file / fs_list_dir) ---
+  const HOME = "C:\\Users\\demo";
+  const FIXTURE_PATHS = {
+    "D:\\Dev\\ai": { dir: true },
+    "D:\\Dev\\ai\\research": { dir: true },
+    "D:\\Dev\\ai\\projects\\active\\Kove Clients\\STATE.md": { dir: false },
+    "D:\\Dev\\ai\\projects\\active\\flightdeck\\STATE.md": { dir: false },
+    "C:\\dev\\acme-api\\src\\app.ts": { dir: false },
+    [HOME + "\\.claude\\agents\\frontend.md"]: { dir: false },
+  };
+  const normP = (p) => String(p).replace(/\//g, "\\").replace(/\\+$/, "");
+  const FIXTURE_BY_KEY = new Map(Object.entries(FIXTURE_PATHS).map(([k, v]) => [k.toLowerCase(), { path: k, isDir: v.dir }]));
+  function fixtureText(path) {
+    if (/\.ts$/i.test(path)) return Array.from({ length: 40 }, (_, i) => `export const line${i + 1} = ${i + 1};`).join("\n") + "\n";
+    return `# ${path.split("\\").pop()}\n\nFixture note for the link e2e.\n\n` + Array.from({ length: 20 }, (_, i) => `- item ${i + 1}`).join("\n") + "\n";
+  }
+  function pathsExist({ raws, bases }) {
+    return (raws ?? []).map((raw) => {
+      let r = String(raw);
+      if (/^(\\\\|\/\/)/.test(r)) return null; // never resolve UNC
+      if (r === "~" || /^~[\\/]/.test(r)) r = HOME + r.slice(1);
+      const cands = /^[A-Za-z]:[\\/]/.test(r) ? [r] : (bases ?? []).map((b) => normP(b) + "\\" + r.replace(/^\.[\\/]/, "").replace(/\//g, "\\"));
+      for (const c of cands) {
+        const hit = FIXTURE_BY_KEY.get(normP(c).toLowerCase());
+        if (hit) return { input: raw, path: hit.path, isDir: hit.isDir };
+      }
+      return null;
+    });
+  }
+
   // --- Command handlers -------------------------------------------------
   const handlers = {
     // PTY
@@ -572,7 +602,18 @@ index 3c92f1a..7d40b2e 100644
     manifest_problems: () => [],
 
     // Filesystem
-    fs_list_dir: ({ path }) => DIRS[path] ?? [],
+    fs_list_dir: ({ path }) => {
+      if (DIRS[path]) return DIRS[path];
+      const hit = FIXTURE_BY_KEY.get(normP(path).toLowerCase());
+      return hit?.isDir ? [{ name: "notes.md", dir: false }] : [];
+    },
+    paths_exist: (a) => pathsExist(a),
+    fs_read_text_file: ({ path }) => {
+      const hit = FIXTURE_BY_KEY.get(normP(path).toLowerCase());
+      if (!hit) throw new Error("No such file: " + path);
+      if (hit.isDir) throw new Error("Is a directory (os error 21): " + path);
+      return fixtureText(hit.path);
+    },
     reveal_in_explorer: () => null,
 
     // Git
@@ -650,7 +691,7 @@ index 3c92f1a..7d40b2e 100644
         console.warn("[fd-demo] unhandled command:", cmd, args);
         return Promise.reject(new Error(`mock: no handler for ${cmd}`));
       }
-      return new Promise((resolve) => setTimeout(() => resolve(fn(args ?? {})), 40));
+      return new Promise((resolve, reject) => setTimeout(() => { try { resolve(fn(args ?? {})); } catch (e) { reject(e); } }, 40));
     },
   };
 
@@ -662,6 +703,9 @@ index 3c92f1a..7d40b2e 100644
   // module-level `listeners` map above, cleaned up on the plugin:event|unlisten
   // invoke call that already runs alongside this.
   window.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: () => {} };
+
+  // Test hook: make a pane print text (newlines become CRLF).
+  window.__mockPrint = (paneId, text) => emit("pty://output", { pane_id: paneId, b64: b64(String(text).replace(/\r?\n/g, "\r\n")) });
 
   window.__FD_MOCK__ = true;
   window.__FD_DEMO__ = true;
