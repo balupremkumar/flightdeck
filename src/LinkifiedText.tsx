@@ -34,7 +34,7 @@ export function splitLinkified(text: string, cwd?: string): LinkifiedPart[] {
   matches.forEach((m: LinkMatch, i: number) => {
     if (m.start > last) parts.push({ key: `t${i}`, kind: "text", text: text.slice(last, m.start) });
     const href = m.kind === "url" ? m.raw : cwd ? resolvePath(m, cwd) : m.raw;
-    parts.push({ key: `m${i}`, kind: m.kind, text: m.text, href, line: m.line });
+    parts.push({ key: `m${i}`, kind: m.kind === "wikilink" ? "path" : m.kind, text: m.text, href, line: m.line });
     last = m.end;
   });
   if (last < text.length) parts.push({ key: "tend", kind: "text", text: text.slice(last) });
