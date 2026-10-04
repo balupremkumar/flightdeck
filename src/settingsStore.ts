@@ -1,7 +1,10 @@
 // settingsStore.ts: the non-UI half of Settings (getters, defaults, pure helpers).
 // Eager on purpose: boot, Terminal, session and the palette read these, and
 // Settings.tsx itself is a lazy chunk. Settings.tsx re-exports everything here.
+import { useEffect } from "react";
 import { relTime } from "./format";
+import { useUI } from "./ui";
+import { getPendingReleaseNotes, clearPendingReleaseNotes } from "./updater";
 
 // ---------------------------------------------------------------------
 // Terminal settings (88). Persisted + exported for Terminal.tsx to read.
@@ -308,6 +311,22 @@ export function shouldShowWhatsNew(
   return !!pending && pending.version === currentVersion && pending.notes.trim().length > 0;
 }
 export const WHATSNEW_SEEN_KEY = "flightdeck-whatsnew-seen-version";
+
+// UX-600: runs once at boot from App (eager). It used to live in Settings,
+// which is a lazy chunk mounted only while open, so the boot toast never fired.
+export function useWhatsNew() {
+  useEffect(() => {
+    let seen: string | null = null;
+    try { seen = localStorage.getItem(WHATSNEW_SEEN_KEY); } catch { /* non-persistent */ }
+    const pending = getPendingReleaseNotes();
+    if (shouldShowWhatsNew(APP_VERSION, seen, pending)) {
+      useUI.getState().setWhatsNew(pending);
+      useUI.getState().pushToast("info", `Updated to Flightdeck ${APP_VERSION} — see What’s new in Settings > About.`);
+    }
+    try { localStorage.setItem(WHATSNEW_SEEN_KEY, APP_VERSION); } catch { /* non-persistent */ }
+    clearPendingReleaseNotes();
+  }, []);
+}
 
 // Newest first; trim to the last ~10 entries as it grows.
 export const CHANGELOG: Array<{ date: string; text: string }> = [

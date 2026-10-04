@@ -107,6 +107,10 @@ interface UIState {
   pushToast: (kind: Toast["kind"], text: string, opts?: { url?: string; detail?: string }) => void;
   dismissToast: (id: number) => void;
 
+  /** UX-600: release notes for the just-installed version, set at boot by useWhatsNew; Settings > About reads it. */
+  whatsNew: { version: string; notes: string } | null;
+  setWhatsNew: (w: { version: string; notes: string } | null) => void;
+
   updateAvailable: UpdateInfo | null;
   setUpdateAvailable: (info: UpdateInfo | null) => void;
 
@@ -277,6 +281,9 @@ export const useUI = create<UIState>((set, get) => ({
     set((s) => ({ toasts: [...s.toasts, { id: ++tseq, kind, text, url: opts?.url, detail: opts?.detail }] }));
   },
   dismissToast: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
+
+  whatsNew: null,
+  setWhatsNew: (whatsNew) => set({ whatsNew }),
 
   updateAvailable: null,
   setUpdateAvailable: (updateAvailable) => set({ updateAvailable }),

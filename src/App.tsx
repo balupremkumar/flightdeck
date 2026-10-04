@@ -10,6 +10,7 @@ import { applyThemeForMode, isFollowingSystem, toggleThemeMode } from "./themes"
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { lazy, Suspense, useEffect } from "react";
 import { logEvent } from "./applog";
+import { useWhatsNew } from "./settingsStore";
 
 const Settings = lazy(() => import("./Settings").then((m) => ({ default: m.Settings })));
 
@@ -78,6 +79,7 @@ function LauncherChrome() {
 
 export default function App() {
   useFollowSystemTheme();
+  useWhatsNew();
   // Boot beacon for the release gate (tools/boot-gate.ps1). App is the one
   // component mounted in BOTH boot states (launcher and cockpit), so this line
   // in the flight recorder means "the UI provably reached a usable screen". A

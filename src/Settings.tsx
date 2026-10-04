@@ -13,7 +13,7 @@ import { adoptSession, lastSessionSaveAt } from "./session";
 import { clearPreferences, PREFERENCE_KEYS } from "./storageKeys";
 import {
   checkForUpdate, getReleasesDir, setReleasesDir, resolveReleasesDir,
-  getPendingReleaseNotes, clearPendingReleaseNotes, type UpdateCheckResult,
+  type UpdateCheckResult,
   installNote, REVERT_COMMAND,
 } from "./updater";
 import { trustedRepos, untrustRepo } from "./trust";
@@ -34,7 +34,7 @@ import {
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getName } from "@tauri-apps/api/app";
 import "./overlays.css";
-import { TerminalSettings, DEFAULT_TERMINAL_SETTINGS, CONTRAST_RANGE, TERM_LINE_HEIGHT_RANGE, PreviewWidth, ReadingSettings, DEFAULT_READING_SETTINGS, PREVIEW_FONT_RANGE, UI_TEXT_SCALE_RANGE, PREVIEW_LH_RANGE, PREVIEW_WIDTHS, READING_SETTINGS_KEY, getReadingSettings, applyReadingSettings, saveReadingSettings, parseRgb, luminance, adjustForContrast, TERMINAL_FONTS, getTerminalSettings, saveTerminalSettings, FIXED_SHORTCUTS, getShortcuts, saveShortcut, resetShortcuts, formatCombo, AgentSettings, DEFAULT_AGENT_SETTINGS, getAgentSettings, saveAgentSettings, EditorId, EditorSettings, EDITOR_PRESETS, DEFAULT_EDITOR_SETTINGS, getEditorSettings, saveEditorSettings, resolveEditorCommand, StartupBehavior, getStartupBehavior, saveStartupBehavior, APP_VERSION, shouldShowWhatsNew, WHATSNEW_SEEN_KEY, CHANGELOG, MIN_MEMORY_CEILING_MB, MAX_MEMORY_CEILING_MB, getMemoryCeilingMb, setMemoryCeilingMb, setHooksInstalled, HookStatus, hookStatusLine } from "./settingsStore";
+import { TerminalSettings, DEFAULT_TERMINAL_SETTINGS, CONTRAST_RANGE, TERM_LINE_HEIGHT_RANGE, PreviewWidth, ReadingSettings, DEFAULT_READING_SETTINGS, PREVIEW_FONT_RANGE, UI_TEXT_SCALE_RANGE, PREVIEW_LH_RANGE, PREVIEW_WIDTHS, READING_SETTINGS_KEY, getReadingSettings, applyReadingSettings, saveReadingSettings, parseRgb, luminance, adjustForContrast, TERMINAL_FONTS, getTerminalSettings, saveTerminalSettings, FIXED_SHORTCUTS, getShortcuts, saveShortcut, resetShortcuts, formatCombo, AgentSettings, DEFAULT_AGENT_SETTINGS, getAgentSettings, saveAgentSettings, EditorId, EditorSettings, EDITOR_PRESETS, DEFAULT_EDITOR_SETTINGS, getEditorSettings, saveEditorSettings, resolveEditorCommand, StartupBehavior, getStartupBehavior, saveStartupBehavior, APP_VERSION, CHANGELOG, MIN_MEMORY_CEILING_MB, MAX_MEMORY_CEILING_MB, getMemoryCeilingMb, setMemoryCeilingMb, setHooksInstalled, HookStatus, hookStatusLine } from "./settingsStore";
 export * from "./settingsStore";
 
 // ---------------------------------------------------------------------
@@ -870,24 +870,8 @@ export function Settings() {
     return () => clearInterval(id);
   }, []);
 
-  // UX-600: compare the running version against what was last acknowledged.
-  // Runs once on mount regardless of whether Settings is open, so a toast can
-  // fire the moment the app boots on a freshly-installed version, not only
-  // when Balu happens to open Settings. Notes only ever come from the release
-  // manifest (see updater.ts) — never invented copy.
-  const [whatsNew, setWhatsNew] = useState<{ version: string; notes: string } | null>(null);
-  useEffect(() => {
-    let seen: string | null = null;
-    try { seen = localStorage.getItem(WHATSNEW_SEEN_KEY); } catch { /* non-persistent */ }
-    const pending = getPendingReleaseNotes();
-    if (shouldShowWhatsNew(APP_VERSION, seen, pending)) {
-      setWhatsNew(pending);
-      useUI.getState().pushToast("info", `Updated to Flightdeck ${APP_VERSION} — see What’s new in Settings > About.`);
-    }
-    try { localStorage.setItem(WHATSNEW_SEEN_KEY, APP_VERSION); } catch { /* non-persistent */ }
-    clearPendingReleaseNotes();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // UX-600: the boot check lives in useWhatsNew (App); About just reads the result.
+  const whatsNew = useUI((s) => s.whatsNew);
 
   // UI-181: the palette can ask for a specific section. Consume the request
   // once and scroll to it — leaving it set would re-jump on the next open.
