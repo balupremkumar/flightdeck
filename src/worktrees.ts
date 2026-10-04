@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useApp, type PaneModel } from "./store";
 import { useUI } from "./ui";
+import { dispose as disposePaneSession } from "./paneSessions";
 import { vendorShort } from "./vendors";
 import { loadSession } from "./persist";
 import { ensureTrusted } from "./trust";
@@ -172,11 +173,13 @@ export async function rememberedOrSuggestedSetup(dir: string): Promise<string | 
   } catch { return undefined; }
 }
 
-/** Close a pane and clean up its worktree (D6). The remove runs after a short
- *  delay so the PTY kill (Terminal unmount) releases its cwd handle first; the
- *  backend retries once more on top. Dirty worktrees prompt keep/discard —
+/** Close a pane and clean up its worktree (D6). The PTY is killed here, through
+ *  the pane-session registry (R1: unmounting a Terminal no longer kills it), and
+ *  the remove runs after a short delay so that kill releases the cwd handle
+ *  first; the backend retries once more on top. Dirty worktrees prompt keep/discard —
  *  cancel leaves the worktree in place, and next launch's GC keep-commits it. */
 export function closePaneWithCleanup(wsId: number, pane: PaneModel) {
+  disposePaneSession(pane.id);
   useApp.getState().closePane(wsId, pane.id);
   const worktreePath = pane.worktreePath;
   if (!worktreePath) return;
@@ -186,6 +189,7 @@ export function closePaneWithCleanup(wsId: number, pane: PaneModel) {
 /** Workspace close: same contract, all isolated panes at once. */
 export function closeWorkspaceWithCleanup(ws: { id: number; panes: PaneModel[] }) {
   const paths = ws.panes.map((p) => p.worktreePath).filter((p): p is string => !!p);
+  for (const p of ws.panes) disposePaneSession(p.id);
   useApp.getState().closeWorkspace(ws.id);
   if (paths.length === 0) return;
   window.setTimeout(() => { for (const p of paths) void cleanupWorktree(p); }, 700);

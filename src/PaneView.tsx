@@ -4,6 +4,7 @@ import { revealPath } from "./reveal";
 import { useApp, registerPaneSend, unregisterPaneSend, type PaneModel, type PaneState } from "./store";
 import { useUI, useOverlayEsc } from "./ui";
 import { Terminal, type TerminalHandle } from "./Terminal";
+import { get as getPaneSession } from "./paneSessions";
 import {
   IconBranch, IconClose, IconRefresh, IconDrag, IconOverflow,
   IconMaximizePane, IconMinimize, IconFolder, IconChevron, IconDiff, IconFile,
@@ -236,7 +237,10 @@ function PaneViewInner({
   const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
   // UI-140: font zoom is a per-agent habit (agy's TUI runs denser than
   // claude's), so remember it per vendor rather than resetting every pane.
-  const [fontSize, setFontSizeRaw] = useState(() => loadVendorFont(pane.vendor));
+  // R1: a pane that changes grid row remounts this PaneView but keeps its
+  // terminal session, so the live prefs seed from the session (when there is
+  // one) instead of resetting to defaults and undoing the zoom / toggles.
+  const [fontSize, setFontSizeRaw] = useState(() => getPaneSession(pane.id)?.live.fontSize.current ?? loadVendorFont(pane.vendor));
   const setFontSize = (next: number | ((f: number) => number)) => {
     setFontSizeRaw((f) => {
       const v = typeof next === "function" ? next(f) : next;
@@ -244,11 +248,11 @@ function PaneViewInner({
       return v;
     });
   };
-  const [ligatures, setLigatures] = useState(false);
+  const [ligatures, setLigatures] = useState(() => getPaneSession(pane.id)?.live.ligatures.current ?? false);
   // QL-758: OSC 52 clipboard writes from the child, off until this pane is
   // told otherwise. Per pane and per session on purpose — it is a "I trust
   // what this one agent is about to do" switch, not a preference.
-  const [osc52, setOsc52] = useState(false);
+  const [osc52, setOsc52] = useState(() => getPaneSession(pane.id)?.live.osc52.current ?? false);
   // QL-762: this pane's buffer from the last session, if the restore staged
   // one. Read once per PaneView (not per Terminal mount) and only handed over
   // on the pane's FIRST spawn: a deliberate Restart bumps the epoch and should
@@ -258,9 +262,12 @@ function PaneViewInner({
   // claude; a shell is idle at once) — UX-560: or the user's saved override
   // for that vendor, if they've set one from any pane's menu. The per-pane
   // slider still overrides it for just this pane's session.
-  const [quietSec, setQuietSec] = useState(
-    () => loadVendorQuietOverride(pane.vendor) ?? vendorMeta(pane.vendor).quietSeconds ?? DEFAULT_QUIET_SEC
-  );
+  const [quietSec, setQuietSec] = useState(() => {
+    const live = getPaneSession(pane.id)?.live.quietMs.current;
+    return live !== undefined
+      ? live / 1000
+      : loadVendorQuietOverride(pane.vendor) ?? vendorMeta(pane.vendor).quietSeconds ?? DEFAULT_QUIET_SEC;
+  });
   // UX-546/553/554/562/563: overlay open flags for the new per-pane surfaces.
   const [transcriptOpen, setTranscriptOpen] = useState(false);
   const [groupsOpen, setGroupsOpen] = useState(false);
@@ -1292,6 +1299,7 @@ Running low — consider /compact in this pane.` : "")
           key={pane.epoch}
           ref={terminalRef}
           modelId={pane.id}
+          epoch={pane.epoch}
           vendor={pane.vendor}
           cwd={pane.cwd}
           initialDraft={pane.draft}

@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useImperativeHandle, useRef, useSyncExternalStore } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useSyncExternalStore } from "react";
 import { useApp } from "./store";
 import { Terminal as XTerm } from "@xterm/xterm";
 import type { ILinkProvider, ILink, ITheme, IMarker, IDecoration } from "@xterm/xterm";
@@ -8,13 +8,12 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import { LigaturesAddon } from "@xterm/addon-ligatures";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
-// QL-762: TYPE-only. The addon itself is ~32KB of vendor code that is not
+// QL-762: the SerializeAddon TYPE lives in paneSessions.ts. The addon itself is ~32KB of vendor code that is not
 // needed to paint a pane — only to snapshot one for the session doc, which
 // first happens ~20s in — so it is dynamically imported below and deliberately
 // NOT added to vite.config.ts's `xterm` manualChunk (that chunk is eagerly
 // loaded; listing it there would put it straight back in the boot payload and
 // blow perfbudget.test.ts's cold-start budget).
-import type { SerializeAddon } from "@xterm/addon-serialize";
 import "@xterm/xterm/css/xterm.css";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -24,6 +23,10 @@ import { getTerminalSettings } from "./Settings";
 import { linkify, resolvePath, type LinkMatch } from "./linkify";
 import { openInEditor } from "./editor";
 import { useUI } from "./ui";
+import {
+  acquire, attach, detach, get as getSession, setSessionFactory,
+  type PaneHandlers, type PaneSession, type SessionLive, type SpawnSpec,
+} from "./paneSessions";
 
 // Reads the app's active theme straight off the DOM — the app dispatches no
 // theme-change event, so this (plus the MutationObserver below) is how the
@@ -457,6 +460,9 @@ interface TerminalProps {
    *  `paneId`): store actions such as setPaneDraft match on the model id. */
   modelId: number;
   vendor: string;
+  /** PaneModel.epoch: part of the session's generation, so a Restart (epoch
+   *  bump) replaces the PTY while a mere remount does not. */
+  epoch?: number;
   cwd: string;
   /** Worktree setup command to run before the agent (fresh worktrees only).
    *  Captured at mount; `onSetupConsumed` fires once the spawn has taken it so
@@ -506,99 +512,37 @@ interface TerminalProps {
 // avoids both wasted xterm writes while invisible and an unbounded memory grow.
 const HIDDEN_BUFFER_CAP = 262144; // 256KB
 
-// One live terminal bound to a PTY in the Rust core.
-export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Terminal(
-  { modelId, vendor, cwd, setup, onSetupConsumed, initialDraft, restoredScrollback, osc52 = false, fontSize = 12.5, ligatures = false, quietThresholdMs = 3000, onExit, onState, onProc, onBell, onLine, onScrollAway, onProgress, onCwd },
-  ref
-) {
-  const elRef = useRef<HTMLDivElement>(null);
-  const termRef = useRef<XTerm | null>(null);
-  const fitRef = useRef<FitAddon | null>(null);
-  const searchAddonRef = useRef<SearchAddon | null>(null);
-  const serializeAddonRef = useRef<SerializeAddon | null>(null);
-  const ligAddonRef = useRef<LigaturesAddon | null>(null);
-  // QL-762: mount-time value only. The mount effect keys on [vendor, cwd], so
-  // reading the prop directly inside it would be a stale-closure trap; a ref
-  // initialised once says "the scrollback this pane was born with" exactly.
-  const restoredRef = useRef(restoredScrollback);
-  // QL-758: read inside the OSC handler, so flipping the pane menu's toggle
-  // takes effect immediately without remounting the terminal (and respawning
-  // the agent, which is what a prop in the mount deps would cost).
-  const osc52Ref = useRef(osc52);
-  const quietThresholdRef = useRef(quietThresholdMs);
-  // UX-510: the preview drawer reads this at open-time so it starts at the
-  // same zoom as the pane the click came from, without forcing a re-register
-  // of the link provider on every zoom step.
-  const fontSizeRef = useRef(fontSize);
-  const themeRef = useRef<ITheme>(terminalThemeFor(activeThemeId()));
-  // Mirrors the effect-local paneId so imperative handle methods (paste, etc.)
-  // can reach the live PTY.
-  const paneIdRef = useRef(0);
-  // QL-753: set by the mount effect, which owns the mark list. Same bridge
-  // pattern as paneIdRef — the handle is built once with [] deps.
-  const jumpMarkRef = useRef<(dir: 1 | -1) => boolean>(() => false);
-  // QL-754: ditto for the hint overlay, which the mount effect owns.
-  const showHintsRef = useRef<() => boolean>(() => false);
-  // QL-754/755: both overlays are positioned in pixels off the cell size, so a
-  // font-size change has to re-measure them. Same bridge pattern again.
-  const remeasureOverlaysRef = useRef<() => void>(() => {});
+/** QL-736: GPU renderer. Activation throws where WebGL2 isn't available —
+ *  not fatal, xterm keeps the DOM renderer. Context loss (driver reset, GPU
+ *  sleep) disposes the addon and falls back. R1: a parked / moved pane may
+ *  also lose its context to Chromium's per-page cap, so attach retries ONCE. */
+function loadWebgl(term: XTerm, ref: { current: WebglAddon | null }): void {
+  const webgl = new WebglAddon();
+  webgl.onContextLoss(() => { webgl.dispose(); if (ref.current === webgl) ref.current = null; });
+  term.loadAddon(webgl);
+  ref.current = webgl;
+}
+function loadWebglOnce(term: XTerm, ref: { current: WebglAddon | null }): void {
+  if (ref.current) return;
+  try { loadWebgl(term, ref); } catch { /* stay on the DOM renderer */ }
+}
 
-  useImperativeHandle(ref, () => ({
-    findNext: (query, opts) =>
-      searchAddonRef.current?.findNext(query, { ...opts, decorations: searchDecorations(themeRef.current) } as ISearchOptions) ?? false,
-    findPrevious: (query) =>
-      searchAddonRef.current?.findPrevious(query, { decorations: searchDecorations(themeRef.current) } as ISearchOptions) ?? false,
-    clearSearch: () => searchAddonRef.current?.clearDecorations(),
-    onSearchResults: (cb) => {
-      const d = searchAddonRef.current?.onDidChangeResults(cb);
-      return () => d?.dispose();
-    },
-    clearScrollback: () => termRef.current?.clear(),
-    scrollToBottom: () => termRef.current?.scrollToBottom(),
-    // UX-546/547: whole scrollback as plain text. Walks the buffer rather than
-    // selecting, so it never disturbs the user's own selection.
-    getScrollbackText: () => {
-      const t = termRef.current;
-      if (!t) return "";
-      const buf = t.buffer.active;
-      const lines: string[] = [];
-      for (let i = 0; i < buf.length; i++) lines.push(buf.getLine(i)?.translateToString(true) ?? "");
-      return lines.join("\n");
-    },
-    getSelection: () => termRef.current?.getSelection() ?? "",
-    selectAll: () => termRef.current?.selectAll(),
-    copySelection: async () => {
-      const sel = termRef.current?.getSelection() ?? "";
-      if (sel) await navigator.clipboard.writeText(sel);
-    },
-    paste: (text: string) => { if (paneIdRef.current) invoke("pty_write", { paneId: paneIdRef.current, data: text }); },
-    jumpToCommandMark: (dir) => jumpMarkRef.current(dir),
-    showQuickHints: () => showHintsRef.current(),
-    // QL-762: try the biggest window first and step down until the result fits
-    // the per-pane byte cap — a pane whose output is mostly colour codes still
-    // gets SOME history back rather than none.
-    serializeScrollback: () => {
-      const addon = serializeAddonRef.current;
-      if (!addon) return "";
-      for (const scrollback of SCROLLBACK_SAVE_STEPS) {
-        try {
-          // Modes and the alt buffer are deliberately excluded: this string is
-          // replayed into a fresh terminal BEFORE its shell attaches, and
-          // restoring (say) an alt-buffer or bracketed-paste mode the new shell
-          // knows nothing about would leave the pane in a state it can't undo.
-          const out = addon.serialize({ scrollback, excludeModes: true, excludeAltBuffer: true });
-          if (out.length <= SCROLLBACK_SAVE_MAX_CHARS) return out;
-        } catch {
-          return ""; // buffer mid-teardown — no history is better than a throw
-        }
-      }
-      return "";
-    },
-  }), []);
-
-  useEffect(() => {
-    const el = elRef.current!;
-    themeRef.current = terminalThemeFor(activeThemeId());
+/** R1: builds the xterm + PTY for one pane. Registered with paneSessions as the
+ *  factory; it runs ONCE per (pane id, gen), not once per React mount, and
+ *  everything it sets up is torn down by paneSessions.dispose() through
+ *  entry.disposers, never by a component unmounting. */
+function createSession(modelId: number, gen: string, spec: SpawnSpec, handlers: PaneHandlers, container: HTMLElement): PaneSession {
+  const host = document.createElement("div");
+  host.style.cssText = "width:100%;height:100%;";
+  container.appendChild(host);
+  const themeRef = { current: terminalThemeFor(activeThemeId()) as ITheme };
+  const live: SessionLive = {
+    osc52: { current: spec.osc52 },
+    quietMs: { current: spec.quietMs },
+    fontSize: { current: spec.fontSize },
+    ligatures: { current: false },
+  };
+  const webglRef: { current: WebglAddon | null } = { current: null };
     // Terminal settings from Settings > Terminal (QOL 319 — they were persisted
     // but never read). fontSize stays a per-pane prop (zoom control).
     const ts = getTerminalSettings();
@@ -609,7 +553,7 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
       // ErrorBoundary takes down the whole cockpit (the 0.5.3 boot loop).
       allowProposedApi: true,
       fontFamily: `'${ts.fontFamily}','JetBrains Mono','Cascadia Code',Consolas,monospace`,
-      fontSize,
+      fontSize: spec.fontSize,
       cursorBlink: true,
       cursorStyle: ts.cursorStyle,
       scrollback: ts.scrollback,
@@ -641,7 +585,7 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
     term.loadAddon(unicode11);
     term.unicode.activeVersion = "11";
 
-    term.open(el);
+    term.open(host);
     // QL-736: GPU renderer, loaded after open() because it needs the element.
     // A pane streaming a diff repaints far cheaper on WebGL than on the DOM
     // renderer. Activation throws where WebGL2 isn't available (software
@@ -650,19 +594,20 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
     // user can't act on. Context loss (driver reset, GPU sleep) is the same
     // story: dispose and fall back, never take the pane down over a repaint.
     try {
-      const webgl = new WebglAddon();
-      webgl.onContextLoss(() => webgl.dispose());
-      term.loadAddon(webgl);
+      loadWebgl(term, webglRef);
     } catch { /* no WebGL2 here — DOM renderer it is */ }
-    termRef.current = term;
-    fitRef.current = fit;
-    searchAddonRef.current = search;
     try { fit.fit(); } catch { /* not measured yet */ }
+    const entry: PaneSession = {
+      modelId, gen, term, host, fit, search, serialize: null, ligatures: null, ptyId: 0, handlers, live,
+      theme: themeRef,
+      api: { jumpMark: () => false, showHints: () => false, remeasure: () => {}, onAttach: () => loadWebglOnce(term, webglRef) },
+      owner: null, saved: { viewportY: 0, atBottom: true, hadFocus: false }, disposers: [], disposed: false,
+    };
     // QL-757: starts at the spawn cwd and is replaced by every OSC 9;9 report,
     // so a `cd` inside the pane immediately re-bases relative file links.
-    const cwdRef = { current: cwd };
+    const cwdRef = { current: spec.cwd };
     // Needs term.element, so registered only after open() above.
-    const pathLinks = registerPathLinks(term, cwdRef, fontSizeRef);
+    const pathLinks = registerPathLinks(term, cwdRef, live.fontSize);
 
     // QL-762: the serializer turns this pane's buffer back into the bytes that
     // drew it, so a restored pane comes back with its history instead of a
@@ -674,13 +619,13 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
     let serializeIdle = 0;
     const loadSerializer = () => {
       serializeIdle = 0;
-      if (disposed || serializeAddonRef.current) return;
+      if (entry.disposed || entry.serialize) return;
       import("@xterm/addon-serialize")
         .then(({ SerializeAddon }) => {
-          if (disposed || serializeAddonRef.current) return;
+          if (entry.disposed || entry.serialize) return;
           const addon = new SerializeAddon();
           term.loadAddon(addon);
-          serializeAddonRef.current = addon;
+          entry.serialize = addon;
         })
         .catch(() => { /* no snapshotting for this pane — never fatal */ });
     };
@@ -693,7 +638,7 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
     // setting: replying would let any process that can print to a pane
     // exfiltrate whatever the user last copied.
     term.parser.registerOscHandler(52, (data) => {
-      if (!osc52Ref.current) return true;
+      if (!live.osc52.current) return true;
       const semi = data.indexOf(";");
       const payload = semi >= 0 ? data.slice(semi + 1) : "";
       if (!payload || payload === "?") return true;
@@ -817,15 +762,15 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
       renderHints();
       return true;
     };
-    showHintsRef.current = openHints;
+    entry.api.showHints = openHints;
     // Any of these invalidate the coordinates the chips were placed at, and a
     // chip pointing at the wrong text is worse than no chip.
     const hintBlur = () => closeHints();
     // Set fully once the sticky strip below exists; both overlays re-measure
     // through it when the pane's font size changes.
-    remeasureOverlaysRef.current = closeHints;
+    entry.api.remeasure = closeHints;
     term.textarea?.addEventListener("blur", hintBlur);
-    el.addEventListener("mousedown", hintBlur);
+    host.addEventListener("mousedown", hintBlur);
 
     // --- QL-753: command marks ---------------------------------------------
     // One entry per prompt the shell drew. `ran` means a command actually
@@ -873,7 +818,7 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
       if (ev.kind === "cwd") {
         if (!ev.cwd || ev.cwd === cwdRef.current) return;
         cwdRef.current = ev.cwd;
-        onCwd?.(ev.cwd);
+        entry.handlers.onCwd?.(ev.cwd);
         return;
       }
       if (ev.kind === "prompt") {
@@ -918,7 +863,7 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
       term.scrollToLine(Math.max(0, target));
       return true;
     };
-    jumpMarkRef.current = jumpMark;
+    entry.api.jumpMark = jumpMark;
 
     // --- QL-755: sticky command line ---------------------------------------
     // Scrolled back through a long build, the one thing you can't see is which
@@ -970,7 +915,7 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
     // Coalesced: onWriteParsed fires per flush on a chatty pane, and this reads
     // layout. One update per frame is plenty for a one-line label.
     const scheduleSticky = () => { if (!stickyRaf) stickyRaf = requestAnimationFrame(updateSticky); };
-    remeasureOverlaysRef.current = () => { closeHints(); scheduleSticky(); };
+    entry.api.remeasure = () => { closeHints(); scheduleSticky(); };
     // mousedown is swallowed so clicking the strip never steals the caret out
     // of the terminal; the click itself scrolls and hands focus straight back.
     sticky.addEventListener("mousedown", (e) => { e.preventDefault(); e.stopPropagation(); });
@@ -1027,7 +972,6 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
     });
 
     let paneId = 0;
-    let disposed = false;
     let unOut: (() => void) | undefined;
     let unExit: (() => void) | undefined;
     let unState: (() => void) | undefined;
@@ -1111,13 +1055,13 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
       // the mode opened — once those move, every one of them lies.
       closeHints();
       scheduleSticky(); // QL-755
-      if (atBottom()) { linesBehind = 0; onScrollAway?.(0); }
+      if (atBottom()) { linesBehind = 0; entry.handlers.onScrollAway?.(0); }
     });
     const writeDisp = term.onWriteParsed(() => {
       scheduleSticky(); // QL-755: a new mark (or reflow) can change the owner
-      if (atBottom()) { if (linesBehind !== 0) { linesBehind = 0; onScrollAway?.(0); } return; }
+      if (atBottom()) { if (linesBehind !== 0) { linesBehind = 0; entry.handlers.onScrollAway?.(0); } return; }
       linesBehind++;
-      onScrollAway?.(linesBehind);
+      entry.handlers.onScrollAway?.(linesBehind);
     });
 
     const io = new IntersectionObserver((entries) => {
@@ -1126,7 +1070,7 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
       visible = nowVisible;
       if (visible) { flushHidden(); try { fit.fit(); } catch { /* mid-teardown */ } }
     }, { threshold: 0 });
-    io.observe(el);
+    io.observe(host);
 
     // Frontend-computed "waiting" (configurable quiet-threshold): the backend
     // still tells us starting/running/error/idle, but "waiting" is superseded
@@ -1154,7 +1098,7 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
       const text = textDecoder.decode(bytes);
       // UI-135: the agent rang the terminal bell — surface it as a visual pulse
       // (many CLIs ring on "done" or "needs input").
-      if (text.includes("\x07")) onBell?.();
+      if (text.includes("\x07")) entry.handlers.onBell?.();
       // QL-753/757: command marks and cwd reports (these are stripped out of
       // the tail below as plain OSC, so parse first). A cwd report is
       // position-free and applies immediately; a command mark has to wait
@@ -1177,21 +1121,21 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
       for (const m of text.matchAll(/\x1b\]9;4;(\d)(?:;(\d{1,3}))?(?:\x07|\x1b\\)/g)) {
         const state = m[1];
         if (state === "0") {
-          onProgress?.(null);
+          entry.handlers.onProgress?.(null);
           publishPaneProgress(paneId, null);
         } else if (state === "3") {
-          onProgress?.(-1);
+          entry.handlers.onProgress?.(-1);
           publishPaneProgress(paneId, { state: "indeterminate", percent: 0 });
         } else {
           const pct = Math.min(100, parseInt(m[2] ?? "0", 10));
-          onProgress?.(pct);
+          entry.handlers.onProgress?.(pct);
           publishPaneProgress(paneId, { state: state === "2" ? "error" : "normal", percent: pct });
         }
       }
       // UI-141: keep the last meaningful line for the attention queue.
       const clean = outTail.replace(OSC_RE, "").replace(ANSI_RE, "");
       const lines = clean.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-      if (lines.length) onLine?.(lines[lines.length - 1].slice(0, 120));
+      if (lines.length) entry.handlers.onLine?.(lines[lines.length - 1].slice(0, 120));
     };
     const tailShowsPermissionPrompt = () =>
       PERMISSION_PATTERNS.some((re) => re.test(outTail.replace(OSC_RE, "").replace(ANSI_RE, "")));
@@ -1203,10 +1147,10 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
     const armQuietTimer = () => {
       clearQuietTimer();
       quietTimer = setTimeout(() => {
-        if (disposed || !currentlyAlive) return;
+        if (entry.disposed || !currentlyAlive) return;
         localWaiting = true;
-        onState?.(tailShowsPermissionPrompt() ? "permission" : "waiting");
-      }, quietThresholdRef.current);
+        entry.handlers.onState?.(tailShowsPermissionPrompt() ? "permission" : "waiting");
+      }, live.quietMs.current);
     };
     const bumpActivity = () => {
       // Output IS proof of life. The backend also emits pty://state "running",
@@ -1215,9 +1159,9 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
       // contradicting what the user can plainly see.
       if (!currentlyAlive) {
         currentlyAlive = true;
-        onState?.("running");
+        entry.handlers.onState?.("running");
       }
-      if (localWaiting) { localWaiting = false; onState?.("running"); }
+      if (localWaiting) { localWaiting = false; entry.handlers.onState?.("running"); }
       armQuietTimer();
     };
 
@@ -1228,8 +1172,8 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
     // parsed for marks, progress or the permission-prompt tail. The separator
     // is the honesty bit — without it there is no way to tell last week's
     // output from this second's.
-    if (restoredRef.current) {
-      const text = restoredRef.current;
+    if (spec.restoredScrollback) {
+      const text = spec.restoredScrollback;
       term.write(text.endsWith("\n") ? text : `${text}\r\n`);
       term.write("\x1b[2m— restored scrollback ends here —\x1b[0m\r\n");
     }
@@ -1252,7 +1196,7 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
         term.write(e.payload.crashed
           ? "\r\n\x1b[31m[process exited — crashed]\x1b[0m\r\n"
           : "\r\n\x1b[2m[process exited]\x1b[0m\r\n");
-        onExit?.(e.payload.crashed);
+        entry.handlers.onExit?.(e.payload.crashed);
       });
       unState = await listen<{ pane_id: number; state: string }>("pty://state", (e) => {
         if (e.payload.pane_id !== paneId) return;
@@ -1265,40 +1209,40 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
           currentlyAlive = false;
           clearQuietTimer();
         }
-        onState?.(e.payload.state);
+        entry.handlers.onState?.(e.payload.state);
       });
 
       unProc = await listen<{ pane_id: number; name: string }>("pty://proc", (e) => {
         if (paneId === 0) { earlyProc.set(e.payload.pane_id, e.payload.name); return; }
         if (e.payload.pane_id !== paneId) return;
-        onProc?.(e.payload.name);
+        entry.handlers.onProc?.(e.payload.name);
       });
 
       try {
-        paneId = await invoke<number>("pty_spawn", { vendor, cwd, cols: term.cols, rows: term.rows, setup: setup ?? null });
-        paneIdRef.current = paneId;
+        paneId = await invoke<number>("pty_spawn", { vendor: spec.vendor, cwd: spec.cwd, cols: term.cols, rows: term.rows, setup: spec.setup ?? null });
+        entry.ptyId = paneId;
       } catch (err) {
         // UI-11: a raw error string tells the user nothing actionable. Name the
         // likely cause and the fix, keeping the technical detail underneath
         // rather than instead of it.
         const raw = String(err);
         const guess = /not found|no such file|cannot find|not recognized/i.test(raw)
-          ? `${vendor} doesn't look installed, or isn't on your PATH.`
+          ? `${spec.vendor} doesn't look installed, or isn't on your PATH.`
           : /denied|permission/i.test(raw)
-            ? `Windows blocked launching ${vendor} from this folder.`
+            ? `Windows blocked launching ${spec.vendor} from this folder.`
             : /directory|cwd|path/i.test(raw)
               ? "This pane's folder couldn't be opened — it may have been moved or deleted."
-              : `${vendor} couldn't be started.`;
+              : `${spec.vendor} couldn't be started.`;
         term.write(
           `\r\n\x1b[31m${guess}\x1b[0m\r\n` +
           `\x1b[2mCheck Settings > Agents for install and sign-in state, then Restart this pane.\x1b[0m\r\n` +
           `\x1b[2m${raw}\x1b[0m\r\n`
         );
-        onState?.("error");
+        entry.handlers.onState?.("error");
         return;
       }
-      if (setup) onSetupConsumed?.();
-      if (disposed) { invoke("pty_kill", { paneId }); return; }
+      if (spec.setup) entry.handlers.onSetupConsumed?.();
+      if (entry.disposed) { entry.ptyId = 0; invoke("pty_kill", { paneId }); return; }
 
       // Replay buffered output belonging to this pane, then go live.
       for (const p of earlyOut) {
@@ -1307,7 +1251,7 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
       }
       earlyOut.length = 0;
       const bufferedProc = earlyProc.get(paneId);
-      if (bufferedProc) onProc?.(bufferedProc);
+      if (bufferedProc) entry.handlers.onProc?.(bufferedProc);
       earlyProc.clear();
 
       // The container may have resized during the spawn round-trip (the observer
@@ -1318,8 +1262,8 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
       // restore it. Approximates line editing (it does not follow arrow-key
       // cursor movement), which is enough to not lose a typed-but-unsent
       // prompt. Debounced so a fast typist doesn't thrash the session save.
-      if (initialDraft) invoke("pty_write", { paneId, data: initialDraft });
-      let draftBuf = initialDraft ?? "";
+      if (spec.initialDraft) invoke("pty_write", { paneId, data: spec.initialDraft });
+      let draftBuf = spec.initialDraft ?? "";
       let draftTimer: ReturnType<typeof setTimeout> | undefined;
       const saveDraft = () => {
         if (draftTimer) clearTimeout(draftTimer);
@@ -1341,7 +1285,7 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
     // size, and xterm throws on a zero-column fit.
     const ro = new ResizeObserver(() => {
       if (!visible) return;
-      const r = el.getBoundingClientRect();
+      const r = host.getBoundingClientRect();
       if (r.width < 24 || r.height < 24) return;
       // Reflow moves every hint chip off its character; the sticky strip just
       // needs re-measuring against the new cell size.
@@ -1349,7 +1293,7 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
       try { fit.fit(); } catch { /* mid-teardown */ }
       scheduleSticky();
     });
-    ro.observe(el);
+    ro.observe(host);
 
     // Live theme sync: Settings flips `data-theme` on <html> with no event of
     // its own, so watch the attribute directly. Mutates xterm's existing
@@ -1374,8 +1318,7 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
     });
     themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
 
-    return () => {
-      disposed = true;
+    entry.disposers.push(() => {
       if (writeRaf) cancelAnimationFrame(writeRaf);
       clearQuietTimer();
       ro.disconnect();
@@ -1389,14 +1332,11 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
       if (stickyRaf) cancelAnimationFrame(stickyRaf);
       if (serializeIdle) clearTimeout(serializeIdle); // QL-762
       term.textarea?.removeEventListener("blur", hintBlur);
-      el.removeEventListener("mousedown", hintBlur);
+      host.removeEventListener("mousedown", hintBlur);
       hintLayer.remove();
       hintBar.remove();
       sticky.remove();
       for (const m of marks.splice(0)) { m.dec?.dispose(); m.marker.dispose(); }
-      jumpMarkRef.current = () => false;
-      showHintsRef.current = () => false;
-      remeasureOverlaysRef.current = () => {};
       scrollDisp.dispose();
       writeDisp.dispose();
       unOut?.();
@@ -1404,51 +1344,147 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
       unState?.();
       unProc?.();
       publishPaneProgress(paneId, null); // QL-782
-      if (paneId) invoke("pty_kill", { paneId });
-      paneIdRef.current = 0;
-      term.dispose();
-      termRef.current = null;
-      fitRef.current = null;
-      searchAddonRef.current = null;
-      serializeAddonRef.current = null;
-    };
-    // fontSize/ligatures/quietThresholdMs deliberately excluded — none of them
-    // should remount/respawn the PTY, they're applied live by the effects below.
+      entry.api = { jumpMark: () => false, showHints: () => false, remeasure: () => {}, onAttach: () => {} };
+    });
+
+    return entry;
+}
+
+setSessionFactory(createSession);
+
+// One live terminal bound to a PTY in the Rust core. R1: this component no
+// longer OWNS the xterm or the PTY (paneSessions does, keyed by modelId); it
+// attaches the session's persistent host into its own container and detaches
+// on unmount, so a pane changing grid row moves the same terminal instead of
+// killing and respawning the agent.
+export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Terminal(
+  { modelId, vendor, cwd, epoch = 0, setup, onSetupConsumed, initialDraft, restoredScrollback, osc52 = false, fontSize = 12.5, ligatures = false, quietThresholdMs = 3000, onExit, onState, onProc, onBell, onLine, onScrollAway, onProgress, onCwd },
+  ref
+) {
+  const elRef = useRef<HTMLDivElement>(null);
+  const sess = () => getSession(modelId);
+
+  useImperativeHandle(ref, () => ({
+    findNext: (query, opts) =>
+      sess()?.search.findNext(query, { ...opts, decorations: searchDecorations(sess()!.theme.current) } as ISearchOptions) ?? false,
+    findPrevious: (query) =>
+      sess()?.search.findPrevious(query, { decorations: searchDecorations(sess()!.theme.current) } as ISearchOptions) ?? false,
+    clearSearch: () => sess()?.search.clearDecorations(),
+    onSearchResults: (cb) => {
+      const d = sess()?.search.onDidChangeResults(cb);
+      return () => d?.dispose();
+    },
+    clearScrollback: () => sess()?.term.clear(),
+    scrollToBottom: () => sess()?.term.scrollToBottom(),
+    // UX-546/547: whole scrollback as plain text. Walks the buffer rather than
+    // selecting, so it never disturbs the user's own selection.
+    getScrollbackText: () => {
+      const t = sess()?.term;
+      if (!t) return "";
+      const buf = t.buffer.active;
+      const lines: string[] = [];
+      for (let i = 0; i < buf.length; i++) lines.push(buf.getLine(i)?.translateToString(true) ?? "");
+      return lines.join("\n");
+    },
+    getSelection: () => sess()?.term.getSelection() ?? "",
+    selectAll: () => sess()?.term.selectAll(),
+    copySelection: async () => {
+      const sel = sess()?.term.getSelection() ?? "";
+      if (sel) await navigator.clipboard.writeText(sel);
+    },
+    paste: (text: string) => { const id = sess()?.ptyId; if (id) invoke("pty_write", { paneId: id, data: text }); },
+    jumpToCommandMark: (dir) => sess()?.api.jumpMark(dir) ?? false,
+    showQuickHints: () => sess()?.api.showHints() ?? false,
+    // QL-762: try the biggest window first and step down until the result fits
+    // the per-pane byte cap — a pane whose output is mostly colour codes still
+    // gets SOME history back rather than none.
+    serializeScrollback: () => {
+      const addon = sess()?.serialize;
+      if (!addon) return "";
+      for (const scrollback of SCROLLBACK_SAVE_STEPS) {
+        try {
+          // Modes and the alt buffer are deliberately excluded: this string is
+          // replayed into a fresh terminal BEFORE its shell attaches, and
+          // restoring (say) an alt-buffer or bracketed-paste mode the new shell
+          // knows nothing about would leave the pane in a state it can't undo.
+          const out = addon.serialize({ scrollback, excludeModes: true, excludeAltBuffer: true });
+          if (out.length <= SCROLLBACK_SAVE_MAX_CHARS) return out;
+        } catch {
+          return ""; // buffer mid-teardown — no history is better than a throw
+        }
+      }
+      return "";
+    },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [vendor, cwd]);
+  }), [modelId]);
+
+  // The session's callbacks are replaced every render so events always reach
+  // the live PaneView, never a closure from a mount that has since gone.
+  const handlers: PaneHandlers = { onExit, onState, onProc, onBell, onLine, onScrollAway, onProgress, onCwd, onSetupConsumed };
+
+  // Layout effect so the host lands in its new container before paint (no
+  // blank frame), and so in one commit the old owner's detach runs before the
+  // new owner's attach. acquire() is idempotent per (modelId, gen): StrictMode's
+  // mount-cleanup-mount reuses the session, one spawn and zero kills. The
+  // cleanup only DETACHES; killing is paneSessions.dispose()'s job alone.
+  // fontSize/ligatures/quietThresholdMs/osc52 are deliberately not deps (they
+  // are creation-time values here): the effects below apply them live.
+  useLayoutEffect(() => {
+    const el = elRef.current!;
+    acquire(
+      modelId,
+      { vendor, cwd, epoch, setup, initialDraft, restoredScrollback, fontSize, osc52, quietMs: quietThresholdMs },
+      handlers,
+      el
+    );
+    const token = attach(modelId, el);
+    return () => detach(modelId, token);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modelId, vendor, cwd, epoch]);
+
+  useLayoutEffect(() => {
+    const s = getSession(modelId);
+    if (s) s.handlers = handlers;
+  });
 
   // Live font-size zoom: mutate the existing terminal in place, no remount.
   useEffect(() => {
-    fontSizeRef.current = fontSize;
-    const term = termRef.current;
-    if (!term) return;
-    term.options.fontSize = fontSize;
-    try { fitRef.current?.fit(); } catch { /* mid-teardown */ }
-    remeasureOverlaysRef.current(); // QL-754/755: cell size just moved
-  }, [fontSize]);
+    const s = getSession(modelId);
+    if (!s) return;
+    s.live.fontSize.current = fontSize;
+    s.term.options.fontSize = fontSize;
+    try { s.fit.fit(); } catch { /* mid-teardown */ }
+    s.api.remeasure(); // QL-754/755: cell size just moved
+  }, [fontSize, modelId, vendor, cwd, epoch]);
 
   // Ligatures toggle: load/dispose the addon in place.
   useEffect(() => {
-    const term = termRef.current;
-    if (!term) return;
+    const s = getSession(modelId);
+    if (!s) return;
+    s.live.ligatures.current = ligatures;
     if (ligatures) {
       const addon = new LigaturesAddon();
-      term.loadAddon(addon);
-      ligAddonRef.current = addon;
+      s.term.loadAddon(addon);
+      s.ligatures = addon;
     }
-    return () => { ligAddonRef.current?.dispose(); ligAddonRef.current = null; };
-  }, [ligatures]);
+    return () => {
+      try { s.ligatures?.dispose(); } catch { /* term already disposed */ }
+      s.ligatures = null;
+    };
+  }, [ligatures, modelId, vendor, cwd, epoch]);
 
   // Configurable quiet-threshold: takes effect from the next activity cycle
   // (doesn't retroactively reschedule an already-pending timer).
   useEffect(() => {
-    quietThresholdRef.current = quietThresholdMs;
-  }, [quietThresholdMs]);
+    const s = getSession(modelId);
+    if (s) s.live.quietMs.current = quietThresholdMs;
+  }, [quietThresholdMs, modelId, vendor, cwd, epoch]);
 
   // QL-758: the pane menu's OSC 52 toggle, live — no remount, no respawn.
   useEffect(() => {
-    osc52Ref.current = osc52;
-  }, [osc52]);
+    const s = getSession(modelId);
+    if (s) s.live.osc52.current = osc52;
+  }, [osc52, modelId, vendor, cwd, epoch]);
 
   return <div ref={elRef} style={{ width: "100%", height: "100%" }} />;
 });
