@@ -13,6 +13,7 @@ mod hooks;
 mod job;
 mod orphans;
 mod outbuf;
+mod pathcheck;
 mod overlay;
 mod persist;
 mod procname;
@@ -637,6 +638,7 @@ pub fn run() {
         .manage(Registry::default())
         .invoke_handler(tauri::generate_handler![
             pty_spawn,
+            pathcheck::paths_exist,
             pty_write,
             pty_resize,
             pty_kill,
