@@ -462,12 +462,29 @@ fn stage_intent(dir: &Path) {
     let _ = git(dir, &["add", "-N", "."]);
 }
 
+/// Files above this size are reported as binary by the summary WITHOUT git
+/// inflating their blob. `git diff --numstat` decides "binary or text" by
+/// reading each blob's content, so a branch that committed gigabytes of
+/// media (a worktree with 8.5GB of PNGs took 11-14s per summary, every 30s,
+/// on the main thread — the 2026-09-19 lag) was re-inflated on every poll.
+/// Measured there: 8.5s with renames off alone, 4.3s at 8m, 3.3s at 4m,
+/// 2.1s at 1m. 4m keeps every lockfile and generated bundle diffable; a text
+/// file bigger than that is not something the review drawer could show
+/// usefully anyway. `file_diff` is untouched and still diffs it in full.
+const SUMMARY_BIG_FILE_THRESHOLD: &str = "core.bigFileThreshold=4m";
+
 pub fn diff_summary(dir: &Path, base: Option<&str>, include_untracked: bool) -> Result<DiffSummary, String> {
     let anchor = diff_anchor(dir, base)?;
     if include_untracked {
         stage_intent(dir);
     }
-    let out = git(dir, &["diff", "--numstat", &anchor])?;
+    // `--no-renames`: rename detection hashes every added blob against every
+    // deleted one, which alone kept the summary at 8.5s on that worktree even
+    // with the threshold. A rename now lists as a delete plus an add, each
+    // with a real path — the `old => new` form numstat prints for a detected
+    // rename was never parsed here and gave the review drawer a path that
+    // `file_diff` could not open.
+    let out = git(dir, &["-c", SUMMARY_BIG_FILE_THRESHOLD, "diff", "--numstat", "--no-renames", &anchor])?;
     if !out.ok() {
         return Err(explain_git_failure("git diff failed", &out.stderr));
     }
@@ -1004,7 +1021,7 @@ pub fn worktree_list(wt_root: &Path, claimed: &[String]) -> Vec<WorktreeEntry> {
 // Tauri command wrappers
 // ---------------------------------------------------------------------------
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn git_repo_toplevel(cwd: String) -> Option<String> {
     toplevel(Path::new(&cwd))
 }
@@ -1035,13 +1052,13 @@ fn is_flightdeck_worktree(app: &AppHandle, cwd: &str) -> bool {
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn git_diff_summary(app: AppHandle, cwd: String, base: Option<String>) -> Result<DiffSummary, String> {
     let untracked = is_flightdeck_worktree(&app, &cwd);
     diff_summary(Path::new(&cwd), base.as_deref(), untracked)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn git_file_diff(app: AppHandle, cwd: String, base: Option<String>, file: String) -> Result<String, String> {
     let untracked = is_flightdeck_worktree(&app, &cwd);
     file_diff(Path::new(&cwd), base.as_deref(), &file, untracked)
@@ -1054,19 +1071,19 @@ pub fn git_merge_back(app: AppHandle, worktree_path: String, files: Option<Vec<S
     merge_back(&worktrees_root(&app)?, &worktree_path, files.as_deref())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn detect_setup_command(cwd: String) -> Option<String> {
     setup_suggestion(Path::new(&cwd))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn git_worktree_list(app: AppHandle, claimed: Vec<String>) -> Result<Vec<WorktreeEntry>, String> {
     Ok(worktree_list(&worktrees_root(&app)?, &claimed))
 }
 
 /// UI-154: the repo's browsable web URL, from its origin remote. Reuses
 /// compare_url's host parsing so recognition stays consistent with PR handoff.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn git_repo_web_url(cwd: String) -> Option<String> {
     let dir = Path::new(&cwd);
     let remote = git(dir, &["remote", "get-url", "origin"]).ok()?;
@@ -1084,7 +1101,7 @@ pub fn git_repo_web_url(cwd: String) -> Option<String> {
     None
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn git_branch_context(cwd: String, base: Option<String>) -> Result<BranchContext, String> {
     branch_context(Path::new(&cwd), base.as_deref())
 }
@@ -1359,6 +1376,33 @@ mod tests {
             Ok(_) => panic!("a non-repo dir must be a typed error, not Ok garbage"),
         }
         let _ = std::fs::remove_dir_all(&non_repo);
+    }
+
+    /// 2026-09-19 lag: the summary must never inflate a huge blob just to
+    /// learn it is binary. A 9MB text file over the threshold is reported as
+    /// binary by the summary (its lines are not counted), while file_diff —
+    /// which the user asks for one file at a time — still diffs it in full.
+    #[test]
+    fn diff_summary_reports_files_over_the_big_file_threshold_as_binary() {
+        let t = temp_repo();
+        sh(&t.repo, &["checkout", "-b", "feature"]);
+        let big = "x".repeat(1023) + "
+";
+        std::fs::write(t.repo.join("big.txt"), big.repeat(9 * 1024)).unwrap(); // 9MB > 8m
+        std::fs::write(t.repo.join("small.txt"), "one
+two
+").unwrap();
+        sh(&t.repo, &["add", "-A"]);
+        sh(&t.repo, &["commit", "-m", "big"]);
+        let s = diff_summary(&t.repo, Some("main"), false).unwrap();
+        let big = s.files.iter().find(|f| f.path == "big.txt").expect("big.txt is in the summary");
+        assert!(big.binary, "over the threshold: binary, not line-counted");
+        assert_eq!(big.added, 0);
+        let small = s.files.iter().find(|f| f.path == "small.txt").unwrap();
+        assert!(!small.binary);
+        assert_eq!(small.added, 2);
+        let patch = file_diff(&t.repo, Some("main"), "big.txt", false).unwrap();
+        assert!(patch.contains("+xxx"), "file_diff is not bounded by the summary's threshold");
     }
 
     #[test]

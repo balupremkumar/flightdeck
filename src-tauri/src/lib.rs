@@ -95,14 +95,14 @@ struct Entry {
 // First-run detection + the frontend's single source of truth for which
 // agents/shells exist. Env stripping now lives per-adapter in vendors.rs
 // (BASE_ENV_STRIP + PROXY_ENV_STRIP), enforced by its conformance tests.
-#[tauri::command]
+#[tauri::command(async)]
 fn detect_vendors() -> Vec<vendors::VendorInfo> {
     vendors::detect()
 }
 
 // The user-facing manifest folder (#218): where JSON vendor files live. The
 // Settings > Agents "Open vendors folder" button reveals it.
-#[tauri::command]
+#[tauri::command(async)]
 fn manifest_problems() -> Vec<vendors::ManifestProblem> {
     vendors::manifest_problems()
 }
@@ -421,7 +421,7 @@ fn pty_kill(reg: State<Registry>, pane_id: u32) -> Result<(), String> {
 }
 
 // One-level directory listing for the Explorer sidebar (folders first, then files).
-#[tauri::command]
+#[tauri::command(async)]
 fn fs_list_dir(path: String) -> Result<Vec<Entry>, String> {
     let mut out = Vec::new();
     for e in std::fs::read_dir(&path).map_err(|e| e.to_string())? {
@@ -443,7 +443,7 @@ fn fs_list_dir(path: String) -> Result<Vec<Entry>, String> {
 // Read-only file preview (UX-505). Text only, with a size cap so a huge log or
 // a binary can't stall the UI thread. Lossy decode on purpose: a preview should
 // show something useful for a mostly-text file rather than refuse it.
-#[tauri::command]
+#[tauri::command(async)]
 fn fs_read_text_file(path: String) -> Result<String, String> {
     let meta = std::fs::metadata(&path).map_err(|e| e.to_string())?;
     if meta.len() > 5 * 1024 * 1024 {
@@ -455,7 +455,7 @@ fn fs_read_text_file(path: String) -> Result<String, String> {
 
 // Images referenced from a previewed markdown file (UX-508), returned as base64
 // for a data: URI. Never fetched over the network.
-#[tauri::command]
+#[tauri::command(async)]
 fn fs_read_file_base64(path: String) -> Result<String, String> {
     let meta = std::fs::metadata(&path).map_err(|e| e.to_string())?;
     if meta.len() > 10 * 1024 * 1024 {

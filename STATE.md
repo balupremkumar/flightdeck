@@ -10,7 +10,19 @@ hub_you: "Pick and add to the QoL list once it lands."
 
 Vault: [[HOME]] | [[PORTFOLIO|Portfolio]] | [[projects/active/flightdeck/BACKLOG|Backlog]]
 
-Updated: 2026-08-14 (Docker container panel fully planned, parked to BACKLOG DK-1 by Balu; no code changes this session).
+Updated: 2026-09-19 (lag root-caused and fixed on branch flightdeck/pfi232, uncommitted; full roadmap written to BACKLOG.md section N).
+
+## CURRENT 2026-09-19: the "laggy with Antigravity" bug is root-caused and fixed on this branch (uncommitted, not yet cut)
+Symptom: the whole app freezes for seconds whenever the Tappy/Antigravity workspace is on screen. Not Antigravity's fault.
+Root cause, proven E2E: every `#[tauri::command]` was synchronous, and Tauri runs sync commands on the main thread, the same thread that delivers every `invoke` (keystrokes) and every `pty://output` event.
+In the Tappy worktree the diff-badge poll (`git add -N .` + `git diff --numstat <merge-base>`) takes 11-14 s because the branch committed 8.5 GB of PNGs under raw/ that git re-inflates on every numstat, every 30 s.
+Measured on the live 0.5.4: main-thread stalls of 150 ms to 1.4 s on an exact 30 s cadence even with that workspace hidden (git_status + pane_usage polls); a DevTools probe on a canary dev build showed a keystroke-sized invoke waiting 13.3 s behind the diff.
+Fix (6 files): `#[tauri::command(async)]` on the 19 read-only pollers (git_status, git_diff_summary, git_file_diff, branch context, worktree list, pane_usage/subagents/plans/sessions, fs_*, detect_vendors); diff summary runs with `-c core.bigFileThreshold=4m --no-renames` (13.6 s to 3.4 s there); `cachedInvoke` stretches a slow call's TTL (20x its duration, 5 min cap). `pty_*` stay sync so writes keep order.
+After: the same probe shows 2-3 ms invokes while the diff runs. Gates: cargo 198/198 (new test `diff_summary_reports_files_over_the_big_file_threshold_as_binary`), vitest 659 + 1 new, tsc clean.
+Committed 9dd8272 on flightdeck/pfi232 (branch pushed). Balu installs tomorrow.
+NEXT (Balu, from a plain PowerShell window, NOT inside a Flightdeck pane): `cd C:\Users\User\AppData\Roaming\ai.flightdeck.app\worktrees\ee560a59ef1a\pfi232` then `pwsh tools/release.ps1 -Version 0.5.5 -Notes "..."`; the installer lands at `releases\Flightdeck_0.5.5_x64-setup.exe` in that worktree; run it (closes 0.5.4, upgrades in place, keeps sessions and settings). The in-app Settings > About path is not trusted yet.
+NEXT (session): commit the version bump, merge flightdeck/pfi232 to main, then BACKLOG section N tier N1.
+Side finding: the Tappy repo has 8.5 GB of raw PNGs committed on its branch; every git op in that pane is slow for the agent too. A .gitignore/LFS decision is Balu's.
 
 2026-10-04 (later): 20 roadmap decisions LOCKED (brain/rulings.md 2026-10-04, top of the roadmap file). NEXT: Phase 0 on Balu's go (merge origin, CI tsc + browser lane, R1 fix, UNC, manual-release pipeline with archive + auto-backup + revert, Board export + delete).
 2026-10-04: QoL roadmap DELIVERED: docs/plans/qol-roadmap-2026-10-04.md (Fable red-teamed; no code changed). OPEN BUG R1 (reproduced, Playwright on mock): pane reflow (3->4 panes, close, cross-row drag) kills and respawns the agent in the pane that changes row (PaneGrid.tsx:138-141 + Terminal.tsx:1404). Link bugs reproduced in src/linkify.ts (spaced paths split, `~/` broken, wikilinks/bare names unlinked, UNC clickable). Local main 1 ahead / 3 behind origin: reconcile before any build.
