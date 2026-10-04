@@ -286,6 +286,7 @@ pub fn restore_from_point(app: AppHandle, id: String) -> Result<SessionDoc, Stri
 
 #[tauri::command]
 pub fn export_backup(app: AppHandle, dest_path: String) -> Result<(), String> {
+    crate::pathguard::check(&dest_path)?;
     // Reads the raw file directly (not the `load_session` command) so an
     // explicit export always includes the current session even under safe mode.
     let session = read_session_file(&app)?;
@@ -307,6 +308,7 @@ pub fn export_backup(app: AppHandle, dest_path: String) -> Result<(), String> {
 // it straight into the store without a second round trip.
 #[tauri::command]
 pub fn import_backup(app: AppHandle, src_path: String) -> Result<Option<SessionDoc>, String> {
+    crate::pathguard::check(&src_path)?;
     let s = fs::read_to_string(&src_path).map_err(|e| e.to_string())?;
     let bundle: BackupBundle =
         serde_json::from_str(&s).map_err(|e| format!("backup file is corrupt: {e}"))?;

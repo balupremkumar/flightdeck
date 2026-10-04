@@ -1023,6 +1023,7 @@ pub fn worktree_list(wt_root: &Path, claimed: &[String]) -> Vec<WorktreeEntry> {
 
 #[tauri::command(async)]
 pub fn git_repo_toplevel(cwd: String) -> Option<String> {
+    if crate::pathguard::check(&cwd).is_err() { return None; }
     toplevel(Path::new(&cwd))
 }
 
@@ -1030,11 +1031,13 @@ pub fn git_repo_toplevel(cwd: String) -> Option<String> {
 // snake_case params — the frontend invokes with { repoDir }, { worktreePath }.
 #[tauri::command]
 pub fn git_worktree_add(app: AppHandle, repo_dir: String, slug: String) -> Result<WorktreeInfo, String> {
+    crate::pathguard::check(&repo_dir)?;
     worktree_add(&worktrees_root(&app)?, &repo_dir, &slug)
 }
 
 #[tauri::command]
 pub fn git_worktree_remove(app: AppHandle, worktree_path: String, mode: String) -> Result<RemoveOutcome, String> {
+    crate::pathguard::check(&worktree_path)?;
     worktree_remove(&worktrees_root(&app)?, &worktree_path, &mode)
 }
 
@@ -1054,12 +1057,14 @@ fn is_flightdeck_worktree(app: &AppHandle, cwd: &str) -> bool {
 
 #[tauri::command(async)]
 pub fn git_diff_summary(app: AppHandle, cwd: String, base: Option<String>) -> Result<DiffSummary, String> {
+    crate::pathguard::check(&cwd)?;
     let untracked = is_flightdeck_worktree(&app, &cwd);
     diff_summary(Path::new(&cwd), base.as_deref(), untracked)
 }
 
 #[tauri::command(async)]
 pub fn git_file_diff(app: AppHandle, cwd: String, base: Option<String>, file: String) -> Result<String, String> {
+    crate::pathguard::check(&cwd)?;
     let untracked = is_flightdeck_worktree(&app, &cwd);
     file_diff(Path::new(&cwd), base.as_deref(), &file, untracked)
 }
@@ -1068,11 +1073,13 @@ pub fn git_file_diff(app: AppHandle, cwd: String, base: Option<String>, file: St
 /// pre-UI-168 behaviour exactly) or `Some(paths)` to land only those paths.
 #[tauri::command]
 pub fn git_merge_back(app: AppHandle, worktree_path: String, files: Option<Vec<String>>) -> Result<MergeOutcome, String> {
+    crate::pathguard::check(&worktree_path)?;
     merge_back(&worktrees_root(&app)?, &worktree_path, files.as_deref())
 }
 
 #[tauri::command(async)]
 pub fn detect_setup_command(cwd: String) -> Option<String> {
+    if crate::pathguard::check(&cwd).is_err() { return None; }
     setup_suggestion(Path::new(&cwd))
 }
 
@@ -1085,6 +1092,7 @@ pub fn git_worktree_list(app: AppHandle, claimed: Vec<String>) -> Result<Vec<Wor
 /// compare_url's host parsing so recognition stays consistent with PR handoff.
 #[tauri::command(async)]
 pub fn git_repo_web_url(cwd: String) -> Option<String> {
+    if crate::pathguard::check(&cwd).is_err() { return None; }
     let dir = Path::new(&cwd);
     let remote = git(dir, &["remote", "get-url", "origin"]).ok()?;
     if !remote.ok() {
@@ -1103,16 +1111,19 @@ pub fn git_repo_web_url(cwd: String) -> Option<String> {
 
 #[tauri::command(async)]
 pub fn git_branch_context(cwd: String, base: Option<String>) -> Result<BranchContext, String> {
+    crate::pathguard::check(&cwd)?;
     branch_context(Path::new(&cwd), base.as_deref())
 }
 
 #[tauri::command]
 pub fn git_update_from_base(app: AppHandle, worktree_path: String) -> Result<MergeOutcome, String> {
+    crate::pathguard::check(&worktree_path)?;
     update_from_base(&worktrees_root(&app)?, &worktree_path)
 }
 
 #[tauri::command]
 pub fn git_pr_handoff(app: AppHandle, worktree_path: String) -> Result<PrOutcome, String> {
+    crate::pathguard::check(&worktree_path)?;
     pr_handoff(&worktrees_root(&app)?, &worktree_path)
 }
 

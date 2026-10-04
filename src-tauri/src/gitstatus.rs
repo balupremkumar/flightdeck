@@ -56,6 +56,7 @@ fn parse_ahead_behind(out: &str) -> Option<(u32, u32)> {
 // writes keep their order.
 #[tauri::command(async)]
 pub fn git_status(cwd: String) -> GitStatus {
+    if crate::pathguard::check(&cwd).is_err() { return GitStatus { is_repo: false, branch: None, dirty: false, ahead: None, behind: None }; }
     let branch = run_git(&cwd, &["rev-parse", "--abbrev-ref", "HEAD"]);
     let Some(branch) = branch else {
         return GitStatus { is_repo: false, branch: None, dirty: false, ahead: None, behind: None };

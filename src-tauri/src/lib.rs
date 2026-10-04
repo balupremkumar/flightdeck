@@ -14,6 +14,7 @@ mod job;
 mod orphans;
 mod outbuf;
 mod pathcheck;
+mod pathguard;
 mod overlay;
 mod persist;
 mod procname;
@@ -158,6 +159,7 @@ fn pty_spawn(
     rows: u16,
     setup: Option<String>,
 ) -> Result<u32, String> {
+    crate::pathguard::check(&cwd)?;
     let pty_system = native_pty_system();
     let pair = pty_system
         .openpty(PtySize {
@@ -424,6 +426,7 @@ fn pty_kill(reg: State<Registry>, pane_id: u32) -> Result<(), String> {
 // One-level directory listing for the Explorer sidebar (folders first, then files).
 #[tauri::command(async)]
 fn fs_list_dir(path: String) -> Result<Vec<Entry>, String> {
+    pathguard::check(&path)?;
     let mut out = Vec::new();
     for e in std::fs::read_dir(&path).map_err(|e| e.to_string())? {
         let e = e.map_err(|x| x.to_string())?;
@@ -446,6 +449,7 @@ fn fs_list_dir(path: String) -> Result<Vec<Entry>, String> {
 // show something useful for a mostly-text file rather than refuse it.
 #[tauri::command(async)]
 fn fs_read_text_file(path: String) -> Result<String, String> {
+    pathguard::check(&path)?;
     let meta = std::fs::metadata(&path).map_err(|e| e.to_string())?;
     if meta.len() > 5 * 1024 * 1024 {
         return Err("too large to preview (over 5MB)".into());
@@ -458,6 +462,7 @@ fn fs_read_text_file(path: String) -> Result<String, String> {
 // for a data: URI. Never fetched over the network.
 #[tauri::command(async)]
 fn fs_read_file_base64(path: String) -> Result<String, String> {
+    pathguard::check(&path)?;
     let meta = std::fs::metadata(&path).map_err(|e| e.to_string())?;
     if meta.len() > 10 * 1024 * 1024 {
         return Err("too large to preview (over 10MB)".into());
@@ -540,6 +545,7 @@ fn kill_orphans(pids: Vec<u32>) -> Result<(), String> {
 // Redacted support bundle export (204/159) — see support.rs.
 #[tauri::command]
 fn export_support_bundle(app: AppHandle, reg: State<Registry>, dest_path: String) -> Result<(), String> {
+    crate::pathguard::check(&dest_path)?;
     let panes: Vec<support::SupportPaneInput> = {
         let panes = reg.panes.lock().unwrap();
         panes
@@ -779,6 +785,17 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fs_commands_refuse_network_paths() {
+        for p in [r"\\server\share\x", r"/\server\share\x", r"\/server/x", "//server/share", r"\\?\UNC\s\x", r"\\.\pipe\x"] {
+            let e = pathguard::NETWORK_PATH_ERR;
+            assert_eq!(fs_read_text_file(p.into()).unwrap_err(), e, "{p}");
+            assert_eq!(fs_read_file_base64(p.into()).unwrap_err(), e, "{p}");
+            assert_eq!(fs_list_dir(p.into()).map(|_| ()).unwrap_err(), e, "{p}");
+            assert_eq!(reveal::reveal_in_explorer(p.into()).unwrap_err(), e, "{p}");
+        }
+    }
 
     /// Records every write/flush the PTY writer would have seen, so the tests
     /// can assert on syscall shape without a real ConPTY.

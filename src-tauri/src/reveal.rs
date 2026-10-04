@@ -30,6 +30,7 @@ fn spawn_explorer_select(path: &str) -> std::io::Result<std::process::Child> {
 /// window with no feedback that anything went wrong).
 #[tauri::command]
 pub fn reveal_in_explorer(path: String) -> Result<(), String> {
+    crate::pathguard::check(&path)?;
     if !std::path::Path::new(&path).exists() {
         return Err(format!("Path does not exist: {path}"));
     }

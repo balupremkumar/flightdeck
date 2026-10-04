@@ -16,7 +16,7 @@ pub struct PathHit {
 }
 
 fn is_unc(s: &str) -> bool {
-    s.starts_with("\\\\") || s.starts_with("//")
+    crate::pathguard::is_remote_or_device(Path::new(s))
 }
 
 fn has_drive(s: &str) -> bool {
@@ -86,9 +86,12 @@ fn probe(candidate: &str, bases: &[String], home: Option<&Path>) -> Option<(Stri
         return None;
     }
     let try_path = |p: PathBuf| -> Option<(String, bool)> {
+        if crate::pathguard::is_remote_or_device(&p) {
+            return None;
+        }
         let n = normalise(&p);
         let s = n.to_string_lossy();
-        if is_unc(&s) {
+        if crate::pathguard::is_remote_or_device(&n) {
             return None;
         }
         std::fs::metadata(&n).ok().map(|m| (s.into_owned(), m.is_dir()))
@@ -241,6 +244,32 @@ mod tests {
         assert!(r[0].is_none());
         assert!(r[1].is_none());
         assert!(r[2].is_some()); // UNC bases skipped, real base still used
+    }
+
+    #[test]
+    fn mixed_slash_and_device_paths_rejected() {
+        let d = tmp("mixed");
+        fs::write(d.join("f"), "x").unwrap();
+        let bad = [
+            r"/\server\share\x",
+            r"\/server/share/x",
+            r"/\\server\share",
+            r"\\?\UNC\server\share\x",
+            r"\\?\C:\x",
+            r"\\.\pipe\x",
+            "//server/share",
+            "%5C%5Cserver%5Cshare",
+        ];
+        let raws: Vec<String> = bad.iter().map(|b| b.to_string()).collect();
+        let r = resolve_with_home(&raws, &[s(&d)], None);
+        assert!(r.iter().all(|x| x.is_none()));
+        // bad bases are skipped, the real base still resolves
+        let bases = [r"/\server\share".to_string(), r"\/server/x".to_string(), r"\\?\C:\".to_string(), s(&d)];
+        let r = resolve_with_home(&["f".into()], &bases, None);
+        assert_eq!(r[0].as_ref().unwrap().path, s(&d.join("f")));
+        // a UNC raw that follows a `~` expansion is also refused
+        let h = tmp("mixed-home");
+        assert!(resolve_with_home(&[r"~/\server\share".into()], &[], Some(&h))[0].is_none());
     }
 
     #[test]
