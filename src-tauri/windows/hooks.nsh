@@ -11,8 +11,9 @@
 ;                       (the webview's localStorage: all UI settings live there)
 ;
 ; <old-version> comes from last-version.txt, written by the app on every
-; startup (src-tauri/src/updates.rs write_last_version). No marker (first
-; install, or a build from before the marker existed) means "unknown".
+; startup (src-tauri/src/updates.rs write_last_version). No marker (a build
+; from before the marker existed) falls back to the uninstall key's
+; DisplayVersion; neither (first install) means "unknown".
 ;
 ; ${BUNDLEID} is the Tauri identifier, so the canary installer
 ; (ai.flightdeck.canary) backs up its OWN folders, never stable's.
@@ -63,6 +64,11 @@
     StrCpy $R0 $R0 -1
     Goto fd_trim_${ID}
   fd_trimmed_${ID}:
+  ; No marker (builds before 0.5.5 never wrote one): fall back to the version
+  ; the installer registered last time. The hook runs before this install
+  ; rewrites DisplayVersion, so this is still the OLD version.
+  StrCmp $R0 "" 0 +2
+    ReadRegStr $R0 SHCTX "${UNINSTKEY}" "DisplayVersion"
   StrCmp $R0 "" 0 +2
     StrCpy $R0 "unknown"
 
