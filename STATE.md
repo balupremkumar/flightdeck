@@ -2,9 +2,9 @@
 hub_updated: 2026-10-04
 hub_status: paused
 hub_lane: products
-hub_last: "QoL roadmap review under way: Ledger, history, competitor and VS Code research; link bugs reproduced in linkify.ts."
-hub_next: "Deliver the red-teamed QoL list, then phase it with Balu; Codex plan decisions still open."
-hub_you: "Pick and add to the QoL list once it lands."
+hub_last: "Phase 6 + TN (Claude output one line per action) + Phase 4 S1-S3 merged to main, gated; not released."
+hub_next: "Resume from docs/plans/RESUME-2026-10-05.md: Phase 4 S4-S10, Phase 5 Home, Fable red team, 0.6.0 Canary."
+hub_you: "Say go for Phase 4; install and run the 0.6.0 checklist when it is cut."
 ---
 # STATE — Flightdeck
 

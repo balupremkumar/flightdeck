@@ -21,3 +21,12 @@ Fixed by marking the read-only pollers `(async)`, bounding the summary with core
 Agy itself was working (generating Tappy images: 10-50% CPU, 3.5 MB/s reads), which is legitimate and unrelated.
 Roadmap written from the Idea Ledger (daily AI Pulse routine), BACKLOG sections A/I/K/DK-1 and the review findings: BACKLOG.md section N.
 Uncommitted at session end; Balu to review, commit and cut 0.5.5.
+
+## 2026-10-04 night: Phase 6 + TN merged to main
+Resumed the QoL run. TN (terminal noise) built: Chat default for Claude panes, one activity line per burst of tool work with narration folded in (real busy turn 16 -> 4 rows), subagent lines, per-turn change row, Focus mode turns on Claude's focus view via a Flightdeck-owned --settings file.
+Phase 6 finished: Settings search, all-projects regex session search, MCP health chip, hook-driven permission state, OSC 9;4 busy, copy-on-select and right-click paste, Claude theme match, Catppuccin, queued-prompt chip, port and PR/CI chips.
+Phase 4 S1-S3 (ring, reattach after reload, reaper) merged with Fable red-team fixes (unbounded ring on LF-free TUIs, wrong-agent attach, poison-tolerant locks).
+Phase 6 Fable red team: 4 should-fix (dead busy signal, right-click paste could answer a permission prompt, dead right-click on classic Claude panes, sticky MCP chip), all fixed; design critique 13 fixes applied.
+Flakes fixed: Vite watched .claude/ agent worktrees (mid-test reloads); preview-split fixed sleep.
+Rulings: subagents on explicit cheap models; red team Sonnet per phase, one Fable before release; side-chat parked (BACKLOG NH1); report and stop after each phase.
+main af0412d..4d50752 pushed. Gate: tsc 0, vitest 1339, cargo 364, build OK, 13 e2e PASS. Resume: docs/plans/RESUME-2026-10-05.md.
