@@ -28,6 +28,7 @@ import {
   HOOKS_CHANGED_EVENT,
   hooksInstalled,
 } from "./settingsStore";
+import { playNeedsYouChime } from "./needsYouSound";
 import "./Notifications.css";
 
 // All configurable states, approval/waiting/error first since those are the
@@ -47,28 +48,6 @@ const KIND_SETTING_KEY: Record<AttentionKind, PaneState> = {
 };
 
 const KIND_ORDER: AttentionKind[] = ["permission", "error", "question"];
-
-// Short sine chime via WebAudio — no bundled asset, degrades silently if the
-// AudioContext API is unavailable (e.g. autoplay-blocked before user gesture).
-function playChime() {
-  try {
-    const w = window as unknown as { AudioContext?: typeof AudioContext; webkitAudioContext?: typeof AudioContext };
-    const Ctx = w.AudioContext ?? w.webkitAudioContext;
-    if (!Ctx) return;
-    const ctx = new Ctx();
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = "sine";
-    osc.frequency.value = 880;
-    gain.gain.setValueAtTime(0.0001, ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.16, ctx.currentTime + 0.02);
-    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.32);
-    osc.connect(gain).connect(ctx.destination);
-    osc.start();
-    osc.stop(ctx.currentTime + 0.34);
-    osc.onended = () => ctx.close();
-  } catch { /* audio unavailable — non-critical, skip */ }
-}
 
 // OS toast via the standard web Notification API (no Tauri notification
 // plugin is registered in src-tauri; this works inside the webview without
@@ -367,6 +346,7 @@ function NeedsYouRow({ item, onJump, onSnooze }: { item: AttentionItem; onJump: 
 // and per-workspace mute + do-not-disturb. Mount once: <Notifications />.
 export function Notifications() {
   const workspaces = useApp((s) => s.workspaces);
+  const activeId = useApp((s) => s.activeId);
   const switchWorkspace = useApp((s) => s.switchWorkspace);
   const focusPane = useApp((s) => s.focusPane);
   const setPaneState = useApp((s) => s.setPaneState);
@@ -522,7 +502,7 @@ export function Notifications() {
 
         const muted = notify.dnd || notify.mutedWorkspaces.includes(w.id) || focusMode;
         if (muted) continue;
-        if (notify.sound) playChime();
+        playNeedsYouChime(p.id, activeId, workspaces);
         if (notify.osToast && notify.osToastOn[KIND_SETTING_KEY[kind]] && !document.hasFocus()) {
           // The toast carries WHAT is being asked, not just that something is:
           // the pane's last output line, same text the bell dropdown shows.
