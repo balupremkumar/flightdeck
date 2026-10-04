@@ -18,7 +18,7 @@ import { Unicode11Addon } from "@xterm/addon-unicode11";
 import "@xterm/xterm/css/xterm.css";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { OutputPipe, attachFirst, type OutputEvt } from "./ptyAttach";
+import { OutputPipe, attachFirst, attachPlan, type OutputEvt } from "./ptyAttach";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { terminalThemeFor } from "./terminal-theme";
 import { getTerminalSettings, terminalReadabilityOptions } from "./settingsStore";
@@ -1562,6 +1562,7 @@ function createSession(modelId: number, gen: string, spec: SpawnSpec, handlers: 
       if (entry.disposed) { entry.ptyId = 0; invoke("pty_kill", { paneId }); return; }
 
       let attachSize: { cols: number; rows: number } | null = null;
+      let attachBodyLen = 0;
       if (hit) {
         // Paint the ring into a clean terminal at the width it was written for.
         // Straight through term.write like restored scrollback: it is history,
@@ -1569,9 +1570,12 @@ function createSession(modelId: number, gen: string, spec: SpawnSpec, handlers: 
         // ~600 bytes prime the permission-prompt tail.
         const { cols, rows, snapshot, proc_name } = hit.info;
         if (cols && rows && cols >= 2 && rows >= 2) { term.resize(cols, rows); attachSize = { cols, rows }; }
-        term.reset();
         const head = decodeB64(snapshot.head);
         const body = decodeB64(snapshot.body);
+        attachBodyLen = body.length;
+        // A tiny snapshot (resized plain shell) would wipe the restored
+        // scrollback and leave a blank pane: keep it, the agent is nudged below.
+        if (attachPlan(body.length, !!spec.restoredScrollback, false).reset) term.reset();
         const replay = new Uint8Array(head.length + body.length);
         replay.set(head, 0);
         replay.set(body, head.length);
@@ -1597,6 +1601,11 @@ function createSession(modelId: number, gen: string, spec: SpawnSpec, handlers: 
       if (hit) {
         fitSane();
         if (!attachSize || attachSize.cols !== term.cols || attachSize.rows !== term.rows) {
+          invoke("pty_resize", { paneId, cols: term.cols, rows: term.rows });
+        } else if (attachPlan(attachBodyLen, !!spec.restoredScrollback, true).nudge && term.cols > 2) {
+          // Same size, so no SIGWINCH would fire: wiggle one column to make the
+          // agent redraw into the (now sparse) terminal.
+          invoke("pty_resize", { paneId, cols: term.cols - 1, rows: term.rows });
           invoke("pty_resize", { paneId, cols: term.cols, rows: term.rows });
         }
       } else {

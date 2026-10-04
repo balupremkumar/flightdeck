@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { OutputPipe, attachFirst, type AttachInfo, type OutputEvt } from "./ptyAttach";
+import { OutputPipe, attachFirst, attachPlan, type AttachInfo, type OutputEvt } from "./ptyAttach";
 
 const b64 = (s: string) => btoa(s);
 const evt = (pane_id: number, text: string, seq?: number): OutputEvt => ({ pane_id, b64: b64(text), seq });
@@ -112,5 +112,15 @@ describe("attach-then-subscribe", () => {
     let seen: unknown;
     await attachFirst(async <T,>(_c: string, a?: Record<string, unknown>) => { seen = a; return null as T; }, pipe, 42, "7|codex|D:\\p");
     expect(seen).toEqual({ modelId: 42, gen: "7|codex|D:\\p" });
+  });
+});
+
+describe("attachPlan", () => {
+  it("keeps restored scrollback and nudges a redraw after a tiny snapshot", () => {
+    expect(attachPlan(40, true, true)).toEqual({ reset: false, nudge: true });
+  });
+  it("resets a clean terminal for a real snapshot, or when nothing was restored", () => {
+    expect(attachPlan(100_000, true, true)).toEqual({ reset: true, nudge: false });
+    expect(attachPlan(40, false, false)).toEqual({ reset: true, nudge: false });
   });
 });

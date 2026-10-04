@@ -92,3 +92,21 @@ export async function attachFirst<E extends { pane_id: number; seq?: number }>(
   if (!info) return null;
   return { info, early: pipe.bind(info.pty_id, info.snapshot.next_seq) };
 }
+
+/** Snapshot bodies at or under this are "nothing worth replaying": a pty_resize
+ *  trims the ring to its last safe mark, so a resized plain shell replays a
+ *  prompt at most. */
+export const TINY_SNAPSHOT_BYTES = 512;
+
+/** What to do with the terminal on an attach hit. A tiny snapshot must not wipe
+ *  the restored scrollback painted before the attach (reset: false), and when the
+ *  pty already has our size no resize will happen, so the agent gets a one-column
+ *  wiggle to redraw itself (nudge: true). */
+export function attachPlan(
+  bodyBytes: number,
+  hasRestoredScrollback: boolean,
+  sizeMatches: boolean,
+): { reset: boolean; nudge: boolean } {
+  const tiny = bodyBytes <= TINY_SNAPSHOT_BYTES;
+  return { reset: !(tiny && hasRestoredScrollback), nudge: tiny && sizeMatches };
+}
