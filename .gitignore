@@ -32,3 +32,4 @@ releases
 
 # Agent worktrees
 .claude/worktrees/
+e2e/shots/
