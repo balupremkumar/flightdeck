@@ -317,3 +317,31 @@ describe("TN4 change row", () => {
     expect(changeLabel(["/p/src/x.ts"], 0, 0, "/p")).toBe("Changed src/x.ts");
   });
 });
+
+describe("TN6 density measure", () => {
+  // A realistic multi-file edit turn: prompt, prose, 6 Edits over 4 files, 3 Bash, 8 Reads, 2 Grep, a subagent, closing prose.
+  const turn = () => {
+    const recs: ChatRecord[] = [user("Wire the uploader through the new limiter"), say("Reading the modules, then changing four files.")];
+    for (let i = 0; i < 8; i++) recs.push(use(`r${i}`, "Read", `src/m${i}.ts`, [`/p/src/m${i}.ts`]), res(`r${i}`, "ok"));
+    const edits: [string, string][] = [["e1", "a"], ["e2", "b"], ["e3", "b"], ["e4", "c"], ["e5", "d"], ["e6", "d"]];
+    edits.forEach(([id, f], i) => {
+      recs.push(use(id, "Edit", `src/${f}.ts`, [`/p/src/${f}.ts`], 5, 1), res(id, "ok"));
+      if (i === 0) recs.push(use("b1", "Bash", "npm run build"), res("b1", "ok"));
+    });
+    recs.push(use("b2", "Bash", "npm test"), res("b2", "ok"), use("b3", "Bash", "npm run lint"), res("b3", "ok"));
+    recs.push(use("g1", "Grep", "limiter"), res("g1", "ok"), use("g2", "Grep", "TODO"), res("g2", "ok"));
+    recs.push(use("ag", "Agent", "Build element 11"), res("ag", "done"));
+    recs.push(say("All four files are updated and the checks pass."));
+    return buildTurns(recs)[0];
+  };
+  const rows = (t: ReturnType<typeof turn>, normal: boolean) =>
+    (normal ? foldActivity(t.items) : t.items).length + (t.files.length ? 1 : 0);
+
+  it("Normal renders the turn in at most 5 rows below the prompt; Verbose keeps every group", () => {
+    const t = turn();
+    expect(rows(t, true)).toBeLessThanOrEqual(5);
+    expect(rows(t, false)).toBeGreaterThan(rows(t, true));
+    const a = foldActivity(t.items)[1];
+    expect(a.kind === "activity" && activityLabel(a.calls, 0)).toBe("Edited 4 files, ran 3 commands, read 8 files +3 more");
+  });
+});

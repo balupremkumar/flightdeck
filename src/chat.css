@@ -101,3 +101,4 @@
 .chat-subturn + .chat-subturn { margin-top: 6px; }
 .chat-empty-btn { margin-top: 10px; border: 1px solid var(--line-strong); background: var(--surface-2); border-radius: 8px; padding: 4px 12px; color: var(--text); }
 .chat-empty-btn:hover { border-color: var(--accent); }
+.chat-chip.sub .chat-now { flex-shrink: 0; }

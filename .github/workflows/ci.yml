@@ -79,6 +79,10 @@ jobs:
         working-directory: e2e
         run: node chat-view.mjs
 
+      - name: Chat density (Normal vs Verbose)
+        working-directory: e2e
+        run: node chat-density.mjs
+
   backend:
     name: Backend (Cargo)
     # The Rust crate calls Win32 APIs (Job Objects, process/thread control),

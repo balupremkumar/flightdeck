@@ -701,6 +701,7 @@ index 3c92f1a..7d40b2e 100644
     pane_usage: ({ cwd }) => (/acme/.test(String(cwd)) ? { ...getRepo(cwd).usage } : null),
 
     // Session
+    session_subagents: () => [], // TN3: no subagent transcripts unless a test overrides this
     is_safe_mode: () => false,
     has_previous_session: () => true,
     load_session: () => JSON.parse(JSON.stringify(SESSION_DOC)),

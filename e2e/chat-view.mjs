@@ -114,6 +114,10 @@ await page.evaluate(() => { window.__calls.length = 0; });
 await pane.locator('.pview-toggle button[aria-label^="Chat"]').click();
 check(await has(".chat"), "Chat button switches the pane to chat");
 check(await has(".chat-chip"), "session records render as chips");
+// TN2: Normal folds tool runs into activity lines (more in chat-density.mjs); the rest of this suite asserts today's chips, i.e. Verbose.
+check(!(await chipTexts()).some((t) => /npm test|fix-only/.test(t)), "Normal keeps the folded commands out of sight until the activity line is opened");
+await page.locator('.chat-seg button:has-text("Verbose")').click();
+check(await has(".chat-group .chat-chip"), "Verbose shows today's chips");
 await shot("chips");
 
 const chips = await chipTexts();
@@ -121,9 +125,8 @@ console.log("   chips: " + JSON.stringify(chips));
 check(chips.some((t) => /^Edited src\/api\/upload\.ts \+3 -1$/.test(t)), 'Edit chip reads "Edited src/api/upload.ts +3 -1"');
 check(chips.some((t) => /^Ran git status$/.test(t)), 'Bash chip reads "Ran git status"');
 check(chips.some((t) => /^Ran 2 commands$/.test(t)), 'consecutive Bash calls fold into "Ran 2 commands"');
-check(!chips.some((t) => /npm test|fix-only/.test(t)), "folded commands are not shown individually until opened");
-check((await page.locator(".chat-sub .chat-chip").count()) === 1, "sidechain records appear as one collapsed Subagent chip");
-check((await page.locator(".chat-group .chat-chip.err").count()) === 1, "group containing an error result is flagged failed");
+check((await page.locator(".chat-sub > .chat-chip").count()) === 1, "sidechain records appear as one collapsed Subagent chip");
+check((await page.locator(".chat-group > .chat-chip.err").count()) === 1, "group containing an error result is flagged failed");
 
 // Expanding a chip fetches session_record and shows the diff.
 await page.evaluate(() => { window.__calls.length = 0; });
@@ -150,7 +153,7 @@ check(await gone(".chat-find"), "Escape closes the chat find box");
 // "N files changed" opens Review AT the file (list for several, direct for one).
 const filesBtns = page.locator(".chat-files");
 check((await filesBtns.count()) === 2, "each turn that edited files has a files-changed button");
-await filesBtns.first().click();
+await filesBtns.first().locator(".chat-files-caret").click();
 check(await has(".chat-filelist"), "a turn with several files offers a file list");
 await page.locator(".chat-filelist .chat-link", { hasText: "other.ts" }).click();
 check(await has(".rv-drawer .rv-patch-file"), "Review drawer opens from the chat");
@@ -159,7 +162,7 @@ await shot("review-at-file");
 await page.keyboard.press("Escape");
 check(await gone(".rv-drawer"), "Escape closes Review");
 await page.locator(".chat-files").nth(1).scrollIntoViewIfNeeded();
-await page.locator(".chat-files").nth(1).click();
+await page.locator(".chat-files").nth(1).locator(".chat-files-main").click();
 check(await cond(() => document.querySelector(".rv-patch-file")?.textContent === "src/lone.ts"), "a single-file turn opens Review directly at that file (src/lone.ts)");
 await page.keyboard.press("Escape");
 await gone(".rv-drawer");
