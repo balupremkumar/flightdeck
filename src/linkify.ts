@@ -220,6 +220,8 @@ function parseWhole(inner: string, mode: "quote" | "tick" | "angle" | "md"): Who
   }
   if (!raw || /^\s|\s$/.test(raw) || /[|*?"<>]/.test(raw) || !/[A-Za-z]/.test(raw)) return null;
   if (/^\.+$/.test(lastSeg(raw)) && !/[\\/]$/.test(raw)) return null;
+  if (/^\\[^\\]*$/.test(raw)) return null; // `\r`, `\n`: escapes, not paths
+  if (!/[\\/]/.test(raw) && raw[0] === ".") return null; // `.json`: a bare extension, not a file
   const hasSep = /[\\/]/.test(raw);
   const strong = STRONG_RE.test(raw);
   const prefix = PREFIX_RE.test(raw);

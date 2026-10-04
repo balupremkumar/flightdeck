@@ -388,6 +388,46 @@ describe("linkify L1 — wikilinks", () => {
   });
 });
 
+// Real lines mined from agent transcripts (docs/plans/phase1-link-fixtures.txt),
+// hand-checked. A trailing "?" marks an unverified (delimited:false) candidate.
+describe("linkify L1 — real transcript lines", () => {
+  const fmt = (s: string) => linkify(s).map((m) => s.slice(m.start, m.end) + (m.delimited ? "" : "?"));
+  const cases: [string, string[]][] = [
+    ["5. Confirm `%APPDATA%\\ai.flightdeck.canary\\backups\\` has a folder containing `complete.txt`.",
+      ["%APPDATA%\\ai.flightdeck.canary\\backups\\", "complete.txt?"]],
+    ["- unquoted paths with spaces (`Client\\...`) split into two broken links", []],
+    ["- **Each install backs up your sessions.** `tools\\revert.ps1` puts the old version back", ["tools\\revert.ps1"]],
+    ["- **Network paths (`\\\\server\\...`) are no longer clickable.**", []],
+    ["- **Phase 1:** the plan is written (`docs\\plans\\phase1-links.md`) and four agents are running", ["docs\\plans\\phase1-links.md"]],
+    ['1. Client. From a plain PowerShell window, run `pwsh tools\\release.ps1 -Version 0.5.5 -Notes "QoL phase 0"`.', ["tools\\release.ps1"]],
+    ["recorded in `brain\\rulings.md` (2026-10-04 entry), the top of `docs\\plans\\qol-roadmap-2026-10-04.md`, and STATE.md.",
+      ["brain\\rulings.md", "docs\\plans\\qol-roadmap-2026-10-04.md", "STATE.md?"]],
+    ["its dossier is at `D:\\Dev\\ai\\research\\vscode-qol-for-flightdeck-2026-10`. I'm correcting two of its claims",
+      ["D:\\Dev\\ai\\research\\vscode-qol-for-flightdeck-2026-10"]],
+    ["blocked because a `C:\\` argument appeared in the same block as `Remove-Item`.", ["C:\\"]],
+    ["worktree copies under `.claude\\worktrees` (219 files instead of 44).", [".claude\\worktrees?"]],
+    ["`\\r` got eaten. Fix with Edit.", []],
+    ["| 0.5b | Archive every installer forever in `releases\\archive\\<version>` | Haiku |", ["releases\\archive\\?"]],
+    ["its weekly sync to `IDEAS.md` isn't running: the file doesn't exist.", ["IDEAS.md?"]],
+    ["- **Branch:** all Phase 0 work is on `qol/phase-0`, so main stays the version you can release.", ["qol/phase-0?"]],
+    ["- **Links break on common shapes** (tested against `src/linkify.ts`):", ["src/linkify.ts"]],
+    ["but `Terminal.tsx:154-160` does.", ["Terminal.tsx:154-160?"]],
+    ["| 1.2e | More line-number formats: `#L12`, `, line 12`, `12:5-20` | Sonnet | VS Code |", []],
+    ["every clicked path, folders and `.json` files", []],
+    ["| 1.2d | Client Bash `/c/` and WSL `/mnt/d/` paths | Haiku | VS Code |", ["/c/?", "/mnt/d/"]],
+    ["| 1.2c | Expand `~` to your home folder | Haiku | iTerm2 |", []],
+    ["STATE.md is updated: `main` pushed, 0.5.5 mid-build", ["STATE.md?"]],
+    ["Both sides added a new section at the end of BACKLOG.md (OC-1 locally, roadmap section N on origin).", ["BACKLOG.md?"]],
+    ["Now splice, fix imports, main.tsx, palette, Rust.", ["main.tsx?"]],
+    ["Local `main` is 3 commits behind GitHub; the September lag fix isn't on it.", []],
+    ["- **Pushed:** `main` is on GitHub, so the CI checks will run there.", []],
+    ["local `main` and `origin/main` have split.", ["origin/main?"]],
+  ];
+  it.each(cases)("%s", (line, expected) => {
+    expect(fmt(line)).toEqual(expected);
+  });
+});
+
 describe("linkify L1 — misc", () => {
   it("file:/// url yields the drive path", () => {
     expect(linkify("file:///D:/Dev/ai/HOME.md")[0]).toMatchObject({ kind: "path", raw: "D:/Dev/ai/HOME.md" });
