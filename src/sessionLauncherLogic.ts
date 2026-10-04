@@ -22,6 +22,26 @@ import { bytes } from "./format";
  *  chip's data source implies: no transcript, nothing to show). */
 export const RESUME_VENDOR = "claude";
 
+/** Vendors whose past sessions the launcher can list and reopen. Codex keeps
+ *  rollouts under ~/.codex/sessions (codexsessions.rs) and reopens one with
+ *  `codex resume <uuid>`. */
+export const RESUME_VENDORS = ["claude", "codex"] as const;
+export function canResume(vendor: string): boolean {
+  return (RESUME_VENDORS as readonly string[]).includes(vendor);
+}
+/** Codex has no fork. */
+export function supportsFork(vendor: string): boolean {
+  return vendor === "claude";
+}
+/** Backend command that lists this vendor's past sessions for a folder. */
+export function listCommandFor(vendor: string): string {
+  return vendor === "codex" ? "list_codex_sessions" : "list_claude_sessions";
+}
+/** Deep (full-text) search only exists for Claude's transcripts. */
+export function supportsDeepSearch(vendor: string): boolean {
+  return vendor === "claude";
+}
+
 export const OPEN_EVENT = "flightdeck:session-launcher";
 
 export interface ClaudeSession {
@@ -57,6 +77,14 @@ export function resumeArgs(sessionId: string, fork: boolean): string[] {
   return fork ? ["--resume", sessionId, "--fork-session"] : ["--resume", sessionId];
 }
 
+/** Per-vendor argv that reopens `sessionId`. Claude as `resumeArgs`; Codex is
+ *  `resume <uuid>` and never forks (the flag is ignored). The backend only
+ *  accepts exactly that shape for codex, since it lands in a pwsh -Command line. */
+export function resumeArgsFor(vendor: string, sessionId: string, fork: boolean): string[] {
+  if (vendor === "codex") return ["resume", sessionId];
+  return resumeArgs(sessionId, fork);
+}
+
 /** "claude-opus-4-1-20250805" -> "opus 4.1", "claude-3-5-haiku-20241022" ->
  *  "haiku 3.5". Unknown ids fall back to the id with the date stamp dropped,
  *  so a model this doesn't know still reads as something. */
@@ -80,7 +108,9 @@ export function modelShort(model: string | null | undefined): string {
  *  the transcript states the window, so this is the one inferred number in the
  *  chip — every other figure in the tooltip is read straight off the file. */
 export const DEFAULT_CONTEXT_WINDOW = 200_000;
-export function contextWindowFor(model: string | null | undefined): number {
+export function contextWindowFor(model: string | null | undefined, reported?: number | null): number {
+  // Codex rollouts state their own window (model_context_window): trust it.
+  if (reported && reported > 0) return reported;
   return model && /(\[1m\]|-1m\b)/i.test(model) ? 1_000_000 : DEFAULT_CONTEXT_WINDOW;
 }
 
@@ -191,7 +221,7 @@ export async function launchResume(
     await invoke("stage_launch_args", {
       vendor: pane.vendor,
       cwd: pane.cwd,
-      args: resumeArgs(sessionId, fork),
+      args: resumeArgsFor(pane.vendor, sessionId, fork),
     });
   } catch {
     return false;

@@ -9,7 +9,7 @@ vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn(), openPath: vi.fn(
 import type { ClaudeSession, SessionSearchHit } from "./SessionLauncher";
 
 const {
-  resumeArgs, modelShort, contextWindowFor, filterSessions, sessionWeight,
+  resumeArgs, resumeArgsFor, canResume, supportsFork, supportsDeepSearch, listCommandFor, modelShort, contextWindowFor, filterSessions, sessionWeight,
   groupHits, highlightParts,
   DEFAULT_CONTEXT_WINDOW, RESUME_VENDOR, MIN_SEARCH_CHARS, SEARCH_DEBOUNCE_MS,
 } = await import("./SessionLauncher");
@@ -36,6 +36,35 @@ describe("resumeArgs (QL-764)", () => {
 
   it("only ever applies to the Claude vendor", () => {
     expect(RESUME_VENDOR).toBe("claude");
+  });
+});
+
+describe("per-vendor resume (Codex)", () => {
+  it("claude args are unchanged", () => {
+    expect(resumeArgsFor("claude", "abc", false)).toEqual(["--resume", "abc"]);
+    expect(resumeArgsFor("claude", "abc", true)).toEqual(["--resume", "abc", "--fork-session"]);
+  });
+
+  it("codex is `resume <id>` and never forks", () => {
+    const id = "0199aaaa-1111-7222-8333-444455556666";
+    expect(resumeArgsFor("codex", id, false)).toEqual(["resume", id]);
+    expect(resumeArgsFor("codex", id, true)).toEqual(["resume", id]);
+  });
+
+  it("gates by vendor", () => {
+    expect(canResume("claude") && canResume("codex")).toBe(true);
+    expect(canResume("agy") || canResume("pwsh")).toBe(false);
+    expect(supportsFork("codex")).toBe(false);
+    expect(supportsFork("claude")).toBe(true);
+    expect(supportsDeepSearch("codex")).toBe(false);
+    expect(listCommandFor("codex")).toBe("list_codex_sessions");
+    expect(listCommandFor("claude")).toBe("list_claude_sessions");
+  });
+
+  it("a rollout-reported context window beats the model table", () => {
+    expect(contextWindowFor("gpt-5-codex", 272_000)).toBe(272_000);
+    expect(contextWindowFor("gpt-5-codex", null)).toBe(DEFAULT_CONTEXT_WINDOW);
+    expect(contextWindowFor("gpt-5-codex", 0)).toBe(DEFAULT_CONTEXT_WINDOW);
   });
 });
 

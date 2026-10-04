@@ -24,7 +24,7 @@ import { closePaneWithCleanup } from "./worktrees";
 import { Transcript } from "./TranscriptView";
 import { extractLastCommand, redactText, scrollbackFilename, toLines } from "./transcript";
 import { SelectionToolbar, GroupsPanel, SessionSnapshots } from "./PaneOps";
-import { openSessionLauncher, modelShort, contextWindowFor, RESUME_VENDOR } from "./sessionLauncherLogic";
+import { openSessionLauncher, modelShort, contextWindowFor, canResume, RESUME_VENDOR } from "./sessionLauncherLogic";
 import { SubagentTree, subagentChipLabel, type SubagentCount } from "./SubagentTreeView";
 import { PlanPanel, pendingPlan, planChipTitle, PLAN_APPROVE_KEYS, type PlanEntry } from "./PlanPanelView";
 import { parseWorkspaceDef, serializeWorkspaceExport } from "./snapshots";
@@ -647,15 +647,20 @@ function PaneViewInner({
     lastCacheReadTokens: number;
     lastCacheCreationTokens: number;
     lastOutputTokens: number;
+    // Codex only (null for Claude): the window the rollout states, and plan
+    // rate-limit usage from its rate_limits block.
+    contextWindow?: number | null;
+    planUsedPercent5h?: number | null;
+    planUsedPercentWeek?: number | null;
   }
   const [usage, setUsage] = useState<PaneUsage | null>(null);
   usePoll(async () => {
     try {
-      setUsage(await cachedInvoke<PaneUsage | null>("pane_usage", { cwd: pane.cwd }, 7000));
+      setUsage(await cachedInvoke<PaneUsage | null>("pane_usage", { vendor: pane.vendor, cwd: pane.cwd }, 7000));
     } catch {
       setUsage(null);
     }
-  }, 15000, [pane.cwd, pane.epoch], paneVisible);
+  }, 15000, [pane.cwd, pane.vendor, pane.epoch], paneVisible);
 
   // QL-769/770: subagent fan-out and plan mode, both read from the same Claude
   // Code transcripts the chip above reads — so both are Claude-only, and a pane
@@ -1000,7 +1005,7 @@ function PaneViewInner({
           // QL-765: the window is the ONE inferred number here (see
           // contextWindowFor's comment) — everything else in the tooltip is the
           // latest turn's own usage block, read straight off the transcript.
-          const CONTEXT_WINDOW = contextWindowFor(usage.model);
+          const CONTEXT_WINDOW = contextWindowFor(usage.model, usage.contextWindow);
           const pct = usage.contextTokens / CONTEXT_WINDOW;
           const level = pct >= 0.9 ? "crit" : pct >= 0.7 ? "warn" : "";
           const cached = usage.lastCacheReadTokens + usage.lastCacheCreationTokens;
@@ -1018,6 +1023,10 @@ function PaneViewInner({
                 (usage.contextTokens > 0 ? ` (${Math.round((cached / usage.contextTokens) * 100)}% of the prompt)` : "") + `
 ` +
                 `output so far: ${num(usage.outputTokens)} across ${num(usage.turns)} turns` +
+                (usage.planUsedPercent5h != null ? `
+5h plan limit: ${Math.round(usage.planUsedPercent5h)}% used` : "") +
+                (usage.planUsedPercentWeek != null ? `
+weekly plan limit: ${Math.round(usage.planUsedPercentWeek)}% used` : "") +
                 (level ? `
 
 Running low — consider /compact in this pane.` : "")
@@ -1207,7 +1216,7 @@ Running low — consider /compact in this pane.` : "")
               {/* QL-764: reopen one of this folder's past sessions in a new
                   pane (--resume, or --fork-session from the launcher). Claude
                   Code only — nothing else writes the transcripts it reads. */}
-              {pane.vendor === RESUME_VENDOR && (
+              {canResume(pane.vendor) && (
                 <button className="pmenu-item" onClick={() => { setMenuOpen(false); openSessionLauncher(pane.id); }}>
                   <IconRefresh size={13} /> Resume a past session…
                 </button>

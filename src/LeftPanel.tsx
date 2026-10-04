@@ -149,7 +149,7 @@ export function LeftPanel({ expanded }: { expanded: boolean }) {
       let total = 0;
       for (const p of w.panes) {
         try {
-          const u = await cachedInvoke<{ contextTokens: number } | null>("pane_usage", { cwd: p.cwd }, 7000);
+          const u = await cachedInvoke<{ contextTokens: number } | null>("pane_usage", { vendor: p.vendor, cwd: p.cwd }, 7000);
           if (u) total += u.contextTokens;
         } catch { /* pane has no transcript — contributes nothing */ }
       }

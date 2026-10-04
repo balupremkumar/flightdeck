@@ -7,7 +7,7 @@ import { relTime, timeTitle, tailEllipsis } from "./format";
 import { vendorShort } from "./vendors";
 import "./leftpanel.css";
 import "./overlays.css";
-import { RESUME_VENDOR, OPEN_EVENT, ClaudeSession, sessionWeight, modelShort, filterSessions, SessionSearchResults, MIN_SEARCH_CHARS, SEARCH_DEBOUNCE_MS, groupHits, highlightParts, launchResume } from "./sessionLauncherLogic";
+import { canResume, supportsFork, listCommandFor, supportsDeepSearch, OPEN_EVENT, ClaudeSession, sessionWeight, modelShort, filterSessions, SessionSearchResults, MIN_SEARCH_CHARS, SEARCH_DEBOUNCE_MS, groupHits, highlightParts, launchResume } from "./sessionLauncherLogic";
 export * from "./sessionLauncherLogic";
 
 export function SessionLauncher() {
@@ -60,10 +60,10 @@ export function SessionLauncher() {
         useUI.getState().pushToast("info", "Focus a pane first — the launcher lists that folder’s past sessions.");
         return;
       }
-      if (found.pane.vendor !== RESUME_VENDOR) {
+      if (!canResume(found.pane.vendor)) {
         useUI.getState().pushToast(
           "info",
-          `Resuming past sessions is a ${vendorShort(RESUME_VENDOR)} feature — this pane is ${vendorShort(found.pane.vendor)}.`
+          `Resuming past sessions works for ${vendorShort("claude")} and ${vendorShort("codex")} panes — this pane is ${vendorShort(found.pane.vendor)}.`
         );
         return;
       }
@@ -98,7 +98,7 @@ export function SessionLauncher() {
     setDeep(false);
     setSearch(null);
     setSearchError(null);
-    invoke<ClaudeSession[]>("list_claude_sessions", { cwd: pane.cwd })
+    invoke<ClaudeSession[]>(listCommandFor(pane.vendor), { cwd: pane.cwd })
       .then((list) => { if (!cancelled) setSessions(list); })
       .catch((e) => { if (!cancelled) { setSessions([]); setError(String(e)); } });
     const id = requestAnimationFrame(() => inputRef.current?.focus());
@@ -141,6 +141,8 @@ export function SessionLauncher() {
     return () => { cancelled = true; clearTimeout(t); };
   }, [open, pane?.cwd, deep, trimmed, reloadTick]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const forkable = !!pane && supportsFork(pane.vendor);
+  const deepOk = !!pane && supportsDeepSearch(pane.vendor);
   const hits = deep ? search?.hits ?? [] : [];
   const groups = useMemo(() => groupHits(hits), [hits]);
   /** Flat row index of each group's first hit — keyboard nav runs over the flat
@@ -155,6 +157,7 @@ export function SessionLauncher() {
   const run = useCallback(
     async (sessionId: string, fork: boolean) => {
       if (!pane || !target) return;
+      fork = fork && supportsFork(pane.vendor);
       close();
       const ok = await launchResume(target.wsId, pane, sessionId, fork);
       if (!ok) { pushToast("error", "Couldn’t stage the resume — no pane was opened."); return; }
@@ -175,7 +178,7 @@ export function SessionLauncher() {
         // Plain Tab flips title filter <-> content search. Shift+Tab is left
         // alone so the row of buttons is still reachable by keyboard.
         e.preventDefault();
-        setDeep((d) => !d);
+        if (deepOk) setDeep((d) => !d);
       }
       else if (e.key === "Enter") {
         e.preventDefault();
@@ -185,7 +188,7 @@ export function SessionLauncher() {
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [open, results, hits, deep, index, rowCount, run]);
+  }, [open, deepOk, results, hits, deep, index, rowCount, run]);
 
   if (!open || !pane) return null;
 
@@ -205,6 +208,7 @@ export function SessionLauncher() {
             onChange={(e) => setQuery(e.target.value)}
             spellCheck={false}
           />
+          {deepOk && (
           <button
             className={"agent-chip" + (deep ? " ok" : "")}
             aria-pressed={deep}
@@ -217,6 +221,7 @@ export function SessionLauncher() {
           >
             Search content
           </button>
+          )}
           <button className="ov-x" onClick={() => setReloadTick((t) => t + 1)} title="Re-read the transcripts">
             <IconRefresh size={15} />
           </button>
@@ -346,7 +351,7 @@ export function SessionLauncher() {
               <span className="cmdp-empty-hint">
                 {error
                   ? error
-                  : `Sessions appear here once Claude Code has written a transcript for ${pane.cwd}.`}
+                  : `Sessions appear here once ${pane.vendor === "codex" ? "Codex has recorded a session (only the last week or so is listed; older ones are compressed)" : "Claude Code has written a transcript"} for ${pane.cwd}.`}
               </span>
             </div>
           )}
@@ -373,6 +378,7 @@ export function SessionLauncher() {
                   {[modelShort(s.model), sessionWeight(s)].filter(Boolean).join(" · ")}
                 </span>
                 <span className="cmdp-hint" title={timeTitle(s.modifiedMs)}>{relTime(s.modifiedMs)}</span>
+                {forkable && (
                 <button
                   className="cmdp-shortcut"
                   style={{ background: "none", border: 0, cursor: "pointer", color: "inherit", font: "inherit" }}
@@ -381,6 +387,7 @@ export function SessionLauncher() {
                 >
                   <kbd>Fork</kbd>
                 </button>
+                )}
               </div>
             );
           })}
@@ -388,8 +395,10 @@ export function SessionLauncher() {
         <div className="cmdp-foot">
           <span><kbd>↑</kbd><kbd>↓</kbd> navigate</span>
           <span><kbd>Enter</kbd> resume</span>
-          <span><kbd>Shift</kbd>+<kbd>Enter</kbd> fork</span>
-          <span><kbd>Tab</kbd> {deep ? "session titles" : "search content"}</span>
+          {forkable && <span><kbd>Shift</kbd>+<kbd>Enter</kbd> fork</span>}
+          {deepOk
+            ? <span><kbd>Tab</kbd> {deep ? "session titles" : "search content"}</span>
+            : <span>content search: Claude panes only</span>}
           <span><kbd>Esc</kbd> close</span>
         </div>
       </div>
