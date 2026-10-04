@@ -1,14 +1,14 @@
-.ws-chips { display: inline-flex; align-items: center; gap: 6px; min-width: 0; margin-left: 8px; overflow: hidden; }
-.ws-chips .wsc { display: inline-flex; align-items: center; flex: 0 0 auto; height: 22px; border: 1px solid var(--border, color-mix(in srgb, var(--text) 14%, transparent)); border-radius: 11px; background: color-mix(in srgb, var(--text) 5%, transparent); color: var(--tmuted); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ws-chips { display: inline-flex; align-items: center; gap: 6px; flex: 0 1 auto; min-width: 0; margin-left: 8px; overflow: hidden; }
+.ws-chips .wsc { display: inline-flex; align-items: center; flex: 0 1 auto; min-width: 0; max-width: 180px; overflow: hidden; height: 22px; border: 1px solid var(--border, color-mix(in srgb, var(--text) 14%, transparent)); border-radius: 11px; background: color-mix(in srgb, var(--text) 5%, transparent); color: var(--tmuted); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .ws-chips .wsc button, .ws-chips button.wsc { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
-.ws-chips .wsc-main { padding: 0 4px 0 9px; height: 100%; }
+.ws-chips .wsc-main { padding: 0 4px 0 9px; height: 100%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ws-chips .wsc-main:hover { color: var(--text); }
-.ws-chips .wsc-x { padding: 0 8px 0 2px; height: 100%; opacity: .7; }
+.ws-chips .wsc-x { padding: 0 8px 0 2px; height: 100%; opacity: .7; flex: none; }
 .ws-chips .wsc-x:hover { color: var(--st-error); opacity: 1; }
-.ws-chips .wsc-pr { padding: 0 9px; gap: 6px; }
+.ws-chips .wsc-pr { padding: 0 9px; gap: 6px; text-overflow: ellipsis; }
 .ws-chips .wsc-pr:hover:not(:disabled) { color: var(--text); }
 .ws-chips .wsc-pr:disabled { cursor: default; }
-.ws-chips .wsc-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--tmuted); }
+.ws-chips .wsc-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--tmuted); }
 .ws-chips .wsc-pr.running .wsc-dot { background: var(--st-waiting); }
 .ws-chips .wsc-pr.passed .wsc-dot { background: var(--accent); }
 .ws-chips .wsc-pr.failed .wsc-dot { background: var(--st-error); }
