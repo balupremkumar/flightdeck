@@ -288,6 +288,9 @@ pub struct PaneRing {
     marks: VecDeque<Mark>,
     /// Most recent safe mark (always >= base).
     tail: Mark,
+    /// Most recent point where the parser was idle (ground, not in a codepoint),
+    /// LF or not. Only used as the hard-ceiling cut for streams with no LF.
+    idle_mark: Mark,
     spacing: u64,
     parser: Parser,
 }
@@ -304,6 +307,7 @@ impl PaneRing {
             base,
             marks: VecDeque::new(),
             tail: base,
+            idle_mark: base,
             spacing: (cap / 64).clamp(1, MAX_MARK_SPACING) as u64,
             parser: Parser::new(),
         }
@@ -334,12 +338,18 @@ impl PaneRing {
         self.buf.extend_from_slice(bytes);
         let seq0 = self.seq;
         let p = &mut self.parser;
+        let mut last_idle: Option<(usize, Modes)> = None;
         for (i, &b) in bytes.iter().enumerate() {
             // Fast path: printable ASCII in ground state changes nothing.
             if (0x20..0x7f).contains(&b) && p.idle() {
+                last_idle = Some((i, p.modes));
                 continue;
             }
-            if p.feed(b) {
+            let safe = p.feed(b);
+            if p.idle() {
+                last_idle = Some((i, p.modes));
+            }
+            if safe {
                 let m = Mark { seq: seq0 + i as u64 + 1, modes: p.modes };
                 self.tail = m;
                 let last = self.marks.back().map_or(self.base.seq, |x| x.seq);
@@ -347,6 +357,9 @@ impl PaneRing {
                     self.marks.push_back(m);
                 }
             }
+        }
+        if let Some((i, modes)) = last_idle {
+            self.idle_mark = Mark { seq: seq0 + i as u64 + 1, modes };
         }
         self.seq = seq0 + bytes.len() as u64;
         self.evict();
@@ -363,10 +376,31 @@ impl PaneRing {
         let cut = match self.marks.front() {
             Some(m) => *m,
             None if self.tail.seq >= target => self.tail,
-            // No safe point yet: stay over capacity until one arrives.
-            None => return,
+            // No safe point yet: tolerate up to the hard ceiling, then fall back.
+            None => {
+                if self.len() > self.cap.saturating_mul(2) {
+                    self.hard_cut();
+                }
+                return;
+            }
         };
         self.cut_to(cut);
+    }
+
+    /// Over the hard ceiling with no LF-safe mark (alt-screen TUIs redraw with CUP/EL
+    /// and never emit a ground-state LF). Cut at the latest idle point, else drop the
+    /// whole body and keep only the modes in force as head.
+    fn hard_cut(&mut self) {
+        let m = if self.idle_mark.seq > self.base.seq {
+            self.idle_mark
+        } else {
+            Mark { seq: self.seq, modes: self.parser.modes }
+        };
+        self.cut_to(m);
+        if self.len() > self.cap.saturating_mul(2) {
+            // Stuck inside a long sequence since that idle point: drop everything.
+            self.cut_to(Mark { seq: self.seq, modes: self.parser.modes });
+        }
     }
 
     fn cut_to(&mut self, m: Mark) {
@@ -486,13 +520,13 @@ mod tests {
     #[test]
     fn defers_when_no_newline_then_cuts_at_next_safe_point() {
         let mut r = PaneRing::new(64);
-        r.push(&vec![b'x'; 500]); // no newline at all
+        r.push(&vec![b'x'; 100]); // no newline at all, under the 2x hard ceiling
         assert_eq!(r.snapshot().start_seq, 0);
-        assert_eq!(r.len(), 500);
+        assert_eq!(r.len(), 100);
         r.push(b"tail\n");
         r.push(b"more\n");
         let s = r.snapshot();
-        assert!(s.start_seq >= 504, "cut must land at a newline after the long line, got {}", s.start_seq);
+        assert!(s.start_seq >= 104, "cut must land at a newline after the long line, got {}", s.start_seq);
         assert!(s.body.len() <= 64 + 10);
     }
 
@@ -808,6 +842,11 @@ mod tests {
 
             let cap = [64usize, 200, 512, 2048][(seed % 4) as usize];
             let mut r = PaneRing::new(cap);
+            // Streams with LF-free gaps past the hard ceiling cut at idle marks by
+            // design (covered by the lf_free_* tests); skip those here.
+            if (max_gap as usize) + r.spacing as usize + 97 + cap > 2 * cap {
+                continue;
+            }
             let mut pos = 0usize;
             let mut last_seq = 0u64;
             let mut last_start = 0u64;
@@ -869,5 +908,32 @@ mod tests {
         eprintln!("ring throughput: {} bytes in {:?} (debug_assertions={})", pushed, el, cfg!(debug_assertions));
         assert!(r.len() <= DEFAULT_CAPACITY + 64 * 1024);
         assert!(el.as_secs_f64() < 5.0, "too slow: {:?}", el);
+    }
+
+    #[test]
+    fn lf_free_cup_stream_stays_bounded() {
+        let cap = 1000;
+        let mut r = PaneRing::new(cap);
+        r.push(b"[?1049h");
+        let mut peak = 0;
+        for i in 0..5000usize {
+            let frame = format!("[{};1H[2Kframe {}", i % 24 + 1, i);
+            r.push(frame.as_bytes());
+            peak = peak.max(r.len());
+        }
+        assert!(peak <= 2 * cap + 64, "peak {}", peak);
+        let s = r.snapshot();
+        assert_eq!(s.start_seq + s.body.len() as u64, r.seq());
+        assert!(head_modes(&s.head).alt_screen);
+    }
+
+    #[test]
+    fn lf_free_stream_inside_sequence_drops_body_keeps_modes() {
+        let cap = 100;
+        let mut r = PaneRing::new(cap);
+        r.push(b"[?1049h]0;");
+        r.push(&vec![b'x'; 1000]);
+        assert!(r.len() <= 2 * cap + 16);
+        assert!(head_modes(&r.snapshot().head).alt_screen);
     }
 }
