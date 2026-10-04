@@ -25,6 +25,13 @@ Each phase's red team adds its items here; the final release note links this fil
 - [ ] Canary and stable open at once: neither kills the other's agents.
 - [ ] Paste 50 KB into a pane: arrives in order.
 
+## Phase 6 health (G2 MCP chip, G3 hook state, OSC 9;4)
+
+- [ ] With Claude hooks on, a permission request rings the bell straight away (hook path, not the 3 s quiet timer).
+- [ ] An MCP server that disconnects shows the MCP chip on that pane, tooltip names the server; it clears within 30 min.
+- [ ] An MCP elicitation ("An MCP server needs your input") shows as needs-you.
+- [ ] A long command that prints progress (winget, a build showing a taskbar progress bar) keeps the pane "running", not "waiting".
+
 ## TN (terminal noise)
 
 - [ ] New Claude pane opens in Chat; the folder trust prompt is reachable via "Switch to Terminal".
