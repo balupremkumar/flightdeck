@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getFollow, setFollow, viewersFor, extOf, viewersForExt, resolveViewer, rememberViewer, getWrap, setWrap, VIEWER_CHOICE_KEY } from "./registry";
+import { isMediaViewer, getFollow, setFollow, viewersFor, extOf, viewersForExt, resolveViewer, rememberViewer, getWrap, setWrap, VIEWER_CHOICE_KEY } from "./registry";
 
 function fakeStore(init: Record<string, string> = {}) {
   const m = new Map(Object.entries(init));
@@ -62,5 +62,11 @@ describe("registry", () => {
     setFollow("b.log.1", false, s);
     expect(getFollow("z.ts", s)).toBe(true);
     expect(getFollow("a.log", s)).toBe(false);
+  });
+  it("routes images and pdf to media viewers, svg also offers source", () => {
+    for (const e of ["png", "jpg", "jpeg", "gif", "webp", "bmp", "ico"]) expect(viewersFor("/x/a." + e.toUpperCase())).toEqual(["image"]);
+    expect(viewersFor("/x/a.svg")).toEqual(["image", "code"]);
+    expect(viewersFor("/x/a.pdf")).toEqual(["pdf"]);
+    expect(isMediaViewer("image") && isMediaViewer("pdf") && !isMediaViewer("code")).toBe(true);
   });
 });

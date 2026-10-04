@@ -4,7 +4,7 @@
 // user's pick from the "View" menu is remembered per extension in localStorage.
 // Pure on purpose (storage is injectable) so it is testable without a DOM.
 
-export type ViewerId = "text" | "raw" | "rendered" | "json-tree" | "jsonl" | "csv" | "code" | "log";
+export type ViewerId = "text" | "raw" | "rendered" | "json-tree" | "jsonl" | "csv" | "code" | "log" | "image" | "pdf";
 
 export const VIEWER_LABEL: Record<ViewerId, string> = {
   text: "Text",
@@ -15,6 +15,8 @@ export const VIEWER_LABEL: Record<ViewerId, string> = {
   csv: "Table",
   code: "Code",
   log: "Log",
+  image: "Image",
+  pdf: "PDF",
 };
 
 // CsvTable.tsx is built by another stream. A glob (not an import) keeps the
@@ -34,7 +36,7 @@ export const CODE_LANG: Record<string, string> = {
   rs: "rust", py: "python", pyw: "python",
   ps1: "powershell", psm1: "powershell", psd1: "powershell",
   yaml: "yaml", yml: "yaml", toml: "toml", sql: "sql", cs: "csharp",
-  html: "html", htm: "html", css: "css", json: "json", xml: "xml", xsd: "xml", csproj: "xml",
+  html: "html", htm: "html", css: "css", json: "json", svg: "xml", xml: "xml", xsd: "xml", csproj: "xml",
   sh: "shell", bash: "shell", zsh: "shell",
 };
 
@@ -50,6 +52,10 @@ export function keyOf(path: string): string {
 const BY_EXT: Record<string, ViewerId[]> = {
   ...Object.fromEntries(Object.keys(CODE_LANG).map((e) => [e, ["code", "text"] as ViewerId[]])),
   log: ["log", "text"],
+  // Media loads through the asset protocol, never fs_read_text_file. SVG also offers its source.
+  ...Object.fromEntries(["png", "jpg", "jpeg", "gif", "webp", "bmp", "ico"].map((e) => [e, ["image"] as ViewerId[]])),
+  svg: ["image", "code"],
+  pdf: ["pdf"],
   json: ["json-tree", "code", "text"],
   jsonl: ["jsonl", "text"],
   ndjson: ["jsonl", "text"],
@@ -72,6 +78,9 @@ export function viewersForExt(ext: string, opts: { csv?: boolean } = {}): Viewer
   const list = BY_EXT[ext.toLowerCase()] ?? ["text"];
   return list.filter((v) => v !== "csv" || csv);
 }
+
+/** Viewers that load their file themselves (asset protocol); Preview must not read it as text. */
+export const isMediaViewer = (v: ViewerId) => v === "image" || v === "pdf";
 
 export function viewersFor(path: string): ViewerId[] {
   return viewersForExt(keyOf(path));

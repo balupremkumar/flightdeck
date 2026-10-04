@@ -32,7 +32,7 @@ import { useFocusTrap } from "./useFocusTrap";
 import { IconClose } from "./Icons";
 import { findTheme } from "./themes";
 import {
-  csvLoaders, mermaidLoaders, rememberViewer, resolveViewer, viewersFor, VIEWER_LABEL, getWrap, setWrap, getFollow, setFollow, type ViewerId,
+  csvLoaders, mermaidLoaders, rememberViewer, resolveViewer, viewersFor, VIEWER_LABEL, getWrap, setWrap, getFollow, setFollow, isMediaViewer, type ViewerId,
 } from "./viewers/registry";
 import { FOLLOW_POLL_MS, scopeRetryDelay, shouldPoll, statChanged, type FileStat } from "./viewers/previewlogic";
 import { clearDomFind, nextIndex, scanDom, type DomFind } from "./viewers/findInViewer";
@@ -54,6 +54,8 @@ const CodeMirrorView = lazy(() => import("./viewers/CodeView"));
 const TocPanel = lazy(() => import("./viewers/TocPanel"));
 const OutsideScopePanel = lazy(() => import("./viewers/OutsideScopePanel"));
 const LogView = lazy(() => import("./viewers/LogLines"));
+const ImageView = lazy(() => import("./viewers/ImageView"));
+const PdfView = lazy(() => import("./viewers/PdfView"));
 function lazyFrom<P extends object>(loaders: Record<string, () => Promise<unknown>>): ComponentType<P> | null {
   const load = Object.values(loaders)[0];
   return load ? (lazy(load as () => Promise<{ default: ComponentType<P> }>) as unknown as ComponentType<P>) : null;
@@ -530,9 +532,10 @@ function PreviewBody({ tab }: { tab: PreviewTab }) {
   // Line-aware viewers (code, log, text) honour a line target; the rest drop to text.
   const lineMode = useCallback((): ViewerId => {
     const r = resolveViewer(tab.path);
-    return r === "code" || r === "log" || r === "text" ? r : textView;
+    return r === "code" || r === "log" || r === "text" || isMediaViewer(r) ? r : textView;
   }, [tab.path, textView]);
   const [mode, setMode] = useState<ViewerId>(() => (tab.line ? lineMode() : resolveViewer(tab.path)));
+  const media = isMediaViewer(mode);
   const [wrap, setWrapState] = useState(getWrap);
   const [badJson, setBadJson] = useState<JsonParseError | null>(null);
   const seq = useRef(0);
@@ -559,6 +562,8 @@ function PreviewBody({ tab }: { tab: PreviewTab }) {
     const my = ++seq.current;
     if (!silent) setState("loading");
     if (isRemotePath(tab.path)) { setErrMsg("Network and device paths are not opened from Flightdeck."); setState("error"); return; }
+    // Image/PDF viewers fetch the file themselves (asset protocol): no text read.
+    if (media) { setText(""); setBadJson(null); setState("loaded"); return; }
     if (isBinaryPath(tab.path)) { setState("binary"); return; }
     invoke<string>("fs_read_text_file", { path: tab.path })
       .then((t) => {
@@ -597,7 +602,7 @@ function PreviewBody({ tab }: { tab: PreviewTab }) {
         setErrMsg(big ? "" : guessErrorMessage(e));
         setState("error");
       });
-  }, [tab.path, tab.id]);
+  }, [tab.path, tab.id, media]);
   loadRef.current = load;
 
   useEffect(() => { load(); }, [load]);
@@ -609,7 +614,7 @@ function PreviewBody({ tab }: { tab: PreviewTab }) {
   useEffect(() => {
     lastStat.current = null;
     const visible = () => document.visibilityState === "visible";
-    if (!follow || state !== "loaded") return;
+    if (!follow || state !== "loaded" || media) return;
     let stop = false;
     const tick = async () => {
       if (!shouldPoll({ follow, drawerOpen: true, windowVisible: visible(), loaded: true })) return;
@@ -626,7 +631,7 @@ function PreviewBody({ tab }: { tab: PreviewTab }) {
     const onVis = () => { if (visible()) void tick(); };
     document.addEventListener("visibilitychange", onVis);
     return () => { stop = true; clearInterval(id); document.removeEventListener("visibilitychange", onVis); };
-  }, [follow, state, tab.path]);
+  }, [follow, state, tab.path, media]);
   useEffect(() => {
     if (!justUpdated) return;
     const id = setTimeout(() => setJustUpdated(false), 6000);
@@ -663,7 +668,7 @@ function PreviewBody({ tab }: { tab: PreviewTab }) {
   // Invalid JSON drops to the text view (with a banner) at the error's line.
   const view: ViewerId = mode === "json-tree" && badJson ? "text" : mode;
   const selfFind = view === "json-tree" || view === "jsonl" || view === "code" || view === "log"; // these count their own matches
-  const fill = selfFind || view === "csv";
+  const fill = selfFind || view === "csv" || media;
 
   // ---- find in viewer (Ctrl+F while focus is in this drawer) ----
   const [findOpen, setFindOpen] = useState(false);
@@ -766,14 +771,14 @@ function PreviewBody({ tab }: { tab: PreviewTab }) {
                 Wrap: {wrap ? "on" : "off"}
               </button>
             )}
-            <button
+            {!media && <button
               className="prv-copy"
               aria-pressed={follow}
               title="Reload when the file changes on disk"
               onClick={() => setFollowOn((f) => { setFollow(tab.path, !f); return !f; })}
             >
               Follow: {follow ? "on" : "off"}
-            </button>
+            </button>}
             {justUpdated && <span className="prv-updated" role="status">Updated just now</span>}
             {canFind && (
               <button className="prv-copy" aria-pressed={findOpen} title="Find (Ctrl+F)" onClick={() => setFindOpen((o) => !o)}>
@@ -864,8 +869,15 @@ function PreviewBody({ tab }: { tab: PreviewTab }) {
             <button className="prv-retry" onClick={() => load()}>Retry</button>
           </div>
         )}
-        {state === "loaded" && text === "" && <div className="prv-state">Empty file.</div>}
-        {state === "loaded" && text !== "" && (
+        {state === "loaded" && media && (
+          <ViewerBoundary>
+            <Suspense fallback={<PreviewSkeleton />}>
+              {mode === "image" ? <ImageView path={tab.path} /> : <PdfView path={tab.path} />}
+            </Suspense>
+          </ViewerBoundary>
+        )}
+        {state === "loaded" && !media && text === "" && <div className="prv-state">Empty file.</div>}
+        {state === "loaded" && !media && text !== "" && (
           mdTree ? (
             <div className="prv-md">
               {blocks && blocks.filter((b) => b.type === "heading").length >= 3 && (
