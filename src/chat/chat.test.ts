@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { ChatRecord } from "../chatlog";
-import { buildTurns, itemKey, callKey, isSystemPromptText } from "./turns";
+import { buildTurns, itemKey, callKey, isSystemPromptText, foldActivity, runningCall } from "./turns";
 import { buildPromptPayload, sanitizeDraft } from "./send";
-import { chipLabel, groupLabel, shortPath } from "./chips";
+import { activityLabel, chipLabel, groupLabel, shortPath } from "./chips";
 import { planFind } from "./find";
 import { appendBounded } from "./buffer";
 import { promptGate } from "./gate";
@@ -225,5 +225,64 @@ describe("system records", () => {
     const t = buildTurns([user("hi"), base({ kind: "system", text: "compact summary" }), say("x")]);
     expect(t[0].items.map((i) => i.kind)).toEqual(["text"]);
     expect(t[0].notes.map((r) => r.text)).toEqual(["compact summary"]);
+  });
+});
+
+describe("TN2 activity folding", () => {
+  const run = () => buildTurns([
+    user("go"), say("start"),
+    use("e1", "Edit", "a", ["/p/a.ts"], 2, 1), use("e2", "Edit", "b", ["/p/a.ts"], 1, 0), use("e3", "Write", "c", ["/p/c.ts"], 5, 0),
+    use("b1", "Bash", "npm test"), use("b2", "Bash", "ls"),
+    use("r1", "Read", "x", ["/p/x"]), use("r2", "Read", "y", ["/p/y"]),
+    res("e1", "ok"), res("b1", "bad", true),
+    say("done"), use("g", "Grep", "foo"), say("end"),
+  ]);
+
+  it("folds a run of tool groups into one activity and leaves single groups alone", () => {
+    const items = foldActivity(run()[0].items);
+    expect(items.map((i) => i.kind)).toEqual(["text", "activity", "text", "tools", "text"]);
+    const a = items[1];
+    expect(a.kind === "activity" && a.calls.length).toBe(7);
+  });
+
+  it("labels verb first in fixed order, unique files for edits and reads", () => {
+    const a = foldActivity(run()[0].items)[1];
+    if (a.kind !== "activity") throw new Error("not activity");
+    expect(activityLabel(a.calls, 0)).toBe("Edited 2 files, ran 2 commands, read 2 files");
+  });
+
+  it("caps at three segments with +N more, and counts subagents", () => {
+    const t = buildTurns([
+      user("go"), use("e", "Edit", "a", ["/a"]), use("b", "Bash", "x"), use("r", "Read", "y", ["/y"]),
+      use("g", "Grep", "z"), use("w", "WebFetch", "u"), use("ag", "Agent", "sub"),
+    ]);
+    const a = foldActivity(t[0].items)[0];
+    if (a.kind !== "activity") throw new Error("not activity");
+    expect(activityLabel(a.calls, 0)).toBe("Edited 1 file, ran 1 command, read 1 file +3 more");
+    expect(activityLabel([a.calls[5]], 1)).toBe("Ran 2 subagents");
+  });
+
+  it("single calls keep their chip label", () => {
+    const t = buildTurns([user("go"), use("e", "Edit", "a", ["/p/a.ts"], 2, 1)]);
+    const only = t[0].items[0];
+    if (only.kind !== "tools") throw new Error("not tools");
+    expect(activityLabel(only.calls, 0, "/p")).toBe("Edited a.ts +2 -1");
+  });
+
+  it("flags the trailing call without a result as running only for the live turn", () => {
+    const t = buildTurns([user("go"), use("a", "Read", "x", ["/x"]), use("b", "Bash", "sleep 9"), res("a", "ok")]);
+    const live = foldActivity(t[0].items, true)[0];
+    const old = foldActivity(t[0].items, false)[0];
+    if (live.kind !== "activity" || old.kind !== "activity") throw new Error("not activity");
+    expect(runningCall(live)?.tool.id).toBe("b");
+    expect(runningCall(old)).toBeNull();
+  });
+
+  it("planFind opens the activity line that holds a hit", () => {
+    const turns = run();
+    const plan = planFind(turns, "npm test");
+    const a = foldActivity(turns[0].items)[1];
+    expect(plan.keys).toContain(callKey((turns[0].items[3] as Extract<typeof turns[0]["items"][number], { kind: "tools" }>).calls[0]));
+    expect(a.kind === "activity" && plan.expand.has(a.key)).toBe(true);
   });
 });

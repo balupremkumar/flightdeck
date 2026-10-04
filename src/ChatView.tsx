@@ -13,8 +13,8 @@ import { LinkifiedText } from "./LinkifiedText";
 import { useUI } from "./ui";
 import type { PaneState } from "./store";
 import { appendBounded } from "./chat/buffer";
-import { buildTurns, callKey, itemKey, recKey, type Item, type ToolCall, type Turn } from "./chat/turns";
-import { CHIP_GLYPH, chipIcon, chipLabel, groupLabel, shortPath } from "./chat/chips";
+import { buildTurns, callKey, foldActivity, itemKey, recKey, runningCall, type Activity, type Item, type NormalItem, type ToolCall, type Turn } from "./chat/turns";
+import { CHIP_GLYPH, activityIcon, activityLabel, chipIcon, chipLabel, groupLabel, shortPath } from "./chat/chips";
 import { planFind } from "./chat/find";
 import { promptGate } from "./chat/gate";
 import { buildPromptPayload } from "./chat/send";
@@ -206,11 +206,30 @@ function ToolsItem({ item, ctx }: { item: Extract<Item, { kind: "tools" }>; ctx:
   );
 }
 
-function Items({ items, ctx, side }: { items: Item[]; ctx: Ctx; side?: boolean }) {
+/** TN2: a whole run of tool steps as one line; click for today's chips. */
+function ActivityItem({ item, ctx }: { item: Activity; ctx: Ctx }) {
+  const open = ctx.open.has(item.key);
+  const failed = item.calls.some((c) => c.result?.is_error);
+  const now = runningCall(item);
+  return (
+    <div className="chat-group chat-activity" data-ck={item.key}>
+      <button className={"chat-chip" + (failed ? " err" : "")} aria-expanded={open} onClick={() => ctx.toggle(item.key)}>
+        <span className="chat-glyph" aria-hidden>{CHIP_GLYPH[activityIcon(item.calls, item.sideSubagents)]}</span>
+        <span className="chat-chip-text">{activityLabel(item.calls, item.sideSubagents, ctx.cwd)}</span>
+        {failed && <span className="chat-badge">failed</span>}
+        {now && <span className="chat-now">{"·"} now: {chipLabel(now.tool, ctx.cwd)}</span>}
+        <span className="chat-caret" aria-hidden>{open ? "▾" : "▸"}</span>
+      </button>
+      {open && <div className="chat-activity-body"><Items items={item.items} ctx={ctx} /></div>}
+    </div>
+  );
+}
+
+function Items({ items, ctx, side }: { items: NormalItem[]; ctx: Ctx; side?: boolean }) {
   return (
     <>
       {items.map((it) => {
-        const k = itemKey(it);
+        const k = it.kind === "activity" ? it.key : itemKey(it);
         if (it.kind === "text") {
           const text = it.rec.text ?? "";
           return (
@@ -219,6 +238,7 @@ function Items({ items, ctx, side }: { items: Item[]; ctx: Ctx; side?: boolean }
             </div>
           );
         }
+        if (it.kind === "activity") return <ActivityItem key={it.key} item={it} ctx={ctx} />;
         if (it.kind === "tools") return <ToolsItem key={k} item={it} ctx={ctx} />;
         const open = ctx.verbose || ctx.open.has(k);
         return (
@@ -236,15 +256,17 @@ function Items({ items, ctx, side }: { items: Item[]; ctx: Ctx; side?: boolean }
   );
 }
 
-const TurnView = memo(function TurnView({ turn, ctx, index, paneId }: { turn: Turn; ctx: Ctx; index: number; paneId: number }) {
+const TurnView = memo(function TurnView({ turn, ctx, index, paneId, live }: { turn: Turn; ctx: Ctx; index: number; paneId: number; live: boolean }) {
   const [filesOpen, setFilesOpen] = useState(false);
+  // Normal folds each run of tool steps into one line; Verbose renders the items as built.
+  const items = useMemo(() => (ctx.verbose ? turn.items : foldActivity(turn.items, live)), [turn.items, ctx.verbose, live]);
   const pk = turn.prompt ? `p:${recKey(turn.prompt)}` : "";
   return (
     <section className="chat-turn" data-turn={index}>
       {turn.prompt && (
         <div className={"chat-user" + (ctx.hits.has(pk) ? " hit" : "")} data-ck={pk}>{turn.prompt.text}</div>
       )}
-      <Items items={turn.items} ctx={ctx} />
+      <Items items={items} ctx={ctx} />
       {ctx.verbose && turn.notes.length > 0 && (
         <details className="chat-sysnote">
           <summary>System note{turn.notes.length > 1 ? ` (${turn.notes.length})` : ""}</summary>
@@ -551,7 +573,7 @@ export default function ChatView({ paneId, cwd, epoch, paneState, exited, onRest
         {!noPath && loaded && turns.length === 0 && <div className="chat-empty" role="status">No messages yet</div>}
         {turns.map((t, i) => (
           <Fragment key={t.key}>
-            <TurnView turn={t} ctx={ctx} index={i} paneId={paneId} />
+            <TurnView turn={t} ctx={ctx} index={i} paneId={paneId} live={i === turns.length - 1} />
           </Fragment>
         ))}
       </div>

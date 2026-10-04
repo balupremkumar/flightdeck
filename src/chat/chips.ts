@@ -89,6 +89,76 @@ export function groupLabel(name: string, calls: ToolCall[], cwd?: string): strin
   }
 }
 
+// TN2: the one-line label for a whole run of calls (Normal density).
+export type ToolClass = "edits" | "commands" | "reads" | "searches" | "web" | "subagents" | "other";
+/** Fixed segment order: what changed first, then what ran, then what was looked at. */
+export const CLASS_ORDER: ToolClass[] = ["edits", "commands", "reads", "searches", "web", "subagents", "other"];
+export function toolClass(name: string): ToolClass {
+  switch (chipIcon(name)) {
+    case "edit": return "edits";
+    case "run": return "commands";
+    case "read": return "reads";
+    case "search": return "searches";
+    case "web": return "web";
+    case "agent": return "subagents";
+    default: return "other";
+  }
+}
+const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+const SEGMENT: Record<ToolClass, (n: number) => string> = {
+  edits: (n) => `edited ${plural(n, "file", "files")}`,
+  commands: (n) => `ran ${plural(n, "command", "commands")}`,
+  reads: (n) => `read ${plural(n, "file", "files")}`,
+  searches: (n) => `ran ${plural(n, "search", "searches")}`,
+  web: (n) => `made ${plural(n, "web request", "web requests")}`,
+  subagents: (n) => `ran ${plural(n, "subagent", "subagents")}`,
+  other: (n) => `used ${plural(n, "other tool", "other tools")}`,
+};
+const MAX_SEGMENTS = 3;
+
+/**
+ * "Edited 4 files, ran 3 commands, read 6 files": verb first, fixed order.
+ * Edits and reads count unique files, everything else counts calls. Past three
+ * segments the rest collapse into "+N more", N being the remaining actions.
+ * A single call keeps its chip label, a run of one tool keeps its group label.
+ */
+export function activityLabel(calls: ToolCall[], sideSubagents = 0, cwd?: string): string {
+  if (!sideSubagents && calls.length === 1) return chipLabel(calls[0].tool, cwd);
+  if (!sideSubagents && calls.length > 1 && calls.every((c) => c.tool.name === calls[0].tool.name)) {
+    return groupLabel(calls[0].tool.name, calls, cwd);
+  }
+  const by = new Map<ToolClass, { calls: number; paths: Set<string> }>();
+  for (const c of calls) {
+    const k = toolClass(c.tool.name);
+    const b = by.get(k) ?? { calls: 0, paths: new Set<string>() };
+    b.calls++;
+    for (const p of c.tool.paths) b.paths.add(p);
+    by.set(k, b);
+  }
+  if (sideSubagents) {
+    const b = by.get("subagents") ?? { calls: 0, paths: new Set<string>() };
+    b.calls += sideSubagents;
+    by.set("subagents", b);
+  }
+  const segs = CLASS_ORDER.filter((k) => by.has(k)).map((k) => {
+    const b = by.get(k)!;
+    const n = (k === "edits" || k === "reads") && b.paths.size ? b.paths.size : b.calls;
+    return { text: SEGMENT[k](n), calls: b.calls };
+  });
+  const shown = segs.slice(0, MAX_SEGMENTS).map((s) => s.text).join(", ");
+  const rest = segs.slice(MAX_SEGMENTS).reduce((n, s) => n + s.calls, 0);
+  const label = rest ? `${shown} +${rest} more` : shown;
+  return label.charAt(0).toUpperCase() + label.slice(1);
+}
+
+/** Glyph class of the first segment, so the line's icon matches its first word. */
+export function activityIcon(calls: ToolCall[], sideSubagents = 0): ChipIcon {
+  const present = new Set(calls.map((c) => toolClass(c.tool.name)));
+  if (sideSubagents) present.add("subagents");
+  const first = CLASS_ORDER.find((k) => present.has(k)) ?? "other";
+  return ({ edits: "edit", commands: "run", reads: "read", searches: "search", web: "web", subagents: "agent", other: "tool" } as const)[first];
+}
+
 export type ChipIcon = "edit" | "run" | "read" | "search" | "web" | "agent" | "tool";
 export const CHIP_GLYPH: Record<ChipIcon, string> = {
   edit: "✎", run: "▶", read: "☰", search: "⌕", web: "◎", agent: "✦", tool: "⚙",

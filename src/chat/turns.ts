@@ -61,6 +61,64 @@ function collectFiles(items: Item[], into: Set<string>): void {
   }
 }
 
+/**
+ * TN2 Normal density: a run of consecutive non-text items (tool groups and
+ * subagents) between two pieces of prose, shown as ONE line. Verbose renders
+ * Turn.items as built; this is a view over them, never a replacement.
+ */
+export interface Activity {
+  kind: "activity";
+  key: string;
+  items: Item[];
+  /** Top-level calls in the run, in order (a subagent's own calls are not the parent's). */
+  calls: ToolCall[];
+  /** Sidechain subagent items in the run (older transcripts). */
+  sideSubagents: number;
+  /** The run ends the conversation so far, so a call without a result is still running. */
+  live: boolean;
+}
+export type NormalItem = Item | Activity;
+
+export const activityKey = (first: Item): string => `a:${itemKey(first)}`;
+
+/** The call of a live run that is still running, if any. */
+export function runningCall(a: Activity): ToolCall | null {
+  const last = a.calls[a.calls.length - 1];
+  return a.live && last && !last.result && a.items[a.items.length - 1].kind === "tools" ? last : null;
+}
+
+/**
+ * Folds every run of non-text items into one Activity. A run that is already a
+ * single line (one tool group, or one sidechain subagent) stays as it is. `live`:
+ * this is the newest turn, so its trailing run may still be in progress.
+ */
+export function foldActivity(items: Item[], live = false): NormalItem[] {
+  const out: NormalItem[] = [];
+  let run: Item[] = [];
+  const flush = (atEnd: boolean) => {
+    if (!run.length) return;
+    const only = run.length === 1 ? run[0] : null;
+    if (only && (only.kind === "subagent" || only.kind === "tools")) out.push(only);
+    else {
+      out.push({
+        kind: "activity",
+        key: activityKey(run[0]),
+        items: run,
+        calls: run.flatMap((it) => (it.kind === "tools" ? it.calls : [])),
+        sideSubagents: run.filter((it) => it.kind === "subagent").length,
+        live: live && atEnd,
+      });
+    }
+    run = [];
+  };
+  for (const it of items) {
+    if (it.kind === "text") { flush(false); out.push(it); }
+    else run.push(it);
+  }
+  flush(true);
+  return out;
+}
+
 export function buildTurns(records: ChatRecord[]): Turn[] {
   const results = new Map<string, ChatRecord>();
   for (const r of records) if (r.kind === "tool_result" && r.result) results.set(r.result.tool_use_id, r);

@@ -50,7 +50,7 @@
 .chat-prose table { border-collapse: collapse; font-size: 12px; }
 .chat-prose th, .chat-prose td { border: 1px solid var(--line); padding: 3px 8px; text-align: left; }
 
-.chat-call.nested, .chat-sub-body { margin-left: 16px; }
+.chat-call.nested, .chat-sub-body, .chat-activity-body { margin-left: 16px; }
 .chat-group, .chat-call, .chat-sub { margin: 3px 0; }
 .chat-chip { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 2px 9px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface-2); font-size: 12px; color: var(--muted); }
 .chat-chip:hover { border-color: var(--line-strong); color: var(--text); }
@@ -59,6 +59,7 @@
 .chat-glyph { font-size: 11px; opacity: .85; }
 .chat-badge { font-size: 10.5px; text-transform: uppercase; letter-spacing: .04em; }
 .chat-caret { font-size: 10px; }
+.chat-now { font-size: 11.5px; color: var(--muted); font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .chat-result { margin: 3px 0 3px 10px; font-size: 11.5px; color: var(--muted); font-family: var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
 .chat-result.err { color: var(--st-error); }
 .chat-detail { margin: 4px 0 6px 10px; font-size: 12px; }
