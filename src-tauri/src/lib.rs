@@ -919,6 +919,7 @@ pub fn run() {
             pane_resume,
             chatlog::pane_session_info,
             chatlog::session_tail,
+            usage::session_subagents,
             chatlog::session_record,
             pathcheck::paths_exist,
             doctor::instruction_files,

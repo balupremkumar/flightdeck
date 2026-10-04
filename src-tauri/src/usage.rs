@@ -680,11 +680,24 @@ pub struct SubagentCount {
     pub recent: u64,
 }
 
+/// TN3: tool_use counts by class, kept beside the QL-769 state so one pass over
+/// the appended bytes feeds both the popover and the transcript's subagent links.
+#[derive(Clone, Default)]
+struct ToolCounts {
+    edits: u64,
+    commands: u64,
+    reads: u64,
+    searches: u64,
+    other: u64,
+}
+
 struct SubState {
     offset: u64,
     carry: String,
     usage: PaneUsage,
     info: SubagentInfo,
+    counts: ToolCounts,
+    tool_use_id: Option<String>,
 }
 
 fn sub_states() -> &'static Mutex<HashMap<PathBuf, SubState>> {
@@ -698,7 +711,7 @@ fn subagents_dir(transcript: &Path) -> PathBuf {
     transcript.with_extension("").join("subagents")
 }
 
-fn apply_sub_line(line: &str, usage: &mut PaneUsage, info: &mut SubagentInfo) {
+fn apply_sub_line(line: &str, usage: &mut PaneUsage, info: &mut SubagentInfo, counts: &mut ToolCounts) {
     let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else { return };
     apply_usage(&v, usage);
     if let Some(ms) = v.get("timestamp").and_then(|t| t.as_str()).and_then(iso_ms) {
@@ -717,6 +730,15 @@ fn apply_sub_line(line: &str, usage: &mut PaneUsage, info: &mut SubagentInfo) {
                     called_a_tool = true;
                     if let Some(name) = b.get("name").and_then(|n| n.as_str()) {
                         info.tool = Some(name.to_string());
+                        match name {
+                            "Edit" | "MultiEdit" | "Write" | "NotebookEdit" => counts.edits += 1,
+                            "Bash" | "PowerShell" => counts.commands += 1,
+                            "Read" => counts.reads += 1,
+                            "Grep" | "Glob" | "WebSearch" | "WebFetch" => counts.searches += 1,
+                            _ => counts.other += 1,
+                        }
+                    } else {
+                        counts.other += 1;
                     }
                 }
             }
@@ -731,6 +753,12 @@ fn apply_sub_line(line: &str, usage: &mut PaneUsage, info: &mut SubagentInfo) {
 }
 
 fn scan_subagent(path: &Path, meta: (Option<String>, Option<String>)) -> Option<SubagentInfo> {
+    scan_subagent_full(path, (meta.0, meta.1, None)).map(|r| r.0)
+}
+
+type SubMeta = (Option<String>, Option<String>, Option<String>);
+
+fn scan_subagent_full(path: &Path, meta: SubMeta) -> Option<(SubagentInfo, ToolCounts, Option<String>)> {
     let fsmeta = std::fs::metadata(path).ok()?;
     let len = fsmeta.len();
     let mut map = sub_states().lock().unwrap();
@@ -749,12 +777,19 @@ fn scan_subagent(path: &Path, meta: (Option<String>, Option<String>)) -> Option<
                 description: meta.1,
                 ..SubagentInfo::default()
             },
+            counts: ToolCounts::default(),
+            tool_use_id: None,
         }
     });
+    // The sidecar can land after the transcript's first poll; fill gaps late.
+    if st.tool_use_id.is_none() {
+        st.tool_use_id = meta.2;
+    }
     if len < st.offset {
         st.offset = 0;
         st.carry = String::new();
         st.usage = PaneUsage::default();
+        st.counts = ToolCounts::default();
     }
     if len > st.offset {
         let mut f = std::fs::File::open(path).ok()?;
@@ -765,8 +800,8 @@ fn scan_subagent(path: &Path, meta: (Option<String>, Option<String>)) -> Option<
         let chunk = st.carry.clone() + &String::from_utf8_lossy(&buf);
         let complete_up_to = chunk.rfind('\n').map(|i| i + 1).unwrap_or(0);
         for line in chunk[..complete_up_to].lines() {
-            let (usage, info) = (&mut st.usage, &mut st.info);
-            apply_sub_line(line, usage, info);
+            let (usage, info, counts) = (&mut st.usage, &mut st.info, &mut st.counts);
+            apply_sub_line(line, usage, info, counts);
         }
         st.carry = chunk[complete_up_to..].to_string();
         st.info.context_tokens = st.usage.context_tokens;
@@ -786,15 +821,98 @@ fn scan_subagent(path: &Path, meta: (Option<String>, Option<String>)) -> Option<
             .map(|d| d.as_millis() as u64)
             .unwrap_or(st.info.last_activity_ms);
     }
-    Some(st.info.clone())
+    Some((st.info.clone(), st.counts.clone(), st.tool_use_id.clone()))
+}
+
+fn read_agent_meta3(path: &Path) -> SubMeta {
+    let meta_path = path.with_extension("meta.json");
+    let Ok(text) = std::fs::read_to_string(&meta_path) else { return (None, None, None) };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else { return (None, None, None) };
+    let s = |k: &str| v.get(k).and_then(|x| x.as_str()).filter(|x| !x.is_empty()).map(|x| x.to_string());
+    (s("agentType"), s("description"), s("toolUseId"))
 }
 
 fn read_agent_meta(path: &Path) -> (Option<String>, Option<String>) {
-    let meta_path = path.with_extension("meta.json");
-    let Ok(text) = std::fs::read_to_string(&meta_path) else { return (None, None) };
-    let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else { return (None, None) };
-    let s = |k: &str| v.get(k).and_then(|x| x.as_str()).filter(|x| !x.is_empty()).map(|x| x.to_string());
-    (s("agentType"), s("description"))
+    let m = read_agent_meta3(path);
+    (m.0, m.1)
+}
+
+// ---------------------------------------------------------------------------
+// TN3: subagent links for the chat transcript. Same files and cached scan as the
+// popover above, keyed from the parent JSONL path the transcript view already
+// holds, with tool counts by class and the parent's Agent tool_use id.
+// ---------------------------------------------------------------------------
+
+/// Links returned per session; the newest-modified win when more exist.
+const SUBAGENT_LINK_CAP: usize = 50;
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubagentLink {
+    pub id: String,
+    pub tool_use_id: Option<String>,
+    pub agent_type: Option<String>,
+    pub description: Option<String>,
+    pub jsonl_path: String,
+    pub edits: u64,
+    pub commands: u64,
+    pub reads: u64,
+    pub searches: u64,
+    pub other: u64,
+    pub finished: bool,
+    pub last_activity_ms: u64,
+}
+
+/// `parent` is the already-validated parent transcript path (not canonicalised,
+/// so the returned paths stay plain drive paths that session_tail accepts).
+/// Oldest spawn first.
+pub fn subagent_links_for(parent: &Path) -> Vec<SubagentLink> {
+    let Ok(entries) = std::fs::read_dir(subagents_dir(parent)) else { return Vec::new() };
+    let mut files: Vec<PathBuf> = entries
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().map(|x| x == "jsonl").unwrap_or(false))
+        .collect();
+    files.sort_by_key(|p| std::cmp::Reverse(modified_ms(p)));
+    files.truncate(SUBAGENT_LINK_CAP);
+    let mut rows: Vec<(u64, SubagentLink)> = files
+        .iter()
+        .filter_map(|p| {
+            let (info, c, tool_use_id) = scan_subagent_full(p, read_agent_meta3(p))?;
+            Some((
+                info.started_ms,
+                SubagentLink {
+                    id: info.id,
+                    tool_use_id,
+                    agent_type: info.agent_type,
+                    description: info.description,
+                    jsonl_path: p.to_string_lossy().into_owned(),
+                    edits: c.edits,
+                    commands: c.commands,
+                    reads: c.reads,
+                    searches: c.searches,
+                    other: c.other,
+                    finished: info.finished,
+                    last_activity_ms: info.last_activity_ms,
+                },
+            ))
+        })
+        .collect();
+    rows.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.id.cmp(&b.1.id)));
+    rows.into_iter().map(|r| r.1).collect()
+}
+
+#[tauri::command(async)]
+pub fn session_subagents(jsonl_path: String) -> Result<Vec<SubagentLink>, String> {
+    let root = crate::chatlog::projects_root().ok_or_else(|| "USERPROFILE not set".to_string())?;
+    subagent_links_checked(&root, &jsonl_path)
+}
+
+fn subagent_links_checked(root: &Path, jsonl_path: &str) -> Result<Vec<SubagentLink>, String> {
+    // Validate exactly like session_tail; then walk from the caller's own path
+    // (check_under returns a \\?\ canonical form that pathguard rejects).
+    crate::chatlog::check_under(root, jsonl_path)?;
+    Ok(subagent_links_for(Path::new(jsonl_path)))
 }
 
 fn subagent_files(projects_root: &Path, cwd: &str) -> Vec<PathBuf> {
@@ -1920,6 +2038,131 @@ mod tests {
         format!(
             r#"{{"type":"user","isSidechain":true,"timestamp":"{ts}","message":{{"role":"user","content":[{{"type":"tool_result","tool_use_id":"t1","content":"ok"}}]}}}}"#
         )
+    }
+
+    // --- TN3: session_subagents ------------------------------------------
+
+    /// Parent transcript path (string) for the session `session_with_subagents` wrote.
+    fn parent_of(root: &Path, cwd: &str) -> String {
+        root.join(slugify(cwd)).join("sess.jsonl").to_string_lossy().into_owned()
+    }
+
+    fn write_meta_tool_use(root: &Path, cwd: &str, id: &str, tool_use_id: &str) {
+        let subs = root.join(slugify(cwd)).join("sess").join("subagents");
+        std::fs::write(
+            subs.join(format!("agent-{id}.meta.json")),
+            format!(r#"{{"agentType":"Explore","description":"d","toolUseId":"{tool_use_id}","spawnDepth":1}}"#),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn links_count_tools_by_class_and_read_tool_use_id() {
+        let cwd = "D:\\proj\\links";
+        let lines = vec![
+            sub_tool("2026-10-01T10:00:00.000Z", "Edit", 1),
+            sub_tool("2026-10-01T10:00:01.000Z", "MultiEdit", 1),
+            sub_tool("2026-10-01T10:00:02.000Z", "Write", 1),
+            sub_tool("2026-10-01T10:00:03.000Z", "NotebookEdit", 1),
+            sub_tool("2026-10-01T10:00:04.000Z", "Bash", 1),
+            sub_tool("2026-10-01T10:00:05.000Z", "PowerShell", 1),
+            sub_tool("2026-10-01T10:00:06.000Z", "Read", 1),
+            sub_tool("2026-10-01T10:00:07.000Z", "Grep", 1),
+            sub_tool("2026-10-01T10:00:08.000Z", "Glob", 1),
+            sub_tool("2026-10-01T10:00:09.000Z", "WebSearch", 1),
+            sub_tool("2026-10-01T10:00:10.000Z", "WebFetch", 1),
+            sub_tool("2026-10-01T10:00:11.000Z", "Agent", 1),
+            sub_tool("2026-10-01T10:00:12.000Z", "mcp__x__y", 1),
+            sub_text("2026-10-01T10:00:13.000Z", 5),
+        ];
+        let root = session_with_subagents(cwd, &[("aaa", "Explore", lines)]);
+        write_meta_tool_use(&root, cwd, "aaa", "toolu_01");
+        let links = subagent_links_checked(&root, &parent_of(&root, cwd)).unwrap();
+        assert_eq!(links.len(), 1);
+        let l = &links[0];
+        assert_eq!(l.id, "aaa");
+        assert_eq!(l.tool_use_id.as_deref(), Some("toolu_01"));
+        assert_eq!(l.agent_type.as_deref(), Some("Explore"));
+        assert_eq!((l.edits, l.commands, l.reads, l.searches, l.other), (4, 2, 1, 4, 2));
+        assert!(l.finished);
+        assert!(l.jsonl_path.ends_with("agent-aaa.jsonl"));
+        // The frontend tails this path with session_tail, so its guard must accept it.
+        assert_eq!(crate::chatlog::check_under(&root, &l.jsonl_path).is_ok(), true);
+        let v = serde_json::to_value(l).unwrap();
+        assert!(v.get("toolUseId").is_some() && v.get("lastActivityMs").is_some());
+    }
+
+    #[test]
+    fn links_missing_meta_gives_nulls() {
+        let cwd = "D:\\proj\\links-nometa";
+        let root = session_with_subagents(cwd, &[("bbb", "Explore", vec![sub_tool("2026-10-01T10:00:00.000Z", "Read", 1)])]);
+        let subs = root.join(slugify(cwd)).join("sess").join("subagents");
+        std::fs::remove_file(subs.join("agent-bbb.meta.json")).unwrap();
+        let links = subagent_links_checked(&root, &parent_of(&root, cwd)).unwrap();
+        assert_eq!(links.len(), 1);
+        assert!(links[0].tool_use_id.is_none() && links[0].agent_type.is_none() && links[0].description.is_none());
+        assert!(!links[0].finished);
+        assert_eq!(links[0].reads, 1);
+    }
+
+    #[test]
+    fn links_finished_rule_and_incremental_append() {
+        let cwd = "D:\\proj\\links-inc";
+        let root = session_with_subagents(cwd, &[("ccc", "Explore", vec![sub_tool("2026-10-01T10:00:00.000Z", "Bash", 1)])]);
+        let parent = parent_of(&root, cwd);
+        let l = &subagent_links_checked(&root, &parent).unwrap()[0];
+        assert_eq!((l.commands, l.finished), (1, false));
+        let f = root.join(slugify(cwd)).join("sess").join("subagents").join("agent-ccc.jsonl");
+        let mut body = std::fs::read_to_string(&f).unwrap();
+        body += &(sub_result("2026-10-01T10:00:01.000Z") + "\n");
+        body += &(sub_tool("2026-10-01T10:00:02.000Z", "Edit", 1) + "\n");
+        std::fs::write(&f, &body).unwrap();
+        let l = &subagent_links_checked(&root, &parent).unwrap()[0];
+        assert_eq!((l.commands, l.edits, l.finished), (1, 1, false), "counts add, not recount");
+        body += &(sub_text("2026-10-01T10:00:03.000Z", 5) + "\n");
+        std::fs::write(&f, &body).unwrap();
+        let l = &subagent_links_checked(&root, &parent).unwrap()[0];
+        assert_eq!((l.commands, l.edits, l.finished), (1, 1, true));
+    }
+
+    #[test]
+    fn links_oldest_spawn_first() {
+        let cwd = "D:\\proj\\links-order";
+        let root = session_with_subagents(
+            cwd,
+            &[
+                ("new", "Explore", vec![sub_tool("2026-10-01T11:00:00.000Z", "Read", 1)]),
+                ("old", "Explore", vec![sub_tool("2026-10-01T09:00:00.000Z", "Read", 1)]),
+            ],
+        );
+        let links = subagent_links_checked(&root, &parent_of(&root, cwd)).unwrap();
+        assert_eq!(links.iter().map(|l| l.id.as_str()).collect::<Vec<_>>(), vec!["old", "new"]);
+    }
+
+    #[test]
+    fn links_reject_paths_outside_projects_root() {
+        let cwd = "D:\\proj\\links-guard";
+        let root = session_with_subagents(cwd, &[("ddd", "Explore", vec![sub_text("2026-10-01T10:00:00.000Z", 1)])]);
+        let other = temp_root();
+        let outside = other.join("sess.jsonl");
+        std::fs::write(&outside, "{}\n").unwrap();
+        assert!(subagent_links_checked(&root, &outside.to_string_lossy()).is_err());
+        assert!(subagent_links_checked(&root, r"\\server\share\x.jsonl").is_err());
+        let not_jsonl = root.join(slugify(cwd)).join("sess").join("subagents").join("agent-ddd.meta.json");
+        assert!(subagent_links_checked(&root, &not_jsonl.to_string_lossy()).is_err());
+    }
+
+    #[test]
+    fn links_cap_keeps_newest_fifty() {
+        let cwd = "D:\\proj\\links-cap";
+        let agents: Vec<(String, Vec<String>)> = (0..55)
+            .map(|i| (format!("a{i:02}"), vec![sub_text(&format!("2026-10-01T10:{:02}:00.000Z", i % 60), 1)]))
+            .collect();
+        let borrowed: Vec<(&str, &str, Vec<String>)> =
+            agents.iter().map(|(id, l)| (id.as_str(), "Explore", l.clone())).collect();
+        let root = session_with_subagents(cwd, &borrowed);
+        let links = subagent_links_checked(&root, &parent_of(&root, cwd)).unwrap();
+        assert_eq!(links.len(), SUBAGENT_LINK_CAP);
     }
 
     #[test]
