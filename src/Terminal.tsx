@@ -23,6 +23,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { terminalThemeFor } from "./terminal-theme";
 import { getTerminalSettings, terminalReadabilityOptions } from "./settingsStore";
 import { shouldCopyOnSelect } from "./terminalMouse";
+import { isOscBusy, nextOscBusy, type OscBusy } from "./oscBusy";
 import { linkify, resolvePath, isRemotePath, type LinkMatch } from "./linkify";
 import { computeFoldRanges, foldAll, foldsContaining, foldSummary, pruneFolded, toggleFold, type FoldRange } from "./foldmarks";
 import { invalidatePathCache } from "./pathcheck";
@@ -1418,6 +1419,7 @@ function createSession(modelId: number, gen: string, spec: SpawnSpec, handlers: 
     const OSC_RE = /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?/g;
     const textDecoder = new TextDecoder("utf-8", { fatal: false });
     let outTail = "";
+    let oscBusy: OscBusy = null; // SF1: last OSC 9;4 reading
     const appendTail = (bytes: Uint8Array) => {
       const text = textDecoder.decode(bytes);
       // UI-135: the agent rang the terminal bell — surface it as a visual pulse
@@ -1444,6 +1446,7 @@ function createSession(modelId: number, gen: string, spec: SpawnSpec, handlers: 
       // status band) keeps its original null/-1/pct contract.
       for (const m of text.matchAll(/\x1b\]9;4;(\d)(?:;(\d{1,3}))?(?:\x07|\x1b\\)/g)) {
         const state = m[1];
+        oscBusy = nextOscBusy(oscBusy, parseInt(state, 10), Date.now());
         if (state === "0") {
           entry.handlers.onProgress?.(null);
           publishPaneProgress(paneId, null);
@@ -1475,6 +1478,8 @@ function createSession(modelId: number, gen: string, spec: SpawnSpec, handlers: 
       clearQuietTimer();
       quietTimer = setTimeout(() => {
         if (entry.disposed || !currentlyAlive) return;
+        // SF1: OSC 9;4 busy (npm, cargo...) is not "waiting"; look again later.
+        if (isOscBusy(oscBusy, Date.now())) { armQuietTimer(); return; }
         localWaiting = true;
         entry.handlers.onState?.(tailShowsPermissionPrompt() ? "permission" : "waiting");
       }, live.quietMs.current);
