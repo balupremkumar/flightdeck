@@ -66,6 +66,27 @@ const STANDARD_PROMPT_RE = [
   /waiting for (your )?(approval|confirmation|permission)/i,
 ];
 
+/** Codex-only approval prompt strings, read from the TUI strings in the
+ *  installed codex.exe (v0.160.0, the openai/codex tui approval overlay):
+ *  "Would you like to run the following command?" / "...make the following
+ *  edits?" / "...grant these permissions?" (already caught by the shared
+ *  "would you like to"), "Do you want to approve network access to ..." (shared
+ *  "do you want to"), plus the ones the shared list misses below. */
+const CODEX_PROMPT_RE = [
+  /no, and tell codex what to do differently/i,
+  /yes, and don'?t ask again/i,
+  /yes, just this once/i,
+  /approve app tool call\?/i,
+  /allow (for this session|this request and remember)/i,
+];
+
+/** The permission-prompt patterns Terminal.tsx matches against a quiet pane's
+ *  tail: the shared list (identical to what Terminal carried inline before),
+ *  plus Codex's extras for the codex vendor only. Claude/agy are unchanged. */
+export function permissionPatternsFor(vendor: string): RegExp[] {
+  return vendor === "codex" ? [...STANDARD_PROMPT_RE, ...CODEX_PROMPT_RE] : STANDARD_PROMPT_RE;
+}
+
 /** UX-559: true when a pane's last output line reads as the agent asking a
  *  genuine open-ended question ("which package manager should I use?",
  *  "what should I name this branch?") rather than a standard yes/no/approval

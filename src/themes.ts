@@ -437,7 +437,7 @@ export const THEME_TOKENS = [
   "--line", "--line-strong", "--text", "--muted", "--faint",
   "--ice", "--azure", "--aqua", "--deepblue", "--red", "--accent",
   "--st-starting", "--st-running", "--st-waiting", "--st-idle", "--st-error", "--st-exited",
-  "--agent-claude", "--accent-grad", "--glow", "--shadow-lg",
+  "--agent-claude", "--agent-codex", "--accent-grad", "--glow", "--shadow-lg",
   "--font-sans", "--font-mono", "--ease-out", "--ease-soft",
 ];
 

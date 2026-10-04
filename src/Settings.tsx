@@ -2229,7 +2229,7 @@ export function Settings() {
                 <div className="set-row-t">
                   <span className="set-row-name">Trusted folders</span>
                   <span className="set-row-sub">
-                    Folders you’ve let a trust-requiring agent (Antigravity) work in. Revoking means
+                    Folders you’ve let a trust-requiring agent (Antigravity, Codex) work in. Revoking means
                     you’ll be asked again next time.
                   </span>
                 </div>
