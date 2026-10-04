@@ -80,7 +80,7 @@ fn write_if_changed(path: &std::path::Path, contents: &str) -> std::io::Result<(
 /// stays, for a file deleted while the app runs.
 pub fn write_view_settings(dir: &std::path::Path) {
     for focus in [true, false] {
-        let _ = view_settings_file(dir, focus);
+        let _ = view_settings_file(dir, focus, None);
     }
 }
 
@@ -735,7 +735,7 @@ mod tests {
             let hs: Vec<_> = (0..4)
                 .map(|_| {
                     let d = dir.clone();
-                    std::thread::spawn(move || view_settings_file(&d, true).is_ok())
+                    std::thread::spawn(move || view_settings_file(&d, true, None).is_ok())
                 })
                 .collect();
             for h in hs {
