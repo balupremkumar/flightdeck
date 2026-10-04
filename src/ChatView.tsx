@@ -350,11 +350,9 @@ export default function ChatView({ paneId, cwd, epoch, paneState, exited, onRest
           setRecords([]); setTrimmed(false); setSkippedHead(false); setLoaded(false);
         } else {
           cur.pinned = si.pinned;
-          if (si.rotated) {
-            // File replaced under us: old offsets and records are stale.
-            cur.t.reset();
-            setRecords([]); setTrimmed(false); setSkippedHead(false);
-          }
+          // No reset on si.rotated here: the backend reports rotated for as long as a
+          // newer file than the pinned one exists, and it already hands back that newer
+          // path, so a real rotation arrives as the path change handled above.
         }
         setInfo(si);
       }
