@@ -8,6 +8,7 @@ mod applog;
 mod canary;
 mod chatlog;
 mod codexsessions;
+mod doctor;
 mod editor;
 mod gitstatus;
 mod health;
@@ -732,6 +733,8 @@ pub fn run() {
             chatlog::session_tail,
             chatlog::session_record,
             pathcheck::paths_exist,
+            doctor::instruction_files,
+            doctor::plugin_validate,
             pty_write,
             pty_resize,
             pty_kill,
