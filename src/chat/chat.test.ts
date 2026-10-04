@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ChatRecord } from "../chatlog";
-import { buildTurns, itemKey, callKey } from "./turns";
+import { buildTurns, itemKey, callKey, isSystemPromptText } from "./turns";
+import { buildPromptPayload, sanitizeDraft } from "./send";
 import { chipLabel, groupLabel, shortPath } from "./chips";
 import { planFind } from "./find";
 import { appendBounded } from "./buffer";
@@ -176,5 +177,53 @@ describe("raw helpers", () => {
     expect(resultText(raw, "nope")).toBe("");
     expect(capLines([1, 2, 3, 4], 2, false)).toEqual({ shown: [1, 2], hidden: 2 });
     expect(capLines([1, 2, 3, 4], 2, true).hidden).toBe(0);
+  });
+});
+
+describe("prompt payload", () => {
+  it("wraps in bracketed paste and submits once", () => {
+    expect(buildPromptPayload("a\nb")).toBe("\x1b[200~a\nb\x1b[201~\r");
+  });
+  it("normalises CRLF and lone CR", () => {
+    expect(sanitizeDraft("a\r\nb\rc")).toBe("a\nb\nc");
+  });
+  it("strips ESC, C0 and DEL but keeps tab and newline", () => {
+    expect(sanitizeDraft("a\x1b[31mb\x03\x7f\tc\nd\x00")).toBe("a[31mb\tc\nd");
+  });
+  it("returns null when nothing is left", () => {
+    expect(buildPromptPayload("  \x1b \r\n ")).toBeNull();
+  });
+  it("cannot smuggle a paste terminator", () => {
+    expect(buildPromptPayload("x\x1b[201~rm")).toBe("\x1b[200~x[201~rm\x1b[201~\r");
+  });
+});
+
+describe("system records", () => {
+  it("do not start turns or set prompts", () => {
+    const t = buildTurns([user("hi"), say("yo"), base({ kind: "system", text: "<system-reminder>x" }), say("more")]);
+    expect(t).toHaveLength(1);
+    expect(t[0].prompt?.text).toBe("hi");
+  });
+  it("defensively skips wrapper-tag user prompts", () => {
+    const t = buildTurns([
+      user("real"), say("a"),
+      user("<task-notification>done</task-notification>"),
+      user("<system-reminder>x"), user("<command-name>/x"), user("<local-command-stdout>o"),
+      user("<command-message>m"), user("<command-args>a"),
+      say("b"),
+    ]);
+    expect(t).toHaveLength(1);
+    expect(t[0].items).toHaveLength(2);
+    expect(t[0].notes).toHaveLength(6);
+  });
+  it("keeps ordinary prompts that merely start with <", () => {
+    expect(isSystemPromptText("<div> why")).toBe(false);
+    expect(isSystemPromptText("  <system-reminder>x")).toBe(true);
+    expect(buildTurns([user("<div> why")])).toHaveLength(1);
+  });
+  it("collects system notes separately from items", () => {
+    const t = buildTurns([user("hi"), base({ kind: "system", text: "compact summary" }), say("x")]);
+    expect(t[0].items.map((i) => i.kind)).toEqual(["text"]);
+    expect(t[0].notes.map((r) => r.text)).toEqual(["compact summary"]);
   });
 });

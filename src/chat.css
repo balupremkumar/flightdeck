@@ -90,3 +90,6 @@
 }
 .chat-filelist { list-style: none; margin: 4px 0 0; padding: 0 0 0 4px; font-size: 12px; }
 .chat-filelist .chat-link { margin-left: 0; }
+.chat-sysnote { margin: 4px 0; font-size: 11.5px; color: var(--muted); }
+.chat-sysnote summary { cursor: pointer; }
+.chat-sysnote pre { margin: 4px 0 0; white-space: pre-wrap; word-break: break-word; max-height: 160px; overflow: auto; font: inherit; }

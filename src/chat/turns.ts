@@ -20,9 +20,15 @@ export interface Turn {
   key: string;
   prompt: ChatRecord | null;
   items: Item[];
+  /** System-classified records (meta, compact summaries, wrapper tags); shown only in Verbose. */
+  notes: ChatRecord[];
   /** Unique paths touched by edit-class tools in this turn. */
   files: string[];
 }
+
+const SYSTEM_TAG = /^\s*<(task-notification|system-reminder|command-name|local-command-stdout|command-message|command-args)\b/;
+/** Defensive: user text that is really a harness wrapper, in case the backend missed it. */
+export const isSystemPromptText = (text: string): boolean => SYSTEM_TAG.test(text);
 
 export const EDIT_TOOLS = new Set(["Edit", "MultiEdit", "Write", "NotebookEdit"]);
 
@@ -65,18 +71,26 @@ export function buildTurns(records: ChatRecord[]): Turn[] {
 
   const ensureTurn = (rec: ChatRecord): Turn => {
     if (!cur) {
-      cur = { key: `t${recKey(rec)}`, prompt: null, items: [], files: [] };
+      cur = { key: `t${recKey(rec)}`, prompt: null, items: [], notes: [], files: [] };
       turns.push(cur);
     }
     return cur;
   };
-  const flushSide = () => {
+  // NOTE: Claude 2.1.289 writes subagent transcripts to <session>/subagents/*.jsonl,
+  // not into the main file, so this sidechain grouping rarely fires any more.
+  // Left in place for older transcripts.
+  const flushSide =() => {
     if (side && side.length && cur) cur.items.push({ kind: "subagent", items: side });
     side = null;
   };
 
   for (const rec of records) {
-    if (rec.kind === "tool_result" || rec.kind === "system" || rec.kind === "other") continue;
+    if (rec.kind === "system" || (rec.kind === "user" && rec.text && isSystemPromptText(rec.text))) {
+      // Never a prompt or sticky header; kept as a note on the current turn (Verbose only).
+      if (cur && !rec.sidechain && rec.text && rec.text.trim()) (cur as Turn).notes.push(rec);
+      continue;
+    }
+    if (rec.kind === "tool_result" || rec.kind === "other") continue;
     if (rec.sidechain) {
       ensureTurn(rec);
       if (!side) side = [];
@@ -86,7 +100,7 @@ export function buildTurns(records: ChatRecord[]): Turn[] {
     flushSide();
     if (rec.kind === "user") {
       if (!rec.text || !rec.text.trim()) continue;
-      cur = { key: `t${recKey(rec)}`, prompt: rec, items: [], files: [] };
+      cur = { key: `t${recKey(rec)}`, prompt: rec, items: [], notes: [], files: [] };
       turns.push(cur);
       continue;
     }
