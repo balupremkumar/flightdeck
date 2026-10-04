@@ -28,7 +28,7 @@ describe("cachedInvoke", () => {
     // second call, third call (after TTL + adaptive TTL have expired).
     let callIdx = 0;
     const times = [1000, 1001, 1001, 12000];
-    const nowSpy = vi.spyOn(global.Date, "now").mockImplementation(() => times[Math.min(callIdx++, times.length - 1)]);
+    const nowSpy = vi.spyOn(global.Date, "now").mockImplementation(() => times[callIdx++]);
 
     try {
       invokeMock.mockResolvedValue("v1");
