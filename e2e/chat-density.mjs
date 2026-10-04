@@ -52,14 +52,17 @@ const overrides = `(() => {
     ...edit("e1", "src/a.ts", 10, 2),
     ...call("b1", "Bash", "npm run build", [], 0, 0),
     ...edit("e2", "src/b.ts", 20, 5),
+    rec("assistant_text", { text: "Now I'll update the tests." }),
     ...edit("e3", "src/b.ts", 4, 1),
     ...edit("e4", "src/c.ts", 30, 3),
     ...edit("e5", "src/d.ts", 8, 0),
     ...edit("e6", "src/d.ts", 2, 2),
+    rec("assistant_text", { text: "Running the checks." }),
     ...call("b2", "Bash", "npm test", [], 0, 0),
     ...call("b3", "Bash", "npm run lint", [], 0, 0),
     ...call("g1", "Grep", "limiter", [], 0, 0),
     ...call("g2", "Grep", "TODO", [], 0, 0),
+    rec("assistant_text", { text: "Handing the last piece to a subagent." }),
     ...call("ag1", "Agent", "Build element 11", [], 0, 0),
     rec("assistant_text", { text: "All four files are updated and the checks pass." }),
   ];
@@ -132,12 +135,18 @@ check((await page.locator(".chat-activity > .chat-chip").first().getAttribute("a
 const changeRow = (await page.locator(".chat-files-main").first().textContent())?.trim();
 check(changeRow === "Changed 4 files +74 -13", `change row sums +/- over the turn's edits (got "${changeRow}")`);
 check((await subTailCalls()) === 0, "no subagent transcript is read while collapsed");
+check((await page.locator(".chat-turn > .chat-text").count()) === 1, "only the closing reply stays visible as prose; narration is folded into the line");
+const lastNarr = await page.locator(".chat-activity .chat-narr-last").first().getAttribute("title");
+check(lastNarr === "Handing the last piece to a subagent.", `the line shows the latest narration sentence, title holds it in full (got "${lastNarr}")`);
 await shot("normal");
 
 // --- Activity line -> chips -> diff ------------------------------------------
 await page.locator(".chat-activity > .chat-chip").first().click();
 check(await has(".chat-activity-body .chat-chip"), "clicking the activity line expands to today's chips");
 check((await page.locator(".chat-activity > .chat-chip").first().getAttribute("aria-expanded")) === "true", "activity line reports aria-expanded=true");
+check((await page.locator(".chat-activity-body .chat-narr").count()) === 4, "expanded line interleaves the 4 narration sentences with the chips");
+const order = await page.evaluate(() => [...document.querySelectorAll(".chat-activity-body > *")].slice(0, 3).map((e) => e.classList.contains("chat-narr") ? "narr" : "step"));
+check(order[0] === "narr", "narration sits in original order (the opening sentence comes first)");
 await shot("normal-expanded");
 await page.locator(".chat-activity-body .chat-call", { hasText: "Edited src/a.ts" }).locator(".chat-chip").click();
 check(await has(".chat-diff"), "clicking a chip shows its diff");
@@ -168,6 +177,11 @@ await page.locator(".chat-find input").fill("npm run lint");
 check(await has(".chat-activity-body .chat-call.hit"), "Find opens the activity line that holds the hit");
 await page.locator(".chat-find input").press("Escape");
 
+await page.keyboard.press("Control+f");
+await page.locator(".chat-find input").fill("update the tests");
+check(await has(".chat-activity-body .chat-narr.hit"), "Find hits narration text and opens its activity line");
+await page.locator(".chat-find input").press("Escape");
+
 // --- Change row opens Review --------------------------------------------------
 await page.locator(".chat-files-main").first().click();
 check(await has(".rv-drawer .rv-patch-file"), "change row opens Review");
@@ -189,6 +203,25 @@ check(verboseRows > normalRows, `Verbose shows more rows than Normal (${verboseR
 check((await page.locator(".chat-group > .chat-chip").count()) >= 4, "Verbose shows the per-tool group chips");
 console.log(`   rows below the prompt: Normal ${normalRows}, Verbose ${verboseRows}`);
 await shot("verbose");
+
+// --- TN1 empty state: no session yet, Claude asking in the terminal ----------
+{
+  const p2 = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  p2.on("pageerror", (e) => pageErrors.push(e.message));
+  await p2.addInitScript(boot + "\n" + mock + "\n" + overrides + "\nwindow.__mockOverrides.pane_session_info = () => ({ session_id: null, pinned: false, jsonl_path: null });");
+  await p2.goto(URL, { waitUntil: "networkidle" });
+  await p2.waitForSelector(".pane", { timeout: 30000 });
+  await p2.evaluate(async () => { window.__app = (await import("/src/store.ts")).useApp; });
+  const id2 = await p2.evaluate(() => window.__app.getState().workspaces[0].panes[0].id);
+  await p2.locator('.pane').first().locator('.pview-toggle button[aria-label^="Chat"]').click();
+  await p2.evaluate((id) => window.__app.getState().setPaneState(id, "permission"), id2);
+  const msg = await p2.waitForSelector(".chat-empty", { timeout: 15000, state: "visible" }).then(() => true, () => false);
+  check(msg && /Claude is asking something in the terminal/.test((await p2.locator(".chat-empty").textContent()) ?? ""), "no session + permission state: Chat says Claude is asking something in the terminal");
+  await p2.screenshot({ path: path.join(shots, "chat-density-empty-asking.png") });
+  await p2.locator(".chat-empty-btn", { hasText: "Switch to Terminal" }).click();
+  check(await p2.waitForSelector(".chat", { timeout: 15000, state: "detached" }).then(() => true, () => false), "Switch to Terminal leaves Chat for the terminal");
+  await p2.close();
+}
 
 check(pageErrors.length === 0, "no page errors" + (pageErrors.length ? ": " + pageErrors.join(" | ") : ""));
 await browser.close();

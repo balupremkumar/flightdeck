@@ -1,6 +1,7 @@
 // Pure record -> turn grouping for the chat view. DOM-free so it unit-tests in
 // plain Node. A "turn" is everything under one user prompt.
 import type { ChatRecord, ChatResult, ChatTool } from "../chatlog";
+import { parseMarkdown } from "../markdown";
 
 export const recKey = (r: Pick<ChatRecord, "index" | "block">): string => `${r.index}:${r.block}`;
 
@@ -74,6 +75,8 @@ export interface Activity {
   calls: ToolCall[];
   /** Sidechain subagent items in the run (older transcripts). */
   sideSubagents: number;
+  /** Short narration sentences absorbed into the run, in order (latest last). */
+  narration: string[];
   /** The run ends the conversation so far, so a call without a result is still running. */
   live: boolean;
 }
@@ -84,19 +87,38 @@ export const activityKey = (first: Item): string => `a:${itemKey(first)}`;
 /** The call of a live run that is still running, if any. */
 export function runningCall(a: Activity): ToolCall | null {
   const last = a.calls[a.calls.length - 1];
-  return a.live && last && !last.result && a.items[a.items.length - 1].kind === "tools" ? last : null;
+  const tail = [...a.items].reverse().find((it) => it.kind !== "text");
+  return a.live && last && !last.result && tail?.kind === "tools" ? last : null;
+}
+
+const NARRATION_MAX = 200;
+
+/** A short, single-paragraph sentence with no code, list, table or heading. */
+export function isNarration(text: string): boolean {
+  const t = text.trim();
+  if (!t || t.length > NARRATION_MAX) return false;
+  const blocks = parseMarkdown(t);
+  return blocks.length === 1 && blocks[0].type === "paragraph";
 }
 
 /**
- * Folds every run of non-text items into one Activity. A run that is already a
- * single line (one tool group, or one sidechain subagent) stays as it is. `live`:
- * this is the newest turn, so its trailing run may still be in progress.
+ * Folds every run of non-text items into one Activity. Short narration
+ * ("Now I'll update the tests.") between or around steps joins the run, so
+ * runs separated only by narration become one line. The turn's closing reply
+ * (the last assistant text, when no step follows it) and any long or
+ * structured prose stay visible and split runs. A run that is already a
+ * single line (one tool group, or one sidechain subagent) stays as it is.
+ * `live`: this is the newest turn, so its trailing run may still be in progress.
  */
 export function foldActivity(items: Item[], live = false): NormalItem[] {
   const out: NormalItem[] = [];
   let run: Item[] = [];
+  let lastText = -1;
+  items.forEach((it, i) => { if (it.kind === "text" && it.rec.kind === "assistant_text") lastText = i; });
+  const stepAfterLast = items.slice(lastText + 1).some((it) => it.kind !== "text");
   const flush = (atEnd: boolean) => {
     if (!run.length) return;
+    if (!run.some((it) => it.kind !== "text")) { out.push(...run); run = []; return; }
     const only = run.length === 1 ? run[0] : null;
     if (only && (only.kind === "subagent" || only.kind === "tools")) out.push(only);
     else {
@@ -106,15 +128,17 @@ export function foldActivity(items: Item[], live = false): NormalItem[] {
         items: run,
         calls: run.flatMap((it) => (it.kind === "tools" ? it.calls : [])),
         sideSubagents: run.filter((it) => it.kind === "subagent").length,
+        narration: run.flatMap((it) => (it.kind === "text" && it.rec.text ? [it.rec.text.trim()] : [])),
         live: live && atEnd,
       });
     }
     run = [];
   };
-  for (const it of items) {
-    if (it.kind === "text") { flush(false); out.push(it); }
+  items.forEach((it, i) => {
+    const narr = it.kind === "text" && it.rec.kind === "assistant_text" && isNarration(it.rec.text ?? "") && (i !== lastText || stepAfterLast);
+    if (it.kind === "text" && !narr) { flush(false); out.push(it); }
     else run.push(it);
-  }
+  });
   flush(true);
   return out;
 }

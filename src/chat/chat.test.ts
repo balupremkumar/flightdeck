@@ -230,12 +230,12 @@ describe("system records", () => {
 
 describe("TN2 activity folding", () => {
   const run = () => buildTurns([
-    user("go"), say("start"),
+    user("go"), say("start\n\nsecond paragraph"),
     use("e1", "Edit", "a", ["/p/a.ts"], 2, 1), use("e2", "Edit", "b", ["/p/a.ts"], 1, 0), use("e3", "Write", "c", ["/p/c.ts"], 5, 0),
     use("b1", "Bash", "npm test"), use("b2", "Bash", "ls"),
     use("r1", "Read", "x", ["/p/x"]), use("r2", "Read", "y", ["/p/y"]),
     res("e1", "ok"), res("b1", "bad", true),
-    say("done"), use("g", "Grep", "foo"), say("end"),
+    say("done\n\nsecond paragraph"), use("g", "Grep", "foo"), say("end"),
   ]);
 
   it("folds a run of tool groups into one activity and leaves single groups alone", () => {
@@ -276,6 +276,34 @@ describe("TN2 activity folding", () => {
     if (live.kind !== "activity" || old.kind !== "activity") throw new Error("not activity");
     expect(runningCall(live)?.tool.id).toBe("b");
     expect(runningCall(old)).toBeNull();
+  });
+
+  it("absorbs short narration, so runs split only by narration become one line", () => {
+    const t = buildTurns([
+      user("go"), say("Now I'll update the tests."), use("e1", "Edit", "a", ["/p/a.ts"]), say("Next, the build."),
+      use("b1", "Bash", "npm run build"), say("Checking the result."), use("r1", "Read", "x", ["/p/x"]), say("All done, tests pass."),
+    ]);
+    const items = foldActivity(t[0].items);
+    expect(items.map((i) => i.kind)).toEqual(["activity", "text"]);
+    const a = items[0];
+    expect(a.kind === "activity" && [a.calls.length, a.narration]).toEqual([3, ["Now I'll update the tests.", "Next, the build.", "Checking the result."]]);
+  });
+
+  it("keeps long, structured and closing prose visible and splitting runs", () => {
+    const long = "x".repeat(201);
+    const t = buildTurns([
+      user("go"), use("a", "Edit", "a", ["/a"]), say(long), use("b", "Bash", "ls"), say("- one\n- two"), use("c", "Read", "r", ["/r"]),
+      say("```\ncode\n```"), use("d", "Read", "s", ["/s"]), say("Short closing reply."),
+    ]);
+    expect(foldActivity(t[0].items).map((i) => i.kind)).toEqual(["tools", "text", "tools", "text", "tools", "text", "tools", "text"]);
+  });
+
+  it("planFind hits narration and opens its activity line", () => {
+    const turns = buildTurns([user("go"), say("Now the zebra step."), use("a", "Edit", "a", ["/a"]), use("b", "Bash", "ls"), say("Fin.")]);
+    const plan = planFind(turns, "zebra");
+    const a = foldActivity(turns[0].items)[0];
+    expect(plan.keys).toHaveLength(1);
+    expect(a.kind === "activity" && plan.expand.has(a.key)).toBe(true);
   });
 
   it("planFind opens the activity line that holds a hit", () => {
@@ -322,14 +350,18 @@ describe("TN6 density measure", () => {
   // A realistic multi-file edit turn: prompt, prose, 6 Edits over 4 files, 3 Bash, 8 Reads, 2 Grep, a subagent, closing prose.
   const turn = () => {
     const recs: ChatRecord[] = [user("Wire the uploader through the new limiter"), say("Reading the modules, then changing four files.")];
+    const nar = (t: string) => recs.push(say(t));
     for (let i = 0; i < 8; i++) recs.push(use(`r${i}`, "Read", `src/m${i}.ts`, [`/p/src/m${i}.ts`]), res(`r${i}`, "ok"));
     const edits: [string, string][] = [["e1", "a"], ["e2", "b"], ["e3", "b"], ["e4", "c"], ["e5", "d"], ["e6", "d"]];
     edits.forEach(([id, f], i) => {
       recs.push(use(id, "Edit", `src/${f}.ts`, [`/p/src/${f}.ts`], 5, 1), res(id, "ok"));
       if (i === 0) recs.push(use("b1", "Bash", "npm run build"), res("b1", "ok"));
+      if (i === 2) nar("Now I'll update the tests.");
     });
+    nar("Running the checks.");
     recs.push(use("b2", "Bash", "npm test"), res("b2", "ok"), use("b3", "Bash", "npm run lint"), res("b3", "ok"));
     recs.push(use("g1", "Grep", "limiter"), res("g1", "ok"), use("g2", "Grep", "TODO"), res("g2", "ok"));
+    nar("Handing the last piece to a subagent.");
     recs.push(use("ag", "Agent", "Build element 11"), res("ag", "done"));
     recs.push(say("All four files are updated and the checks pass."));
     return buildTurns(recs)[0];
@@ -341,7 +373,8 @@ describe("TN6 density measure", () => {
     const t = turn();
     expect(rows(t, true)).toBeLessThanOrEqual(5);
     expect(rows(t, false)).toBeGreaterThan(rows(t, true));
-    const a = foldActivity(t.items)[1];
+    const a = foldActivity(t.items)[0];
+    expect(a.kind === "activity" && a.narration.length).toBe(4);
     expect(a.kind === "activity" && activityLabel(a.calls, 0)).toBe("Edited 4 files, ran 3 commands, read 8 files +3 more");
   });
 });

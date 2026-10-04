@@ -49,4 +49,23 @@ tsc, vitest, cargo test, vite build within perf budget, all e2e/*.mjs, design cr
 
 ## TN6 measurement
 
-(filled in at merge)
+Target: a realistic multi-file edit turn renders in at most 5 rows below the prompt in Normal.
+Real tool steps are separated by short sentences ("Now I'll update the tests."), so folding only runs of consecutive steps was not enough.
+Normal now also absorbs narration into the activity line.
+Narration is an assistant text of at most 200 characters, one paragraph, with no code block, list, table or heading.
+The turn's closing reply (the last assistant text with no step after it) and any long or structured prose stay visible and still split runs.
+
+Mock turn (vitest TN6 and e2e/chat-density.mjs): 6 Edits over 4 files, 3 Bash, 8 Reads, 2 Grep, one subagent, plus short narration sentences.
+Verbose renders 14 rows below the prompt.
+Normal renders 3 rows: the activity line, the closing reply and the change row.
+
+Real transcript (7852afef, 70 turns, top-level calls only):
+
+| Turn | Verbose rows | Normal before narration fold | Normal after |
+| --- | --- | --- | --- |
+| 31 (21 calls, 5 files) | 16 | 10 | 4 |
+| 33 (15 calls, 4 files) | 17 | 10 | 4 |
+| All 31 turns with 5+ calls | 361 | 246 | 106 |
+
+Rows include the change row.
+The line shows the counts label, then the latest narration sentence as dim text (full text in the title); expanding it interleaves chips and narration in original order.

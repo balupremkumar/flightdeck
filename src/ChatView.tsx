@@ -315,6 +315,7 @@ function ActivityItem({ item, ctx }: { item: Activity; ctx: Ctx }) {
   const open = ctx.open.has(item.key);
   const failed = item.calls.some((c) => c.result?.is_error);
   const now = runningCall(item);
+  const latest = item.narration[item.narration.length - 1];
   return (
     <div className="chat-group chat-activity" data-ck={item.key}>
       <button className={"chat-chip" + (failed ? " err" : "")} aria-expanded={open} onClick={() => ctx.toggle(item.key)}>
@@ -322,14 +323,15 @@ function ActivityItem({ item, ctx }: { item: Activity; ctx: Ctx }) {
         <span className="chat-chip-text">{activityLabel(item.calls, item.sideSubagents, ctx.cwd)}</span>
         {failed && <span className="chat-badge">failed</span>}
         {now && <span className="chat-now">{"·"} now: {chipLabel(now.tool, ctx.cwd)}</span>}
+        {!now && latest && <span className="chat-narr-last" title={latest}>{"·"} {latest}</span>}
         <span className="chat-caret" aria-hidden>{open ? "▾" : "▸"}</span>
       </button>
-      {open && <div className="chat-activity-body"><Items items={item.items} ctx={ctx} /></div>}
+      {open && <div className="chat-activity-body"><Items items={item.items} ctx={ctx} narr /></div>}
     </div>
   );
 }
 
-function Items({ items, ctx, side }: { items: NormalItem[]; ctx: Ctx; side?: boolean }) {
+function Items({ items, ctx, side, narr }: { items: NormalItem[]; ctx: Ctx; side?: boolean; narr?: boolean }) {
   return (
     <>
       {items.map((it) => {
@@ -337,7 +339,7 @@ function Items({ items, ctx, side }: { items: NormalItem[]; ctx: Ctx; side?: boo
         if (it.kind === "text") {
           const text = it.rec.text ?? "";
           return (
-            <div key={k} className={"chat-text" + (ctx.hits.has(k) ? " hit" : "")} data-ck={k}>
+            <div key={k} className={"chat-text" + (narr ? " chat-narr" : "") + (ctx.hits.has(k) ? " hit" : "")} data-ck={k}>
               {side && it.rec.kind === "user" ? <div className="chat-subprompt">{text}</div> : <Prose text={text} cwd={ctx.cwd} />}
             </div>
           );
