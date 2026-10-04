@@ -658,6 +658,9 @@ index 3c92f1a..7d40b2e 100644
       return fixtureText(hit.path);
     },
     reveal_in_explorer: () => null,
+    workspace_ports: () => [],
+    kill_port_process: () => null,
+    pr_status: () => null,
 
     // Git
     git_repo_toplevel: ({ cwd }) => (String(cwd).startsWith("C:\\dev\\acme-web") ? "C:\\dev\\acme-web" : String(cwd).startsWith("C:\\dev\\acme-api") ? "C:\\dev\\acme-api" : null),

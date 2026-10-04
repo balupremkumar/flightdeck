@@ -40,6 +40,7 @@ const PreviewHost = lazyOverlay(() => import("./PreviewHost"), "PreviewHost", "t
 const QuickOpen = lazyOverlay(() => import("./QuickOpenOverlay"), "QuickOpen", "quick open");
 // Own chunk: keeps the gauge out of the main bundle.
 const QuotaGauge = lazy(() => import("./QuotaGauge"));
+const WorkspaceChips = lazy(() => import("./WorkspaceChips"));
 
 export function Cockpit() {
   const workspaces = useApp((s) => s.workspaces);
@@ -370,6 +371,7 @@ export function Cockpit() {
             )}
           </div>
         )}
+        {active && <Suspense fallback={null}><WorkspaceChips workspace={active} /></Suspense>}
         <span className="sp" />
         <Suspense fallback={null}><QuotaGauge /></Suspense>
         <Notifications />
