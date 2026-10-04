@@ -178,6 +178,14 @@ export const IconWipe = (p: IconProps) => (
   </Svg>
 );
 
+// Pencil — "open in editor".
+export const IconEdit = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M12.6 4.2 l3.2 3.2 L7.4 15.8 H4.2 v-3.2 Z" />
+    <path d="M11 5.8 l3.2 3.2" />
+  </Svg>
+);
+
 // Copy — two offset sheets (clipboard-adjacent), for copy-patch / copy-path actions.
 export const IconCopy = (p: IconProps) => (
   <Svg {...p}>

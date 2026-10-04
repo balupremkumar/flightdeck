@@ -29,7 +29,7 @@ import type { BlockNode, InlineNode } from "./markdown";
 import { highlightLine, langFor } from "./diffhighlight";
 import type { Lang } from "./diffhighlight";
 import { useFocusTrap } from "./useFocusTrap";
-import { IconClose } from "./Icons";
+import { IconClose, IconCopy, IconEdit, IconFolder } from "./Icons";
 import { findTheme } from "./themes";
 import {
   csvLoaders, mermaidLoaders, rememberViewer, resolveViewer, viewersFor, VIEWER_LABEL, getWrap, setWrap, getFollow, setFollow, isMediaViewer, type ViewerId,
@@ -550,6 +550,8 @@ function PreviewBody({ tab }: { tab: PreviewTab }) {
   }, [tab.path, textView]);
   const [mode, setMode] = useState<ViewerId>(() => (tab.line ? lineMode() : resolveViewer(tab.path)));
   const media = isMediaViewer(mode);
+  // Structured and media viewers have nothing worth live-reloading in place.
+  const canFollow = !media && mode !== "json-tree" && mode !== "jsonl" && mode !== "csv";
   const [wrap, setWrapState] = useState(getWrap);
   const [badJson, setBadJson] = useState<JsonParseError | null>(null);
   const seq = useRef(0);
@@ -628,7 +630,7 @@ function PreviewBody({ tab }: { tab: PreviewTab }) {
   useEffect(() => {
     lastStat.current = null;
     const visible = () => document.visibilityState === "visible";
-    if (!follow || state !== "loaded" || media) return;
+    if (!follow || state !== "loaded" || !canFollow) return;
     let stop = false;
     const tick = async () => {
       if (!shouldPoll({ follow, drawerOpen: true, windowVisible: visible(), loaded: true })) return;
@@ -645,7 +647,7 @@ function PreviewBody({ tab }: { tab: PreviewTab }) {
     const onVis = () => { if (visible()) void tick(); };
     document.addEventListener("visibilitychange", onVis);
     return () => { stop = true; clearInterval(id); document.removeEventListener("visibilitychange", onVis); };
-  }, [follow, state, tab.path, media]);
+  }, [follow, state, tab.path, canFollow]);
   useEffect(() => {
     if (!justUpdated) return;
     const id = setTimeout(() => setJustUpdated(false), 6000);
@@ -767,10 +769,23 @@ function PreviewBody({ tab }: { tab: PreviewTab }) {
     <div className="prv-body-wrap" ref={wrapRef}>
       <div className="prv-toolbar">
         <span className="prv-path" title={tab.path}>{tab.path}</span>
-        <div className="prv-actions">
-          <button className="prv-copy" onClick={() => { void openInEditor(tab.path, tab.line); }}>Open in editor</button>
-          <button className="prv-copy" onClick={() => { void revealPath(tab.path); }}>Reveal in Explorer</button>
-          <button className="prv-copy" onClick={() => copyPath(tab.path)}>Copy path</button>
+        {/* Compact icon buttons (labels stay for assistive tech). The outside-scope
+            and binary panels carry their own Reveal / Copy path, so the header
+            drops those two there rather than showing each twice. */}
+        <div className="prv-actions prv-icons">
+          <button className="prv-ic" title="Open in editor" aria-label="Open in editor" onClick={() => { void openInEditor(tab.path, tab.line); }}>
+            <IconEdit size={14} />
+          </button>
+          {state !== "outside" && state !== "binary" && (
+            <>
+              <button className="prv-ic" title="Reveal in Explorer" aria-label="Reveal in Explorer" onClick={() => { void revealPath(tab.path); }}>
+                <IconFolder size={14} />
+              </button>
+              <button className="prv-ic" title="Copy path" aria-label="Copy path" onClick={() => copyPath(tab.path)}>
+                <IconCopy size={14} />
+              </button>
+            </>
+          )}
         </div>
         {state === "loaded" && (
           <div className="prv-actions">
@@ -785,7 +800,7 @@ function PreviewBody({ tab }: { tab: PreviewTab }) {
                 Wrap: {wrap ? "on" : "off"}
               </button>
             )}
-            {!media && <button
+            {canFollow && <button
               className="prv-copy"
               aria-pressed={follow}
               title="Reload when the file changes on disk"
