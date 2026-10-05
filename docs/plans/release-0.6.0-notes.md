@@ -17,7 +17,8 @@
 ## Multiple windows (preview)
 
 - Workspaces can live in their own windows. It is a preview behind a setting: Settings > Windows > "Multiple windows (preview)", off by default, takes effect after a restart.
-- Move a workspace to a new window (Ctrl+Shift+N) or to an existing one (Ctrl+Shift+O). Agents keep running through the move.
+- Move a workspace to a new window (Ctrl+Shift+N) or, from the palette, to an existing one. Agents keep running through the move.
+- Ctrl+Shift+O switches to the next window.
 - "Merge all windows" brings everything back to the main window.
 - Closing a secondary window merges its workspaces back into the main window.
 - Secondary windows reopen on launch at their saved size and position.
