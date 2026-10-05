@@ -50,6 +50,10 @@ export class MultiWindowBus {
     this.badge = 0; // the summed count Rust puts on every window's overlay
     this.badges = []; // every value badge took, in order
     this.multiwindow = false; // set by main's window_boot, like Rust
+    this.adopts = new Map(); // transfer id -> "waiting" | "acked" | "cancelled" (windows.rs AdoptLedger)
+    this.nextTransfer = 0;
+    this.adoptAckMs = 3000; // ADOPT_ACK_MS
+    this.dropAdoptTo = null; // label whose next win://adopt is lost (its listener is not up yet)
     this.slicePuts = new Map(); // label -> pushes seen (the flush acknowledgement)
     this.doc = null; // the session document on "disk" (seedDoc); null = the mock's own boot doc
     this.restored = false; // main planned its launch restore (once per run, like RESTORE_PLANNED)
@@ -348,6 +352,13 @@ export class MultiWindowBus {
         this.pending.delete(label);
         return { label, ordinal: rec.ordinal, slice: label === "main" ? null : (this.slices.get(label) ?? null), transfer };
       }
+      case "window_adopted": {
+        // windows.rs AdoptLedger::ack: only a transfer still waiting may be adopted.
+        const st = this.adopts.get(a.transferId);
+        if (st === "waiting") { this.adopts.set(a.transferId, "acked"); return true; }
+        if (st === "cancelled") this.adopts.delete(a.transferId);
+        return false;
+      }
       case "window_heartbeat":
       case "window_focus_next":
         return null;
@@ -431,7 +442,28 @@ export class MultiWindowBus {
           if (!have.workspaces.some((w) => w.id === snap.workspaceId)) have.workspaces = [...have.workspaces, ...snap.slice.workspaces];
           this.slices.set(to, have);
           this.transfers.push({ from: label, to, workspaceId: snap.workspaceId });
-          await this.emitTo(to, "win://adopt", { from: label, workspaceIds: [snap.workspaceId], activeWs: snap.workspaceId, slice: snap.slice, transfer: snap.transfer });
+          const transferId = ++this.nextTransfer;
+          this.adopts.set(transferId, "waiting");
+          if (this.dropAdoptTo === to) this.dropAdoptTo = null;
+          else await this.emitTo(to, "win://adopt", { from: label, workspaceIds: [snap.workspaceId], activeWs: snap.workspaceId, slice: snap.slice, transfer: snap.transfer, transferId });
+          // The target acks before it adopts; no ack in time and the source keeps the workspace.
+          const end = Date.now() + this.adoptAckMs;
+          while (this.adopts.get(transferId) !== "acked" && Date.now() < end) await new Promise((r) => setTimeout(r, 10));
+          if (this.adopts.get(transferId) !== "acked") {
+            this.adopts.set(transferId, "cancelled");
+            this.reassign(snap.workspaceId, label);
+            have.workspaces = have.workspaces.filter((w) => w.id !== snap.workspaceId);
+            for (const id of Object.keys(snap.transfer?.panes ?? {})) {
+              const p = this.byModel.get(Number(id));
+              if (p?.paused) {
+                p.paused = false;
+                if (p.seq > p.pausedAt) this.emitAll("pty://output", { pane_id: p.id, b64: b64(p.buf.slice(p.pausedAt - p.base)), seq: p.seq });
+              }
+            }
+            this.transfers.pop();
+            throw new Error(`${to} did not respond. The workspace stays here.`);
+          }
+          this.adopts.delete(transferId);
           await this.pages.get(to)?.bringToFront().catch(() => {});
           const src = this.windows.get(label);
           if (label !== "main" && src?.booted && src.workspaceIds.length === 0) setTimeout(() => this.retire(label), 50);

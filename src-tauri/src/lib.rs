@@ -1053,6 +1053,7 @@ pub fn run() {
             windows::attention_report,
             windows::window_focus_pane,
             windows::ws_transfer,
+            windows::window_adopted,
             windows::window_focus_next,
             windows::window_close_self,
             windows::window_summary,

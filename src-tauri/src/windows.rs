@@ -484,6 +484,79 @@ pub fn wait_for(timeout_ms: u64, poll_ms: u64, mut done: impl FnMut() -> bool) -
     }
 }
 
+/// How long the source waits for the target of a move to acknowledge `win://adopt`.
+pub const ADOPT_ACK_MS: u64 = 3_000;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AdoptState {
+    Waiting,
+    Acked,
+    Cancelled,
+}
+
+/// Move-to-existing-window handshake (finding 2). The source emits `win://adopt`
+/// with a transfer id and waits for the target to ack it; the ack is the target
+/// saying "my listener is up and I am adopting now". A transfer the source gave
+/// up on is cancelled, and a late ack for it is refused, so the workspace is never
+/// adopted by a target after the source resumed its panes and kept it.
+#[derive(Debug, Default)]
+pub struct AdoptLedger {
+    next: u64,
+    by_id: HashMap<u64, AdoptState>,
+}
+
+impl AdoptLedger {
+    pub fn begin(&mut self) -> u64 {
+        self.next += 1;
+        self.by_id.insert(self.next, AdoptState::Waiting);
+        self.next
+    }
+
+    /// The target adopts. True when it may.
+    pub fn ack(&mut self, id: u64) -> bool {
+        match self.by_id.get_mut(&id) {
+            Some(s @ AdoptState::Waiting) => {
+                *s = AdoptState::Acked;
+                true
+            }
+            Some(AdoptState::Cancelled) => {
+                self.by_id.remove(&id);
+                false
+            }
+            _ => false,
+        }
+    }
+
+    pub fn is_acked(&self, id: u64) -> bool {
+        self.by_id.get(&id) == Some(&AdoptState::Acked)
+    }
+
+    /// The source gives up. True when the transfer is now cancelled; false when
+    /// the target had already acked (the move stands).
+    pub fn cancel(&mut self, id: u64) -> bool {
+        match self.by_id.get_mut(&id) {
+            Some(s @ AdoptState::Waiting) => {
+                *s = AdoptState::Cancelled;
+                true
+            }
+            Some(AdoptState::Cancelled) => true,
+            _ => false,
+        }
+    }
+
+    /// The source is done with this id (the move stands).
+    pub fn finish(&mut self, id: u64) {
+        self.by_id.remove(&id);
+    }
+}
+
+static ADOPTS: Mutex<Option<AdoptLedger>> = Mutex::new(None);
+
+fn with_ledger<T>(f: impl FnOnce(&mut AdoptLedger) -> T) -> T {
+    let mut g = ADOPTS.lock().unwrap_or_else(|e| e.into_inner());
+    f(g.get_or_insert_with(AdoptLedger::default))
+}
+
 /// Managed state (beside `Registry` in lib.rs).
 #[derive(Default)]
 pub struct WindowState(pub Mutex<WindowRegistry>);
@@ -647,19 +720,44 @@ pub async fn ws_transfer(
                 reg.assign_to_window(&source, &label, ws_id)?;
             }
             persist::append_to_slice(&label, &ws_snapshot.slice);
+            let pane_ids = transfer_pane_ids(&ws_snapshot.transfer);
+            let transfer_id = with_ledger(|l| l.begin());
             let payload = AdoptPayload {
                 from: source.clone(),
                 workspace_ids: vec![ws_id],
                 active_ws: Some(ws_id),
                 slice: Some(ws_snapshot.slice),
                 transfer: Some(ws_snapshot.transfer),
+                transfer_id: Some(transfer_id),
             };
-            if let Err(e) = app.emit_to(label.as_str(), ADOPT_EVENT, payload) {
+            // Undo the assignment: the source keeps the workspace and its panes go
+            // back on the air.
+            let give_back = |why: &str| {
+                with_ledger(|l| l.finish(transfer_id));
                 state.lock().reassign(ws_id, &source);
                 persist::remove_from_slice(&label, ws_id);
-                crate::applog::log("error", "window", &format!("ws_transfer: could not reach {label}: {e}"));
+                for id in &pane_ids {
+                    if let Err(e) = crate::resume_pane_model(&app, *id) {
+                        crate::applog::log("warn", "window", &format!("pane_resume {id} after a failed move to {label}: {e}"));
+                    }
+                }
+                crate::applog::log("error", "window", &format!("ws_transfer: {why}"));
+            };
+            if let Err(e) = app.emit_to(label.as_str(), ADOPT_EVENT, payload) {
+                give_back(&format!("could not reach {label}: {e}"));
                 return Err(e.to_string());
             }
+            // The target acks before it adopts. `win://adopt` is fire and forget: a
+            // target whose listener is not up yet drops it, and releasing the source
+            // now would leave the panes paused for good.
+            let acked = tauri::async_runtime::spawn_blocking(move || wait_for(ADOPT_ACK_MS, 10, || with_ledger(|l| l.is_acked(transfer_id))))
+                .await
+                .map_err(|e| e.to_string())?;
+            if !acked && with_ledger(|l| l.cancel(transfer_id)) {
+                give_back(&format!("{label} did not acknowledge the workspace within {ADOPT_ACK_MS} ms; it stays on {source}"));
+                return Err(format!("{label} did not respond. The workspace stays here."));
+            }
+            with_ledger(|l| l.finish(transfer_id));
             // The user just asked for this: follow the workspace.
             if let Some(w) = app.get_webview_window(&label) {
                 let _ = w.show();
@@ -826,6 +924,16 @@ struct AdoptPayload {
     /// Set when a workspace is moved to this window alive (S9): the paused panes'
     /// screens and offsets, as `window_boot` hands them to a new window.
     transfer: Option<serde_json::Value>,
+    /// Set with `transfer` on a move into an existing window: the target must
+    /// `window_adopted` this id before adopting (finding 2).
+    transfer_id: Option<u64>,
+}
+
+/// The target of a move calls this just before it adopts. False means the source
+/// already gave up and kept the workspace: do not adopt.
+#[tauri::command]
+pub async fn window_adopted(transfer_id: u64) -> bool {
+    with_ledger(|l| l.ack(transfer_id))
 }
 
 /// Rust to a window: take these workspaces (a merge into main, or a move into it).
@@ -842,7 +950,7 @@ fn merge_window(app: &AppHandle, label: &str, why: &str) -> Vec<u32> {
         crate::applog::log("info", "window", &format!("window {label} {why}: re-adopting {} workspace(s) into main", workspace_ids.len()));
         if !workspace_ids.is_empty() {
             moved = workspace_ids.clone();
-            let _ = app.emit_to(MAIN, ADOPT_EVENT, AdoptPayload { from: label.to_string(), workspace_ids, active_ws, slice, transfer: None });
+            let _ = app.emit_to(MAIN, ADOPT_EVENT, AdoptPayload { from: label.to_string(), workspace_ids, active_ws, slice, transfer: None, transfer_id: None });
         }
     }
     if let Some(w) = app.get_webview_window(label) {
@@ -1338,6 +1446,36 @@ mod tests {
         assert!(j.tick(&r, t2).is_empty(), "a sleep gap is not evidence of death");
         assert!(j.tick(&r, t2 + WATCH_TICK_MS).is_empty(), "the miss count restarted");
         assert_eq!(j.tick(&r, t2 + 2 * WATCH_TICK_MS), vec!["fw-1".to_string()]);
+    }
+
+    #[test]
+    fn an_acked_adopt_stands_and_a_late_cancel_is_refused() {
+        let mut l = AdoptLedger::default();
+        let id = l.begin();
+        assert!(!l.is_acked(id));
+        assert!(l.ack(id));
+        assert!(l.is_acked(id));
+        assert!(!l.cancel(id), "the target already took it: the source must not resume");
+    }
+
+    #[test]
+    fn a_cancelled_adopt_refuses_a_late_ack() {
+        let mut l = AdoptLedger::default();
+        let id = l.begin();
+        assert!(l.cancel(id), "no ack in time: the source keeps the workspace");
+        assert!(!l.ack(id), "a target that wakes up late must not adopt");
+        assert!(!l.is_acked(id));
+    }
+
+    #[test]
+    fn an_unknown_transfer_id_is_never_acked() {
+        let mut l = AdoptLedger::default();
+        assert!(!l.ack(99));
+        let a = l.begin();
+        let b = l.begin();
+        assert_ne!(a, b);
+        l.finish(a);
+        assert!(!l.ack(a));
     }
 
     #[test]

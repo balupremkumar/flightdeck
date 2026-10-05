@@ -30,7 +30,7 @@
   const ordinalOf = (l) => (l === "main" ? 0 : Number(String(l).replace("fw-", "")) || 0);
   const BUS_CMDS = [
     "pty_spawn", "pty_attach", "pty_write", "pty_resize", "pty_kill", "pane_pause", "pane_resume",
-    "window_boot", "window_heartbeat", "ws_transfer", "window_focus_next", "session_put_slice",
+    "window_boot", "window_heartbeat", "ws_transfer", "window_adopted", "window_focus_next", "session_put_slice",
     "window_close_self", "window_summary", "set_multiwindow", "merge_all_windows", "window_focus_pane", "attention_report",
     "restore_windows",
   ];
@@ -738,6 +738,7 @@ index 3c92f1a..7d40b2e 100644
     session_put_slice: () => null,
     window_boot: () => ({ label: WINDOW_LABEL, ordinal: ordinalOf(WINDOW_LABEL), slice: null }),
     window_heartbeat: () => null,
+    window_adopted: () => true,
     ws_transfer: () => { throw new Error("mock: ws_transfer needs the multiwindow bus"); },
     window_focus_next: () => null,
     restore_windows: () => [],

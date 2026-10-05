@@ -95,7 +95,7 @@ export async function adoptBootInfo(info: BootInfo | null): Promise<void> {
 
 /** Sent by Rust to main when a window's workspaces fold into it: the heartbeat
  *  watcher (a dead secondary), and later the close path. */
-interface AdoptPayload { from: string; workspaceIds: number[]; activeWs: number | null; slice: SessionDraft | null; transfer?: TransferPayload | null }
+interface AdoptPayload { from: string; workspaceIds: number[]; activeWs: number | null; slice: SessionDraft | null; transfer?: TransferPayload | null; transferId?: number | null }
 
 /** Every window listens. A payload with a `transfer` is a workspace moved here alive
  *  ("Move workspace to window..."): adopt it as a new window does at boot. Otherwise
@@ -103,9 +103,15 @@ interface AdoptPayload { from: string; workspaceIds: number[]; activeWs: number 
  *  and add them; their ptys are still running in Rust, so the terminals attach. */
 export function listenForAdopt(): void {
   void listen<AdoptPayload>("win://adopt", async (e) => {
-    const { from, workspaceIds, activeWs, slice, transfer } = e.payload;
+    const { from, workspaceIds, activeWs, slice, transfer, transferId } = e.payload;
     try {
       if (transfer?.workspace) {
+        // Ack before adopting: the source releases only on this, and refuses (false)
+        // once it has given up and kept the workspace.
+        if (transferId != null && !(await invoke<boolean>("window_adopted", { transferId }))) {
+          logEvent("warn", "windowBoot", `win://adopt from ${from} was cancelled; leaving it with the source`);
+          return;
+        }
         if (!useApp.getState().workspaces.some((w) => w.id === transfer.workspace.id)) adoptTransfer(transfer);
         return;
       }
