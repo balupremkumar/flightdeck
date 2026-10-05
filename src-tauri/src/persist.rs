@@ -414,6 +414,47 @@ fn normalize_windows(mut doc: SessionDoc, multiwindow: bool) -> SessionDoc {
     doc
 }
 
+/// One window's share of a normalized doc: its workspaces, its active one, the
+/// shared uiPrefs, no window table (the shape a slice has).
+fn cut_slice(doc: &SessionDoc, w: &PersistedWindow) -> SessionDoc {
+    let mut s = doc.clone();
+    s.workspaces.retain(|ws| w.workspace_ids.contains(&ws.id));
+    s.active_workspace_id = w.active_workspace_id;
+    s.windows = Vec::new();
+    s
+}
+
+/// What main hydrates from: with the flag on, only the workspaces main's window
+/// entry lists (the rest belong to the secondaries restored beside it).
+fn main_view(doc: SessionDoc, multiwindow: bool) -> SessionDoc {
+    if !multiwindow {
+        return doc;
+    }
+    match doc.windows.iter().find(|w| w.label == MAIN_LABEL) {
+        Some(m) => SessionDoc { windows: doc.windows.clone(), ..cut_slice(&doc, m) },
+        None => doc,
+    }
+}
+
+/// Launch restore (Phase 4 D2): the session doc validated for the flag. Main's
+/// `window_boot` turns its `fw-*` entries into the restore plan.
+pub(crate) fn restore_doc(app: &AppHandle) -> Option<SessionDoc> {
+    if safe_mode_active() {
+        return None;
+    }
+    read_session_file(app).ok().flatten().map(|d| normalize_windows(d, true))
+}
+
+/// In-memory slices for every window of a restored doc, main included, so a
+/// write that lands before a restored window has pushed anything still carries
+/// that window's workspaces (merge_slices only knows the slices it holds).
+pub(crate) fn seed_restored(doc: &SessionDoc) {
+    let mut g = SLICES.lock().unwrap_or_else(|e| e.into_inner());
+    for w in &doc.windows {
+        g.by_label.entry(w.label.clone()).or_insert_with(|| cut_slice(doc, w));
+    }
+}
+
 // Merge whatever is held and write it. Runs on a worker or command thread,
 // never the main thread.
 fn write_merged(app: &AppHandle) -> Result<(), String> {
@@ -486,13 +527,14 @@ pub fn session_put_slice(app: AppHandle, window: tauri::Window, slice: SessionDo
 // Ok(None) means "nothing to restore" — either a first run or safe mode is
 // active. Only a genuinely corrupt session.json is an Err.
 #[tauri::command(async)]
-pub fn load_session(app: AppHandle) -> Result<Option<SessionDoc>, String> {
+pub fn load_session(app: AppHandle, window: tauri::Window) -> Result<Option<SessionDoc>, String> {
     if safe_mode_active() {
         return Ok(None);
     }
     // The flag is whatever main reported in window_boot (false until it has).
     let multiwindow = crate::windows::multiwindow_on(&app);
-    Ok(read_session_file(&app)?.map(|d| normalize_windows(d, multiwindow)))
+    let doc = read_session_file(&app)?.map(|d| normalize_windows(d, multiwindow));
+    Ok(if window.label() == MAIN_LABEL { doc.map(|d| main_view(d, multiwindow)) } else { doc })
 }
 
 /// Largest window ordinal baked into persisted workspace and pane ids, so a
@@ -1056,5 +1098,29 @@ mod tests {
         assert_eq!(d.windows[0].workspace_ids, vec![1, 3]); // unclaimed go to main
         assert_eq!(d.windows[1].workspace_ids, vec![2]); // unknown 99 dropped
         assert_eq!(d.windows[1].active_workspace_id, None);
+    }
+
+    #[test]
+    fn main_view_keeps_only_main_workspaces_when_the_flag_is_on() {
+        let mut d = slice(vec![ws(1, 10), ws(2, 20), ws(3, 30)], Some(2), serde_json::Value::Null);
+        d.windows = vec![PersistedWindow { label: "fw-1".into(), workspace_ids: vec![2], active_workspace_id: Some(2) }];
+        let d = normalize_windows(d, true);
+        let v = main_view(d.clone(), true);
+        assert_eq!(v.workspaces.iter().map(|w| w.id).collect::<Vec<_>>(), vec![1, 3]);
+        assert_eq!(v.active_workspace_id, None);
+        // Flag off: normalize already put everything in main, and the view is the doc.
+        let off = main_view(normalize_windows(d, false), false);
+        assert_eq!(off.workspaces.len(), 3);
+    }
+
+    #[test]
+    fn seed_restored_gives_a_window_its_slice() {
+        let mut d = slice(vec![ws(1, 10), ws(2, 20)], None, serde_json::Value::Null);
+        d.windows = vec![PersistedWindow { label: "fw-9".into(), workspace_ids: vec![2], active_workspace_id: Some(2) }];
+        let d = normalize_windows(d, true);
+        seed_restored(&d);
+        let g = SLICES.lock().unwrap_or_else(|e| e.into_inner());
+        assert_eq!(g.by_label["fw-9"].workspaces.iter().map(|w| w.id).collect::<Vec<_>>(), vec![2]);
+        assert_eq!(g.by_label["fw-9"].active_workspace_id, Some(2));
     }
 }

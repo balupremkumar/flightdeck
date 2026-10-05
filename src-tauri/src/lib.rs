@@ -1048,6 +1048,7 @@ pub fn run() {
             pane_resume,
             pty_reap_unclaimed,
             windows::window_boot,
+            windows::restore_windows,
             windows::window_heartbeat,
             windows::attention_report,
             windows::window_focus_pane,

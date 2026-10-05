@@ -32,6 +32,7 @@
     "pty_spawn", "pty_attach", "pty_write", "pty_resize", "pty_kill", "pane_pause", "pane_resume",
     "window_boot", "window_heartbeat", "ws_transfer", "window_focus_next", "session_put_slice",
     "window_close_self", "window_summary", "set_multiwindow", "merge_all_windows", "window_focus_pane", "attention_report",
+    "restore_windows",
   ];
   const listeners = new Map(); // event name -> Set<callback>
   // Offset so pty ids never coincide with store model ids (as after a real restore).
@@ -739,6 +740,7 @@ index 3c92f1a..7d40b2e 100644
     window_heartbeat: () => null,
     ws_transfer: () => { throw new Error("mock: ws_transfer needs the multiwindow bus"); },
     window_focus_next: () => null,
+    restore_windows: () => [],
     window_close_self: () => null,
     window_summary: () => [],
     set_multiwindow: () => null,
@@ -755,6 +757,9 @@ index 3c92f1a..7d40b2e 100644
 
   if (typeof window.__fdBus === "function") {
     for (const cmd of BUS_CMDS) handlers[cmd] = (args) => window.__fdBus({ cmd, args: args ?? {}, label: WINDOW_LABEL });
+    // The bus may hold a seeded session document; without one it answers null and the boot doc stands.
+    const bootDoc = handlers.load_session;
+    handlers.load_session = async (args) => (await window.__fdBus({ cmd: "load_session", args: args ?? {}, label: WINDOW_LABEL })) ?? bootDoc(args);
   }
 
   window.__TAURI_INTERNALS__ = {

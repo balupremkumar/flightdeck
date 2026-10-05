@@ -1,0 +1,125 @@
+// Phase 4 D2: restore secondary windows on launch.
+//
+// Same harness as multiwindow-close.mjs (lib/multiwindow.mjs ports the Rust registry,
+// slices and rings; the real store and Terminal run in every page). The bus holds a v2
+// session document on "disk" with main plus fw-1.
+//   A. Flag on: main boots and hydrates only its own workspace; restore_windows then
+//      recreates fw-1 under its persisted label; that page boots with its workspace and
+//      its panes print output. Nothing is focused (no bringToFront), and the next label
+//      minted is fw-2.
+//   B. Flag off with the same v2 doc: no second page, every workspace lives in main.
+//
+// Run from e2e/ with a Vite dev server: FD_URL=http://localhost:1443 node multiwindow-restore.mjs
+import { chromium } from "playwright";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import path from "node:path";
+import { MultiWindowBus } from "./lib/multiwindow.mjs";
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+const mock = readFileSync(path.join(here, "..", "demo", "mock-tauri-interactive.js"), "utf8");
+
+const URL = process.env.FD_URL ?? "http://localhost:1443";
+const failures = [];
+const check = (ok, msg) => { console.log(`${ok ? "ok  " : "FAIL"} ${msg}`); if (!ok) failures.push(msg); };
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const until = async (fn, ms, what) => {
+  const end = Date.now() + ms;
+  for (;;) {
+    const v = await fn().catch(() => null);
+    if (v) return v;
+    if (Date.now() > end) { check(false, `timed out waiting for ${what}`); return null; }
+    await sleep(100);
+  }
+};
+
+const FW_WS = (1 << 24) + 1;
+const FW_PANE = (1 << 24) + 1;
+const doc = {
+  version: 2,
+  savedAt: Date.now(),
+  activeWorkspaceId: 1,
+  workspaces: [
+    { id: 1, name: "acme-api", root: "C:\\dev\\acme-api", setupCmd: "npm ci", panes: [{ id: 1, vendor: "claude", cwd: "C:\\dev\\acme-api" }] },
+    { id: FW_WS, name: "far-away", root: "C:\\dev\\scratch", setupCmd: "", panes: [{ id: FW_PANE, vendor: "claude", cwd: "C:\\dev\\scratch" }] },
+  ],
+  uiPrefs: {},
+  windows: [
+    { label: "main", workspaceIds: [1], activeWorkspaceId: 1 },
+    { label: "fw-1", workspaceIds: [FW_WS], activeWorkspaceId: FW_WS },
+  ],
+};
+
+const browser = await chromium.launch();
+const pageErrors = [];
+
+async function launch(multiwindow) {
+  const context = await browser.newContext({ viewport: { width: 1600, height: 900 } });
+  const bus = new MultiWindowBus(context, URL);
+  await bus.install();
+  bus.seedDoc(doc);
+  const boot = `localStorage.setItem("flightdeck-startup","reopen");${multiwindow ? `localStorage.setItem("flightdeck-multiwindow","1");` : ""}`;
+  await context.addInitScript(`if (/^https?:/.test(location.protocol)) {\n${boot}\n${mock}\n}`);
+  context.on("page", (p) => p.on("pageerror", (e) => pageErrors.push(e.message)));
+  const main = await context.newPage();
+  bus.register("main", main);
+  await main.goto(URL, { waitUntil: "networkidle" });
+  return { context, bus, main };
+}
+
+const termText = (page, id) => page.evaluate(async (id) => {
+  const ps = await import("/src/paneSessions.ts");
+  const t = ps.get(id)?.term;
+  if (!t) return null;
+  const b = t.buffer.active;
+  let out = "";
+  for (let i = 0; i < b.length; i++) out += (b.getLine(i)?.translateToString(true) ?? "") + "\n";
+  return out;
+}, id);
+const storeState = (page) => page.evaluate(async () => {
+  const { useApp } = await import("/src/store.ts");
+  const s = useApp.getState();
+  return { activeId: s.activeId, workspaces: s.workspaces.map((w) => ({ id: w.id, name: w.name, panes: w.panes.map((p) => p.id) })) };
+});
+
+// ---- A. flag on ----
+{
+  const { context, bus, main } = await launch(true);
+  await until(async () => bus.restores.includes("fw-1"), 10000, "restore_windows to create fw-1");
+  const fw = bus.pages.get("fw-1");
+  check(!!fw, "a page exists for the persisted label fw-1");
+  if (fw) {
+    await fw.waitForLoadState("networkidle").catch(() => {});
+    await until(async () => (await storeState(fw)).workspaces.some((w) => w.id === FW_WS), 10000, "fw-1 to hold its workspace");
+    const st = await storeState(fw);
+    check(st.workspaces.length === 1 && st.workspaces[0].name === "far-away", `fw-1 holds exactly its workspace (${JSON.stringify(st.workspaces)})`);
+    check(!!(await until(async () => /TICK-\d+-\d+/.test((await termText(fw, FW_PANE)) ?? ""), 8000, "fw-1 pane output")), "fw-1 pane prints output");
+    check(bus.windows.get("fw-1")?.booted === true, "fw-1 booted through window_boot");
+  }
+  const m = await storeState(main);
+  check(m.workspaces.length === 1 && m.workspaces[0].id === 1, `main hydrated only its own workspace (${JSON.stringify(m.workspaces.map((w) => w.id))})`);
+  check(bus.focuses.length === 0, "launch restore focused nothing");
+  check(bus.nextOrdinal === 2, `next label allocation skips restored labels (nextOrdinal ${bus.nextOrdinal})`);
+  check(bus.restores.length === 1, `exactly one window restored (${bus.restores})`);
+  await context.close();
+}
+
+// ---- B. flag off ----
+{
+  const { context, bus, main } = await launch(false);
+  await sleep(3500);
+  const m = await storeState(main);
+  check(m.workspaces.length === 2, `flag off: main holds every workspace (${JSON.stringify(m.workspaces.map((w) => w.id))})`);
+  check(bus.restores.length === 0 && context.pages().length === 1, `flag off: no secondary page (${context.pages().length} page(s))`);
+  await main.evaluate(async (id) => {
+    const { useApp } = await import("/src/store.ts");
+    useApp.setState({ activeId: id });
+  }, FW_WS);
+  check(!!(await until(async () => /TICK-\d+-\d+/.test((await termText(main, FW_PANE)) ?? ""), 8000, "the merged pane's output in main")), "flag off: the merged workspace's pane prints output in main");
+  await context.close();
+}
+
+check(pageErrors.length === 0, `no page errors${pageErrors.length ? `: ${pageErrors[0]}` : ""}`);
+await browser.close();
+console.log(failures.length ? `\n${failures.length} FAILED` : "\nall passed");
+process.exit(failures.length ? 1 : 0);

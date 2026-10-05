@@ -51,7 +51,59 @@ export class MultiWindowBus {
     this.badges = []; // every value badge took, in order
     this.multiwindow = false; // set by main's window_boot, like Rust
     this.slicePuts = new Map(); // label -> pushes seen (the flush acknowledgement)
+    this.doc = null; // the session document on "disk" (seedDoc); null = the mock's own boot doc
+    this.restored = false; // main planned its launch restore (once per run, like RESTORE_PLANNED)
+    this.restores = []; // labels restore_windows created, in order
     this.ensureMain();
+  }
+
+  /** Put a v2 session document "on disk": `windows[]` says which window held which workspace. */
+  seedDoc(doc) {
+    this.doc = JSON.parse(JSON.stringify(doc));
+  }
+
+  /** windows.rs restore_plan + apply_restore + persist seed_restored: runs at main's boot, flag on. */
+  planRestore() {
+    if (this.restored || !this.multiwindow || !this.doc) return;
+    this.restored = true;
+    const known = new Set(this.doc.workspaces.map((w) => w.id));
+    const plan = [];
+    for (const w of this.doc.windows ?? []) {
+      const m = /^fw-([1-9]\d*)$/.exec(w.label);
+      const ids = (w.workspaceIds ?? []).filter((id) => known.has(id));
+      if (!m || Number(m[1]) > MAX_ORDINAL || ids.length === 0 || plan.some((p) => p.label === w.label)) continue;
+      plan.push({ label: w.label, ordinal: Number(m[1]), ids, active: ids.includes(w.activeWorkspaceId) ? w.activeWorkspaceId : null });
+    }
+    for (const p of plan) {
+      if (!this.windows.has(p.label)) this.windows.set(p.label, { ordinal: p.ordinal, workspaceIds: p.ids, activeWs: p.active, booted: false });
+      this.nextOrdinal = Math.max(this.nextOrdinal, p.ordinal + 1);
+      this.slices.set(p.label, { ...this.doc, workspaces: this.doc.workspaces.filter((w) => p.ids.includes(w.id)), activeWorkspaceId: p.active, windows: undefined });
+    }
+  }
+
+  /** persist.rs load_session: flag off, everything is main's; flag on, main gets only its own. */
+  loadSession(label) {
+    if (!this.doc) return null;
+    const doc = JSON.parse(JSON.stringify(this.doc));
+    if (label !== "main" || !this.multiwindow) return doc;
+    const held = new Set([...this.windows.entries()].filter(([l]) => l !== "main").flatMap(([, r]) => r.workspaceIds));
+    doc.workspaces = doc.workspaces.filter((w) => !held.has(w.id));
+    if (!doc.workspaces.some((w) => w.id === doc.activeWorkspaceId)) doc.activeWorkspaceId = doc.workspaces[0]?.id ?? null;
+    return doc;
+  }
+
+  /** windows.rs restore_windows: create every planned secondary, never focused. */
+  async restoreWindows() {
+    if (!this.multiwindow) return [];
+    const labels = [...this.windows.entries()].filter(([l, r]) => l !== "main" && !r.booted && !r.created && r.workspaceIds.length > 0).map(([l]) => l);
+    for (const label of labels) {
+      this.windows.get(label).created = true;
+      const page = await this.context.newPage();
+      this.pages.set(label, page);
+      this.restores.push(label);
+      await page.goto(`${this.url}/?label=${label}`, { waitUntil: "domcontentloaded" });
+    }
+    return labels;
   }
 
   async install() {
@@ -291,7 +343,7 @@ export class MultiWindowBus {
         const rec = this.windows.get(label);
         if (!rec) throw new Error(`window ${label} was not created by Flightdeck`);
         rec.booted = true;
-        if (label === "main") this.multiwindow = !!a.multiwindow;
+        if (label === "main") { this.multiwindow = !!a.multiwindow; this.planRestore(); }
         const transfer = this.pending.get(label) ?? null;
         this.pending.delete(label);
         return { label, ordinal: rec.ordinal, slice: label === "main" ? null : (this.slices.get(label) ?? null), transfer };
@@ -299,6 +351,10 @@ export class MultiWindowBus {
       case "window_heartbeat":
       case "window_focus_next":
         return null;
+      case "load_session":
+        return this.loadSession(label);
+      case "restore_windows":
+        return label === "main" ? this.restoreWindows() : [];
       case "set_multiwindow": {
         const was = this.multiwindow;
         this.multiwindow = !!a.enabled;

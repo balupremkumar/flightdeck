@@ -10,7 +10,7 @@ import { runWorktreeGc } from "./worktrees";
 import { startAutosave, offerSessionRestore, crashedLastRun, armCleanExitSentinel, lastRestoreReport } from "./session";
 import { armGlobalErrorLog } from "./applog";
 import { syncReadRoots } from "./readscope";
-import { bootWindow, adoptBootInfo, listenForAdopt, listenForFocusPane, listenForScaleChange, closeWhenEmpty } from "./windowBoot";
+import { bootWindow, adoptBootInfo, listenForAdopt, listenForFocusPane, listenForScaleChange, closeWhenEmpty, restoreWindows } from "./windowBoot";
 import { armStorageSync } from "./storageSync";
 import { isMainWindow } from "./persist";
 
@@ -46,6 +46,7 @@ listenForScaleChange();
 // Phase 4: settings changed in another window apply here live (storage events).
 armStorageSync();
 void booted.then(() => offerSessionRestore()).then(() => {
+  restoreWindows();
   void runWorktreeGc();
   // UX-583: after a bad shutdown, say exactly what came back and whether each
   // worktree survived, rather than a vague "restored" that leaves you guessing.

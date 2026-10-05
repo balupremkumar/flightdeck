@@ -11,13 +11,14 @@
 #![allow(dead_code)]
 
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
 
-use crate::persist::{self, SessionDoc};
+use crate::persist::{self, PersistedWindow, SessionDoc};
 
 pub const MAIN: &str = "main";
 /// JS sends `window_heartbeat` this often.
@@ -109,6 +110,39 @@ pub fn validate_label(label: &str) -> Result<u32, String> {
     }
 }
 
+/// A secondary to recreate at launch (Phase 4 D2).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RestoreWindow {
+    pub label: String,
+    pub ordinal: u32,
+    pub workspace_ids: Vec<u32>,
+    pub active_ws: Option<u32>,
+}
+
+/// Which secondaries to recreate: the doc's `fw-*` entries that hold workspaces, by
+/// ordinal. Flag off, nothing (the doc loader already merged every slice into main).
+/// Main, bad labels, duplicates and empty entries are skipped.
+pub fn restore_plan(windows: &[PersistedWindow], multiwindow: bool) -> Vec<RestoreWindow> {
+    if !multiwindow {
+        return Vec::new();
+    }
+    let mut out: Vec<RestoreWindow> = Vec::new();
+    for w in windows {
+        let Ok(ordinal) = validate_label(&w.label) else { continue };
+        if ordinal == 0 || w.workspace_ids.is_empty() || out.iter().any(|r| r.label == w.label) {
+            continue;
+        }
+        out.push(RestoreWindow {
+            label: w.label.clone(),
+            ordinal,
+            workspace_ids: w.workspace_ids.clone(),
+            active_ws: w.active_workspace_id.filter(|a| w.workspace_ids.contains(a)),
+        });
+    }
+    out.sort_by_key(|r| r.ordinal);
+    out
+}
+
 /// Largest window ordinal already baked into persisted ids.
 pub fn max_ordinal(ids: impl IntoIterator<Item = u32>) -> u32 {
     ids.into_iter().map(|i| i >> 24).max().unwrap_or(0)
@@ -141,6 +175,34 @@ impl WindowRegistry {
         let label = format!("fw-{ordinal}");
         self.windows.insert(label.clone(), WindowRec { ordinal, ..WindowRec::default() });
         Ok(label)
+    }
+
+    /// Register the windows a launch restore will create, under their persisted
+    /// labels (the window-state plugin stores geometry by label), and move
+    /// `next_ordinal` past them so a later mint can never reuse one.
+    pub fn apply_restore(&mut self, plan: &[RestoreWindow]) {
+        for r in plan {
+            self.windows.entry(r.label.clone()).or_insert_with(|| WindowRec {
+                workspace_ids: r.workspace_ids.clone(),
+                active_ws: r.active_ws,
+                ordinal: r.ordinal,
+                ..WindowRec::default()
+            });
+            self.floor_ordinal(r.ordinal);
+        }
+    }
+
+    /// Restored windows still waiting to be created: registered, never stamped,
+    /// holding workspaces. By ordinal.
+    pub fn pending_restores(&self) -> Vec<String> {
+        let mut v: Vec<(u32, String)> = self
+            .windows
+            .iter()
+            .filter(|(l, r)| l.as_str() != MAIN && !r.booted && r.created_ms == 0 && !r.workspace_ids.is_empty())
+            .map(|(l, r)| (r.ordinal, l.clone()))
+            .collect();
+        v.sort();
+        v.into_iter().map(|(_, l)| l).collect()
     }
 
     /// Raise `next_ordinal` past ordinals that persisted ids already use.
@@ -430,6 +492,10 @@ fn pending_take(label: &str) -> Option<serde_json::Value> {
     PENDING.lock().unwrap_or_else(|e| e.into_inner()).as_mut().and_then(|m| m.remove(label))
 }
 
+/// Main plans the launch restore at most once per process; a main reload must not
+/// resurrect a secondary the user closed since.
+static RESTORE_PLANNED: AtomicBool = AtomicBool::new(false);
+
 /// Registry copy for `persist` to decide slice ownership against.
 pub fn snapshot(app: &AppHandle) -> WindowRegistry {
     app.state::<WindowState>().lock().clone()
@@ -455,6 +521,12 @@ pub fn window_boot(
     let label = window.label().to_string();
     let ordinal = validate_label(&label)?;
     let floor = persist::session_id_ordinal_floor(&app);
+    // Launch restore: once per run, main only, flag on. Read the doc before taking the lock.
+    let restore = if label == MAIN && multiwindow && !RESTORE_PLANNED.swap(true, Ordering::SeqCst) { persist::restore_doc(&app) } else { None };
+    let plan = restore.as_ref().map(|d| restore_plan(&d.windows, true)).unwrap_or_default();
+    if let Some(d) = restore.as_ref().filter(|_| !plan.is_empty()) {
+        persist::seed_restored(d);
+    }
     let ids = {
         let mut reg = state.lock();
         let now = now_ms();
@@ -462,6 +534,7 @@ pub fn window_boot(
             reg.multiwindow = multiwindow;
             reg.floor_ordinal(floor);
             reg.ensure_main();
+            reg.apply_restore(&plan);
         } else if !reg.windows.contains_key(&label) {
             // Only Rust mints secondaries; a label nobody minted is refused.
             return Err(format!("window {label} was not created by Flightdeck"));
@@ -529,7 +602,7 @@ pub async fn ws_transfer(
             };
             persist::seed_slice(&label, ws_snapshot.slice);
             pending_put(&label, ws_snapshot.transfer);
-            if let Err(e) = create_window(&app, &label) {
+            if let Err(e) = create_window(&app, &label, true) {
                 pending_take(&label);
                 persist::drop_slice(&label);
                 state.lock().rollback_new_window(&label, &source, ws_id);
@@ -581,18 +654,53 @@ pub async fn ws_transfer(
     Ok(label)
 }
 
-fn create_window(app: &AppHandle, label: &str) -> Result<(), String> {
+fn create_window(app: &AppHandle, label: &str, focus: bool) -> Result<(), String> {
     // Same minimum as tauri.conf.json; created hidden, shown once built.
     let w = WebviewWindowBuilder::new(app, label, WebviewUrl::App("index.html".into()))
         .title("Flightdeck")
         .inner_size(1200.0, 800.0)
         .min_inner_size(940.0, 620.0)
         .visible(false)
+        .focused(focus)
         .build()
         .map_err(|e| e.to_string())?;
+    // `focused(false)` makes tao's first show SW_SHOWNOACTIVATE, so a launch restore
+    // never takes focus from whatever the user is in front of.
     w.show().map_err(|e| e.to_string())?;
-    let _ = w.set_focus();
+    if focus {
+        let _ = w.set_focus();
+    }
     Ok(())
+}
+
+/// Launch restore (D2), called by main once it has hydrated: create each secondary
+/// `window_boot` registered, under its persisted label, hidden until built and
+/// never focused. Each then boots as any secondary does and takes its slice. One
+/// that cannot be built folds back into main. Async like every new command.
+#[tauri::command]
+pub async fn restore_windows(app: AppHandle, window: tauri::Window, state: State<'_, WindowState>) -> Result<Vec<String>, String> {
+    if window.label() != MAIN {
+        return Err("only main restores windows".into());
+    }
+    let labels = {
+        let reg = state.lock();
+        if !reg.multiwindow {
+            return Ok(Vec::new());
+        }
+        reg.pending_restores()
+    };
+    let mut created = Vec::new();
+    for label in labels {
+        state.lock().stamp_created(&label, now_ms());
+        match create_window(&app, &label, false) {
+            Ok(()) => created.push(label),
+            Err(e) => {
+                crate::applog::log("error", "window", &format!("restore: could not create {label}: {e}"));
+                merge_window(&app, &label, "could not be restored");
+            }
+        }
+    }
+    Ok(created)
 }
 
 /// Focus the next window in the ring (the "Next window" chord). A direct reply to
@@ -968,6 +1076,55 @@ mod tests {
 
     fn rec(ids: &[u32], booted: bool, hb: u64) -> WindowRec {
         WindowRec { workspace_ids: ids.to_vec(), booted, last_heartbeat_ms: hb, ..WindowRec::default() }
+    }
+
+    fn pw(label: &str, ids: &[u32], active: Option<u32>) -> PersistedWindow {
+        PersistedWindow { label: label.into(), workspace_ids: ids.to_vec(), active_workspace_id: active }
+    }
+
+    #[test]
+    fn restore_plan_lists_populated_secondaries_by_ordinal() {
+        let doc = [pw("main", &[1], Some(1)), pw("fw-3", &[3], Some(9)), pw("fw-1", &[2, 4], Some(4)), pw("fw-2", &[], None), pw("fw-1", &[7], None), pw("bogus", &[8], None)];
+        let plan = restore_plan(&doc, true);
+        assert_eq!(
+            plan,
+            vec![
+                RestoreWindow { label: "fw-1".into(), ordinal: 1, workspace_ids: vec![2, 4], active_ws: Some(4) },
+                RestoreWindow { label: "fw-3".into(), ordinal: 3, workspace_ids: vec![3], active_ws: None },
+            ]
+        );
+    }
+
+    #[test]
+    fn restore_plan_is_empty_with_the_flag_off_so_every_slice_stays_in_main() {
+        assert!(restore_plan(&[pw("main", &[1], None), pw("fw-1", &[2], None)], false).is_empty());
+    }
+
+    #[test]
+    fn restored_labels_are_never_minted_again() {
+        let mut r = WindowRegistry::default();
+        r.apply_restore(&restore_plan(&[pw("fw-2", &[5], Some(5)), pw("fw-4", &[6], None)], true));
+        assert_eq!(r.windows["fw-2"].workspace_ids, vec![5]);
+        assert_eq!(r.windows["fw-2"].ordinal, 2);
+        assert_eq!(r.mint_label().unwrap(), "fw-5");
+        // Applying twice (a reload of main) neither duplicates nor resets a window.
+        r.windows.get_mut("fw-2").unwrap().booted = true;
+        r.apply_restore(&restore_plan(&[pw("fw-2", &[5], Some(5))], true));
+        assert!(r.windows["fw-2"].booted);
+        assert_eq!(r.mint_label().unwrap(), "fw-6");
+    }
+
+    #[test]
+    fn pending_restores_are_the_unstamped_populated_secondaries() {
+        let mut r = WindowRegistry::default();
+        r.ensure_main().workspace_ids = vec![1];
+        r.apply_restore(&restore_plan(&[pw("fw-2", &[5], None), pw("fw-1", &[6], None)], true));
+        assert_eq!(r.pending_restores(), vec!["fw-1", "fw-2"]);
+        r.stamp_created("fw-1", 10);
+        assert_eq!(r.pending_restores(), vec!["fw-2"]);
+        // A never-booted restored window is then folded back by the existing watchdog.
+        assert_eq!(stalled_boots(&r, 10 + BOOT_TIMEOUT_MS + 1), vec!["fw-1"]);
+        assert!(stalled_boots(&r, 5).is_empty());
     }
 
     #[test]

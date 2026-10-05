@@ -38,6 +38,13 @@ export async function bootWindow(): Promise<BootInfo | null> {
   }
 }
 
+/** Phase 4 D2: main has hydrated, so Rust may recreate the secondaries the last
+ *  session had open (flag on only; Rust checks it too). Fire and forget. */
+export function restoreWindows(): void {
+  if (!isMainWindow() || !getMultiwindow()) return;
+  void invoke("restore_windows").catch((e) => logEvent("warn", "windowBoot", `restore_windows failed: ${String(e)}`));
+}
+
 /** Wait until every pane of the workspace has a pty, then put keyboard focus on the
  *  active pane. Each terminal calls term.focus() as it finishes attaching, so a short
  *  settle delay lets the last of those land first. Gives up after ~6 s. */
