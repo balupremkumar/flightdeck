@@ -124,3 +124,9 @@ With the flag off, none of these commands exist and the app behaves as one windo
 
 - [ ] After restoring a session (or restarting a pane), Broadcast, Review "send to agent" and palette "New task" all reach the right pane.
 - [ ] Before the fix they used the saved id and wrote to the wrong pane or nowhere.
+
+## 0.6.0 Fable red team fixes
+
+- [ ] H1, flag on: move a workspace to a second window, quit, relaunch with reopen, add a pane in main: the agent in the second window keeps running.
+- [ ] M2/M3: paste a fake key (`sk-ant-api03-` plus 30 letters) into a Claude pane so it shows in colour, and type one into a pane's input without sending; quit; `session.json` and the newest `snapshots\*.json` hold `[REDACTED]`, not the key.
+- [ ] L2: in DevTools, `fetch(convertFileSrc("<home>\\.claude\\.credentials.json"))` fails (403), while a Claude transcript still opens in the viewer.
