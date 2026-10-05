@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { logEvent } from "./applog";
 import type { PaneState } from "./store";
@@ -623,6 +623,12 @@ export function closeTopOverlay(): boolean {
   top.close();
   return true;
 }
+/** True when `id` (from pushOverlay) is the top-most registered overlay. A key
+ *  handler that is not itself the overlay on top (Home under a confirm dialog)
+ *  checks this before acting. */
+export function isTopOverlay(id: number): boolean {
+  return overlayStack.length > 0 && overlayStack[overlayStack.length - 1].id === id;
+}
 export function overlayStackDepth(): number {
   return overlayStack.length;
 }
@@ -640,8 +646,9 @@ export function __resetOverlayStackForTests() {
  *  `restoreFocus: false` opts an overlay out of the focus-return step (a
  *  transient dropdown whose trigger button already holds focus by the time
  *  it closes doesn't need it). */
-export function useOverlayEsc(open: boolean, onClose: () => void, opts?: { restoreFocus?: boolean }) {
+export function useOverlayEsc(open: boolean, onClose: () => void, opts?: { restoreFocus?: boolean }): () => boolean {
   const closeRef = useRef(onClose);
+  const idRef = useRef(0);
   closeRef.current = onClose;
   const restoreFocus = opts?.restoreFocus !== false;
 
@@ -649,8 +656,10 @@ export function useOverlayEsc(open: boolean, onClose: () => void, opts?: { resto
     if (!open) return;
     const returnEl = (typeof document !== "undefined" ? (document.activeElement as HTMLElement | null) : null);
     const id = pushOverlay(() => closeRef.current());
+    idRef.current = id;
     return () => {
       popOverlay(id);
+      if (idRef.current === id) idRef.current = 0;
       if (restoreFocus && returnEl && document.contains(returnEl)) {
         // Deferred a frame: the overlay's own unmount hasn't necessarily
         // committed yet, and focusing too early can be stolen back by
@@ -660,6 +669,8 @@ export function useOverlayEsc(open: boolean, onClose: () => void, opts?: { resto
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
+  // Whether this overlay is the top of the stack right now (read at event time).
+  return useCallback(() => isTopOverlay(idRef.current), []);
 }
 
 export function setTheme(mode: "dark" | "light") {

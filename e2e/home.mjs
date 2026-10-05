@@ -155,6 +155,20 @@ check((await activeColumn()) === "working", "ArrowRight moves to the next non-em
 await page.keyboard.press("ArrowLeft");
 check((await activeColumn()) === "needs", "ArrowLeft moves back");
 
+// Red team #9: a dialog stacked above Home owns the keyboard; Home's J/K/1-5 do nothing.
+// The app's own ui.ts instance (Vite adds ?t= after an HMR update, so a bare import would be a second copy).
+const uiUrl = await page.evaluate(() => performance.getEntriesByType("resource").map((e) => e.name).find((n) => /\/src\/ui\.ts/.test(n)) ?? "/src/ui.ts");
+const stackedId = await page.evaluate(async (u) => (await import(u)).pushOverlay(() => {}), uiUrl);
+const beforeStacked = await activeCard();
+await page.keyboard.press("j");
+check((await activeCard()) === beforeStacked, `J is ignored while a dialog is stacked above Home (${beforeStacked})`);
+await page.keyboard.press("4");
+check((await activeColumn()) === "needs", "4 is ignored while a dialog is stacked above Home");
+await page.evaluate(async ([u, id]) => (await import(u)).popOverlay(id), [uiUrl, stackedId]);
+await page.keyboard.press("j");
+check((await activeCard()) !== beforeStacked, "J works again once the dialog is gone");
+await page.keyboard.press("k");
+
 // Enter opens the pane: Home closes, workspace switches, terminal has focus.
 await page.keyboard.press("4"); // an idle card; pane 1 lives in acme-api, the other workspace
 await page.locator('[data-pane-id="1"]').focus();

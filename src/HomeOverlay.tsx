@@ -241,7 +241,7 @@ export function HomeOverlay() {
 
   // Escape closes through the shared stack. Focus restore comes from useFocusTrap
   // (back to whatever had focus before Home opened).
-  useOverlayEsc(open, () => setOpen(false), { restoreFocus: false });
+  const isTop = useOverlayEsc(open, () => setOpen(false), { restoreFocus: false });
   useFocusTrap(panelRef, open, () => restoreRef.current);
 
   // Home closes itself when the active workspace or its focused pane changes
@@ -288,6 +288,8 @@ export function HomeOverlay() {
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
+      // A dialog stacked above Home owns the keyboard: j/k/1-5/Space are its, not ours.
+      if (!isTop()) return;
       if (e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) return;
       if (isTypingTarget(e.target as Element | null)) return;
       const root = panelRef.current;

@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   useUI, ZOOM_STEPS, nextZoomStep,
   navPush, navStep,
-  pushOverlay, popOverlay, closeTopOverlay, overlayStackDepth, __resetOverlayStackForTests,
+  pushOverlay, popOverlay, closeTopOverlay, overlayStackDepth, isTopOverlay, __resetOverlayStackForTests,
 } from "./ui";
 
 // The store is a singleton; reset the observable slice this file touches
@@ -235,5 +235,18 @@ describe("overlay stack (ui.ts, UX-542/543)", () => {
     expect(closeTopOverlay()).toBe(true);
     expect(closedOuter).toHaveBeenCalledTimes(1);
     expect(closedInner).not.toHaveBeenCalled(); // never told to close — it just unregistered
+  });
+
+  it("isTopOverlay: only the most recently opened overlay is on top (Home's keys defer to a dialog stacked above it)", () => {
+    const home = pushOverlay(() => {});
+    expect(isTopOverlay(home)).toBe(true);
+    const dialog = pushOverlay(() => {});
+    expect(isTopOverlay(home)).toBe(false);
+    expect(isTopOverlay(dialog)).toBe(true);
+    popOverlay(dialog);
+    expect(isTopOverlay(home)).toBe(true);
+    popOverlay(home);
+    expect(isTopOverlay(home)).toBe(false); // gone is not top
+    expect(isTopOverlay(0)).toBe(false); // never registered
   });
 });
