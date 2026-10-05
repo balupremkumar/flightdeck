@@ -34,6 +34,7 @@ mod support;
 mod updates;
 mod usage;
 mod vendors;
+mod windows;
 mod worktree;
 
 use std::collections::HashMap;
@@ -199,6 +200,7 @@ fn build_command(
 #[tauri::command]
 async fn pty_spawn(
     app: AppHandle,
+    window: tauri::Window,
     reg: State<'_, Registry>,
     model_id: u32,
     gen: String,
@@ -295,7 +297,7 @@ async fn pty_spawn(
         cwd: cwd.clone(),
         epoch,
         out: out.clone(),
-        attached: true,
+        attached: Some(window.label().to_string()),
     };
     reg.panes.lock().unwrap().insert(
         id,
@@ -461,11 +463,11 @@ struct AttachInfo {
 /// reload). None when there is none, or its vendor/cwd differ from `gen`.
 /// Async so a 4 MiB snapshot never runs on the main thread.
 #[tauri::command]
-async fn pty_attach(reg: State<'_, Registry>, model_id: u32, gen: String) -> Result<Option<AttachInfo>, String> {
+async fn pty_attach(window: tauri::Window, reg: State<'_, Registry>, model_id: u32, gen: String) -> Result<Option<AttachInfo>, String> {
     let (req_epoch, vendor, cwd) = paneout::parse_gen(&gen);
     // Registry ids first (panes is never taken while by_model is held).
     let live: std::collections::HashSet<u32> = reg.panes.lock().unwrap().keys().copied().collect();
-    let claimed = paneout::lock_map(&reg.by_model).claim_live(model_id, &vendor, &cwd, req_epoch, &live);
+    let claimed = paneout::lock_map(&reg.by_model).claim_live(model_id, &vendor, &cwd, req_epoch, &live, window.label());
     let Some((pty_id, out)) = claimed else { return Ok(None) };
     // Snapshot under the PaneOut lock: any chunk is either inside it (its event
     // seq <= next_seq, which the frontend drops) or after it (delivered live).
@@ -544,7 +546,7 @@ async fn pty_reap_unclaimed(reg: State<'_, Registry>) -> Result<u32, String> {
     let unclaimed = paneout::lock_map(&reg.by_model).unattached();
     let mut n = 0;
     for (model_id, pty_id) in unclaimed {
-        let still = paneout::lock_map(&reg.by_model).get(model_id).is_some_and(|e| e.pty_id == pty_id && !e.attached);
+        let still = paneout::lock_map(&reg.by_model).get(model_id).is_some_and(|e| e.pty_id == pty_id && e.attached.is_none());
         if !still {
             continue;
         }
@@ -555,13 +557,15 @@ async fn pty_reap_unclaimed(reg: State<'_, Registry>) -> Result<u32, String> {
     Ok(n)
 }
 
-/// Called on every main-webview load. A fresh load has no frontend attached to
-/// anything, so mark every pty unclaimed and, after a grace period, reap the ones
-/// still unclaimed whose model is no longer in the session doc (the pane was
-/// closed, or its workspace is gone). Safe mode never reaps.
-fn on_main_webview_load(app: &AppHandle) {
+/// Called on every webview load, main or `fw-*`. A fresh load of window X has no
+/// frontend attached to anything, so mark the ptys X had claimed unclaimed (other
+/// windows' stay claimed) and, after a grace period, reap the ones still
+/// unclaimed whose model is no longer in the session doc (the pane was closed, or
+/// its workspace is gone). Safe mode never reaps.
+fn on_webview_load(app: &AppHandle, label: &str) {
+    windows::on_webview_load(app, label);
     let reg = app.state::<Registry>();
-    paneout::lock_map(&reg.by_model).mark_all_unattached();
+    paneout::lock_map(&reg.by_model).mark_label_unattached(label);
     let my_gen = reg.load_gen.fetch_add(1, Ordering::SeqCst) + 1;
     let app = app.clone();
     std::thread::spawn(move || {
@@ -587,7 +591,7 @@ fn reap_unclaimed(app: &AppHandle, my_gen: u64) {
     let doc = persist::session_pane_ids(app);
     for (model_id, pty_id) in paneout::reap_targets(&unclaimed, doc.as_ref(), false) {
         // Re-check: it may have been claimed or replaced since the snapshot.
-        let still = paneout::lock_map(&reg.by_model).get(model_id).is_some_and(|e| e.pty_id == pty_id && !e.attached);
+        let still = paneout::lock_map(&reg.by_model).get(model_id).is_some_and(|e| e.pty_id == pty_id && e.attached.is_none());
         if !still {
             continue;
         }
@@ -862,7 +866,7 @@ fn kill_orphans(pids: Vec<u32>) -> Result<(), String> {
 
 // Redacted support bundle export (204/159) — see support.rs.
 #[tauri::command]
-fn export_support_bundle(app: AppHandle, reg: State<Registry>, dest_path: String) -> Result<(), String> {
+fn export_support_bundle(app: AppHandle, reg: State<Registry>, wins: State<windows::WindowState>, dest_path: String) -> Result<(), String> {
     crate::pathguard::check(&dest_path)?;
     let panes: Vec<support::SupportPaneInput> = {
         let panes = reg.panes.lock().unwrap();
@@ -879,6 +883,7 @@ fn export_support_bundle(app: AppHandle, reg: State<Registry>, dest_path: String
     let json = support::build_bundle(
         &app.package_info().version.to_string(),
         panes,
+        windows::support_rows(&wins.lock(), now_ms()),
         applog::tail(64 * 1024),
     )?;
     std::fs::write(&dest_path, json).map_err(|e| e.to_string())
@@ -980,14 +985,15 @@ pub fn run() {
                 .build(),
         )
         .manage(Registry::default())
+        .manage(windows::WindowState::default())
         .on_window_event(|window, event| {
             if matches!(event, tauri::WindowEvent::Destroyed) {
                 readscope::drop_label(window.label());
             }
         })
         .on_page_load(|webview, payload| {
-            if webview.label() == "main" && matches!(payload.event(), tauri::webview::PageLoadEvent::Started) {
-                on_main_webview_load(webview.app_handle());
+            if windows::validate_label(webview.label()).is_ok() && matches!(payload.event(), tauri::webview::PageLoadEvent::Started) {
+                on_webview_load(webview.app_handle(), webview.label());
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -996,6 +1002,8 @@ pub fn run() {
             pane_pause,
             pane_resume,
             pty_reap_unclaimed,
+            windows::window_boot,
+            windows::window_heartbeat,
             chatlog::pane_session_info,
             chatlog::session_tail,
             usage::session_subagents,
@@ -1106,6 +1114,7 @@ pub fn run() {
     hooks::init(app.handle());
 
     spawn_proc_sampler(app.handle().clone());
+    windows::spawn_watcher(app.handle().clone());
     // UX-586: hot-reload the vendor list when a manifest file changes on disk.
     vendors::spawn_manifest_watcher(app.handle().clone());
 

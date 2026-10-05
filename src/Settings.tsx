@@ -39,7 +39,7 @@ import {
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getName } from "@tauri-apps/api/app";
 import "./overlays.css";
-import { TerminalSettings, DEFAULT_TERMINAL_SETTINGS, CONTRAST_RANGE, TERM_LINE_HEIGHT_RANGE, PreviewWidth, ReadingSettings, DEFAULT_READING_SETTINGS, PREVIEW_FONT_RANGE, UI_TEXT_SCALE_RANGE, PREVIEW_LH_RANGE, PREVIEW_WIDTHS, READING_SETTINGS_KEY, getReadingSettings, applyReadingSettings, saveReadingSettings, parseRgb, luminance, adjustForContrast, TERMINAL_FONTS, getTerminalSettings, saveTerminalSettings, FIXED_SHORTCUTS, getShortcuts, saveShortcut, resetShortcuts, formatCombo, AgentSettings, DEFAULT_AGENT_SETTINGS, getAgentSettings, saveAgentSettings, EditorId, EditorSettings, EDITOR_PRESETS, DEFAULT_EDITOR_SETTINGS, getEditorSettings, saveEditorSettings, resolveEditorCommand, StartupBehavior, getStartupBehavior, saveStartupBehavior, APP_VERSION, CHANGELOG, MIN_MEMORY_CEILING_MB, MAX_MEMORY_CEILING_MB, getMemoryCeilingMb, setMemoryCeilingMb, setHooksInstalled, HookStatus, hookStatusLine } from "./settingsStore";
+import { TerminalSettings, DEFAULT_TERMINAL_SETTINGS, CONTRAST_RANGE, TERM_LINE_HEIGHT_RANGE, PreviewWidth, ReadingSettings, DEFAULT_READING_SETTINGS, PREVIEW_FONT_RANGE, UI_TEXT_SCALE_RANGE, PREVIEW_LH_RANGE, PREVIEW_WIDTHS, READING_SETTINGS_KEY, getReadingSettings, applyReadingSettings, saveReadingSettings, parseRgb, luminance, adjustForContrast, TERMINAL_FONTS, getTerminalSettings, saveTerminalSettings, FIXED_SHORTCUTS, getShortcuts, saveShortcut, resetShortcuts, formatCombo, AgentSettings, DEFAULT_AGENT_SETTINGS, getAgentSettings, saveAgentSettings, EditorId, EditorSettings, EDITOR_PRESETS, DEFAULT_EDITOR_SETTINGS, getEditorSettings, saveEditorSettings, resolveEditorCommand, StartupBehavior, getStartupBehavior, saveStartupBehavior, getMultiwindow, saveMultiwindow, APP_VERSION, CHANGELOG, MIN_MEMORY_CEILING_MB, MAX_MEMORY_CEILING_MB, getMemoryCeilingMb, setMemoryCeilingMb, setHooksInstalled, HookStatus, hookStatusLine } from "./settingsStore";
 export * from "./settingsStore";
 
 // ---------------------------------------------------------------------
@@ -876,6 +876,7 @@ export function Settings() {
       return loadImportedThemes().find((t) => t.name === name)?.id ?? null;
     } catch { return null; }
   });
+  const [multiwindow, setMultiwindow] = useState(getMultiwindow);
   // Sound when an agent needs you (the sound itself is played elsewhere).
   const [soundOn, setSoundOn] = useState(() => { try { return localStorage.getItem("flightdeck-sound-needs-you") !== "0"; } catch { return true; } });
   const [soundVol, setSoundVol] = useState(() => {
@@ -2097,6 +2098,21 @@ export function Settings() {
                 <button className={startup === "reopen" ? "on" : ""} onClick={() => updateStartup("reopen")}>Reopen last session</button>
                 <button className={startup === "launcher" ? "on" : ""} onClick={() => updateStartup("launcher")}>Show launcher</button>
               </div>
+            </div>
+          </section>
+
+          <section className="set-section">
+            <SectionHead label="Windows" />
+            <div className="set-row">
+              <div className="set-row-t"><span className="set-row-name">Multiple windows (preview)</span><span className="set-row-sub">Lets workspaces live in their own windows. Takes effect after a restart.</span></div>
+              <button
+                className={"toggle" + (multiwindow ? " on" : "")} role="switch" aria-checked={multiwindow} aria-label="Multiple windows (preview)"
+                onClick={() => {
+                  const next = !multiwindow;
+                  setMultiwindow(next);
+                  saveMultiwindow(next);
+                }}
+              ><span /></button>
             </div>
           </section>
 

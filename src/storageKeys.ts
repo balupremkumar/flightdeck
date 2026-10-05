@@ -67,6 +67,8 @@ export const PREFERENCE_KEYS = [
   "flightdeck-preview-mode",
   "flightdeck-preview-split-size",
   "flightdeck-preview-follow",
+  // Phase 4: "Multiple windows (preview)", default off.
+  "flightdeck-multiwindow",
 ] as const;
 
 /**

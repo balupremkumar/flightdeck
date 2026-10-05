@@ -283,7 +283,7 @@ export function CommandPalette() {
     // UI-181/UX-598: every Settings section, so the palette is a complete
     // index of the app's preferences, not just the ones that existed when
     // this list was first written.
-    for (const sec of ["Appearance", "Terminal", "Editor", "Shortcuts", "Agents", "Startup", "Session", "Diagnostics", "Reset", "About"]) {
+    for (const sec of ["Appearance", "Terminal", "Editor", "Shortcuts", "Agents", "Startup", "Windows", "Session", "Diagnostics", "Reset", "About"]) {
       list.push({
         id: `act:settings:${sec}`,
         section: "Actions",

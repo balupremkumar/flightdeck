@@ -111,9 +111,27 @@ function reorder<T>(list: T[], from: number, to: number): T[] {
   return next;
 }
 
+// Phase 4 id partition: id = (window ordinal << 24) | local, main is ordinal 0 so
+// ids persisted before multi-window are unchanged. Multiplication, not <<, keeps
+// it clear of signed 32-bit overflow. window_boot tells each window its ordinal.
+const ORDINAL_SPAN = 2 ** 24;
+let ordinal = 0;
 let wseq = 0;
 let pseq = 0;
 let gseq = 0;
+
+/** Set once at boot from `window_boot`. Moves the counters to this window's
+ *  partition; call before anything mints an id (hydrate may follow). */
+export function setWindowOrdinal(n: number): void {
+  ordinal = n;
+  wseq = pseq = gseq = n * ORDINAL_SPAN;
+}
+
+/** Counter after seeing a persisted id: only ids in OUR partition move it, so an
+ *  adopted workspace from another window can never push us into its id space. */
+function seen(seq: number, id: number): number {
+  return Math.floor(id / ORDINAL_SPAN) === ordinal ? Math.max(seq, id) : seq;
+}
 
 // ---------------------------------------------------------------------------
 // UX-553/554: cross-pane imperative send registry.
@@ -176,7 +194,7 @@ export const useApp = create<AppState>((set) => ({
   deleteGroup: (id) => set((s) => ({ groups: s.groups.filter((g) => g.id !== id) })),
   hydrateGroups: (groups) =>
     set(() => {
-      for (const g of groups) gseq = Math.max(gseq, g.id);
+      for (const g of groups) gseq = seen(gseq, g.id);
       return { groups };
     }),
 
@@ -234,8 +252,8 @@ export const useApp = create<AppState>((set) => ({
 
   adoptWorkspace: (ws) =>
     set((s) => {
-      wseq = Math.max(wseq, ws.id);
-      for (const p of ws.panes) pseq = Math.max(pseq, p.id);
+      wseq = seen(wseq, ws.id);
+      for (const p of ws.panes) pseq = seen(pseq, p.id);
       return {
         workspaces: [...s.workspaces.filter((w) => w.id !== ws.id), ws],
         activeId: ws.id,
@@ -398,8 +416,8 @@ export const useApp = create<AppState>((set) => ({
       // Bump the id counters past everything restored so new workspaces/panes
       // can never collide with persisted ids.
       for (const w of workspaces) {
-        wseq = Math.max(wseq, w.id);
-        for (const p of w.panes) pseq = Math.max(pseq, p.id);
+        wseq = seen(wseq, w.id);
+        for (const p of w.panes) pseq = seen(pseq, p.id);
       }
       const validActive = workspaces.some((w) => w.id === activeId)
         ? activeId

@@ -96,6 +96,18 @@ struct SupportPane {
     pid: Option<u32>,
 }
 
+/// One row of the window registry (windows.rs): who owns which workspaces and
+/// how recently each window was heard from.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SupportWindow {
+    pub label: String,
+    pub ordinal: u32,
+    pub workspace_ids: Vec<u32>,
+    pub booted: bool,
+    pub heartbeat_age_ms: Option<u64>,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct SupportBundle {
@@ -105,6 +117,7 @@ struct SupportBundle {
     arch: String,
     vendors: Vec<vendors::VendorInfo>,
     panes: Vec<SupportPane>,
+    windows: Vec<SupportWindow>,
     /// Tail of the flight-recorder log (applog.rs) — the error history that
     /// used to be missing from this bundle entirely. Absent when logging never
     /// initialised or nothing has been written.
@@ -123,6 +136,7 @@ fn now_ms() -> u64 {
 pub fn build_bundle(
     app_version: &str,
     panes: Vec<SupportPaneInput>,
+    windows: Vec<SupportWindow>,
     log_tail: Option<String>,
 ) -> Result<String, String> {
     // Reuse the registry's own descriptor rather than rebuilding one, so new
@@ -153,6 +167,7 @@ pub fn build_bundle(
         arch: std::env::consts::ARCH.to_string(),
         vendors: vendor_infos,
         panes,
+        windows,
         // applog already redacts at write time; the second pass here is cheap
         // and keeps this module's "every string is redacted" contract local.
         log_tail: log_tail.map(|t| redact(&t)),
@@ -168,7 +183,7 @@ mod bundle_tests {
     #[test]
     fn bundle_embeds_redacted_log_tail() {
         let secret = "sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789";
-        let out = build_bundle("0.0.0", vec![], Some(format!("boot ok\nerror with {secret}")))
+        let out = build_bundle("0.0.0", vec![], vec![], Some(format!("boot ok\nerror with {secret}")))
             .unwrap();
         assert!(out.contains("logTail"));
         assert!(out.contains("boot ok"));
@@ -177,7 +192,7 @@ mod bundle_tests {
 
     #[test]
     fn bundle_omits_log_tail_when_absent() {
-        let out = build_bundle("0.0.0", vec![], None).unwrap();
+        let out = build_bundle("0.0.0", vec![], vec![], None).unwrap();
         assert!(!out.contains("logTail"));
     }
 }

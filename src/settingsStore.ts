@@ -303,6 +303,15 @@ export function saveStartupBehavior(v: StartupBehavior) {
   try { localStorage.setItem("flightdeck-startup", v); } catch { /* non-persistent */ }
 }
 
+// Phase 4: multiple windows (preview), default off. Main reports it to Rust in
+// window_boot, so a change applies on the next launch.
+export function getMultiwindow(): boolean {
+  try { return localStorage.getItem("flightdeck-multiwindow") === "1"; } catch { return false; }
+}
+export function saveMultiwindow(on: boolean) {
+  try { localStorage.setItem("flightdeck-multiwindow", on ? "1" : "0"); } catch { /* non-persistent */ }
+}
+
 // Shown in About + useful for bug reports. Keep in step with package.json /
 // tauri.conf.json version bumps.
 export const APP_VERSION = "0.5.7";

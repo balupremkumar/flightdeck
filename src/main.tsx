@@ -10,6 +10,7 @@ import { runWorktreeGc } from "./worktrees";
 import { startAutosave, offerSessionRestore, crashedLastRun, armCleanExitSentinel, lastRestoreReport } from "./session";
 import { armGlobalErrorLog } from "./applog";
 import { syncReadRoots } from "./readscope";
+import { bootWindow } from "./windowBoot";
 
 // Flight recorder catch-alls FIRST: a throw or rejection anywhere in the boot
 // sequence below must reach the on-disk log (the v0.5.3 failure didn't).
@@ -32,7 +33,9 @@ syncReadRoots();
 // support bundle while the evidence from the bad run is still on disk.
 const didCrash = crashedLastRun();
 armCleanExitSentinel();
-void offerSessionRestore().then(() => {
+// Phase 4: window_boot first (ordinal for the pane-id partition, heartbeat), so
+// hydrate never runs before the id counters know their partition.
+void bootWindow().then(() => offerSessionRestore()).then(() => {
   void runWorktreeGc();
   // UX-583: after a bad shutdown, say exactly what came back and whether each
   // worktree survived, rather than a vague "restored" that leaves you guessing.

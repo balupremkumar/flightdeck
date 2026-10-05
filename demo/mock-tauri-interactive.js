@@ -712,6 +712,8 @@ index 3c92f1a..7d40b2e 100644
     load_session: () => JSON.parse(JSON.stringify(SESSION_DOC)),
     save_session: () => null, // demo never persists — Reset always returns to this same boot state
     session_put_slice: () => null,
+    window_boot: () => ({ label: "main", ordinal: 0, slice: null }),
+    window_heartbeat: () => null,
     list_restore_points: () => [],
     restore_from_point: () => JSON.parse(JSON.stringify(SESSION_DOC)),
     export_backup: () => null,

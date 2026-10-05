@@ -129,9 +129,9 @@ pub struct ModelEntry {
     pub cwd: String,
     pub epoch: u64,
     pub out: Arc<Mutex<PaneOut>>,
-    /// True once a frontend has spawned or attached this pty since the last
-    /// webview load.
-    pub attached: bool,
+    /// The window label whose frontend has spawned or attached this pty since
+    /// that window's last load. None means nobody has claimed it.
+    pub attached: Option<String>,
 }
 
 #[derive(Default)]
@@ -174,14 +174,14 @@ impl ByModel {
     /// `req_epoch` is the requester's restart epoch. A request newer than the
     /// entry's means a Restart: the entry is the pty being replaced and must not
     /// be attached. A reload resets the epoch to 0, so `<=` still attaches.
-    pub fn claim_live(&mut self, model_id: u32, vendor: &str, cwd: &str, req_epoch: u64, live: &HashSet<u32>) -> Option<(u32, Arc<Mutex<PaneOut>>)> {
+    pub fn claim_live(&mut self, model_id: u32, vendor: &str, cwd: &str, req_epoch: u64, live: &HashSet<u32>, label: &str) -> Option<(u32, Arc<Mutex<PaneOut>>)> {
         let e = self.live.get(&model_id).filter(|e| e.vendor == vendor && e.cwd == cwd && req_epoch <= e.epoch)?;
         if !live.contains(&e.pty_id) {
             self.live.remove(&model_id);
             return None;
         }
         let found = (e.pty_id, e.out.clone());
-        self.mark_attached(model_id);
+        self.mark_attached(model_id, label);
         Some(found)
     }
 
@@ -189,9 +189,9 @@ impl ByModel {
         self.live.get(&model_id)
     }
 
-    pub fn mark_attached(&mut self, model_id: u32) {
+    pub fn mark_attached(&mut self, model_id: u32, label: &str) {
         if let Some(e) = self.live.get_mut(&model_id) {
-            e.attached = true;
+            e.attached = Some(label.to_string());
         }
     }
 
@@ -222,17 +222,20 @@ impl ByModel {
         self.tombs.contains_key(&model_id)
     }
 
-    /// Webview (re)load: nobody is attached any more.
-    pub fn mark_all_unattached(&mut self) {
+    /// Webview (re)load of `label`: whatever it had claimed is unclaimed again.
+    /// Entries attached to other windows are untouched.
+    pub fn mark_label_unattached(&mut self, label: &str) {
         for e in self.live.values_mut() {
-            e.attached = false;
+            if e.attached.as_deref() == Some(label) {
+                e.attached = None;
+            }
         }
     }
 
     /// (model_id, pty_id) of every pty nobody has claimed.
     pub fn unattached(&self) -> Vec<(u32, u32)> {
         let mut v: Vec<(u32, u32)> =
-            self.live.iter().filter(|(_, e)| !e.attached).map(|(m, e)| (*m, e.pty_id)).collect();
+            self.live.iter().filter(|(_, e)| e.attached.is_none()).map(|(m, e)| (*m, e.pty_id)).collect();
         v.sort_unstable();
         v
     }
@@ -268,7 +271,7 @@ mod tests {
             cwd: cwd.into(),
             epoch: 0,
             out: Arc::new(Mutex::new(PaneOut::new(80, 24))),
-            attached,
+            attached: attached.then(|| "main".to_string()),
         }
     }
 
@@ -310,12 +313,12 @@ mod tests {
         let mut m = ByModel::default();
         m.insert(7, entry(100, "claude", "c", false));
         let none: HashSet<u32> = HashSet::new();
-        assert!(m.claim_live(7, "claude", "c", 0, &none).is_none(), "dead pty must not attach");
+        assert!(m.claim_live(7, "claude", "c", 0, &none, "main").is_none(), "dead pty must not attach");
         assert!(m.get(7).is_none(), "dead entry is pruned");
         m.insert(8, entry(101, "claude", "c", false));
         let live: HashSet<u32> = [101].into_iter().collect();
-        assert_eq!(m.claim_live(8, "claude", "c", 0, &live).map(|x| x.0), Some(101));
-        assert!(m.get(8).unwrap().attached);
+        assert_eq!(m.claim_live(8, "claude", "c", 0, &live, "main").map(|x| x.0), Some(101));
+        assert_eq!(m.get(8).unwrap().attached.as_deref(), Some("main"));
     }
 
     #[test]
@@ -325,11 +328,11 @@ mod tests {
         e.epoch = 2;
         m.insert(7, e);
         let live: HashSet<u32> = [100].into_iter().collect();
-        assert!(m.claim_live(7, "claude", "c", 3, &live).is_none(), "restart epoch must spawn, not attach");
+        assert!(m.claim_live(7, "claude", "c", 3, &live, "main").is_none(), "restart epoch must spawn, not attach");
         assert!(m.get(7).is_some(), "the dying pty's entry is left for its kill");
-        assert!(!m.get(7).unwrap().attached);
-        assert!(m.claim_live(7, "claude", "c", 0, &live).is_some(), "reload resets epoch to 0 and attaches");
-        assert!(m.claim_live(7, "claude", "c", 2, &live).is_some());
+        assert!(m.get(7).unwrap().attached.is_none());
+        assert!(m.claim_live(7, "claude", "c", 0, &live, "main").is_some(), "reload resets epoch to 0 and attaches");
+        assert!(m.claim_live(7, "claude", "c", 2, &live, "main").is_some());
     }
 
     #[test]
@@ -381,10 +384,28 @@ mod tests {
         m.insert(1, entry(10, "claude", "c", true));
         m.insert(2, entry(11, "claude", "c", true));
         assert!(m.unattached().is_empty());
-        m.mark_all_unattached();
+        m.mark_label_unattached("main");
         assert_eq!(m.unattached(), vec![(1, 10), (2, 11)]);
-        m.mark_attached(1);
+        m.mark_attached(1, "main");
         assert_eq!(m.unattached(), vec![(2, 11)]);
+    }
+
+    // Red team item 7: a reload of one window must not unclaim another window's ptys.
+    #[test]
+    fn reload_only_unclaims_that_windows_entries() {
+        let mut m = ByModel::default();
+        m.insert(1, entry(10, "claude", "c", true));
+        m.insert(2, entry(11, "claude", "c", true));
+        m.insert(3, entry(12, "claude", "c", true));
+        m.mark_attached(2, "fw-1");
+        m.mark_attached(3, "fw-2");
+        m.mark_label_unattached("fw-1");
+        assert_eq!(m.unattached(), vec![(2, 11)], "only fw-1's entry is unclaimed");
+        m.mark_label_unattached("main");
+        assert_eq!(m.unattached(), vec![(1, 10), (2, 11)]);
+        m.mark_label_unattached("fw-9");
+        assert_eq!(m.unattached(), vec![(1, 10), (2, 11)], "unknown label touches nothing");
+        assert_eq!(m.get(3).unwrap().attached.as_deref(), Some("fw-2"));
     }
 
     #[test]

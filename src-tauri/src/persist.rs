@@ -290,12 +290,6 @@ const SHADOW_FILE: &str = "session.v2.json";
 // import/export paths). Set false for shadow mode: session.v2.json beside it.
 const SLICE_WRITER_PRIMARY: bool = true;
 
-/// Seam for the S7 WindowRegistry: does `label` own workspace `ws_id`? Until the
-/// registry exists only main owns anything, so foreign slices are dropped.
-fn assigned(label: &str, _ws_id: u32) -> bool {
-    label == MAIN_LABEL
-}
-
 struct Slices {
     by_label: BTreeMap<String, SessionDoc>,
     generation: u64,
@@ -416,13 +410,15 @@ fn normalize_windows(mut doc: SessionDoc, multiwindow: bool) -> SessionDoc {
 // Merge whatever is held and write it. Runs on a worker or command thread,
 // never the main thread.
 fn write_merged(app: &AppHandle) -> Result<(), String> {
+    // Registry first: it is never taken while SLICES is held.
+    let windows = crate::windows::snapshot(app);
     let (mut doc, rejected) = {
         let mut g = SLICES.lock().unwrap_or_else(|e| e.into_inner());
         if !g.dirty {
             return Ok(());
         }
         g.dirty = false;
-        merge_slices(&g.by_label, assigned)
+        merge_slices(&g.by_label, |label, id| windows.owns(label, id))
     };
     for (label, id) in rejected {
         crate::applog::log("warn", "session", &format!("dropped workspace {id} from window {label}: not assigned to it"));
@@ -478,8 +474,47 @@ pub fn load_session(app: AppHandle) -> Result<Option<SessionDoc>, String> {
     if safe_mode_active() {
         return Ok(None);
     }
-    // Multi-window is not switchable yet (S7 adds the flag): everything loads into main.
-    Ok(read_session_file(&app)?.map(|d| normalize_windows(d, false)))
+    // The flag is whatever main reported in window_boot (false until it has).
+    let multiwindow = crate::windows::multiwindow_on(&app);
+    Ok(read_session_file(&app)?.map(|d| normalize_windows(d, multiwindow)))
+}
+
+/// Largest window ordinal baked into persisted workspace and pane ids, so a
+/// fresh run never mints an `fw-<n>` whose id partition is already in use.
+pub(crate) fn session_id_ordinal_floor(app: &AppHandle) -> u32 {
+    let Some(doc) = read_session_file(app).ok().flatten() else { return 0 };
+    crate::windows::max_ordinal(doc.workspaces.iter().flat_map(|w| std::iter::once(w.id).chain(w.panes.iter().map(|p| p.id))))
+}
+
+/// The slice a secondary boots with: the last one it pushed, else its assigned
+/// workspaces cut out of the session document.
+pub(crate) fn boot_slice(app: &AppHandle, label: &str, ids: &[u32]) -> Option<SessionDoc> {
+    if let Some(s) = SLICES.lock().unwrap_or_else(|e| e.into_inner()).by_label.get(label) {
+        return Some(s.clone());
+    }
+    let mut doc = read_session_file(app).ok().flatten()?;
+    let active = doc.windows.iter().find(|w| w.label == label).and_then(|w| w.active_workspace_id);
+    doc.workspaces.retain(|w| ids.contains(&w.id));
+    doc.active_workspace_id = active.filter(|a| ids.contains(a));
+    doc.windows.clear();
+    Some(doc)
+}
+
+/// A secondary died: drop its slice and fold its workspaces into main's, so the
+/// next write keeps them until main pushes a slice of its own. Returns the slice.
+pub(crate) fn fold_slice_into_main(label: &str) -> Option<SessionDoc> {
+    let mut g = SLICES.lock().unwrap_or_else(|e| e.into_inner());
+    let dead = g.by_label.remove(label)?;
+    if let Some(main) = g.by_label.get_mut(MAIN_LABEL) {
+        for w in &dead.workspaces {
+            if !main.workspaces.iter().any(|m| m.id == w.id) {
+                main.workspaces.push(w.clone());
+            }
+        }
+    }
+    g.generation += 1;
+    g.dirty = true;
+    Some(dead)
 }
 
 // Pane model ids in session.json, for the post-reload PTY reaper (lib.rs).
@@ -765,8 +800,8 @@ mod tests {
         let mut m = BTreeMap::new();
         m.insert("main".to_string(), slice(vec![ws(1, 10)], Some(1), serde_json::json!({})));
         m.insert("fw-1".to_string(), slice(vec![ws(1, 10), ws(2, 20)], Some(2), serde_json::json!({})));
-        // Today's seam: only main owns anything.
-        let (doc, rejected) = merge_slices(&m, assigned);
+        // Only main owns anything.
+        let (doc, rejected) = merge_slices(&m, |l, _| l == MAIN_LABEL);
         assert_eq!(doc.workspaces.len(), 1);
         assert_eq!(rejected, vec![("fw-1".to_string(), 1), ("fw-1".to_string(), 2)]);
         assert!(doc.windows[1].workspace_ids.is_empty());
@@ -810,7 +845,7 @@ mod tests {
         let old = serde_json::to_value(&draft).unwrap();
         let mut m = BTreeMap::new();
         m.insert("main".to_string(), draft);
-        let (new, rejected) = merge_slices(&m, assigned);
+        let (new, rejected) = merge_slices(&m, |l, _| l == MAIN_LABEL);
         assert!(rejected.is_empty());
         let new = serde_json::to_value(&new).unwrap();
         for k in ["workspaces", "activeWorkspaceId", "uiPrefs"] {
