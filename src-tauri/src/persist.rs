@@ -814,6 +814,7 @@ mod tests {
 
         // Five more arrive while it is in flight; only the last may be written.
         let mut handles = Vec::new();
+        let parked = c.clone();
         for i in 0..5 {
             let (c, w, n) = (c.clone(), written.clone(), calls.clone());
             handles.push(std::thread::spawn(move || {
@@ -823,8 +824,14 @@ mod tests {
                     Ok(())
                 })
             }));
-            // Let each park its payload before the next so ordering is deterministic.
-            std::thread::sleep(std::time::Duration::from_millis(50));
+            // Wait until this payload is actually parked before spawning the
+            // next, so ordering is deterministic (a fixed sleep let a delayed
+            // thread park late under load). Nothing drains `pending` until the
+            // gate opens, so the slot holds the latest parked payload.
+            let want = format!("p{i}");
+            while parked.pending.lock().unwrap().as_deref() != Some(want.as_str()) {
+                std::thread::yield_now();
+            }
         }
         gate_tx.send(()).unwrap();
         t1.join().unwrap().unwrap();
