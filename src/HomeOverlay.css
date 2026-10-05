@@ -65,7 +65,7 @@
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere;
 }
 .hm-act.none { color: var(--faint); font-style: italic; font-family: inherit; }
-.hm-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-height: 14px; font-size: 11px; line-height: 14px; color: var(--muted); }
+.hm-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-height: 14px; flex: none; font-size: 11px; line-height: 14px; color: var(--muted); }
 .hm-diff { font-family: var(--font-mono); }
 .hm-diff .add { color: var(--st-running); }
 .hm-diff .del { color: var(--st-error); }

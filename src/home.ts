@@ -62,6 +62,59 @@ export interface HomeCard {
   snoozedUntil?: number;
 }
 
+// ---------------------------------------------------------------------------
+// Card text: identity and activity line
+// ---------------------------------------------------------------------------
+
+/** PaneView auto-titles a pane with its foreground process (node, pwsh, ...).
+ *  That is not an identity, so Home ignores a title that is just such a name. */
+const PROCESS_NAMES = new Set([
+  "node", "nodejs", "npm", "npx", "pnpm", "yarn", "bun", "deno", "python", "python3", "py", "pip", "uv",
+  "pwsh", "powershell", "cmd", "bash", "zsh", "sh", "fish", "wsl", "git", "cargo", "rustc", "go", "java",
+  "claude", "codex", "agy", "gemini", "kimi", "conhost", "openconsole", "windowsterminal",
+]);
+export function isProcessTitle(title: string): boolean {
+  return PROCESS_NAMES.has(title.trim().toLowerCase().replace(/\.exe$/, ""));
+}
+
+/** The card's name: the pane's own title if it set one, else the vendor short
+ *  name plus the branch. `branchShown` tells the view the branch is already in
+ *  the name so the where-line does not repeat it. */
+export function cardName(title: string, vendorShortName: string, branch?: string): { name: string; branchShown: boolean } {
+  const t = title.trim();
+  if (t && !isProcessTitle(t)) return { name: t, branchShown: false };
+  return branch ? { name: `${vendorShortName} · ${branch}`, branchShown: true } : { name: vendorShortName, branchShown: false };
+}
+
+const OPTION_LINE_RE = /^\s*[❯>›]?\s*\d+[.)]\s+\S/;
+const isOptionLine = (l: string): boolean => OPTION_LINE_RE.test(l);
+/** A line with no letter or digit is a prompt or spinner glyph (">", "▸", "☾", box rules). */
+const hasText = (l: string): boolean => /[\p{L}\p{N}]/u.test(l);
+const stripBox = (l: string): string => l.replace(/^[\s│┃|]+|[\s│┃|]+$/g, "");
+
+/** The activity line to show: null for a bare glyph, and for a permission card
+ *  never one of the menu options (the question above them is the useful line). */
+export function activityLine(line: string | undefined, kind: AttentionKind | null): string | null {
+  if (!line || !hasText(line)) return null;
+  if (kind === "permission" && isOptionLine(line)) return null;
+  return line;
+}
+
+/** The question or tool request above a permission menu in `tail`, or null. */
+export function permissionAsk(tail: string[]): string | null {
+  const lines = tail.slice(-TAIL_WINDOW * 2);
+  let last = -1;
+  for (let i = lines.length - 1; i >= 0; i--) if (isOptionLine(stripBox(lines[i]))) { last = i; break; }
+  if (last < 0) return null;
+  let first = last;
+  while (first > 0 && isOptionLine(stripBox(lines[first - 1]))) first--;
+  for (let i = first - 1; i >= 0; i--) {
+    const l = stripBox(lines[i]);
+    if (l && hasText(l)) return l.length > 160 ? l.slice(0, 159) + "…" : l;
+  }
+  return null;
+}
+
 /** Same cache key as PaneView's diff poll: cwd plus base branch. */
 export const diffKey = (p: PaneModel): string => p.cwd + "|" + (p.baseBranch ?? "");
 
@@ -123,7 +176,7 @@ export function buildHome(
       title: p.title ?? "",
       wsName: w.name,
       since: since ?? ctx.stateSince.get(p.id) ?? ctx.lastOutputAt.get(p.id) ?? ctx.now,
-      activity: ctx.lastLine.get(p.id) ?? null,
+      activity: activityLine(ctx.lastLine.get(p.id), kind),
       kind,
     };
     if (p.branch) c.branch = p.branch;

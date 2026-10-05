@@ -3,8 +3,8 @@ import { lastLine, needsHumanQueue, stateSince } from "./attention";
 import type { PrInfo } from "./chipState";
 import type { PaneModel, PaneState, Workspace } from "./store";
 import {
-  approveKeyFor, buildHome, classifyPane, diffKey, homeKeyAllowed, markPaneMerged, mergedPanes,
-  otherWindowSummaries, prCwd, type HomeCtx, type DiffStat,
+  activityLine, approveKeyFor, buildHome, cardName, classifyPane, diffKey, homeKeyAllowed, isProcessTitle, markPaneMerged,
+  mergedPanes, otherWindowSummaries, permissionAsk, prCwd, type HomeCtx, type DiffStat,
 } from "./home";
 
 const NOW = Date.now(); // needsHumanQueue reads the real clock for snooze
@@ -274,5 +274,45 @@ describe("homeKeyAllowed", () => {
     expect(homeKeyAllowed(k("w", { ctrlKey: true }))).toBe(false);
     expect(homeKeyAllowed(k("b", { ctrlKey: true }))).toBe(false);
     expect(homeKeyAllowed(k("h", { ctrlKey: true }))).toBe(false);
+  });
+});
+
+describe("card identity and activity line", () => {
+  it("ignores a process-name title, falls back to vendor plus branch", () => {
+    expect(isProcessTitle("node")).toBe(true);
+    expect(isProcessTitle("pwsh.exe")).toBe(true);
+    expect(isProcessTitle("Fix login flow")).toBe(false);
+    expect(cardName("node", "Claude", "fix-x")).toEqual({ name: "Claude · fix-x", branchShown: true });
+    expect(cardName("", "Codex")).toEqual({ name: "Codex", branchShown: false });
+    expect(cardName("Fix login flow", "Claude", "fix-x")).toEqual({ name: "Fix login flow", branchShown: false });
+  });
+
+  it("skips lines that are only prompt or spinner glyphs", () => {
+    for (const g of [">", "▸", "☾", "❯ ", "⠋", "  │  ", "─────"]) expect(activityLine(g, null)).toBeNull();
+    expect(activityLine("Editing src/a.ts", null)).toBe("Editing src/a.ts");
+    expect(activityLine(undefined, null)).toBeNull();
+  });
+
+  it("never shows a menu option on a permission card", () => {
+    expect(activityLine("3. No, tell Claude what to do differently", "permission")).toBeNull();
+    expect(activityLine("  ❯ 1. Yes", "permission")).toBeNull();
+    expect(activityLine("3. Not an option on a non-permission card", null)).not.toBeNull();
+  });
+
+  it("permissionAsk returns the line above the numbered options", () => {
+    expect(permissionAsk(["Bash command", "  rm -rf build", "Do you want to proceed?", "❯ 1. Yes", "  2. Yes, and don't ask again", "  3. No, tell Claude what to do differently"]))
+      .toBe("Do you want to proceed?");
+    expect(permissionAsk(["│ Allow this edit? │", "│ ❯ 1. Yes │", "│   2. No │"])).toBe("Allow this edit?");
+    expect(permissionAsk(["old menu", "1. Yes", "2. No", "new question?", "1. Yes", "2. No"])).toBe("new question?");
+    expect(permissionAsk(["no menu here", "just text"])).toBeNull();
+    expect(permissionAsk(["❯ 1. Yes", "2. No"])).toBeNull();
+  });
+
+  it("buildHome puts the glyph-free line on the card", () => {
+    lastLine.set(1, "▸");
+    lastLine.set(2, "Writing tests");
+    const { columns } = buildHome([ws(1, [pane(1, "running"), pane(2, "running")])], ctxOf());
+    expect(columns.working.find((c) => c.paneId === 1)!.activity).toBeNull();
+    expect(columns.working.find((c) => c.paneId === 2)!.activity).toBe("Writing tests");
   });
 });

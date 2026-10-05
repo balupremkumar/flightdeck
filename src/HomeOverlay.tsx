@@ -17,8 +17,8 @@ import { buildTargets, useHomePoll, useHomePollStore } from "./homePoll";
 import { IconClose, IconHome } from "./Icons";
 import { entryTail, PEEK_LINES, useHomeTails, type TailEntry } from "./homeTail";
 import {
-  approveKeyFor, buildHome, cardStateKey, COLUMN_EMPTY, COLUMN_LABEL, effectiveSend, HOME_COLUMNS, mergedPanes,
-  otherWindowSummaries, replyDrafts, sendsReducer,
+  approveKeyFor, buildHome, cardName, cardStateKey, COLUMN_EMPTY, COLUMN_LABEL, effectiveSend, HOME_COLUMNS, mergedPanes,
+  otherWindowSummaries, permissionAsk, replyDrafts, sendsReducer,
   type HomeCard, type HomeColumn, type HomeCtx, type SendState,
 } from "./home";
 import "./HomeOverlay.css";
@@ -336,8 +336,13 @@ export function HomeOverlay() {
   const others = otherWindowSummaries();
 
   const renderCard = (c: HomeCard) => {
-    const name = c.title || vendorShort(c.vendor);
-    const where = c.branch ? `${c.wsName} / ${c.branch}` : c.wsName;
+    // The pane's own title, else vendor plus branch; a process name is not an identity.
+    const { name, branchShown } = cardName(c.title, vendorShort(c.vendor), c.branch);
+    const where = c.branch && !branchShown ? `${c.wsName} / ${c.branch}` : c.wsName;
+    // A permission card shows the question or tool request above the menu, never an option.
+    const ask = c.kind === "permission" ? permissionAsk(entryTail(tails[c.paneId])?.lines ?? []) : null;
+    const activity = ask ?? c.activity;
+    const noActivity = c.kind === "permission" ? "Waiting for your approval" : null; // otherwise show nothing
     // Row 3: only what is known. A fixed-size bar holds the place of a value
     // still loading; a fetched "none" omits its part.
     const diffPart = c.diff === undefined
@@ -371,10 +376,9 @@ export function HomeOverlay() {
             <span className="hm-since" title="Time in this state">{forMins(c.since, now)}</span>
           </div>
           <div className="hm-where" title={where}>{where}</div>
-          <div className={"hm-act" + (c.activity ? "" : " none")}>{c.activity ?? "No output yet"}</div>
-          {(diffPart || prPart) && (
-            <div className="hm-meta" aria-busy={c.diff === undefined || c.pr === undefined}>{diffPart}{prPart}</div>
-          )}
+          {(activity || noActivity) && <div className={"hm-act" + (activity ? "" : " none")}>{activity ?? noActivity}</div>}
+          {/* Always rendered: its reserved height keeps the card from shifting when the row fills or empties. */}
+          <div className="hm-meta" aria-busy={c.diff === undefined || c.pr === undefined}>{diffPart}{prPart}</div>
           {(c.kind || c.snoozedUntil) && (
             <div className="hm-tags">
               {c.kind && <span className={"hm-kind " + c.kind}><span className={"ntf-dot " + c.kind} />{KIND_LABEL[c.kind]}</span>}

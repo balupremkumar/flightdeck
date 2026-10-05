@@ -324,6 +324,15 @@ await page.waitForTimeout(9000);
 await page.keyboard.press("Control+Shift+H");
 const approveBtn = page.locator('.hm-col.needs [data-pane-id="5"] button', { hasText: "Approve" });
 await approveBtn.waitFor({ timeout: 15000 });
+// Lead review fixes: identity, activity line, permission question, reserved row.
+const names = await page.locator(".hm-name").allInnerTexts();
+check(names.length > 0 && names.every((n) => n.toLowerCase() !== "node"), `no card is titled by its process name (${names.join(", ")})`);
+const acts = await page.locator(".hm-act").allInnerTexts();
+check(acts.every((a) => /[\p{L}\p{N}]/u.test(a)), `no activity line is a bare glyph (${JSON.stringify(acts)})`);
+const ask5 = await page.locator('.hm-col.needs [data-pane-id="5"] .hm-act').innerText();
+check(ask5 === "Do you want to proceed?", `permission card shows the question, not an option ("${ask5}")`);
+const metaH = await page.locator(".hm-meta").evaluateAll((els) => els.map((e) => Math.round(e.getBoundingClientRect().height)));
+check(metaH.length > 0 && metaH.every((h) => h >= 14), `row 3 keeps its height on every card (${metaH})`);
 const writesBefore = await page.evaluate(() => window.__calls.filter((x) => x.c === "pty_write").length);
 await approveBtn.click();
 await page.waitForFunction((n) => window.__calls.filter((x) => x.c === "pty_write").length > n, writesBefore, { timeout: 5000 });
