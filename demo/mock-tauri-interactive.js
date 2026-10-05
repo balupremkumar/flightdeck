@@ -22,7 +22,8 @@
 
 (() => {
   const listeners = new Map(); // event name -> Set<callback>
-  let nextPaneId = 0;
+  // Offset so pty ids never coincide with store model ids (as after a real restore).
+  let nextPaneId = 100;
   const panes = new Map(); // ptyId -> pane runtime state
 
   // pty://output carries `seq`, like the Rust PaneOut ring: the running byte

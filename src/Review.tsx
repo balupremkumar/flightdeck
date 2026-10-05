@@ -8,6 +8,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { openInEditor } from "./editor";
 import { useApp } from "./store";
+import { writeToPane } from "./paneSessions";
 import { useUI, useOverlayEsc } from "./ui";
 import { vendorShort } from "./vendors";
 import { IconBranch, IconClose, IconChevron, IconDiff, IconMerge, IconRefresh, IconCopy } from "./Icons";
@@ -589,7 +590,7 @@ export function Review() {
     // derivation, just self-contained.
     const label = pane.title || vendorShort(pane.vendor);
     try {
-      await invoke("pty_write", { paneId: pane.id, data: data + "\r" });
+      await writeToPane(pane.id, data + "\r");
       pushToast("success", note);
     } catch (e) {
       pushToast("error", `Couldn't send to ${label} — it may not be running.`, { detail: String(e) });

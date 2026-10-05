@@ -146,6 +146,16 @@ export function get(modelId: number): PaneSession | undefined {
   return sessions.get(modelId);
 }
 
+/** Write to a pane's live PTY by MODEL id. Rust's pty_write keys on the id
+ *  pty_spawn returned (session.ptyId), a different id space from PaneModel.id
+ *  that only coincides by luck on a fresh session. Rejects when the pane has
+ *  no live session yet, so callers' failure accounting still counts it. */
+export function writeToPane(modelId: number, data: string): Promise<unknown> {
+  const ptyId = sessions.get(modelId)?.ptyId;
+  if (!ptyId) return Promise.reject(new Error("pane has no running terminal"));
+  return Promise.resolve(invoke("pty_write", { paneId: ptyId, data }));
+}
+
 export function size(): number {
   return sessions.size;
 }

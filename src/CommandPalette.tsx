@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import { useApp, type PaneState } from "./store";
+import { writeToPane } from "./paneSessions";
 import { useUI, useOverlayEsc, setTheme } from "./ui";
 import { closePaneGuarded, spawnPane } from "./worktrees";
 import { agentVendors, vendorShort } from "./vendors";
@@ -415,7 +415,7 @@ export function CommandPalette() {
           void sendTaskWhenReady({
             text: taskText,
             getState: () => useApp.getState().workspaces.flatMap((w) => w.panes).find((p) => p.id === paneId)?.state,
-            write: (data) => invoke("pty_write", { paneId, data }),
+            write: (data) => writeToPane(paneId, data),
             copy: (t) => navigator.clipboard.writeText(t),
             toast: (kind, text) => pushToast(kind, text),
           });

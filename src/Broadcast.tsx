@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import { useApp, type PaneModel } from "./store";
+import { writeToPane } from "./paneSessions";
 import { useUI, useOverlayEsc } from "./ui";
 import { IconClose } from "./Icons";
 import { relTime, timeTitle, tailEllipsis } from "./format";
@@ -102,7 +102,7 @@ export function Broadcast() {
     if (!trimmed || targets.length === 0 || sending) return;
     setSending(true);
     const payload = pressEnter ? trimmed + "\r" : trimmed;
-    const results = await Promise.allSettled(targets.map(({ p }) => invoke("pty_write", { paneId: p.id, data: payload })));
+    const results = await Promise.allSettled(targets.map(({ p }) => writeToPane(p.id, payload)));
     setSending(false);
     const failed = results.filter((r) => r.status === "rejected").length;
     pushBroadcastRecord({ text: trimmed, sentTo: targets.length, failed });

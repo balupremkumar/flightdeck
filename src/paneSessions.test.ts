@@ -83,6 +83,16 @@ describe("paneSessions", () => {
     expect(kills()).toHaveLength(0);
   });
 
+  it("writeToPane addresses the live pty id, not the model id; rejects with no live pty", async () => {
+    const s = ps.acquire(2, spec(), {}, container); // fake ptyId = 42
+    await ps.writeToPane(2, "hi");
+    expect(invoke).toHaveBeenCalledWith("pty_write", { paneId: 42, data: "hi" });
+    await expect(ps.writeToPane(99, "x")).rejects.toThrow();
+    s.ptyId = 0;
+    await expect(ps.writeToPane(2, "x")).rejects.toThrow();
+    expect(vi.mocked(invoke).mock.calls.filter(([c]) => c === "pty_write")).toHaveLength(1);
+  });
+
   it("dispose kills the pty once, tears down, and is idempotent", () => {
     const s = ps.acquire(1, spec(), {}, container);
     ps.dispose(1);
