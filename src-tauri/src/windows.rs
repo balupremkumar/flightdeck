@@ -557,6 +557,29 @@ fn with_ledger<T>(f: impl FnOnce(&mut AdoptLedger) -> T) -> T {
     f(g.get_or_insert_with(AdoptLedger::default))
 }
 
+/// Windows whose close is already running (finding 5): every X press used to spawn
+/// its own close thread, each waiting out the 500 ms flush.
+#[derive(Debug, Default)]
+pub struct CloseGuard(HashSet<String>);
+
+impl CloseGuard {
+    /// True when the caller should run the close; false when one is in progress.
+    pub fn begin(&mut self, label: &str) -> bool {
+        self.0.insert(label.to_string())
+    }
+
+    pub fn end(&mut self, label: &str) {
+        self.0.remove(label);
+    }
+}
+
+static CLOSING: Mutex<Option<CloseGuard>> = Mutex::new(None);
+
+fn with_closing<T>(f: impl FnOnce(&mut CloseGuard) -> T) -> T {
+    let mut g = CLOSING.lock().unwrap_or_else(|e| e.into_inner());
+    f(g.get_or_insert_with(CloseGuard::default))
+}
+
 /// Managed state (beside `Registry` in lib.rs).
 #[derive(Default)]
 pub struct WindowState(pub Mutex<WindowRegistry>);
@@ -1034,8 +1057,15 @@ pub fn on_close_requested(app: &AppHandle, label: &str) -> bool {
     if validate_label(label).is_err() || close_action(&app.state::<WindowState>().lock(), label) == CloseAction::Ignore {
         return false;
     }
+    // Still the close is ours to prevent, but a press while one runs does nothing.
+    if !with_closing(|g| g.begin(label)) {
+        return true;
+    }
     let (app, label) = (app.clone(), label.to_string());
-    std::thread::spawn(move || close_secondary(&app, &label));
+    std::thread::spawn(move || {
+        close_secondary(&app, &label);
+        with_closing(|g| g.end(&label));
+    });
     true
 }
 
@@ -1476,6 +1506,16 @@ mod tests {
         assert_ne!(a, b);
         l.finish(a);
         assert!(!l.ack(a));
+    }
+
+    #[test]
+    fn a_second_close_press_does_not_start_another_close() {
+        let mut g = CloseGuard::default();
+        assert!(g.begin("fw-1"));
+        assert!(!g.begin("fw-1"), "a close for fw-1 is already running");
+        assert!(g.begin("fw-2"), "other windows are independent");
+        g.end("fw-1");
+        assert!(g.begin("fw-1"), "once it ends a new close may start");
     }
 
     #[test]
