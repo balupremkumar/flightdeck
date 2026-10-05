@@ -3,14 +3,14 @@ hub_updated: 2026-10-05
 hub_status: active
 hub_lane: products
 hub_last: "Phase 4 S4 (pane release, detach/adopt, dark) on qol/phase-4; S5 readscope and S6 session doc v2 in flight."
-hub_next: "Phase 4 S7-S10, Phase 5 Home, Fable red team, 0.6.0 Canary, run end to end without phase stops."
-hub_you: "Install the 0.6.0 Canary and run the checklist once it is cut."
+hub_next: "Resume from docs/plans/RESUME-2026-10-06.md: merge qol/phase-4 to main, Fable red team, fixes, 0.6.0 Canary."
+hub_you: "Approve the merge and push of qol/phase-4 to main once the other Flightdeck session is closed."
 ---
 # STATE — Flightdeck
 
 Vault: [[HOME]] | [[PORTFOLIO|Portfolio]] | [[projects/active/flightdeck/BACKLOG|Backlog]]
 
-UPDATE 2026-10-05: qol/phase-4 = Phase 4 S4-S10c + Home + red team fixes 1-6/9/10 + 4 bug/flake fixes + 0.6.0 notes/checklist; lead gate tsc 0, vitest 1480, cargo 444, build OK; full e2e (21) running. Next: merge to main, Fable red team, 0.6.0 Canary.
+UPDATE 2026-10-05: qol/phase-4 = Phase 4 S4-S10c + Home + red team fixes 1-6/9/10 + 4 bug/flake fixes + 0.6.0 notes/checklist; lead gate tsc 0, vitest 1480, cargo 444, build OK; full e2e (21) running. Next: merge to main, Fable red team, 0.6.0 Canary. Merge to main blocked pending Balu; resume: docs/plans/RESUME-2026-10-06.md.
 Updated: 2026-09-19 (lag root-caused and fixed on branch flightdeck/pfi232, uncommitted; full roadmap written to BACKLOG.md section N).
 
 ## CURRENT 2026-09-19: the "laggy with Antigravity" bug is root-caused and fixed on this branch (uncommitted, not yet cut)
