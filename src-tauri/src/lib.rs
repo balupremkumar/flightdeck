@@ -1054,6 +1054,8 @@ pub fn run() {
             windows::window_focus_pane,
             windows::ws_transfer,
             windows::window_adopted,
+            windows::main_adopt_done,
+            windows::main_pending_adopts,
             windows::window_focus_next,
             windows::window_close_self,
             windows::window_summary,

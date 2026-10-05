@@ -101,21 +101,21 @@ interface AdoptPayload { from: string; workspaceIds: number[]; activeWs: number 
  *  ("Move workspace to window..."): adopt it as a new window does at boot. Otherwise
  *  it is a fold into main: rebuild the workspaces from the closed window's last slice
  *  and add them; their ptys are still running in Rust, so the terminals attach. */
-export function listenForAdopt(): void {
-  void listen<AdoptPayload>("win://adopt", async (e) => {
-    const { from, workspaceIds, activeWs, slice, transfer, transferId } = e.payload;
-    try {
-      if (transfer?.workspace) {
-        // Ack before adopting: the source releases only on this, and refuses (false)
-        // once it has given up and kept the workspace.
-        if (transferId != null && !(await invoke<boolean>("window_adopted", { transferId }))) {
-          logEvent("warn", "windowBoot", `win://adopt from ${from} was cancelled; leaving it with the source`);
-          return;
-        }
-        if (!useApp.getState().workspaces.some((w) => w.id === transfer.workspace.id)) adoptTransfer(transfer);
+export async function handleAdopt(payload: AdoptPayload): Promise<void> {
+  const { from, workspaceIds, activeWs, slice, transfer, transferId } = payload;
+  try {
+    if (transfer?.workspace) {
+      // Ack before adopting: the source releases only on this, and refuses (false)
+      // once it has given up and kept the workspace.
+      if (transferId != null && !(await invoke<boolean>("window_adopted", { transferId }))) {
+        logEvent("warn", "windowBoot", `win://adopt from ${from} was cancelled; leaving it with the source`);
         return;
       }
-      if (!isMainWindow()) return;
+      if (!useApp.getState().workspaces.some((w) => w.id === transfer.workspace.id)) adoptTransfer(transfer);
+      return;
+    }
+    if (!isMainWindow()) return;
+    try {
       if (!slice) { logEvent("warn", "windowBoot", `win://adopt from ${from} carried no slice; its workspaces cannot be restored`); return; }
       const known = new Set(useApp.getState().workspaces.map((w) => w.id));
       const fresh = slice.workspaces.filter((w) => workspaceIds.includes(w.id) && !known.has(w.id));
@@ -123,10 +123,28 @@ export function listenForAdopt(): void {
       addRestoredUiPrefs(parseUiPrefs(slice.uiPrefs));
       await hydrateFrom(fresh, activeWs, true);
       useUI.getState().pushToast("info", `Window ${from} closed: ${fresh.map((w) => w.name).join(", ")} moved back here`);
-    } catch (err) {
-      logEvent("error", "windowBoot", `win://adopt from ${from} failed: ${String(err)}`);
+    } finally {
+      // Rust keeps a fold until main confirms it (a reload can eat the live event).
+      if (transferId != null) await invoke("main_adopt_done", { transferId }).catch(() => { /* build without the command */ });
     }
-  }).catch(() => { /* browser preview */ });
+  } catch (err) {
+    logEvent("error", "windowBoot", `win://adopt from ${from} failed: ${String(err)}`);
+  }
+}
+
+export function listenForAdopt(): void {
+  void listen<AdoptPayload>("win://adopt", (e) => handleAdopt(e.payload)).catch(() => { /* browser preview */ });
+}
+
+/** Main, after its listener is up: take any fold Rust still holds because the live
+ *  event landed while this window was reloading. Idempotent by workspace id. */
+export async function replayPendingAdopts(): Promise<void> {
+  if (!isMainWindow()) return;
+  let pending: AdoptPayload[] | null = null;
+  try {
+    pending = await invoke<AdoptPayload[]>("main_pending_adopts");
+  } catch { /* browser preview, or a build without the command */ }
+  for (const p of pending ?? []) await handleAdopt(p);
 }
 
 /** Rust asks this window to select a pane (a palette or Home click in another window,

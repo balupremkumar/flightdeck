@@ -557,6 +557,39 @@ fn with_ledger<T>(f: impl FnOnce(&mut AdoptLedger) -> T) -> T {
     f(g.get_or_insert_with(AdoptLedger::default))
 }
 
+/// Folds into main that main has not confirmed (finding 6). `emit_to` is fire and
+/// forget, so a payload sent while main was mid-reload is lost; it stays here until
+/// main acks it, and main replays what is left once its listener is up.
+#[derive(Debug)]
+pub struct AdoptQueue<T> {
+    next: u64,
+    items: Vec<(u64, T)>,
+}
+
+impl<T> Default for AdoptQueue<T> {
+    fn default() -> Self {
+        AdoptQueue { next: 0, items: Vec::new() }
+    }
+}
+
+impl<T: Clone> AdoptQueue<T> {
+    /// Park a payload built from its id (main must ack that id); returns the id.
+    pub fn push(&mut self, make: impl FnOnce(u64) -> T) -> u64 {
+        self.next += 1;
+        self.items.push((self.next, make(self.next)));
+        self.next
+    }
+
+    pub fn ack(&mut self, id: u64) {
+        self.items.retain(|(i, _)| *i != id);
+    }
+
+    /// Unacked payloads, oldest first.
+    pub fn pending(&self) -> Vec<T> {
+        self.items.iter().map(|(_, v)| v.clone()).collect()
+    }
+}
+
 /// Windows whose close is already running (finding 5): every X press used to spawn
 /// its own close thread, each waiting out the 500 ms flush.
 #[derive(Debug, Default)]
@@ -571,6 +604,13 @@ impl CloseGuard {
     pub fn end(&mut self, label: &str) {
         self.0.remove(label);
     }
+}
+
+static MAIN_ADOPTS: Mutex<Option<AdoptQueue<AdoptPayload>>> = Mutex::new(None);
+
+fn with_main_adopts<T>(f: impl FnOnce(&mut AdoptQueue<AdoptPayload>) -> T) -> T {
+    let mut g = MAIN_ADOPTS.lock().unwrap_or_else(|e| e.into_inner());
+    f(g.get_or_insert_with(AdoptQueue::default))
 }
 
 static CLOSING: Mutex<Option<CloseGuard>> = Mutex::new(None);
@@ -939,7 +979,7 @@ pub fn window_focus_pane(
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct AdoptPayload {
+pub struct AdoptPayload {
     from: String,
     workspace_ids: Vec<u32>,
     active_ws: Option<u32>,
@@ -950,6 +990,19 @@ struct AdoptPayload {
     /// Set with `transfer` on a move into an existing window: the target must
     /// `window_adopted` this id before adopting (finding 2).
     transfer_id: Option<u64>,
+}
+
+/// Main confirms it processed a fold (`transferId` of a payload without a `transfer`).
+#[tauri::command]
+pub async fn main_adopt_done(transfer_id: u64) {
+    with_main_adopts(|q| q.ack(transfer_id));
+}
+
+/// Folds main has not confirmed. Main replays them once its adopt listener is up
+/// (a reload can drop the live event); each is idempotent by workspace id.
+#[tauri::command]
+pub async fn main_pending_adopts() -> Vec<AdoptPayload> {
+    with_main_adopts(|q| q.pending())
 }
 
 /// The target of a move calls this just before it adopts. False means the source
@@ -973,7 +1026,19 @@ fn merge_window(app: &AppHandle, label: &str, why: &str) -> Vec<u32> {
         crate::applog::log("info", "window", &format!("window {label} {why}: re-adopting {} workspace(s) into main", workspace_ids.len()));
         if !workspace_ids.is_empty() {
             moved = workspace_ids.clone();
-            let _ = app.emit_to(MAIN, ADOPT_EVENT, AdoptPayload { from: label.to_string(), workspace_ids, active_ws, slice, transfer: None, transfer_id: None });
+            let base = AdoptPayload { from: label.to_string(), workspace_ids, active_ws, slice, transfer: None, transfer_id: None };
+            // Kept until main acks it (`main_adopt_done`), so a reload that eats the
+            // event does not lose the fold.
+            let p = with_main_adopts(|q| {
+                let mut sent = None;
+                q.push(|id| {
+                    let p = AdoptPayload { transfer_id: Some(id), ..base };
+                    sent = Some(p.clone());
+                    p
+                });
+                sent.expect("push ran its closure")
+            });
+            let _ = app.emit_to(MAIN, ADOPT_EVENT, p);
         }
     }
     if let Some(w) = app.get_webview_window(label) {
@@ -1516,6 +1581,22 @@ mod tests {
         assert!(g.begin("fw-2"), "other windows are independent");
         g.end("fw-1");
         assert!(g.begin("fw-1"), "once it ends a new close may start");
+    }
+
+    #[test]
+    fn an_unacked_fold_into_main_is_replayed_and_an_acked_one_is_not() {
+        let mut q: AdoptQueue<&str> = AdoptQueue::default();
+        let a = q.push(|_| "fw-1 folded");
+        let b = q.push(|_| "fw-2 folded");
+        assert_ne!(a, b);
+        assert_eq!(q.pending(), vec!["fw-1 folded", "fw-2 folded"], "main reloaded before acking: both replay, oldest first");
+        q.ack(a);
+        assert_eq!(q.pending(), vec!["fw-2 folded"]);
+        q.ack(a);
+        q.ack(99);
+        assert_eq!(q.pending(), vec!["fw-2 folded"], "double and unknown acks change nothing");
+        q.ack(b);
+        assert!(q.pending().is_empty());
     }
 
     #[test]
