@@ -303,6 +303,14 @@ struct Slices {
     dirty: bool,
 }
 
+/// A failed write must leave the slices dirty, or the quit-time flush skips them
+/// and the last state never reaches disk.
+fn redirty_on_err(g: &mut Slices, r: &Result<(), String>) {
+    if r.is_err() {
+        g.dirty = true;
+    }
+}
+
 static SLICES: Mutex<Slices> = Mutex::new(Slices { by_label: BTreeMap::new(), puts: BTreeMap::new(), generation: 0, dirty: false });
 static SHADOW_SAVER: Coalescer = Coalescer::new();
 
@@ -472,14 +480,30 @@ fn write_merged(app: &AppHandle) -> Result<(), String> {
         crate::applog::log("warn", "session", &format!("dropped workspace {id} from window {label}: not assigned to it"));
     }
     doc.saved_at = now_ms();
-    let json = serde_json::to_string_pretty(&doc).map_err(|e| e.to_string())?;
-    if SLICE_WRITER_PRIMARY {
-        let path = session_path(app)?;
-        SAVER.submit(json, |j| write_session(app, &path, j))
+    let json = match serde_json::to_string_pretty(&doc) {
+        Ok(j) => j,
+        Err(e) => {
+            let e = e.to_string();
+            redirty_on_err(&mut SLICES.lock().unwrap_or_else(|e| e.into_inner()), &Err(e.clone()));
+            return Err(e);
+        }
+    };
+    let result = if SLICE_WRITER_PRIMARY {
+        match session_path(app) {
+            Ok(path) => SAVER.submit(json, |j| write_session(app, &path, j)),
+            Err(e) => Err(e),
+        }
     } else {
-        let path = base_dir(app)?.join(SHADOW_FILE);
-        SHADOW_SAVER.submit(json, |j| write_atomic(&path, j))
-    }
+        match base_dir(app) {
+            Ok(dir) => {
+                let path = dir.join(SHADOW_FILE);
+                SHADOW_SAVER.submit(json, |j| write_atomic(&path, j))
+            }
+            Err(e) => Err(e),
+        }
+    };
+    redirty_on_err(&mut SLICES.lock().unwrap_or_else(|e| e.into_inner()), &result);
+    result
 }
 
 /// Exit-time drain for a slice still inside its debounce window.
@@ -789,6 +813,16 @@ pub fn import_backup(app: AppHandle, src_path: String) -> Result<Option<SessionD
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_failed_write_leaves_the_slices_dirty() {
+        let mut g = Slices { by_label: BTreeMap::new(), puts: BTreeMap::new(), generation: 0, dirty: false };
+        redirty_on_err(&mut g, &Err("disk full".into()));
+        assert!(g.dirty, "an Err write must re-mark dirty");
+        g.dirty = false;
+        redirty_on_err(&mut g, &Ok(()));
+        assert!(!g.dirty, "an Ok write stays clean");
+    }
+
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
