@@ -69,3 +69,12 @@ Test: `toDraft` with `draft: "sk-ant-..."` serialises without the key.
 Round 1: H1 (agent A), M2 + M3 + the `session.test.ts` gap (agent B).
 Round 2: M1 + M4 e2e items (agent C), L2 (agent D).
 L1, L3 accepted; L4 no defect.
+
+## Fix status (2026-10-06, all Sonnet, failing test first)
+
+- H1: 83e603d. `window_boot` returns an id floor from the doc, slices, registry and live `by_model`; e2e `multiwindow-restore.mjs` section C.
+- M1: f259b6e + 4d6d03c. Only snapped panes are released; a pane added mid-move goes to another workspace, or a freshly minted one (never the moved id, which `windowBoot.ts:114` would skip on merge-back).
+- M2/M3: d233a7d. ANSI/CR-aware tokeniser, `draft`/`title`/`lastLine` redacted.
+- M4: c59e783 (rtfix #3a/#3b, home check, labelled `until()` timeouts, CI and release wiring) and d233a7d (`KEY=` test). Open: the bus does not model the `AdoptQueue` ack, fix 6 stays unit-tested only.
+- L2: bc02097. Deny `.credentials.json`, `*.key`, `*.pem` under `~/.claude` in `check_read` and the asset protocol (forbid); asset path hand-checked on the Canary.
+- Gate on qol/rel-060: tsc 0, vitest 1491, cargo 446, vite build OK, e2e 21/21.
