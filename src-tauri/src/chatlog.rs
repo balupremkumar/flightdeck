@@ -57,6 +57,11 @@ pub fn set_view_dir(dir: std::path::PathBuf) {
 
 /// Write `contents` to `path` unless it already holds exactly that (tmp + rename).
 fn write_if_changed(path: &std::path::Path, contents: &str) -> std::io::Result<()> {
+    // Windows rename-over-existing fails with ACCESS_DENIED when another
+    // thread is renaming onto (or has just opened) the same target. A unique
+    // tmp name doesn't help with that, so writers in this process take turns.
+    static WRITE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _guard = WRITE_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     if std::fs::read_to_string(path).map(|c| c == contents).unwrap_or(false) {
         return Ok(());
     }
