@@ -8,6 +8,7 @@
 //     back to the workspace root if the repo itself is gone
 //   - safe-mode banner (--safe-mode / FLIGHTDECK_SAFE_MODE suppresses restore)
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { useApp, type PaneModel, type PaneGroup, type Workspace } from "./store";
 import { useUI } from "./ui";
 import {
@@ -198,6 +199,13 @@ let restoredPaneChat: Record<number, PaneChatPref> = {};
 export function setRestoredPaneChat(map: Record<number, PaneChatPref>): void {
   restoredPaneChat = map;
 }
+/** Phase 4: workspaces adopted from a window that closed or died bring that window's
+ *  per-pane prefs (scrollback, view, colour) with them, added to what is staged, never replacing it. */
+export function addRestoredUiPrefs(prefs: { scrollback: Record<number, string>; paneChat: Record<number, PaneChatPref>; paneColor: Record<number, string> }): void {
+  addRestoredScrollback(prefs.scrollback);
+  restoredPaneChat = { ...restoredPaneChat, ...prefs.paneChat };
+  restoredPaneColor = { ...restoredPaneColor, ...prefs.paneColor };
+}
 
 export function toDraft(workspaces: Workspace[], activeId: number | null): SessionDraft {
   return {
@@ -333,6 +341,16 @@ export function startAutosave() {
     saver.flush(true); // pushes the slice to Rust, skipping its debounce
   };
   window.addEventListener("beforeunload", finalSave);
+  // Phase 4: Rust asks for a final slice when this window is closing or the app is
+  // quitting, and treats the push as the answer. Always push, even if nothing changed.
+  void listen("app://flush", () => {
+    refreshScrollbackCache();
+    const s = useApp.getState();
+    const draft = toDraft(s.workspaces, s.activeId);
+    lastSavedJson = JSON.stringify(draft);
+    saver.schedule(draft);
+    saver.flush(true);
+  }).catch(() => { /* browser preview */ });
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "hidden") finalSave();
   });

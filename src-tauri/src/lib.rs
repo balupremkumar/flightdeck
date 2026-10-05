@@ -543,7 +543,16 @@ async fn pane_pause(reg: State<'_, Registry>, model_id: u32) -> Result<u64, Stri
 /// it (None means the live stream is complete).
 #[tauri::command]
 async fn pane_resume(app: AppHandle, reg: State<'_, Registry>, model_id: u32) -> Result<Option<AttachSnapshot>, String> {
-    let (pty_id, out) = out_for_model(reg.inner(), model_id)?;
+    resume_model(&app, reg.inner(), model_id)
+}
+
+/// Rust-side pane_resume for a transfer whose new window never booted.
+fn resume_pane_model(app: &AppHandle, model_id: u32) -> Result<Option<AttachSnapshot>, String> {
+    resume_model(app, app.state::<Registry>().inner(), model_id)
+}
+
+fn resume_model(app: &AppHandle, reg: &Registry, model_id: u32) -> Result<Option<AttachSnapshot>, String> {
+    let (pty_id, out) = out_for_model(reg, model_id)?;
     let mut o = paneout::lock_out(&out);
     match o.resume() {
         paneout::Resumed::Bytes(bytes, seq) => {
@@ -1012,10 +1021,18 @@ pub fn run() {
         )
         .manage(Registry::default())
         .manage(windows::WindowState::default())
-        .on_window_event(|window, event| {
-            if matches!(event, tauri::WindowEvent::Destroyed) {
+        .on_window_event(|window, event| match event {
+            tauri::WindowEvent::Destroyed => {
                 readscope::drop_label(window.label());
+                windows::on_destroyed(window.app_handle(), window.label());
             }
+            // A secondary closes through Rust (flush, merge into main, destroy).
+            tauri::WindowEvent::CloseRequested { api, .. } => {
+                if windows::on_close_requested(window.app_handle(), window.label()) {
+                    api.prevent_close();
+                }
+            }
+            _ => {}
         })
         .on_page_load(|webview, payload| {
             if windows::validate_label(webview.label()).is_ok() && matches!(payload.event(), tauri::webview::PageLoadEvent::Started) {
@@ -1035,6 +1052,10 @@ pub fn run() {
             windows::window_focus_pane,
             windows::ws_transfer,
             windows::window_focus_next,
+            windows::window_close_self,
+            windows::window_summary,
+            windows::set_multiwindow,
+            windows::app_quit,
             chatlog::pane_session_info,
             chatlog::session_tail,
             usage::session_subagents,
@@ -1182,6 +1203,8 @@ pub fn run() {
             // exit, so closing the window never leaves orphaned claude/agy/pwsh
             // trees running.
             RunEvent::ExitRequested { .. } => {
+                // Windows about to go are not crashes: no re-adopting while we exit.
+                windows::mark_exiting(app_handle);
                 // A save running on a pool thread must land before we exit.
                 persist::wait_idle();
                 let reg = app_handle.state::<Registry>();

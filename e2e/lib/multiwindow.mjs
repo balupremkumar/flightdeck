@@ -5,6 +5,8 @@
 //
 //   - the window registry (windows.rs: labels, ownership, ordinals, assign_new_window)
 //   - slice acceptance (persist.rs: a label's slice keeps only workspaces it owns)
+//   - close semantics (windows.rs): flush then merge into main (closeWindow), merge from
+//     the last slice with no flush (crashWindow), retire a secondary left with nothing
 //   - the pty table and per-pane ring (lib.rs/paneout.rs: spawn, attach, pause/resume,
 //     seq on every output event, delta attach, supersede on a duplicate model id)
 //
@@ -40,6 +42,10 @@ export class MultiWindowBus {
     this.kills = []; // { label, ptyId, modelId, reason }
     this.attaches = []; // { label, modelId, hit, delta }
     this.transfers = []; // { from, to, workspaceId }
+    this.merges = []; // { label, why, flushed, workspaceIds } secondaries folded into main
+    this.retired = []; // labels destroyed because their assignment emptied
+    this.multiwindow = false; // set by main's window_boot, like Rust
+    this.slicePuts = new Map(); // label -> pushes seen (the flush acknowledgement)
     this.ensureMain();
   }
 
@@ -54,7 +60,7 @@ export class MultiWindowBus {
 
   // ---- registry (windows.rs) -------------------------------------------------
   ensureMain() {
-    if (!this.windows.has("main")) this.windows.set("main", { ordinal: 0, workspaceIds: [], booted: false });
+    if (!this.windows.has("main")) this.windows.set("main", { ordinal: 0, workspaceIds: [], activeWs: null, booted: false });
   }
 
   owns(label, wsId) {
@@ -66,7 +72,7 @@ export class MultiWindowBus {
     if (this.nextOrdinal > MAX_ORDINAL) throw new Error("no window ordinals left");
     const ordinal = this.nextOrdinal++;
     const label = `fw-${ordinal}`;
-    this.windows.set(label, { ordinal, workspaceIds: [], booted: false });
+    this.windows.set(label, { ordinal, workspaceIds: [], activeWs: null, booted: false });
     return label;
   }
 
@@ -75,7 +81,69 @@ export class MultiWindowBus {
     const label = this.mintLabel();
     for (const r of this.windows.values()) r.workspaceIds = r.workspaceIds.filter((i) => i !== wsId);
     this.windows.get(label).workspaceIds = [wsId];
+    this.windows.get(label).activeWs = wsId;
     return label;
+  }
+
+  // ---- close semantics (windows.rs: close_secondary / merge_window / retire_if_empty) ----
+  emitTo(label, event, payload) {
+    const page = this.pages.get(label);
+    if (!page || page.isClosed()) return Promise.resolve();
+    return page.evaluate(([e, pl]) => window.__mockEmit?.(e, pl), [event, payload]).catch(() => {});
+  }
+
+  /** Ask a window for its final slice and wait up to `ms` for the push (flush_windows). */
+  async flush(label, ms = 500) {
+    const base = this.slicePuts.get(label) ?? 0;
+    await this.emitTo(label, "app://flush", null);
+    const end = Date.now() + ms;
+    while (Date.now() < end) {
+      if ((this.slicePuts.get(label) ?? 0) > base) return true;
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    return false;
+  }
+
+  /** Fold a secondary into main from its last slice, then destroy it. */
+  async merge(label, why, flushed) {
+    const rec = this.windows.get(label);
+    const page = this.pages.get(label);
+    if (rec && label !== "main") {
+      this.windows.delete(label);
+      const main = this.windows.get("main");
+      for (const id of rec.workspaceIds) if (!main.workspaceIds.includes(id)) main.workspaceIds.push(id);
+      const slice = this.slices.get(label) ?? null;
+      this.slices.delete(label);
+      this.slicePuts.delete(label);
+      this.merges.push({ label, why, flushed, workspaceIds: [...rec.workspaceIds] });
+      if (rec.workspaceIds.length > 0) {
+        await this.emitTo("main", "win://adopt", { from: label, workspaceIds: rec.workspaceIds, activeWs: rec.activeWs, slice });
+      }
+    }
+    this.pages.delete(label);
+    if (page && !page.isClosed()) await page.close({ runBeforeUnload: false }).catch(() => {});
+  }
+
+  /** CloseRequested: prevent, flush (500 ms), merge, destroy. */
+  async closeWindow(label) {
+    const flushed = this.windows.get(label)?.booted ? await this.flush(label) : false;
+    await this.merge(label, "closed", flushed);
+  }
+
+  /** Destroyed with no prior merge (webview crashed or hung): no flush, last slice only. */
+  async crashWindow(label) {
+    await this.merge(label, "destroyed without a merge", false);
+  }
+
+  /** A secondary left with nothing assigned is destroyed by Rust; nothing folds back. */
+  async retire(label) {
+    this.windows.delete(label);
+    this.slices.delete(label);
+    this.slicePuts.delete(label);
+    this.retired.push(label);
+    const page = this.pages.get(label);
+    this.pages.delete(label);
+    if (page && !page.isClosed()) await page.close({ runBeforeUnload: false }).catch(() => {});
   }
 
   // ---- rings (ring.rs / paneout.rs, without safe marks: the generated output is line based) ----
@@ -175,6 +243,7 @@ export class MultiWindowBus {
         const rec = this.windows.get(label);
         if (!rec) throw new Error(`window ${label} was not created by Flightdeck`);
         rec.booted = true;
+        if (label === "main") this.multiwindow = !!a.multiwindow;
         const transfer = this.pending.get(label) ?? null;
         this.pending.delete(label);
         return { label, ordinal: rec.ordinal, slice: label === "main" ? null : (this.slices.get(label) ?? null), transfer };
@@ -182,6 +251,23 @@ export class MultiWindowBus {
       case "window_heartbeat":
       case "window_focus_next":
         return null;
+      case "set_multiwindow":
+        this.multiwindow = !!a.enabled;
+        return null;
+      case "window_summary":
+        return [...this.windows.entries()]
+          .filter(([l, r]) => l !== label && r.booted)
+          .map(([l]) => ({
+            label: l,
+            livePanes: (this.slices.get(l)?.workspaces ?? []).flatMap((w) => w.panes ?? []).filter((p) => this.byModel.has(p.id)).length,
+          }));
+      case "window_close_self": {
+        if (label === "main") throw new Error("main closes by quitting the app");
+        const rec = this.windows.get(label);
+        if (rec?.booted && rec.workspaceIds.length === 0) setTimeout(() => this.retire(label), 20);
+        else setTimeout(() => this.closeWindow(label), 20);
+        return null;
+      }
       case "session_put_slice": {
         const kept = [];
         for (const w of a.slice.workspaces ?? []) {
@@ -189,9 +275,11 @@ export class MultiWindowBus {
           else this.rejected.push({ label, id: w.id });
         }
         this.slices.set(label, { ...a.slice, workspaces: kept });
+        this.slicePuts.set(label, (this.slicePuts.get(label) ?? 0) + 1);
         return null;
       }
       case "ws_transfer": {
+        if (!this.multiwindow) throw new Error("Multiple windows are turned off in Settings.");
         const snap = a.wsSnapshot;
         const to = this.assignNewWindow(label, snap.workspaceId);
         this.slices.set(to, snap.slice);
@@ -200,6 +288,10 @@ export class MultiWindowBus {
         const page = await this.context.newPage();
         this.pages.set(to, page);
         await page.goto(`${this.url}/?label=${to}`, { waitUntil: "domcontentloaded" });
+        // The last workspace left a secondary: Rust closes it (after the reply, so the
+        // source can still release its sessions).
+        const src = this.windows.get(label);
+        if (label !== "main" && src?.booted && src.workspaceIds.length === 0) setTimeout(() => this.retire(label), 50);
         return to;
       }
       default:

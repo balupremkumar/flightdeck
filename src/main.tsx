@@ -10,7 +10,7 @@ import { runWorktreeGc } from "./worktrees";
 import { startAutosave, offerSessionRestore, crashedLastRun, armCleanExitSentinel, lastRestoreReport } from "./session";
 import { armGlobalErrorLog } from "./applog";
 import { syncReadRoots } from "./readscope";
-import { bootWindow, adoptBootInfo, listenForAdopt } from "./windowBoot";
+import { bootWindow, adoptBootInfo, listenForAdopt, closeWhenEmpty } from "./windowBoot";
 import { isMainWindow } from "./persist";
 
 // Flight recorder catch-alls FIRST: a throw or rejection anywhere in the boot
@@ -38,7 +38,7 @@ armCleanExitSentinel();
 // hydrate never runs before the id counters know their partition.
 // A secondary then takes the workspace it was created for (offerSessionRestore is
 // main-only), and main starts listening for workspaces folding back into it.
-const booted = bootWindow().then((info) => adoptBootInfo(info));
+const booted = bootWindow().then((info) => adoptBootInfo(info)).then(() => closeWhenEmpty());
 listenForAdopt();
 void booted.then(() => offerSessionRestore()).then(() => {
   void runWorktreeGc();

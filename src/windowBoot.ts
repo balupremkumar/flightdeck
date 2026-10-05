@@ -4,7 +4,7 @@ import { getMultiwindow } from "./settingsStore";
 import { setWindowOrdinal, useApp, type Workspace } from "./store";
 import { useUI } from "./ui";
 import { isMainWindow, type SessionDraft } from "./persist";
-import { addRestoredScrollback, hydrateFrom, parseUiPrefs } from "./session";
+import { addRestoredUiPrefs, hydrateFrom, parseUiPrefs } from "./session";
 import { markRestoredPane } from "./ptyAttach";
 import { stageTransfers, type PaneTransfer } from "./transferSnap";
 import { get as getSession } from "./paneSessions";
@@ -71,8 +71,7 @@ export async function adoptBootInfo(info: BootInfo | null): Promise<void> {
       setTimeout(() => announce(`Workspace ${ws.name} moved to this window. ${ws.panes.length} pane${ws.panes.length === 1 ? "" : "s"}.`), 600);
       focusActivePane(ws);
     } else if (info.slice && info.slice.workspaces.length > 0) {
-      const prefs = parseUiPrefs(info.slice.uiPrefs);
-      addRestoredScrollback(prefs.scrollback);
+      addRestoredUiPrefs(parseUiPrefs(info.slice.uiPrefs));
       await hydrateFrom(info.slice.workspaces, info.slice.activeWorkspaceId);
     }
   } catch (e) {
@@ -95,11 +94,54 @@ export function listenForAdopt(): void {
       const known = new Set(useApp.getState().workspaces.map((w) => w.id));
       const fresh = slice.workspaces.filter((w) => workspaceIds.includes(w.id) && !known.has(w.id));
       if (fresh.length === 0) return;
-      addRestoredScrollback(parseUiPrefs(slice.uiPrefs).scrollback);
+      addRestoredUiPrefs(parseUiPrefs(slice.uiPrefs));
       await hydrateFrom(fresh, activeWs, true);
       useUI.getState().pushToast("info", `Window ${from} closed: ${fresh.map((w) => w.name).join(", ")} moved back here`);
     } catch (err) {
       logEvent("error", "windowBoot", `win://adopt from ${from} failed: ${String(err)}`);
     }
   }).catch(() => { /* browser preview */ });
+}
+
+/** Tell Rust the Settings toggle changed; ws_transfer refuses while it is off. */
+export function pushMultiwindow(enabled: boolean): void {
+  void invoke("set_multiwindow", { enabled }).catch(() => { /* browser preview */ });
+}
+
+/** A secondary never shows the launcher: once it has booted, an empty store means
+ *  there is nothing left to show, so ask Rust to close it (flush, merge, destroy).
+ *  Call after the boot adopt has finished. */
+export function closeWhenEmpty(): void {
+  if (isMainWindow()) return;
+  let asked = false;
+  const check = () => {
+    if (asked || useApp.getState().workspaces.length > 0) return;
+    asked = true;
+    void invoke("window_close_self").catch((e) => { asked = false; logEvent("warn", "windowBoot", `window_close_self failed: ${String(e)}`); });
+  };
+  useApp.subscribe(check);
+  check();
+}
+
+export interface WindowSummary { label: string; livePanes: number }
+
+/** Live panes in the other windows, for the quit guard. Empty outside Tauri, on a
+ *  build without the command, or when this is the only window. */
+export async function otherWindows(): Promise<WindowSummary[]> {
+  try {
+    const rows = await invoke<WindowSummary[]>("window_summary");
+    return Array.isArray(rows) ? rows : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Main's confirmed quit when other windows exist: Rust flushes every slice, writes
+ *  the session, exits. Falls back to a plain destroy if the command is missing. */
+export async function quitApp(): Promise<void> {
+  try {
+    await invoke("app_quit");
+  } catch {
+    await import("@tauri-apps/api/window").then((m) => m.getCurrentWindow().destroy()).catch(() => { /* gone already */ });
+  }
 }

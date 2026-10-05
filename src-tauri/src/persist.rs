@@ -292,11 +292,14 @@ const SLICE_WRITER_PRIMARY: bool = true;
 
 struct Slices {
     by_label: BTreeMap<String, SessionDoc>,
+    /// How many times each label has pushed a slice (not seeded ones). A close or
+    /// quit flush is acknowledged when its label's count moves past the baseline.
+    puts: BTreeMap<String, u64>,
     generation: u64,
     dirty: bool,
 }
 
-static SLICES: Mutex<Slices> = Mutex::new(Slices { by_label: BTreeMap::new(), generation: 0, dirty: false });
+static SLICES: Mutex<Slices> = Mutex::new(Slices { by_label: BTreeMap::new(), puts: BTreeMap::new(), generation: 0, dirty: false });
 static SHADOW_SAVER: Coalescer = Coalescer::new();
 
 /// Merge per-label slices into one flat doc plus the window table. Workspaces a
@@ -448,6 +451,7 @@ pub fn session_put_slice(app: AppHandle, window: tauri::Window, slice: SessionDo
     let label = window.label().to_string();
     let gen = {
         let mut g = SLICES.lock().unwrap_or_else(|e| e.into_inner());
+        *g.puts.entry(label.clone()).or_insert(0) += 1;
         g.by_label.insert(label, slice);
         g.generation += 1;
         g.dirty = true;
@@ -518,20 +522,47 @@ pub(crate) fn drop_slice(label: &str) {
     }
 }
 
-/// A secondary died: drop its slice and fold its workspaces into main's, so the
-/// next write keeps them until main pushes a slice of its own. Returns the slice.
+/// Pushes `label` has made so far; see `Slices::puts`.
+pub(crate) fn slice_puts(label: &str) -> u64 {
+    SLICES.lock().unwrap_or_else(|e| e.into_inner()).puts.get(label).copied().unwrap_or(0)
+}
+
+/// Pane model ids in `label`'s last slice (the quit guard counts the live ones).
+pub(crate) fn slice_pane_ids(label: &str) -> Vec<u32> {
+    let g = SLICES.lock().unwrap_or_else(|e| e.into_inner());
+    g.by_label.get(label).map(|s| s.workspaces.iter().flat_map(|w| w.panes.iter().map(|p| p.id)).collect()).unwrap_or_default()
+}
+
+/// Does `label`'s last slice hold a workspace other than `moved`?
+pub(crate) fn slice_has_other_workspace(label: &str, moved: u32) -> bool {
+    let g = SLICES.lock().unwrap_or_else(|e| e.into_inner());
+    g.by_label.get(label).is_some_and(|s| s.workspaces.iter().any(|w| w.id != moved))
+}
+
+/// A secondary closed or died: drop its slice and fold its workspaces and uiPrefs
+/// (pane view, colour, scrollback) into main's, so the next write keeps them until
+/// main pushes a slice of its own. Returns the slice.
 pub(crate) fn fold_slice_into_main(label: &str) -> Option<SessionDoc> {
     let mut g = SLICES.lock().unwrap_or_else(|e| e.into_inner());
-    let dead = g.by_label.remove(label)?;
-    if let Some(main) = g.by_label.get_mut(MAIN_LABEL) {
+    let dead = fold_slice(&mut g.by_label, label)?;
+    g.puts.remove(label);
+    g.generation += 1;
+    g.dirty = true;
+    Some(dead)
+}
+
+fn fold_slice(by_label: &mut BTreeMap<String, SessionDoc>, label: &str) -> Option<SessionDoc> {
+    let dead = by_label.remove(label)?;
+    if let Some(main) = by_label.get_mut(MAIN_LABEL) {
         for w in &dead.workspaces {
             if !main.workspaces.iter().any(|m| m.id == w.id) {
                 main.workspaces.push(w.clone());
             }
         }
+        let mut prefs = main.ui_prefs.as_object().cloned().unwrap_or_default();
+        merge_prefs(&mut prefs, &dead.ui_prefs, false);
+        main.ui_prefs = serde_json::Value::Object(prefs);
     }
-    g.generation += 1;
-    g.dirty = true;
     Some(dead)
 }
 
@@ -848,6 +879,29 @@ mod tests {
         m.insert("fw-1".to_string(), slice(vec![], None, serde_json::json!({ "scrollback": {} })));
         let (doc, _) = merge_slices(&m, |_, _| true);
         assert_eq!(doc.ui_prefs["scrollback"], serde_json::json!({ "10": "a" }));
+    }
+
+    #[test]
+    fn folding_a_window_keeps_its_workspaces_and_pane_prefs_in_main() {
+        let mut m = BTreeMap::new();
+        m.insert("main".to_string(), slice(vec![ws(1, 10)], Some(1), serde_json::json!({
+            "groups": [{ "id": 1 }], "scrollback": { "10": "a" }, "paneColor": { "10": "red" }
+        })));
+        m.insert("fw-1".to_string(), slice(vec![ws(2, 20)], Some(2), serde_json::json!({
+            "groups": [{ "id": 9 }], "scrollback": { "20": "b", "10": "stale" },
+            "paneChat": { "20": { "view": "chat" } }, "paneColor": { "20": "blue" }
+        })));
+        let dead = fold_slice(&mut m, "fw-1").expect("slice existed");
+        assert_eq!(dead.workspaces.len(), 1);
+        assert!(!m.contains_key("fw-1"));
+        let main = &m["main"];
+        assert_eq!(main.workspaces.iter().map(|w| w.id).collect::<Vec<_>>(), vec![1, 2]);
+        let p = &main.ui_prefs;
+        assert_eq!(p["paneChat"], serde_json::json!({ "20": { "view": "chat" } }), "view survives the fold");
+        assert_eq!(p["paneColor"], serde_json::json!({ "10": "red", "20": "blue" }), "colour survives the fold");
+        assert_eq!(p["scrollback"], serde_json::json!({ "10": "a", "20": "b" }), "main's own scrollback wins a clash");
+        assert_eq!(p["groups"], serde_json::json!([{ "id": 1 }]), "groups stay main's");
+        assert!(fold_slice(&mut m, "fw-1").is_none(), "a second fold finds nothing");
     }
 
     // S6b: a single-window save through the slice writer yields the same

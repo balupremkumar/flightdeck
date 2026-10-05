@@ -38,6 +38,7 @@ import {
 } from "./vscodeTheme";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getName } from "@tauri-apps/api/app";
+import { pushMultiwindow } from "./windowBoot";
 import "./overlays.css";
 import { TerminalSettings, DEFAULT_TERMINAL_SETTINGS, CONTRAST_RANGE, TERM_LINE_HEIGHT_RANGE, PreviewWidth, ReadingSettings, DEFAULT_READING_SETTINGS, PREVIEW_FONT_RANGE, UI_TEXT_SCALE_RANGE, PREVIEW_LH_RANGE, PREVIEW_WIDTHS, READING_SETTINGS_KEY, getReadingSettings, applyReadingSettings, saveReadingSettings, parseRgb, luminance, adjustForContrast, TERMINAL_FONTS, getTerminalSettings, saveTerminalSettings, FIXED_SHORTCUTS, getShortcuts, saveShortcut, resetShortcuts, formatCombo, AgentSettings, DEFAULT_AGENT_SETTINGS, getAgentSettings, saveAgentSettings, EditorId, EditorSettings, EDITOR_PRESETS, DEFAULT_EDITOR_SETTINGS, getEditorSettings, saveEditorSettings, resolveEditorCommand, StartupBehavior, getStartupBehavior, saveStartupBehavior, getMultiwindow, saveMultiwindow, APP_VERSION, CHANGELOG, MIN_MEMORY_CEILING_MB, MAX_MEMORY_CEILING_MB, getMemoryCeilingMb, setMemoryCeilingMb, setHooksInstalled, HookStatus, hookStatusLine } from "./settingsStore";
 export * from "./settingsStore";
@@ -2111,6 +2112,7 @@ export function Settings() {
                   const next = !multiwindow;
                   setMultiwindow(next);
                   saveMultiwindow(next);
+                  pushMultiwindow(next);
                 }}
               ><span /></button>
             </div>

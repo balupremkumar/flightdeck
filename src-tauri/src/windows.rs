@@ -25,6 +25,14 @@ pub const HEARTBEAT_EVERY_MS: u64 = 2_000;
 /// A booted secondary silent this long is treated as a dead webview.
 pub const HEARTBEAT_TIMEOUT_MS: u64 = 8_000;
 const WATCH_TICK_MS: u64 = 2_000;
+/// A new window that has not called `window_boot` this long is treated as stuck.
+pub const BOOT_TIMEOUT_MS: u64 = 15_000;
+/// Closing a secondary waits this long for its final slice.
+pub const CLOSE_FLUSH_MS: u64 = 500;
+/// Quitting waits this long, in total, for every window's final slice.
+pub const QUIT_FLUSH_MS: u64 = 1_500;
+/// Rust to a window: push your slice now (`session_put_slice` with flush).
+pub const FLUSH_EVENT: &str = "app://flush";
 /// Pane/workspace/group ids are `(ordinal << 24) | local`; keeping the ordinal
 /// at 127 or below keeps every id inside a signed 32-bit int.
 pub const MAX_ORDINAL: u32 = 127;
@@ -41,6 +49,8 @@ pub struct WindowRec {
     pub booted: bool,
     pub last_focus_ms: u64,
     pub last_heartbeat_ms: u64,
+    /// When Rust minted the window (0 for main); the boot watchdog's clock.
+    pub created_ms: u64,
     pub ordinal: u32,
     /// Last `attention_report` from this window (S10).
     pub attention: Option<AttentionReport>,
@@ -206,6 +216,32 @@ impl WindowRegistry {
         Ok(label)
     }
 
+    /// Refuse window-creating work while the flag is off.
+    pub fn require_multiwindow(&self) -> Result<(), String> {
+        if self.multiwindow {
+            Ok(())
+        } else {
+            Err("Multiple windows are turned off in Settings.".into())
+        }
+    }
+
+    /// Start the boot watchdog's clock for a window just minted.
+    pub fn stamp_created(&mut self, label: &str, now: u64) {
+        if let Some(r) = self.windows.get_mut(label) {
+            r.created_ms = now;
+        }
+    }
+
+    /// A booted secondary whose assignment is empty has nothing left to show:
+    /// forget it and say so. Never main; false if it still lists a workspace.
+    pub fn retire_if_empty(&mut self, label: &str) -> bool {
+        let empty = label != MAIN && self.windows.get(label).is_some_and(|r| r.booted && r.workspace_ids.is_empty());
+        if empty {
+            self.windows.remove(label);
+        }
+        empty
+    }
+
     /// The new window could not be created: forget it and give the workspace back.
     pub fn rollback_new_window(&mut self, label: &str, source: &str, ws_id: u32) {
         self.windows.remove(label);
@@ -240,6 +276,62 @@ pub fn dead_windows(reg: &WindowRegistry, now: u64) -> Vec<String> {
         .filter(|(l, r)| l.as_str() != MAIN && r.booted && now.saturating_sub(r.last_heartbeat_ms) > HEARTBEAT_TIMEOUT_MS)
         .map(|(l, _)| l.clone())
         .collect()
+}
+
+/// Secondaries that never booted: minted, then silent past the boot timeout.
+/// Nothing is judged while the app is exiting.
+pub fn stalled_boots(reg: &WindowRegistry, now: u64) -> Vec<String> {
+    if reg.exiting {
+        return Vec::new();
+    }
+    reg.windows
+        .iter()
+        .filter(|(l, r)| l.as_str() != MAIN && !r.booted && r.created_ms > 0 && now.saturating_sub(r.created_ms) > BOOT_TIMEOUT_MS)
+        .map(|(l, _)| l.clone())
+        .collect()
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum CloseAction {
+    /// Main (quit is its own path), an unknown label, or the app is exiting.
+    Ignore,
+    /// Fold the window into main. `flush` asks its webview for a final slice first,
+    /// which only makes sense once it has booted.
+    Merge { flush: bool },
+}
+
+pub fn close_action(reg: &WindowRegistry, label: &str) -> CloseAction {
+    if reg.exiting || label == MAIN {
+        return CloseAction::Ignore;
+    }
+    match reg.windows.get(label) {
+        Some(r) => CloseAction::Merge { flush: r.booted },
+        None => CloseAction::Ignore,
+    }
+}
+
+/// Labels whose webview should be asked for a final slice when the app quits.
+pub fn quit_labels(reg: &WindowRegistry) -> Vec<String> {
+    reg.windows.iter().filter(|(_, r)| r.booted).map(|(l, _)| l.clone()).collect()
+}
+
+/// Pane model ids inside a parked transfer payload (`{ panes: { "<id>": .. } }`).
+pub fn transfer_pane_ids(transfer: &serde_json::Value) -> Vec<u32> {
+    transfer["panes"].as_object().map(|m| m.keys().filter_map(|k| k.parse().ok()).collect()).unwrap_or_default()
+}
+
+/// Poll `done` every `poll_ms` until it is true or `timeout_ms` passes.
+pub fn wait_for(timeout_ms: u64, poll_ms: u64, mut done: impl FnMut() -> bool) -> bool {
+    let end = std::time::Instant::now() + Duration::from_millis(timeout_ms);
+    loop {
+        if done() {
+            return true;
+        }
+        if std::time::Instant::now() >= end {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(poll_ms));
+    }
 }
 
 /// Managed state (beside `Registry` in lib.rs).
@@ -365,8 +457,12 @@ pub async fn ws_transfer(
     let ws_id = ws_snapshot.workspace_id;
     let label = {
         let mut reg = state.lock();
+        // The flag lives in JS; this is the second lock on the same door.
+        reg.require_multiwindow()?;
         reg.ensure_main();
-        reg.assign_new_window(&source, ws_id)?
+        let label = reg.assign_new_window(&source, ws_id)?;
+        reg.stamp_created(&label, now_ms());
+        label
     };
     persist::seed_slice(&label, ws_snapshot.slice);
     pending_put(&label, ws_snapshot.transfer);
@@ -378,6 +474,15 @@ pub async fn ws_transfer(
         return Err(e);
     }
     crate::applog::log("info", "window", &format!("workspace {ws_id} moved from {source} to new window {label}"));
+    // The last workspace left a secondary: nothing to show, so Rust closes it. A
+    // slice workspace the registry never heard of (made in that window) keeps it open.
+    if source != MAIN && !persist::slice_has_other_workspace(&source, ws_id) && state.lock().retire_if_empty(&source) {
+        persist::drop_slice(&source);
+        crate::applog::log("info", "window", &format!("{source} has no workspaces left: closing it"));
+        if let Some(w) = app.get_webview_window(&source) {
+            let _ = w.destroy();
+        }
+    }
     Ok(label)
 }
 
@@ -489,20 +594,92 @@ struct AdoptPayload {
     slice: Option<SessionDoc>,
 }
 
-/// Re-adopt a dead secondary into main and destroy it. Never called for main.
-fn reap_window(app: &AppHandle, label: &str) {
+/// Fold a secondary into main and destroy it. Never called for main. `why` goes
+/// in the log. The window is destroyed even when the registry no longer knows it
+/// (a close we prevented must still end).
+fn merge_window(app: &AppHandle, label: &str, why: &str) {
     let adopted = app.state::<WindowState>().lock().adopt_into_main(label);
-    let Some((workspace_ids, active_ws)) = adopted else { return };
-    let slice = persist::fold_slice_into_main(label);
-    crate::applog::log(
-        "warn",
-        "window",
-        &format!("window {label} silent for {}s: re-adopting {} workspace(s) into main", HEARTBEAT_TIMEOUT_MS / 1000, workspace_ids.len()),
-    );
-    let _ = app.emit_to(MAIN, "win://adopt", AdoptPayload { from: label.to_string(), workspace_ids, active_ws, slice });
+    if let Some((workspace_ids, active_ws)) = adopted {
+        let slice = persist::fold_slice_into_main(label);
+        crate::applog::log("info", "window", &format!("window {label} {why}: re-adopting {} workspace(s) into main", workspace_ids.len()));
+        if !workspace_ids.is_empty() {
+            let _ = app.emit_to(MAIN, "win://adopt", AdoptPayload { from: label.to_string(), workspace_ids, active_ws, slice });
+        }
+    }
     if let Some(w) = app.get_webview_window(label) {
         let _ = w.destroy();
     }
+}
+
+/// Re-adopt a dead secondary into main and destroy it.
+fn reap_window(app: &AppHandle, label: &str) {
+    merge_window(app, label, &format!("silent for {}s", HEARTBEAT_TIMEOUT_MS / 1000));
+}
+
+/// Ask `labels` for a final slice and wait until each has pushed one, or the
+/// timeout. Shared by closing a secondary and quitting. True when all answered.
+fn flush_windows(app: &AppHandle, labels: &[String], timeout_ms: u64) -> bool {
+    let base: Vec<(String, u64)> = labels.iter().map(|l| (l.clone(), persist::slice_puts(l))).collect();
+    for l in labels {
+        let _ = app.emit_to(l.as_str(), FLUSH_EVENT, ());
+    }
+    wait_for(timeout_ms, 10, || base.iter().all(|(l, b)| persist::slice_puts(l) > *b))
+}
+
+/// A secondary's X (or its own request to close): flush, then merge into main
+/// and destroy. A hung webview just costs the 500 ms wait; the last slice is used.
+fn close_secondary(app: &AppHandle, label: &str) {
+    let action = close_action(&app.state::<WindowState>().lock(), label);
+    if let CloseAction::Merge { flush } = action {
+        if flush && !flush_windows(app, &[label.to_string()], CLOSE_FLUSH_MS) {
+            crate::applog::log("warn", "window", &format!("{label} did not flush within {CLOSE_FLUSH_MS} ms: using its last slice"));
+        }
+        merge_window(app, label, "closed");
+    }
+}
+
+/// `on_window_event` hook for CloseRequested. Returns true when it took over (the
+/// caller must `prevent_close`): a secondary closes through Rust, never a kill.
+pub fn on_close_requested(app: &AppHandle, label: &str) -> bool {
+    if validate_label(label).is_err() || close_action(&app.state::<WindowState>().lock(), label) == CloseAction::Ignore {
+        return false;
+    }
+    let (app, label) = (app.clone(), label.to_string());
+    std::thread::spawn(move || close_secondary(&app, &label));
+    true
+}
+
+/// `on_window_event` hook for Destroyed. A secondary that went without a merge
+/// (webview crashed or hung and the OS tore it down) is re-adopted from its last
+/// slice. Main going means the app is quitting: stop judging secondaries.
+pub fn on_destroyed(app: &AppHandle, label: &str) {
+    if label == MAIN {
+        app.state::<WindowState>().lock().exiting = true;
+        return;
+    }
+    if validate_label(label).is_err() {
+        return;
+    }
+    if matches!(close_action(&app.state::<WindowState>().lock(), label), CloseAction::Merge { .. }) {
+        merge_window(app, label, "was destroyed without a merge");
+    }
+}
+
+pub fn mark_exiting(app: &AppHandle) {
+    app.state::<WindowState>().lock().exiting = true;
+}
+
+/// A window that never booted: put its paused panes back on the air, then fold the
+/// workspace into main from the slice the transfer seeded.
+fn reap_unbooted(app: &AppHandle, label: &str) {
+    if let Some(t) = pending_take(label) {
+        for id in transfer_pane_ids(&t) {
+            if let Err(e) = crate::resume_pane_model(app, id) {
+                crate::applog::log("warn", "window", &format!("pane_resume {id} after a stuck boot of {label}: {e}"));
+            }
+        }
+    }
+    merge_window(app, label, &format!("never booted in {}s", BOOT_TIMEOUT_MS / 1000));
 }
 
 pub fn spawn_watcher(app: AppHandle) {
@@ -512,7 +689,73 @@ pub fn spawn_watcher(app: AppHandle) {
         for label in dead {
             reap_window(&app, &label);
         }
+        let stuck = stalled_boots(&app.state::<WindowState>().lock(), now_ms());
+        for label in stuck {
+            reap_unbooted(&app, &label);
+        }
     });
+}
+
+/// A secondary asks to close itself (its store is empty). Same path as its X.
+#[tauri::command(async)]
+pub fn window_close_self(app: AppHandle, window: tauri::Window, state: State<'_, WindowState>) -> Result<(), String> {
+    let label = window.label().to_string();
+    if validate_label(&label)? == 0 {
+        return Err("main closes by quitting the app".into());
+    }
+    if state.lock().retire_if_empty(&label) {
+        persist::drop_slice(&label);
+        let _ = window.destroy();
+        return Ok(());
+    }
+    close_secondary(&app, &label);
+    Ok(())
+}
+
+/// The Settings toggle: Rust's copy of the `flightdeck-multiwindow` flag, which
+/// `ws_transfer` checks. Async like every new command.
+#[tauri::command]
+pub async fn set_multiwindow(state: State<'_, WindowState>, enabled: bool) -> Result<(), String> {
+    state.lock().multiwindow = enabled;
+    Ok(())
+}
+
+/// Live panes in a window other than the caller's, for the quit guard.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WindowSummary {
+    pub label: String,
+    pub live_panes: u32,
+}
+
+#[tauri::command(async)]
+pub fn window_summary(window: tauri::Window, reg: State<'_, crate::Registry>, state: State<'_, WindowState>) -> Vec<WindowSummary> {
+    let labels: Vec<String> = state.lock().windows.iter().filter(|(l, r)| r.booted && l.as_str() != window.label()).map(|(l, _)| l.clone()).collect();
+    labels
+        .into_iter()
+        .map(|label| {
+            let ids = persist::slice_pane_ids(&label);
+            let by_model = crate::paneout::lock_map(&reg.by_model);
+            let live_panes = ids.iter().filter(|id| by_model.get(**id).is_some()).count() as u32;
+            WindowSummary { label, live_panes }
+        })
+        .collect()
+}
+
+/// Main closed and the user confirmed: flush every window's slice, write the
+/// session document, exit. `RunEvent::ExitRequested` reaps the ptys as before.
+#[tauri::command(async)]
+pub fn app_quit(app: AppHandle, state: State<'_, WindowState>) {
+    let labels = {
+        let mut reg = state.lock();
+        reg.exiting = true;
+        quit_labels(&reg)
+    };
+    if !flush_windows(&app, &labels, QUIT_FLUSH_MS) {
+        crate::applog::log("warn", "window", "quit: a window did not flush in time; using its last slice");
+    }
+    persist::wait_idle();
+    app.exit(0);
 }
 
 /// Rows for the support bundle: the registry as it stands.
@@ -679,6 +922,122 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(raw).expect("default.json parses");
         let windows: Vec<&str> = v["windows"].as_array().expect("windows array").iter().filter_map(|w| w.as_str()).collect();
         assert_eq!(windows, vec!["main", "fw-*"]);
+    }
+
+    #[test]
+    fn close_merges_a_secondary_and_ignores_main_unknown_and_exit() {
+        let mut r = WindowRegistry::default();
+        r.windows.insert("main".into(), rec(&[1], true, 0));
+        r.windows.insert("fw-1".into(), rec(&[2], true, 0));
+        r.windows.insert("fw-2".into(), rec(&[3], false, 0));
+        assert_eq!(close_action(&r, "fw-1"), CloseAction::Merge { flush: true });
+        assert_eq!(close_action(&r, "fw-2"), CloseAction::Merge { flush: false }, "never booted: nothing to flush");
+        assert_eq!(close_action(&r, "main"), CloseAction::Ignore, "main quits through app_quit");
+        assert_eq!(close_action(&r, "fw-9"), CloseAction::Ignore);
+        r.exiting = true;
+        assert_eq!(close_action(&r, "fw-1"), CloseAction::Ignore, "no re-adopting while the app exits");
+    }
+
+    #[test]
+    fn a_merged_window_is_not_merged_again_on_destroy() {
+        let mut r = WindowRegistry::default();
+        r.windows.insert("main".into(), rec(&[1], true, 0));
+        r.windows.insert("fw-1".into(), rec(&[2], true, 0));
+        assert_eq!(close_action(&r, "fw-1"), CloseAction::Merge { flush: true });
+        r.adopt_into_main("fw-1");
+        assert_eq!(close_action(&r, "fw-1"), CloseAction::Ignore, "Destroyed after the merge finds nothing to do");
+    }
+
+    #[test]
+    fn boot_watchdog_flags_only_stuck_new_windows() {
+        let mut r = WindowRegistry::default();
+        r.windows.insert("main".into(), rec(&[1], false, 0));
+        let mut stuck = rec(&[2], false, 0);
+        stuck.created_ms = 1_000;
+        let mut fresh = rec(&[3], false, 0);
+        fresh.created_ms = 10_000;
+        let mut booted = rec(&[4], true, 0);
+        booted.created_ms = 1_000;
+        r.windows.insert("fw-1".into(), stuck);
+        r.windows.insert("fw-2".into(), fresh);
+        r.windows.insert("fw-3".into(), booted);
+        r.windows.insert("fw-4".into(), rec(&[5], false, 0)); // restored with no clock: not ours
+        assert!(stalled_boots(&r, 1_000 + BOOT_TIMEOUT_MS).is_empty(), "exactly at the limit is still booting");
+        assert_eq!(stalled_boots(&r, 1_000 + BOOT_TIMEOUT_MS + 1), vec!["fw-1".to_string()]);
+        r.exiting = true;
+        assert!(stalled_boots(&r, u64::MAX).is_empty());
+    }
+
+    #[test]
+    fn stamping_starts_the_boot_clock() {
+        let mut r = WindowRegistry::default();
+        r.ensure_main();
+        let l = r.assign_new_window("main", 4).unwrap();
+        assert_eq!(r.windows[&l].created_ms, 0);
+        r.stamp_created(&l, 77);
+        assert_eq!(r.windows[&l].created_ms, 77);
+        assert_eq!(stalled_boots(&r, 77 + BOOT_TIMEOUT_MS + 1), vec![l]);
+    }
+
+    #[test]
+    fn transfer_pane_ids_come_from_the_parked_payload() {
+        let t = serde_json::json!({ "workspace": { "id": 2 }, "panes": { "7": {}, "16777217": {}, "x": {} } });
+        let mut ids = transfer_pane_ids(&t);
+        ids.sort();
+        assert_eq!(ids, vec![7, 16_777_217]);
+        assert!(transfer_pane_ids(&serde_json::json!({})).is_empty());
+    }
+
+    #[test]
+    fn a_secondary_with_nothing_assigned_is_retired_main_never() {
+        let mut r = WindowRegistry::default();
+        r.windows.insert("main".into(), rec(&[], true, 0));
+        r.windows.insert("fw-1".into(), rec(&[], true, 0));
+        r.windows.insert("fw-2".into(), rec(&[9], true, 0));
+        r.windows.insert("fw-3".into(), rec(&[], false, 0));
+        assert!(!r.retire_if_empty("main"));
+        assert!(!r.retire_if_empty("fw-2"), "still lists a workspace");
+        assert!(!r.retire_if_empty("fw-3"), "not booted yet: the boot path owns it");
+        assert!(r.retire_if_empty("fw-1"));
+        assert!(!r.windows.contains_key("fw-1"));
+        assert!(!r.retire_if_empty("fw-1"), "already gone");
+    }
+
+    #[test]
+    fn moving_the_last_workspace_out_of_a_secondary_empties_it() {
+        let mut r = WindowRegistry::default();
+        r.ensure_main();
+        r.windows.insert("fw-1".into(), rec(&[5], true, 0));
+        r.next_ordinal = 2;
+        r.assign_new_window("fw-1", 5).unwrap();
+        assert!(r.retire_if_empty("fw-1"));
+        assert_eq!(r.windows["fw-2"].workspace_ids, vec![5]);
+    }
+
+    #[test]
+    fn flag_off_refuses_a_transfer() {
+        let mut r = WindowRegistry::default();
+        assert!(r.require_multiwindow().is_err());
+        r.multiwindow = true;
+        assert!(r.require_multiwindow().is_ok());
+    }
+
+    #[test]
+    fn quit_asks_every_booted_window_for_a_slice() {
+        let mut r = WindowRegistry::default();
+        r.windows.insert("main".into(), rec(&[1], true, 0));
+        r.windows.insert("fw-1".into(), rec(&[2], true, 0));
+        r.windows.insert("fw-2".into(), rec(&[3], false, 0));
+        assert_eq!(quit_labels(&r), vec!["fw-1".to_string(), "main".to_string()]);
+    }
+
+    #[test]
+    fn wait_for_returns_early_and_times_out() {
+        let t = std::time::Instant::now();
+        let mut n = 0;
+        assert!(wait_for(1_000, 5, || { n += 1; n >= 3 }));
+        assert!(t.elapsed() < Duration::from_millis(500));
+        assert!(!wait_for(40, 5, || false));
     }
 
     fn top(rank: u32, since: u64, ws: u32, pane: u32) -> Option<AttentionTop> {

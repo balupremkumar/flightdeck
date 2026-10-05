@@ -24,6 +24,7 @@ import { isTypingTarget } from "./isTypingTarget";
 import { attentionQueue, mostRecentOutputPane } from "./attention";
 import { homeKeyAllowed } from "./home";
 import { isMainWindow } from "./persist";
+import { otherWindows, quitApp } from "./windowBoot";
 import { useAnnouncement } from "./windowAnnounce";
 import { multiwindowEnabled, moveActiveWorkspaceToNewWindow, focusNextWindow, MOVE_WINDOW_CHORD, NEXT_WINDOW_CHORD } from "./windowActions";
 
@@ -303,15 +304,27 @@ export function Cockpit() {
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     let cancelled = false;
+    // Phase 4: a secondary's X belongs to Rust (flush, merge into main, destroy). A JS
+    // close listener would destroy the window itself the moment it returned.
+    if (!isMainWindow()) return;
     try {
       getCurrentWindow()
-        .onCloseRequested((e) => {
+        .onCloseRequested(async (e) => {
+          // Main closing quits every window; count their live panes too. Empty when
+          // this is the only window, which keeps the single-window path as it was.
+          const others = await otherWindows();
+          const otherLive = others.reduce((n, w) => n + w.livePanes, 0);
           // Read live state at close time (not render time) — the listener is
           // registered once and must see the current panes.
           const wss = useApp.getState().workspaces;
           const all = wss.flatMap((w) => w.panes);
           const anyLive = all.some((p) => p.state === "running" || p.state === "starting" || p.state === "waiting" || p.state === "permission");
-          if (!anyLive) return; // nothing live — close straight through
+          if (!anyLive && otherLive === 0) {
+            if (others.length === 0) return; // nothing live — close straight through
+            e.preventDefault();
+            void quitApp(); // other windows still hold slices to flush
+            return;
+          }
           e.preventDefault();
           // UI-195: itemise what's actually at stake instead of a flat count —
           // "3 running, 1 waiting on you" is a decision, "4 panes" is a shrug.
@@ -321,6 +334,7 @@ export function Cockpit() {
           if (count("starting")) parts.push(`${count("starting")} still starting`);
           if (count("permission")) parts.push(`${count("permission")} waiting on your approval`);
           if (count("waiting")) parts.push(`${count("waiting")} idle-waiting`);
+          if (otherLive) parts.push(`${otherLive} in other windows`);
           const dirty = all.filter((p) => !!p.worktreePath).length;
           const worktreeNote = dirty > 0
             ? ` ${dirty} isolated worktree${dirty === 1 ? "" : "s"} stay on disk and reattach next launch.`
@@ -330,7 +344,7 @@ export function Cockpit() {
             body: `${parts.join(", ")}. Quitting ends those sessions — your workspaces reopen next launch, but running agents can't be brought back.${worktreeNote}`,
             confirmLabel: "Quit & end sessions",
             danger: true,
-            onConfirm: () => { void getCurrentWindow().destroy(); },
+            onConfirm: () => { if (others.length > 0) void quitApp(); else void getCurrentWindow().destroy(); },
           });
         })
         .then((fn) => { if (!cancelled) unlisten = fn; else fn(); })

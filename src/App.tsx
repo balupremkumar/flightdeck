@@ -12,6 +12,7 @@ import { useEffect } from "react";
 import { lazyOverlay } from "./LazyOverlay";
 import { logEvent } from "./applog";
 import { useWhatsNew } from "./settingsStore";
+import { isMainWindow } from "./persist";
 
 const Settings = lazyOverlay(() => import("./Settings"), "Settings", "Settings");
 
@@ -90,7 +91,8 @@ export default function App() {
   useEffect(() => { logEvent("info", "boot-ok", "app mounted"); }, []);
   const count = useApp((s) => s.workspaces.length);
   const creating = useApp((s) => s.creating);
-  if (count === 0) return <LauncherChrome />;
+  // A secondary window never shows the launcher: empty means Rust is about to close it.
+  if (count === 0) return isMainWindow() ? <LauncherChrome /> : null;
   return (
     <>
       <Cockpit />
