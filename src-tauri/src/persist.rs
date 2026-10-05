@@ -63,6 +63,10 @@ pub struct PersistedPane {
     // Absent for a pane with nothing typed; old session docs load with None.
     #[serde(default)]
     pub draft: Option<String>,
+    // The user typed the title (not the foreground-process auto-title); Home
+    // then shows it even when it equals a process name. Old docs load false.
+    #[serde(default)]
+    pub title_manual: bool,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -869,6 +873,16 @@ mod tests {
             "panes": [{ "id": pane, "vendor": "claude", "cwd": "C:\\r" }]
         }))
         .unwrap()
+    }
+
+    #[test]
+    fn title_manual_defaults_false_and_round_trips() {
+        let old = ws(1, 10);
+        assert!(!old.panes[0].title_manual, "an old doc without titleManual loads as false");
+        let mut p = old.panes[0].clone();
+        p.title_manual = true;
+        let back: PersistedPane = serde_json::from_value(serde_json::to_value(&p).unwrap()).unwrap();
+        assert!(back.title_manual);
     }
 
     fn slice(workspaces: Vec<PersistedWorkspace>, active: Option<u32>, prefs: serde_json::Value) -> SessionDoc {

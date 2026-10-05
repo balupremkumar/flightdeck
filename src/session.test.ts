@@ -36,6 +36,23 @@ describe("session restore (UX-581 draft round-trip / UX-583 restore report)", ()
     expect(pane.draft).toBe("still typing this");
   });
 
+  it("round-trips titleManual; old docs load as unset", async () => {
+    mockInvoke.mockResolvedValue(null);
+    await hydrateFrom(
+      [{ id: 1, name: "ws", root: "D:\\proj", panes: [
+        { id: 10, vendor: "claude", cwd: "D:\\proj", title: "claude", titleManual: true },
+        { id: 11, vendor: "claude", cwd: "D:\\proj", title: "node" },
+      ] }],
+      1
+    );
+    const [a, b] = useApp.getState().workspaces[0].panes;
+    expect(a.titleManual).toBe(true);
+    expect(b.titleManual).toBeUndefined();
+    const { toDraft } = await import("./session");
+    const draft = toDraft(useApp.getState().workspaces, 1);
+    expect(draft.workspaces[0].panes.map((p) => p.titleManual)).toEqual([true, undefined]);
+  });
+
   it("reports a plain (non-isolated) pane as status 'plain'", async () => {
     mockInvoke.mockResolvedValue(null);
     await hydrateFrom(
