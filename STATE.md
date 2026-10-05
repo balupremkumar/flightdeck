@@ -1,15 +1,16 @@
 ---
-hub_updated: 2026-10-05
+hub_updated: 2026-10-06
 hub_status: active
 hub_lane: products
-hub_last: "Phase 4 S4 (pane release, detach/adopt, dark) on qol/phase-4; S5 readscope and S6 session doc v2 in flight."
-hub_next: "Resume from docs/plans/RESUME-2026-10-06.md: merge qol/phase-4 to main, Fable red team, fixes, 0.6.0 Canary."
-hub_you: "Approve the merge and push of qol/phase-4 to main once the other Flightdeck session is closed."
+hub_last: "Phases 4-6 + Home merged to main (5d53cdd, pushed); gate green; Fable pre-release red team running."
+hub_next: "Fix Fable red team findings (docs/plans/release-0.6.0-redteam.md), gate, merge, cut 0.6.0 Canary."
+hub_you: "Run release.ps1 for 0.6.0 from a plain PowerShell window with Canary closed (boot gate refuses a running Canary)."
 ---
 # STATE — Flightdeck
 
 Vault: [[HOME]] | [[PORTFOLIO|Portfolio]] | [[projects/active/flightdeck/BACKLOG|Backlog]]
 
+UPDATE 2026-10-06: qol/phase-4 merged to main ff (5d53cdd) and pushed; main had not moved (Codex work still only on codex/h4-integrate). Gate before merge: tsc 0, vitest 1480, cargo 444, build OK, e2e 21/21. Fable red team on v0.5.7..main in flight; findings go to docs/plans/release-0.6.0-redteam.md.
 UPDATE 2026-10-05: qol/phase-4 = Phase 4 S4-S10c + Home + red team fixes 1-6/9/10 + 4 bug/flake fixes + 0.6.0 notes/checklist; lead gate tsc 0, vitest 1480, cargo 444, build OK; full e2e (21) running. Next: merge to main, Fable red team, 0.6.0 Canary. Merge to main blocked pending Balu; resume: docs/plans/RESUME-2026-10-06.md.
 Updated: 2026-09-19 (lag root-caused and fixed on branch flightdeck/pfi232, uncommitted; full roadmap written to BACKLOG.md section N).
 
