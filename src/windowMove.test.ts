@@ -194,7 +194,7 @@ describe("moveWorkspaceToNewWindow", () => {
     expect(ps.size()).toBe(1);
   });
 
-  it("with no other workspace the extra pane keeps the source workspace shell", async () => {
+  it("with no other workspace the extra pane lands in a fresh workspace, never id 7", async () => {
     useApp.setState((s) => ({ workspaces: s.workspaces.filter((w) => w.id === 7) }));
     addPane3During();
     const r = await moveWorkspaceToNewWindow(7);
@@ -202,7 +202,8 @@ describe("moveWorkspaceToNewWindow", () => {
     expect(ps.get(3)?.disposed).toBe(false);
     expect(calls("pty_kill")).toHaveLength(0);
     const ws = useApp.getState().workspaces;
-    expect(ws.map((w) => w.id)).toEqual([7]);
+    expect(ws.some((w) => w.id === 7)).toBe(false);
+    expect(ws).toHaveLength(1);
     expect(ws[0].panes.map((p) => p.id)).toEqual([3]);
     expect(ws[0].focused).toBe(3);
     expect(log).toContain("release:1");

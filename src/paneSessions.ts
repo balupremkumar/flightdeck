@@ -294,8 +294,8 @@ export function release(modelId: number): void {
  *  Returns the detached workspace for the target window to adopt.
  *  `moved`: the pane ids that actually travelled (the snapshot). Only those are
  *  released; a pane added after the snapshot is not in the transfer, so it stays
- *  here, live: moved to another workspace if one exists, else it keeps the
- *  workspace shell (the moved panes are removed from it). */
+ *  here, live: moved to another workspace if one exists, else to a freshly
+ *  minted one (never the moved workspace's own id, which the target now holds). */
 export function releaseWorkspace(id: number, moved?: ReadonlySet<number>): Workspace | undefined {
   const st = useApp.getState();
   const ws = st.workspaces.find((w) => w.id === id);
@@ -307,14 +307,17 @@ export function releaseWorkspace(id: number, moved?: ReadonlySet<number>): Works
     st.detachWorkspace(id);
     return ws;
   }
-  const dest = st.workspaces.find((w) => w.id !== id);
-  if (dest) {
-    for (const p of staying) st.movePaneToWorkspace(id, p.id, dest.id);
-    st.detachWorkspace(id);
-  } else {
-    for (const p of leaving) st.closePane(id, p.id);
-    st.focusPane(id, staying[0].id);
+  // The moved workspace keeps its id in the target window, so the extras must not: with no
+  // other workspace here, mint a fresh one (empty pane list) rather than keep the shell.
+  let dest = st.workspaces.find((w) => w.id !== id);
+  if (!dest) {
+    st.createWorkspace(ws.root, []);
+    dest = useApp.getState().workspaces.find((w) => w.id !== id);
   }
+  if (dest) {
+    for (const p of staying) useApp.getState().movePaneToWorkspace(id, p.id, dest.id);
+  }
+  useApp.getState().detachWorkspace(id);
   return ws;
 }
 
