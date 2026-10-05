@@ -16,6 +16,7 @@
 // it (the store's `restartPane`). This module never claims a process survived
 // an app restart.
 
+use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
@@ -78,6 +79,19 @@ pub struct PersistedWorkspace {
     pub panes: Vec<PersistedPane>,
 }
 
+// Phase 4 doc v2: which window owns which workspaces. No geometry (the
+// window-state plugin owns that). `workspaces` stays flat, so a build that
+// predates this field ignores it and loads every workspace into one window.
+#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct PersistedWindow {
+    pub label: String,
+    #[serde(default)]
+    pub workspace_ids: Vec<u32>,
+    #[serde(default)]
+    pub active_workspace_id: Option<u32>,
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionDoc {
@@ -94,6 +108,8 @@ pub struct SessionDoc {
     // own prefs shape without a matching change here.
     #[serde(default)]
     pub ui_prefs: serde_json::Value,
+    #[serde(default)]
+    pub windows: Vec<PersistedWindow>,
 }
 
 #[derive(Clone, Serialize)]
@@ -240,6 +256,8 @@ fn write_session(app: &AppHandle, path: &Path, j: &str) -> Result<(), String> {
 /// Called on app exit so a save still running on a pool thread lands, and a
 /// payload parked behind it is written, before the process dies.
 pub fn wait_idle() {
+    flush_slices();
+    SHADOW_SAVER.wait_idle(|_| Ok(()));
     match SAVE_APP.get() {
         Some(app) => match session_path(app) {
             Ok(path) => SAVER.wait_idle(|j| write_session(app, &path, j)),
@@ -259,6 +277,200 @@ pub fn save_session(app: AppHandle, mut doc: SessionDoc) -> Result<(), String> {
     SAVER.submit(json, |j| write_session(&app, &path, j))
 }
 
+// ---------------------------------------------------------------------------
+// Per-window slices (Phase 4 S6). Each window pushes its own slice through
+// `session_put_slice`; Rust owns the merge and is the only writer of the doc.
+// The label comes from the calling Window, never from JS.
+// ---------------------------------------------------------------------------
+
+const MAIN_LABEL: &str = "main";
+const SLICE_DEBOUNCE_MS: u64 = 800;
+const SHADOW_FILE: &str = "session.v2.json";
+// Shadow mode writes session.v2.json beside the unchanged save_session path.
+// S6b flips this so the slice writer owns session.json.
+const SLICE_WRITER_PRIMARY: bool = false;
+
+/// Seam for the S7 WindowRegistry: does `label` own workspace `ws_id`? Until the
+/// registry exists only main owns anything, so foreign slices are dropped.
+fn assigned(label: &str, _ws_id: u32) -> bool {
+    label == MAIN_LABEL
+}
+
+struct Slices {
+    by_label: BTreeMap<String, SessionDoc>,
+    generation: u64,
+    dirty: bool,
+}
+
+static SLICES: Mutex<Slices> = Mutex::new(Slices { by_label: BTreeMap::new(), generation: 0, dirty: false });
+static SHADOW_SAVER: Coalescer = Coalescer::new();
+
+/// Merge per-label slices into one flat doc plus the window table. Workspaces a
+/// label does not own (per `owns`) are dropped and returned for logging; a
+/// workspace id is accepted once, main first.
+fn merge_slices(
+    slices: &BTreeMap<String, SessionDoc>,
+    owns: impl Fn(&str, u32) -> bool,
+) -> (SessionDoc, Vec<(String, u32)>) {
+    let mut labels: Vec<&String> = slices.keys().collect();
+    labels.sort_by_key(|l| (l.as_str() != MAIN_LABEL, l.to_string()));
+    let mut doc = SessionDoc {
+        version: default_version(),
+        saved_at: 0,
+        active_workspace_id: None,
+        workspaces: Vec::new(),
+        ui_prefs: serde_json::Value::Null,
+        windows: Vec::new(),
+    };
+    let mut rejected = Vec::new();
+    let mut seen = HashSet::new();
+    let mut prefs = serde_json::Map::new();
+    for (i, label) in labels.iter().enumerate() {
+        let slice = &slices[*label];
+        let mut ids = Vec::new();
+        for w in &slice.workspaces {
+            if !owns(label, w.id) {
+                rejected.push((label.to_string(), w.id));
+            } else if seen.insert(w.id) {
+                ids.push(w.id);
+                doc.workspaces.push(w.clone());
+            }
+        }
+        if i == 0 {
+            doc.active_workspace_id = slice.active_workspace_id;
+        }
+        doc.windows.push(PersistedWindow {
+            label: label.to_string(),
+            active_workspace_id: slice.active_workspace_id.filter(|a| ids.contains(a)),
+            workspace_ids: ids,
+        });
+        merge_prefs(&mut prefs, &slice.ui_prefs, i == 0);
+    }
+    if !slices.is_empty() {
+        doc.ui_prefs = serde_json::Value::Object(prefs);
+    }
+    (doc, rejected)
+}
+
+// uiPrefs: groups from the first (main) slice only, summary arrays concatenated,
+// object values (scrollback, paneChat, paneColor: pane ids are global) unioned,
+// any other key first-wins.
+fn merge_prefs(out: &mut serde_json::Map<String, serde_json::Value>, add: &serde_json::Value, first: bool) {
+    use serde_json::Value;
+    let Some(add) = add.as_object() else { return };
+    for (k, v) in add {
+        if k == "groups" {
+            if first {
+                out.insert(k.clone(), v.clone());
+            }
+            continue;
+        }
+        match (out.get_mut(k), v) {
+            (None, _) => {
+                out.insert(k.clone(), v.clone());
+            }
+            (Some(Value::Array(a)), Value::Array(b)) if k == "summary" => a.extend(b.iter().cloned()),
+            (Some(Value::Object(a)), Value::Object(b)) => {
+                for (ik, iv) in b {
+                    a.entry(ik.clone()).or_insert_with(|| iv.clone());
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Load-time validation of `windows[]`. Flag off: one main window holding every
+/// workspace. Flag on: unknown workspace ids dropped, workspaces nobody claims
+/// go to main, and a non-main window left empty (never booted) collapses to main.
+fn normalize_windows(mut doc: SessionDoc, multiwindow: bool) -> SessionDoc {
+    let known: Vec<u32> = doc.workspaces.iter().map(|w| w.id).collect();
+    if !multiwindow {
+        doc.windows = vec![PersistedWindow {
+            label: MAIN_LABEL.into(),
+            active_workspace_id: doc.active_workspace_id.filter(|a| known.contains(a)),
+            workspace_ids: known,
+        }];
+        return doc;
+    }
+    let mut claimed = HashSet::new();
+    let mut out: Vec<PersistedWindow> = Vec::new();
+    for mut w in std::mem::take(&mut doc.windows) {
+        w.workspace_ids.retain(|id| known.contains(id) && claimed.insert(*id));
+        w.active_workspace_id = w.active_workspace_id.filter(|a| w.workspace_ids.contains(a));
+        if w.workspace_ids.is_empty() && w.label != MAIN_LABEL {
+            continue;
+        }
+        out.push(w);
+    }
+    if !out.iter().any(|w| w.label == MAIN_LABEL) {
+        out.insert(0, PersistedWindow { label: MAIN_LABEL.into(), workspace_ids: vec![], active_workspace_id: None });
+    }
+    if let Some(main) = out.iter_mut().find(|w| w.label == MAIN_LABEL) {
+        main.workspace_ids.extend(known.iter().filter(|id| !claimed.contains(id)));
+    }
+    doc.windows = out;
+    doc
+}
+
+// Merge whatever is held and write it. Runs on a worker or command thread,
+// never the main thread.
+fn write_merged(app: &AppHandle) -> Result<(), String> {
+    let (mut doc, rejected) = {
+        let mut g = SLICES.lock().unwrap_or_else(|e| e.into_inner());
+        if !g.dirty {
+            return Ok(());
+        }
+        g.dirty = false;
+        merge_slices(&g.by_label, assigned)
+    };
+    for (label, id) in rejected {
+        crate::applog::log("warn", "session", &format!("dropped workspace {id} from window {label}: not assigned to it"));
+    }
+    doc.saved_at = now_ms();
+    let json = serde_json::to_string_pretty(&doc).map_err(|e| e.to_string())?;
+    if SLICE_WRITER_PRIMARY {
+        let path = session_path(app)?;
+        SAVER.submit(json, |j| write_session(app, &path, j))
+    } else {
+        let path = base_dir(app)?.join(SHADOW_FILE);
+        SHADOW_SAVER.submit(json, |j| write_atomic(&path, j))
+    }
+}
+
+/// Exit-time drain for a slice still inside its debounce window.
+fn flush_slices() {
+    if let Some(app) = SAVE_APP.get() {
+        let _ = write_merged(app);
+    }
+}
+
+/// A window pushes its slice (its workspaces, active id, uiPrefs). Debounced
+/// 800 ms and written off the main thread; `flush` writes now (beforeunload).
+#[tauri::command(async)]
+pub fn session_put_slice(app: AppHandle, window: tauri::Window, slice: SessionDoc, flush: Option<bool>) -> Result<(), String> {
+    let label = window.label().to_string();
+    let gen = {
+        let mut g = SLICES.lock().unwrap_or_else(|e| e.into_inner());
+        g.by_label.insert(label, slice);
+        g.generation += 1;
+        g.dirty = true;
+        g.generation
+    };
+    let _ = SAVE_APP.set(app.clone());
+    if flush.unwrap_or(false) {
+        return write_merged(&app);
+    }
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(SLICE_DEBOUNCE_MS));
+        let latest = SLICES.lock().unwrap_or_else(|e| e.into_inner()).generation;
+        if latest == gen {
+            let _ = write_merged(&app);
+        }
+    });
+    Ok(())
+}
+
 // Ok(None) means "nothing to restore" — either a first run or safe mode is
 // active. Only a genuinely corrupt session.json is an Err.
 #[tauri::command(async)]
@@ -266,7 +478,8 @@ pub fn load_session(app: AppHandle) -> Result<Option<SessionDoc>, String> {
     if safe_mode_active() {
         return Ok(None);
     }
-    read_session_file(&app)
+    // Multi-window is not switchable yet (S7 adds the flag): everything loads into main.
+    Ok(read_session_file(&app)?.map(|d| normalize_windows(d, false)))
 }
 
 // Pane model ids in session.json, for the post-reload PTY reaper (lib.rs).
@@ -513,5 +726,129 @@ mod tests {
         let mut got = String::new();
         c.submit("b".into(), |j| { got = j.into(); Ok(()) }).unwrap();
         assert_eq!(got, "b");
+    }
+
+    fn ws(id: u32, pane: u32) -> PersistedWorkspace {
+        serde_json::from_value(serde_json::json!({
+            "id": id, "name": format!("w{id}"), "root": "C:\\r",
+            "panes": [{ "id": pane, "vendor": "claude", "cwd": "C:\\r" }]
+        }))
+        .unwrap()
+    }
+
+    fn slice(workspaces: Vec<PersistedWorkspace>, active: Option<u32>, prefs: serde_json::Value) -> SessionDoc {
+        SessionDoc {
+            version: 1,
+            saved_at: 0,
+            active_workspace_id: active,
+            workspaces,
+            ui_prefs: prefs,
+            windows: vec![],
+        }
+    }
+
+    #[test]
+    fn merge_unions_workspaces_and_builds_window_table() {
+        let mut m = BTreeMap::new();
+        m.insert("main".to_string(), slice(vec![ws(1, 10)], Some(1), serde_json::json!({})));
+        m.insert("fw-1".to_string(), slice(vec![ws(2, 20)], Some(2), serde_json::json!({})));
+        let (doc, rejected) = merge_slices(&m, |_, _| true);
+        assert!(rejected.is_empty());
+        assert_eq!(doc.workspaces.iter().map(|w| w.id).collect::<Vec<_>>(), vec![1, 2]);
+        assert_eq!(doc.active_workspace_id, Some(1));
+        assert_eq!(doc.windows[0], PersistedWindow { label: "main".into(), workspace_ids: vec![1], active_workspace_id: Some(1) });
+        assert_eq!(doc.windows[1].label, "fw-1");
+    }
+
+    #[test]
+    fn merge_rejects_foreign_workspaces_and_dedupes() {
+        let mut m = BTreeMap::new();
+        m.insert("main".to_string(), slice(vec![ws(1, 10)], Some(1), serde_json::json!({})));
+        m.insert("fw-1".to_string(), slice(vec![ws(1, 10), ws(2, 20)], Some(2), serde_json::json!({})));
+        // Today's seam: only main owns anything.
+        let (doc, rejected) = merge_slices(&m, assigned);
+        assert_eq!(doc.workspaces.len(), 1);
+        assert_eq!(rejected, vec![("fw-1".to_string(), 1), ("fw-1".to_string(), 2)]);
+        assert!(doc.windows[1].workspace_ids.is_empty());
+        // A registry that assigns ws 1 to both still yields it once, to main.
+        let (doc, _) = merge_slices(&m, |_, id| id == 1 || id == 2);
+        assert_eq!(doc.workspaces.iter().map(|w| w.id).collect::<Vec<_>>(), vec![1, 2]);
+        assert_eq!(doc.windows[1].workspace_ids, vec![2]);
+    }
+
+    #[test]
+    fn merge_prefs_union_across_labels_replace_within_label() {
+        let mut m = BTreeMap::new();
+        m.insert("main".to_string(), slice(vec![], None, serde_json::json!({
+            "groups": [{ "id": 1 }], "summary": [{ "p": 1 }], "scrollback": { "10": "a" }, "paneColor": { "10": "red" }
+        })));
+        m.insert("fw-1".to_string(), slice(vec![], None, serde_json::json!({
+            "groups": [{ "id": 9 }], "summary": [{ "p": 2 }], "scrollback": { "20": "b" }, "paneColor": { "20": "blue" }
+        })));
+        let (doc, _) = merge_slices(&m, |_, _| true);
+        let p = &doc.ui_prefs;
+        assert_eq!(p["groups"], serde_json::json!([{ "id": 1 }]));
+        assert_eq!(p["summary"], serde_json::json!([{ "p": 1 }, { "p": 2 }]));
+        assert_eq!(p["scrollback"], serde_json::json!({ "10": "a", "20": "b" }));
+        assert_eq!(p["paneColor"], serde_json::json!({ "10": "red", "20": "blue" }));
+        // Re-putting a label replaces its old slice (a dropped pane's scrollback goes).
+        m.insert("fw-1".to_string(), slice(vec![], None, serde_json::json!({ "scrollback": {} })));
+        let (doc, _) = merge_slices(&m, |_, _| true);
+        assert_eq!(doc.ui_prefs["scrollback"], serde_json::json!({ "10": "a" }));
+    }
+
+    // The v1 reader, as it was before `windows` existed: no deny_unknown_fields.
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    #[allow(dead_code)]
+    struct V1Doc {
+        #[serde(default)]
+        active_workspace_id: Option<u32>,
+        #[serde(default)]
+        workspaces: Vec<PersistedWorkspace>,
+        #[serde(default)]
+        ui_prefs: serde_json::Value,
+    }
+
+    #[test]
+    fn v2_json_parses_in_the_v1_struct() {
+        let mut m = BTreeMap::new();
+        m.insert("main".to_string(), slice(vec![ws(1, 10)], Some(1), serde_json::json!({ "x": 1 })));
+        let (doc, _) = merge_slices(&m, |_, _| true);
+        let json = serde_json::to_string_pretty(&doc).unwrap();
+        assert!(json.contains("\"windows\""));
+        let v1: V1Doc = serde_json::from_str(&json).unwrap();
+        assert_eq!(v1.workspaces.len(), 1);
+        assert_eq!(v1.active_workspace_id, Some(1));
+        assert_eq!(v1.ui_prefs["x"], 1);
+        // And an old doc (no windows key) loads into v2 with an empty table.
+        let old: SessionDoc = serde_json::from_str(r#"{"workspaces":[]}"#).unwrap();
+        assert!(old.windows.is_empty());
+    }
+
+    #[test]
+    fn normalize_flag_off_puts_everything_in_main() {
+        let mut d = slice(vec![ws(1, 10), ws(2, 20)], Some(2), serde_json::Value::Null);
+        d.windows = vec![
+            PersistedWindow { label: "main".into(), workspace_ids: vec![1], active_workspace_id: Some(1) },
+            PersistedWindow { label: "fw-1".into(), workspace_ids: vec![2], active_workspace_id: Some(2) },
+        ];
+        let d = normalize_windows(d, false);
+        assert_eq!(d.windows, vec![PersistedWindow { label: "main".into(), workspace_ids: vec![1, 2], active_workspace_id: Some(2) }]);
+    }
+
+    #[test]
+    fn normalize_flag_on_validates_windows() {
+        let mut d = slice(vec![ws(1, 10), ws(2, 20), ws(3, 30)], None, serde_json::Value::Null);
+        d.windows = vec![
+            PersistedWindow { label: "fw-1".into(), workspace_ids: vec![2, 99], active_workspace_id: Some(99) },
+            PersistedWindow { label: "fw-2".into(), workspace_ids: vec![99], active_workspace_id: None }, // never booted
+        ];
+        let d = normalize_windows(d, true);
+        let labels: Vec<_> = d.windows.iter().map(|w| w.label.as_str()).collect();
+        assert_eq!(labels, vec!["main", "fw-1"]);
+        assert_eq!(d.windows[0].workspace_ids, vec![1, 3]); // unclaimed go to main
+        assert_eq!(d.windows[1].workspace_ids, vec![2]); // unknown 99 dropped
+        assert_eq!(d.windows[1].active_workspace_id, None);
     }
 }

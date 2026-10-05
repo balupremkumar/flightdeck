@@ -1049,6 +1049,7 @@ pub fn run() {
             usage::pane_plans,
             usage::plan_usage,
             persist::save_session,
+            persist::session_put_slice,
             persist::load_session,
             persist::has_previous_session,
             persist::is_safe_mode,

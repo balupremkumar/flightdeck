@@ -326,7 +326,7 @@ export function startAutosave() {
   const finalSave = () => {
     refreshScrollbackCache();
     scheduleIfChanged();
-    saver.flush();
+    saver.flush(true); // writes save_session and pushes the slice to Rust
   };
   window.addEventListener("beforeunload", finalSave);
   document.addEventListener("visibilitychange", () => {

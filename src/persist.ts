@@ -75,33 +75,45 @@ export async function saveSession(doc: SessionDraft): Promise<void> {
   await invoke("save_session", { doc });
 }
 
+// Phase 4: pushes this window's slice to the Rust single writer, which merges
+// per-window slices and owns the document. The window label is taken from the
+// calling window on the Rust side, never sent from here. `flush` skips Rust's
+// own 800 ms debounce (beforeunload).
+export async function putSlice(slice: SessionDraft, flush = false): Promise<void> {
+  try {
+    await invoke("session_put_slice", { slice, flush });
+  } catch { /* browser preview, or a Rust build without the command */ }
+}
+
 // Debounced save: coalesces bursts of store changes (pane add/close, rename,
 // reorder, workspace switch, ...) into one write + one restore-point snapshot.
 // Call `schedule` on every change the caller wants persisted; call `flush` on
 // app shutdown/exit to guarantee the last change lands.
 export interface DebouncedSave {
   schedule: (doc: SessionDraft) => void;
-  flush: () => void;
+  /** `final` marks the exit-time flush, which also skips Rust's debounce. */
+  flush: (final?: boolean) => void;
 }
 
 export function makeDebouncedSave(delayMs = 800): DebouncedSave {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let pending: SessionDraft | undefined;
 
-  function flush(): void {
+  function flush(final = false): void {
     if (timer) clearTimeout(timer);
     timer = undefined;
     if (pending) {
       const doc = pending;
       pending = undefined;
       void saveSession(doc);
+      void putSlice(doc, final); // S6 shadow: Rust writes session.v2.json beside the line above
     }
   }
 
   function schedule(doc: SessionDraft): void {
     pending = doc;
     if (timer) clearTimeout(timer);
-    timer = setTimeout(flush, delayMs);
+    timer = setTimeout(() => flush(), delayMs);
   }
 
   return { schedule, flush };
