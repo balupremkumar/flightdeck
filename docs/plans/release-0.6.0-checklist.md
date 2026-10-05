@@ -55,6 +55,11 @@ Each phase's red team adds its items here; the final release note links this fil
 - [ ] Branch with a PR and running CI: chip says "checks running"; when CI ends exactly one toast, no bell.
 - [ ] No gh, logged out, or no PR: no chip, no error.
 - [ ] Long workspace name plus several ports: the topbar chip row clips cleanly.
+- [ ] Match Claude's colours on, then colour-blind-safe on: the theme file is rewritten with the daltonized variant and Claude's diff colours change after a pane restart.
+- [ ] Chat pane: the "queued" chip stays while Claude is mid-turn and clears only when Claude picks the prompt up.
+- [ ] Port chip appears for a dev server started in the pane, and the kill button stops that process.
+- [ ] PR chip toast fires exactly once when CI finishes.
+- [ ] gh not installed: no PR chip and no error.
 
 ## Phase 6 copy and paste (H2)
 
@@ -73,3 +78,40 @@ Each phase's red team adds its items here; the final release note links this fil
 - [ ] Focus pane: Ctrl+O shows the full transcript; `/focus off` inside the pane still works.
 - [ ] After `/focus` in one pane, a classic pane still shows full output.
 - [ ] `<app-data>\claude-view\` holds the two files; nothing under `~/.claude` changed.
+
+## Phase 4 multi-window (flag off by default)
+
+Turn on Settings > Windows > "Multiple windows (preview)" and restart.
+With the flag off, none of these commands exist and the app behaves as one window.
+
+- [ ] Capability: a `fw-*` window can run panes, read files and use the dialogs (no "not allowed" errors in the console).
+- [ ] Window creation is async: opening a second window does not freeze the first or any pane.
+- [ ] Storage events: a setting changed in one window shows in the other without a reload.
+- [ ] A secondary window restored at launch never steals focus (test with a fullscreen game in front).
+- [ ] Emit to a destroyed window: close a secondary while its agent is printing; no error, main keeps running.
+- [ ] Heartbeat: kill one `msedgewebview2` renderer of a secondary; within about 10 s its workspaces are back in main with agents alive.
+- [ ] Claude Code TUI replay on the main screen: move a workspace with a live Claude pane, the last 20 lines match and nothing is doubled.
+- [ ] Claude Code TUI replay on the alt screen (vim, lazygit): the screen redraws cleanly after a move.
+- [ ] Ctrl+R on a live Claude pane reattaches with its history (reload survival, works with the flag off too).
+- [ ] Move workspace to new window, then back: agents keep running, no restart, no duplicate panes.
+- [ ] Close a secondary window: its workspaces merge back into main.
+- [ ] Close the main window: the whole app quits, secondaries included.
+- [ ] Taskbar badge reflects attention across all windows.
+- [ ] Summon (Ctrl+Alt+F) reaches the right window, including with a fullscreen app on screen.
+- [ ] Turn the flag off and restart: every workspace is in main.
+
+## Phase 5 Home (build pending, run after it merges)
+
+- [ ] Ctrl+Shift+H opens Home, as does the button beside the bell and the palette entry "Open Home".
+- [ ] The Home count matches the bell count.
+- [ ] Cards sit in the right columns (Needs you, Working, Ready to review, Idle, Merged).
+- [ ] Peek (Space on a card) shows the last lines of that pane, including a pane not currently mounted.
+- [ ] Reply to a question lands in that pane only, also after restarting the pane.
+- [ ] Approve on a Claude permission prompt answers it; on an unfamiliar prompt only Open is offered.
+- [ ] Escape closes Home and keeps typed drafts; reopening restores them and focus returns to where it was.
+- [ ] At the 940 px minimum width the columns become stacked sections and nothing is clipped.
+
+## Regression: wrong pane id after a restore
+
+- [ ] After restoring a session (or restarting a pane), Broadcast, Review "send to agent" and palette "New task" all reach the right pane.
+- [ ] Before the fix they used the saved id and wrote to the wrong pane or nowhere.
