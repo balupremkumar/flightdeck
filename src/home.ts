@@ -52,6 +52,8 @@ export interface HomeCard {
   vendor: string;
   /** The pane's own title, "" when unnamed (the view falls back to the vendor name). */
   title: string;
+  /** The user typed the title (not PaneView's auto-title). */
+  titleManual?: boolean;
   wsName: string;
   branch?: string;
   since: number;
@@ -80,9 +82,9 @@ export function isProcessTitle(title: string): boolean {
 /** The card's name: the pane's own title if it set one, else the vendor short
  *  name plus the branch. `branchShown` tells the view the branch is already in
  *  the name so the where-line does not repeat it. */
-export function cardName(title: string, vendorShortName: string, branch?: string): { name: string; branchShown: boolean } {
+export function cardName(title: string, vendorShortName: string, branch?: string, titleManual = false): { name: string; branchShown: boolean } {
   const t = title.trim();
-  if (t && !isProcessTitle(t)) return { name: t, branchShown: false };
+  if (t && (titleManual || !isProcessTitle(t))) return { name: t, branchShown: false };
   return branch ? { name: `${vendorShortName} · ${branch}`, branchShown: true } : { name: vendorShortName, branchShown: false };
 }
 
@@ -102,17 +104,27 @@ export function activityLine(line: string | undefined, kind: AttentionKind | nul
 
 /** The question or tool request above a permission menu in `tail`, or null. */
 export function permissionAsk(tail: string[]): string | null {
+  return permissionPrompt(tail).question;
+}
+
+/** The question above a permission menu plus up to two text lines above it
+ *  (the tool request, e.g. the command), so Approve is never blind. */
+export function permissionPrompt(tail: string[]): { question: string | null; request: string[] } {
   const lines = tail.slice(-TAIL_WINDOW * 2);
   let last = -1;
   for (let i = lines.length - 1; i >= 0; i--) if (isOptionLine(stripBox(lines[i]))) { last = i; break; }
-  if (last < 0) return null;
+  if (last < 0) return { question: null, request: [] };
   let first = last;
   while (first > 0 && isOptionLine(stripBox(lines[first - 1]))) first--;
-  for (let i = first - 1; i >= 0; i--) {
+  const clip = (l: string) => (l.length > 160 ? l.slice(0, 159) + "…" : l);
+  const above: string[] = [];
+  for (let i = first - 1; i >= 0 && above.length < 3; i--) {
     const l = stripBox(lines[i]);
-    if (l && hasText(l)) return l.length > 160 ? l.slice(0, 159) + "…" : l;
+    if (isOptionLine(l)) break; // an older menu, not this request
+    if (l && hasText(l)) above.unshift(clip(l));
   }
-  return null;
+  const question = above.pop() ?? null;
+  return { question, request: above };
 }
 
 /** Same cache key as PaneView's diff poll: cwd plus base branch. */
@@ -179,6 +191,7 @@ export function buildHome(
       activity: activityLine(ctx.lastLine.get(p.id), kind),
       kind,
     };
+    if (p.titleManual) c.titleManual = true;
     if (p.branch) c.branch = p.branch;
     const diff = ctx.diff[diffKey(p)];
     if (diff !== undefined) c.diff = diff;

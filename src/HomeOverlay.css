@@ -1,5 +1,5 @@
 /* HomeOverlay.css: Phase 5 Home. Theme tokens only (theme.css); 4px spacing
-   scale; opacity/transform-only motion, silenced by the global
+   scale; opacity/transform-only motion (the Peek pill fades by opacity), silenced by the global
    prefers-reduced-motion rule. */
 .hm-scrim {
   position: fixed; left: 0; right: 0; bottom: 0; top: 44px; /* below the titlebar */
@@ -8,7 +8,11 @@
   padding: 16px; display: flex;
 }
 .hm-panel {
-  flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column;
+  /* Hugs its content and grows downward only; the scrim shows the terminals beneath. */
+  flex: 0 1 auto; width: 100%; align-self: flex-start; min-width: 0; min-height: min(480px, 100%); max-height: 100%;
+  display: flex; flex-direction: column;
+  --hm-err-ink: color-mix(in srgb, var(--st-error) 80%, var(--text));
+  --hm-ok-ink: color-mix(in srgb, var(--st-running) 55%, var(--text));
   background: var(--elevated); border: 1px solid var(--line-strong); border-radius: 14px;
   box-shadow: var(--shadow-lg); animation: ntf-pop .16s var(--ease-out);
 }
@@ -27,10 +31,11 @@
 }
 
 .hm-body {
-  flex: 1; min-height: 0; padding: 16px; display: grid; gap: 12px;
+  flex: 0 1 auto; min-height: 0; padding: 16px; display: grid; gap: 12px;
   grid-template-columns: 1.4fr repeat(4, minmax(0, 1fr));
 }
-.hm-col { min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 8px; overflow-y: auto; }
+/* The 4px padding gives the focus ring (2px + 1px offset) room inside the overflow clip; the negative margin keeps the grid alignment. */
+.hm-col { min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 8px; overflow-y: auto; padding: 4px; margin: -4px; }
 .hm-colhead {
   margin: 0; display: flex; align-items: center; gap: 8px; flex: none;
   font-size: 12px; line-height: 16px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em;
@@ -41,54 +46,64 @@
 .hm-col.needs .hm-colhead::before { background: var(--st-waiting); }
 .hm-col.working .hm-colhead::before { background: var(--st-running); }
 .hm-col.review .hm-colhead::before { background: var(--azure); }
-.hm-n { font-family: var(--font-mono); font-size: 11px; font-weight: 500; color: var(--faint); }
-.hm-colempty { margin: 0; font-size: 11.5px; color: var(--faint); }
+.hm-n { font-family: var(--font-mono); font-size: 11px; font-weight: 500; color: var(--muted); }
+/* 72px matches the card min-height, so a card arriving does not shift the column. */
+.hm-colempty { margin: 0; padding: 12px; min-height: 72px; box-sizing: border-box; font-size: 11.5px; color: var(--muted); border: 1px dashed var(--line); border-radius: var(--r-md); }
 .hm-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 
 .hm-card {
   display: flex; flex-direction: column; gap: 4px; min-height: 72px; padding: 12px;
   background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r-md);
-  cursor: pointer; transition: border-color var(--dur-fast) var(--ease-standard);
+  cursor: pointer;
 }
 .hm-card:hover { border-color: var(--line-strong); }
+.hm-col.idle .hm-card, .hm-col.merged .hm-card { background: transparent; }
+.hm-col.merged .hm-name { color: var(--muted); }
 .hm-card:focus-visible { outline: var(--focus-ring-width) solid var(--focus-ring); outline-offset: 1px; }
 .hm-card.permission { border-left: 3px solid var(--st-waiting); }
 .hm-card.error { border-left: 3px solid var(--st-error); }
 .hm-card.question { border-left: 3px solid var(--azure); }
-.hm-card.snoozed { opacity: .6; }
+.hm-card.snoozed .hm-name, .hm-card.snoozed .hm-act { color: var(--muted); }
 .hm-r1 { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .hm-name { flex: 1; min-width: 0; font-size: 13px; line-height: 18px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.hm-since { flex: none; font-family: var(--font-mono); font-size: 11px; color: var(--faint); }
-.hm-where { font-size: 11px; line-height: 14px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hm-since { flex: none; font-family: var(--font-mono); font-size: 11px; color: var(--muted); }
+.hm-wrow { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; min-width: 0; }
+.hm-where { min-width: 0; font-size: 11px; line-height: 14px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hm-act {
   font-family: var(--font-mono); font-size: 12px; line-height: 16px; color: var(--text);
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere;
 }
-.hm-act.none { color: var(--faint); font-style: italic; font-family: inherit; }
+.hm-act.hm-req { -webkit-line-clamp: 3; white-space: pre-line; color: var(--muted); }
+.hm-act.none { color: var(--muted); font-style: italic; font-family: inherit; }
 .hm-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-height: 14px; flex: none; font-size: 11px; line-height: 14px; color: var(--muted); }
 .hm-diff { font-family: var(--font-mono); }
-.hm-diff .add { color: var(--st-running); }
-.hm-diff .del { color: var(--st-error); }
+.hm-diff .add { color: var(--hm-ok-ink); }
+.hm-diff .del { color: var(--hm-err-ink); }
 .hm-pr { color: var(--muted); }
-.hm-pr.passed { color: var(--st-running); }
-.hm-pr.failed { color: var(--st-error); }
-.hm-pr.running { color: var(--st-waiting); }
-.hm-pr.done { color: var(--faint); }
+.hm-pr.passed { color: var(--hm-ok-ink); }
+.hm-pr.failed { color: var(--hm-err-ink); }
+/* Gold means "needs you"; a running check is only information. */
+.hm-pr.running { color: var(--muted); }
+.hm-pr.done { color: var(--muted); }
 /* Fixed 60x12 so a value arriving never resizes the row. */
 .hm-skel { width: 60px; height: 12px; border-radius: var(--r-sm); background: color-mix(in srgb, var(--text) 8%, transparent); }
 .hm-tags { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 11px; line-height: 14px; }
 .hm-kind { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; color: var(--muted); }
 .hm-kind.permission { color: var(--st-waiting); }
-.hm-kind.error { color: var(--st-error); }
+.hm-kind.error { color: var(--hm-err-ink); }
 .hm-kind.question { color: var(--azure); }
-.hm-snooze { color: var(--faint); border: 1px solid var(--line); border-radius: var(--r-pill); padding: 0 6px; }
-.hm-actions { display: flex; gap: 8px; margin-top: 4px; }
+.hm-snooze { color: var(--muted); border: 1px solid var(--line); border-radius: var(--r-pill); padding: 0 6px; }
+.hm-actions { display: flex; gap: 12px; margin-top: 4px; }
 
 .hm-peekbtn {
   flex: none; font: inherit; font-size: 11px; line-height: 14px; padding: 0 6px; color: var(--muted);
   background: transparent; border: 1px solid var(--line); border-radius: var(--r-pill); cursor: pointer;
 }
 .hm-peekbtn:hover, .hm-peekbtn[aria-expanded="true"] { color: var(--text); border-color: var(--line-strong); }
+/* Outside Needs the pill shows on hover or focus only; opacity, so it stays a tab stop and shifts nothing. */
+.hm-peekbtn { transition: opacity var(--dur-fast) var(--ease-standard); }
+.hm-col:not(.needs) .hm-peekbtn { opacity: 0; }
+.hm-card:hover .hm-peekbtn, .hm-card:focus-within .hm-peekbtn, .hm-peekbtn[aria-expanded="true"], .hm-peekbtn:focus-visible { opacity: 1; }
 .hm-peekbtn:focus-visible { outline: var(--focus-ring-width) solid var(--focus-ring); outline-offset: 1px; }
 .hm-peek {
   display: flex; flex-direction: column; gap: 4px; padding: 8px; cursor: default;
@@ -98,7 +113,7 @@
   margin: 0; font-family: var(--font-mono); font-size: 11px; line-height: 14px; color: var(--muted);
   white-space: pre-wrap; overflow-wrap: anywhere; max-height: 168px; overflow-y: auto; /* 12 lines */
 }
-.hm-peek .note, .hm-peek.note { font-size: 11px; line-height: 14px; color: var(--faint); }
+.hm-peek .note, .hm-peek.note { font-size: 11px; line-height: 14px; color: var(--muted); }
 .hm-skel.wide { width: 100%; }
 .hm-reply { display: flex; flex-direction: column; gap: 4px; margin-top: 4px; cursor: default; }
 .hm-replyrow { display: flex; align-items: flex-end; gap: 8px; }
@@ -108,13 +123,14 @@
   max-height: 74px; /* 4 lines + padding + border */ overflow-y: auto;
 }
 .hm-field:focus-visible { outline: var(--focus-ring-width) solid var(--focus-ring); outline-offset: 1px; }
-.hm-field:disabled { opacity: .6; }
+.hm-field::placeholder { color: var(--muted); opacity: 1; }
+.hm-field:disabled { opacity: .6; } /* only while sending */
 .hm-btn:disabled { opacity: .5; cursor: default; }
-.hm-err { font-size: 11px; line-height: 14px; color: var(--st-error); }
-.hm-sent { margin-top: 4px; font-size: 11px; line-height: 14px; color: var(--st-running); }
+.hm-err { font-size: 11px; line-height: 14px; color: var(--hm-err-ink); }
+.hm-sent { margin-top: 4px; font-size: 11px; line-height: 14px; color: var(--hm-ok-ink); }
 
 .hm-btn {
-  font: inherit; font-size: 12px; padding: 4px 10px; color: var(--text); background: transparent;
+  font: inherit; font-size: 12px; min-height: 28px; padding: 5px 12px; color: var(--text); background: transparent;
   border: 1px solid var(--line-strong); border-radius: var(--r-sm); cursor: pointer;
 }
 .hm-btn:hover { background: color-mix(in srgb, var(--text) 6%, transparent); }
@@ -134,18 +150,30 @@
 .hm-col:focus { outline: none; }
 .hm-col:focus-visible .hm-colhead { outline: var(--focus-ring-width) solid var(--focus-ring); outline-offset: 2px; }
 .hm-fold {
-  display: inline-flex; align-items: center; gap: 8px; padding: 0; border: 0; background: transparent;
+  display: inline-flex; align-items: center; gap: 8px; padding: 0; min-height: 24px; width: 100%; border: 0; background: transparent;
   font: inherit; color: inherit; text-transform: inherit; letter-spacing: inherit; cursor: pointer;
 }
 .hm-fold:focus-visible { outline: var(--focus-ring-width) solid var(--focus-ring); outline-offset: 2px; }
-.hm-chev { width: 10px; text-align: center; font-family: var(--font-mono); color: var(--faint); }
+/* After the count, so every section label starts at its dot. */
+.hm-chev { width: 10px; margin-left: auto; text-align: center; font-family: var(--font-mono); color: var(--muted); }
 
 /* Below 1100px the five columns become one scrolling column of sections. */
 .hm-panel.stacked .hm-body { display: flex; flex-direction: column; gap: 16px; overflow-y: auto; }
 .hm-panel.stacked .hm-col { flex: none; overflow: visible; }
+.hm-panel.stacked .hm-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }
 
 .hm-others { display: inline-flex; flex-wrap: wrap; gap: 12px; }
+.hm-other { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.hm-otherlabel { color: var(--muted); }
+/* Other windows' workspaces: quiet outlined pills, same family as Peek. */
+.hm-wslink {
+  font: inherit; font-size: 11px; line-height: 14px; min-height: 24px; max-width: 160px; padding: 4px 8px; color: var(--text);
+  background: transparent; border: 1px solid var(--line-strong); border-radius: var(--r-pill); cursor: pointer;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.hm-wslink:hover { background: color-mix(in srgb, var(--text) 6%, transparent); }
+.hm-wslink:focus-visible { outline: var(--focus-ring-width) solid var(--focus-ring); outline-offset: 1px; }
 .hm-foot {
   display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; flex: none;
-  padding: 8px 16px; border-top: 1px solid var(--line); font-size: 11px; color: var(--faint);
+  padding: 8px 16px; border-top: 1px solid var(--line); font-size: 11px; color: var(--muted);
 }

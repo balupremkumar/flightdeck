@@ -20,7 +20,7 @@ import { IconClose, IconHome } from "./Icons";
 import { entryTail, PEEK_LINES, useHomeTails, type TailEntry } from "./homeTail";
 import {
   approveKeyFor, buildHome, cardName, cardStateKey, COLUMN_EMPTY, COLUMN_LABEL, effectiveSend, HOME_COLUMNS, mergedPanes,
-  otherWindowSummaries, permissionAsk, replyDrafts, sendsReducer,
+  otherWindowSummaries, permissionPrompt, replyDrafts, sendsReducer,
   type HomeCard, type HomeColumn, type HomeCtx, type SendState,
 } from "./home";
 import "./HomeOverlay.css";
@@ -340,11 +340,17 @@ export function HomeOverlay() {
 
   const renderCard = (c: HomeCard) => {
     // The pane's own title, else vendor plus branch; a process name is not an identity.
-    const { name, branchShown } = cardName(c.title, vendorShort(c.vendor), c.branch);
+    const { name, branchShown } = cardName(c.title, vendorShort(c.vendor), c.branch, c.titleManual);
     const where = c.branch && !branchShown ? `${c.wsName} / ${c.branch}` : c.wsName;
-    // A permission card shows the question or tool request above the menu, never an option.
-    const ask = c.kind === "permission" ? permissionAsk(entryTail(tails[c.paneId])?.lines ?? []) : null;
+    // A permission card shows the tool request and the question above the menu, never an option.
+    const isPerm = c.kind === "permission";
+    const permTail = isPerm ? entryTail(tails[c.paneId]) : undefined;
+    const { question: ask, request } = isPerm ? permissionPrompt(permTail?.lines ?? []) : { question: null, request: [] as string[] };
     const activity = ask ?? c.activity;
+    // No request line to show: open the peek so Approve is never blind.
+    const autoPeek = isPerm && !!permTail && request.length === 0;
+    const peekOpen = peeking.has(c.paneId) || autoPeek;
+    const approveShown = request.length > 0 || (peekOpen && !!permTail);
     const noActivity = c.kind === "permission" ? "Waiting for your approval" : null; // otherwise show nothing
     // Row 3: only what is known. A fixed-size bar holds the place of a value
     // still loading; a fetched "none" omits its part.
@@ -358,11 +364,14 @@ export function HomeOverlay() {
       : c.pr
         ? <span className={"hm-pr " + (c.pr.state.toUpperCase() === "OPEN" ? c.pr.checks : "done")}>{prLabel(c.pr)}</span>
         : null;
+    const meta = <div className="hm-meta" aria-busy={c.diff === undefined || c.pr === undefined}>{diffPart}{prPart}</div>;
     return (
       <li key={c.paneId}>
         <div
           className={"hm-card" + (c.kind ? " " + c.kind : "") + (c.snoozedUntil ? " snoozed" : "")}
           data-pane-id={c.paneId}
+          role="group"
+          aria-label={`${name}, ${c.kind ? KIND_LABEL[c.kind] : COLUMN_LABEL[c.column]}`}
           tabIndex={0}
           onClick={() => openPane(c)}
           onKeyDown={(e) => { if (e.key === "Enter" && e.target === e.currentTarget) { e.preventDefault(); openPane(c); } }}
@@ -372,31 +381,38 @@ export function HomeOverlay() {
             <span className="hm-name" title={name}>{name}</span>
             <button
               className="hm-peekbtn"
-              aria-expanded={peeking.has(c.paneId)}
+              aria-expanded={peekOpen}
+              aria-label={`Peek at ${name}`}
               title="Show recent output (Space)"
               onClick={(e) => { e.stopPropagation(); togglePeek(c.paneId); }}
             >Peek</button>
+          </div>
+          <div className="hm-wrow">
+            <span className="hm-where" title={where}>{where}</span>
             <span className="hm-since" title="Time in this state">{forMins(c.since, now)}</span>
           </div>
-          <div className="hm-where" title={where}>{where}</div>
+          {request.length > 0 && <div className="hm-act hm-req" title={request.join("\n")}>{request.join("\n")}</div>}
           {(activity || noActivity) && <div className={"hm-act" + (activity ? "" : " none")}>{activity ?? noActivity}</div>}
-          {/* Always rendered: its reserved height keeps the card from shifting when the row fills or empties. */}
-          <div className="hm-meta" aria-busy={c.diff === undefined || c.pr === undefined}>{diffPart}{prPart}</div>
+          {/* Always rendered: its reserved height keeps the card from shifting when the row fills or empties.
+              On Needs cards it sits below the action so a stale PR line never separates the ask from it. */}
+          {c.column !== "needs" && meta}
           {(c.kind || c.snoozedUntil) && (
             <div className="hm-tags">
               {c.kind && <span className={"hm-kind " + c.kind}><span className={"ntf-dot " + c.kind} />{KIND_LABEL[c.kind]}</span>}
               {c.snoozedUntil && <span className="hm-snooze">{snoozeLabel(c.snoozedUntil, now)}</span>}
             </div>
           )}
-          {peeking.has(c.paneId) && (
+          {peekOpen && (
             <div onClick={(e) => e.stopPropagation()}>
               <PeekBody entry={tails[c.paneId]} onRetry={() => { void refreshTail(c.paneId); }} />
             </div>
           )}
           {c.column === "needs" && (() => {
             const send = effectiveSend(sends[c.paneId], cardStateKey(c));
-            const canApprove = c.kind === "permission" && approveKeyFor(c.vendor, entryTail(tails[c.paneId])?.lines ?? []) !== null;
+            const keyKnown = approveKeyFor(c.vendor, entryTail(tails[c.paneId])?.lines ?? []) !== null;
             const sending = send.phase === "sending";
+            const approveReady = keyKnown && approveShown;
+            const approveWhy = approveReady ? undefined : !permTail ? "Reading the prompt" : keyKnown ? "Show the command first" : "Not sure what this prompt expects. Open the pane.";
             return (
               <>
                 {c.kind === "question" && send.phase !== "sent" && (
@@ -411,13 +427,20 @@ export function HomeOverlay() {
                 {send.phase === "sent" && <div className="hm-sent" role="status">Sent. Waiting for the agent.</div>}
                 {c.kind !== "question" && send.phase === "failed" && <div className="hm-err" role="alert">{send.error}</div>}
                 <div className="hm-actions">
-                  {canApprove && send.phase !== "sent" && (
-                    <button className="hm-btn primary" disabled={sending} onClick={(e) => { e.stopPropagation(); void approve(c); }}>
+                  {c.kind === "permission" && send.phase !== "sent" && (
+                    <button
+                      className="hm-btn primary"
+                      disabled={sending || !approveReady}
+                      title={approveWhy}
+                      aria-label={`Approve ${name}`}
+                      onClick={(e) => { e.stopPropagation(); void approve(c); }}
+                    >
                       {sending ? "Approving…" : "Approve"}
                     </button>
                   )}
-                  <button className="hm-btn" onClick={(e) => { e.stopPropagation(); openPane(c); }}>Open</button>
+                  <button className="hm-btn" aria-label={`Open ${name}`} onClick={(e) => { e.stopPropagation(); openPane(c); }}>Open</button>
                 </div>
+                {meta}
               </>
             );
           })()}
@@ -442,7 +465,7 @@ export function HomeOverlay() {
         <h2 className="hm-colhead">
           {fold ? (
             <button className="hm-fold" aria-expanded={!closed} onClick={() => setFolded((f) => ({ ...f, [col]: !closed }))}>
-              <span className="hm-chev" aria-hidden="true">{closed ? "+" : "-"}</span>{label}
+              {label}<span className="hm-chev" aria-hidden="true">{closed ? "+" : "-"}</span>
             </button>
           ) : label}
         </h2>
@@ -501,12 +524,12 @@ export function HomeOverlay() {
           {others.length > 0 && (
             <span className="hm-others">
               {others.map((o) => (
-                <span key={o.label}>
-                  {o.title}: {o.needsYou} need you, {o.working} working
+                <span className="hm-other" key={o.label}>
+                  <span className="hm-otherlabel">{o.title}: {o.needsYou} need you, {o.working} working</span>
                   {o.workspaces.map((w) => (
                     <button
                       key={w.id}
-                      className="hm-more"
+                      className="hm-wslink"
                       title={`Go to ${w.name} in ${o.title}`}
                       onClick={() => { setOpen(false); void focusRemoteWorkspace(o.label, w.id, w.paneId); }}
                     >{w.name}</button>

@@ -22,7 +22,7 @@ export interface WorktreeRef { worktreePath: string; branch: string; baseBranch:
 // persisted through session.ts like everything else on PaneModel.
 /** Phase 3: which surface a Claude pane shows. Absent = "terminal". */
 export type PaneViewMode = "terminal" | "chat";
-export interface PaneModel extends Partial<WorktreeRef> { id: number; vendor: string; cwd: string; state: PaneState; epoch: number; title?: string; needsSetup?: boolean; draft?: string; view?: PaneViewMode; focusMode?: boolean; color?: string; }
+export interface PaneModel extends Partial<WorktreeRef> { id: number; vendor: string; cwd: string; state: PaneState; epoch: number; title?: string; titleManual?: boolean; needsSetup?: boolean; draft?: string; view?: PaneViewMode; focusMode?: boolean; color?: string; }
 export interface Workspace { id: number; name: string; root: string; panes: PaneModel[]; focused: number | null; setupCmd?: string; }
 /** TN1: new Claude panes open in Chat when Settings > Agents says so; restored panes keep their saved view. */
 const newPaneView = (vendor: string): PaneViewMode | undefined =>
@@ -77,7 +77,8 @@ interface AppState {
   setPaneView: (paneId: number, view: PaneViewMode) => void;
   /** Persisted Claude fullscreen opt-in; changing it restarts the pane (epoch bump). */
   setPaneFocusMode: (paneId: number, on: boolean) => void;
-  renamePane: (paneId: number, title: string) => void;
+  /** `manual` marks a user-typed title (Home then shows it even if it equals a process name). */
+  renamePane: (paneId: number, title: string, manual?: boolean) => void;
   /** Pane colour tag: a swatch id from paneStyle.ts, or undefined to clear. */
   setPaneColor: (paneId: number, color: string | undefined) => void;
   renameWorkspace: (wsId: number, name: string) => void;
@@ -344,11 +345,11 @@ export const useApp = create<AppState>((set) => ({
 
   // Rename guards (UI-26): cap length so a pasted novel can't overflow the
   // fixed-width header/tile layouts.
-  renamePane: (paneId, title) =>
+  renamePane: (paneId, title, manual) =>
     set((s) => ({
       workspaces: s.workspaces.map((w) => ({
         ...w,
-        panes: w.panes.map((p) => (p.id === paneId ? { ...p, title: normalizePaneName(title) } : p)),
+        panes: w.panes.map((p) => (p.id === paneId ? { ...p, title: normalizePaneName(title), titleManual: manual && normalizePaneName(title) ? true : undefined } : p)),
       })),
     })),
 

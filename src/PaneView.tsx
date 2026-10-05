@@ -397,7 +397,7 @@ function PaneViewInner({
   }, [editing]);
 
   const commitRename = () => {
-    renamePane(pane.id, draft);
+    renamePane(pane.id, draft, true);
     setEditing(false);
   };
 
@@ -415,7 +415,7 @@ function PaneViewInner({
   };
   const closeStyle = () => setStyleOpen(false);
   const saveStyle = () => {
-    if (normalizePaneName(styleDraft) !== pane.title) renamePane(pane.id, styleDraft);
+    if (normalizePaneName(styleDraft) !== pane.title) renamePane(pane.id, styleDraft, true);
     setStyleOpen(false);
   };
   useOverlayEsc(styleOpen, closeStyle);

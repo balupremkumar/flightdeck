@@ -4,7 +4,7 @@ import type { PrInfo } from "./chipState";
 import type { PaneModel, PaneState, Workspace } from "./store";
 import {
   activityLine, approveKeyFor, buildHome, cardName, classifyPane, diffKey, homeKeyAllowed, isProcessTitle, markPaneMerged,
-  mergedPanes, otherWindowSummaries, permissionAsk, prCwd, type HomeCtx, type DiffStat,
+  mergedPanes, otherWindowSummaries, permissionAsk, permissionPrompt, prCwd, type HomeCtx, type DiffStat,
 } from "./home";
 
 const NOW = Date.now(); // needsHumanQueue reads the real clock for snooze
@@ -296,6 +296,7 @@ describe("card identity and activity line", () => {
     expect(isProcessTitle("pwsh.exe")).toBe(true);
     expect(isProcessTitle("Fix login flow")).toBe(false);
     expect(cardName("node", "Claude", "fix-x")).toEqual({ name: "Claude · fix-x", branchShown: true });
+    expect(cardName("claude", "Claude", "fix-x", true)).toEqual({ name: "claude", branchShown: false });
     expect(cardName("", "Codex")).toEqual({ name: "Codex", branchShown: false });
     expect(cardName("Fix login flow", "Claude", "fix-x")).toEqual({ name: "Fix login flow", branchShown: false });
   });
@@ -319,6 +320,13 @@ describe("card identity and activity line", () => {
     expect(permissionAsk(["old menu", "1. Yes", "2. No", "new question?", "1. Yes", "2. No"])).toBe("new question?");
     expect(permissionAsk(["no menu here", "just text"])).toBeNull();
     expect(permissionAsk(["❯ 1. Yes", "2. No"])).toBeNull();
+  });
+
+  it("permissionPrompt returns the request lines above the question", () => {
+    const tail = ["noise", "Bash command", "  rm -rf build", "Do you want to proceed?", "❯ 1. Yes", "  2. No"];
+    expect(permissionPrompt(tail)).toEqual({ question: "Do you want to proceed?", request: ["Bash command", "rm -rf build"] });
+    expect(permissionPrompt(["Do you want to run this command?", "❯ 1. Yes"])).toEqual({ question: "Do you want to run this command?", request: [] });
+    expect(permissionPrompt(["just text"])).toEqual({ question: null, request: [] });
   });
 
   it("buildHome puts the glyph-free line on the card", () => {
