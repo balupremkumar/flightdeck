@@ -1370,3 +1370,5 @@ This output is Claude Code's own TUI rendering inside xterm; Flightdeck draws no
 ## Nice to have (parked 2026-10-04)
 
 - [ ] NH1 Side-chat button for `/btw` and a task chip that spins out-of-scope work into a new worktree session (roadmap H4 part 2; source research/flightdeck-competitor-qol-2026-10/README.md lines 315, 319). Balu: no use in his workflow today.
+- [ ] NH2 Session-wide operations (snapshots, export/import, restore points) from a secondary window: merge all windows then act in main, instead of the 0.6.0 "switch to main window" refusal (Phase 4+5 red team item 8, docs/plans/phase4-5-redteam.md).
+- [ ] NH3 Multi-window S11 flag on by default after Balu's trial; S12 drag a workspace between windows; pane tear-out (docs/plans/phase4-multiwindow.md S15-S18).
