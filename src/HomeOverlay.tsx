@@ -9,7 +9,7 @@ import { useUI, useOverlayEsc } from "./ui";
 import { isTypingTarget } from "./isTypingTarget";
 import { get as getPaneSession, writeToPane } from "./paneSessions";
 import { useFocusTrap } from "./useFocusTrap";
-import { attentionKind, KIND_LABEL, lastLine, lastOutputAt, stateSince, forMins } from "./attention";
+import { KIND_LABEL, lastLine, lastOutputAt, stateSince, forMins } from "./attention";
 import { useVendors, vendorMeta, vendorShort } from "./vendors";
 import { VendorGlyph } from "./VendorGlyph";
 import { prLabel } from "./chipState";
@@ -17,6 +17,7 @@ import { focusRemoteWorkspace } from "./windowActions";
 import { useWindowSummaries } from "./windowSummary";
 import { buildTargets, useHomePoll, useHomePollStore } from "./homePoll";
 import { IconClose, IconHome } from "./Icons";
+import { approveGuarded } from "./homeApprove";
 import { entryTail, PEEK_LINES, useHomeTails, type TailEntry } from "./homeTail";
 import {
   approveKeyFor, buildHome, cardName, cardStateKey, COLUMN_EMPTY, COLUMN_LABEL, effectiveSend, HOME_COLUMNS, mergedPanes,
@@ -51,7 +52,6 @@ function useStacked(): boolean {
 const snoozeLabel = (until: number, now: number) => `Snoozed ${Math.max(1, Math.ceil((until - now) / 60_000))}m`;
 
 const SEND_FAILED = "Could not send to this pane. Try again or open it.";
-const APPROVE_STALE = "The prompt changed, so nothing was sent. Check it and approve again.";
 
 /** The reply box on a question card: auto-grows to 4 lines, Enter sends,
  *  Shift+Enter is a newline. The draft lives in `replyDrafts`, so Escape (which
@@ -213,17 +213,13 @@ export function HomeOverlay() {
   };
   const approve = async (c: HomeCard) => {
     const shown = entryTail(tails[c.paneId]);
-    const ok = await run(c, async () => {
-      // Re-check at click time: still a permission prompt, and the output has
-      // not moved since the prompt Approve was drawn from. Otherwise re-peek, send nothing.
-      const fresh = await refreshTail(c.paneId);
-      const pane = useApp.getState().workspaces.flatMap((w) => w.panes).find((p) => p.id === c.paneId);
-      if (!fresh || !shown || fresh.seq !== shown.seq || !pane || attentionKind(pane) !== "permission") return APPROVE_STALE;
-      const key = approveKeyFor(c.vendor, fresh.lines);
-      if (key === null) return APPROVE_STALE;
-      await writeToPane(c.paneId, key);
-      return null;
-    });
+    const ok = await run(c, () => approveGuarded({
+      vendor: c.vendor,
+      shown,
+      refresh: () => refreshTail(c.paneId),
+      readPane: () => useApp.getState().workspaces.flatMap((w) => w.panes).find((p) => p.id === c.paneId),
+      write: (key) => writeToPane(c.paneId, key),
+    }));
     if (ok) focusNextNeeds(c.paneId);
   };
 
