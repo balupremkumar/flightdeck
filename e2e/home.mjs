@@ -324,15 +324,45 @@ await page.waitForTimeout(9000);
 await page.keyboard.press("Control+Shift+H");
 const approveBtn = page.locator('.hm-col.needs [data-pane-id="5"] button', { hasText: "Approve" });
 await approveBtn.waitFor({ timeout: 15000 });
+// Approve now mounts at once (disabled while the prompt loads); wait for the prompt itself.
+await page.locator('.hm-col.needs [data-pane-id="5"] .hm-req').waitFor({ timeout: 15000 });
 // Lead review fixes: identity, activity line, permission question, reserved row.
 const names = await page.locator(".hm-name").allInnerTexts();
 check(names.length > 0 && names.every((n) => n.toLowerCase() !== "node"), `no card is titled by its process name (${names.join(", ")})`);
 const acts = await page.locator(".hm-act").allInnerTexts();
 check(acts.every((a) => /[\p{L}\p{N}]/u.test(a)), `no activity line is a bare glyph (${JSON.stringify(acts)})`);
-const ask5 = await page.locator('.hm-col.needs [data-pane-id="5"] .hm-act').innerText();
+const ask5 = await page.locator('.hm-col.needs [data-pane-id="5"] .hm-act:not(.hm-req)').innerText();
 check(ask5 === "Do you want to proceed?", `permission card shows the question, not an option ("${ask5}")`);
 const metaH = await page.locator(".hm-meta").evaluateAll((els) => els.map((e) => Math.round(e.getBoundingClientRect().height)));
 check(metaH.length > 0 && metaH.every((h) => h >= 14), `row 3 keeps its height on every card (${metaH})`);
+// Critique 2 and 3: the command being approved is on the card, and Approve is enabled once it shows.
+const req5 = await page.locator('.hm-col.needs [data-pane-id="5"] .hm-req').innerText();
+check(/rm -rf build/.test(req5), `permission card shows the command above the question ("${req5}")`);
+check(await approveBtn.isEnabled(), "Approve is enabled once the command and key are known");
+// Critique 1: the focused card's ring is not clipped by the column.
+await page.keyboard.press("j");
+await page.keyboard.press("k");
+const ringClip = await page.evaluate(() => {
+  const card = document.activeElement?.closest("[data-pane-id]");
+  const col = card?.closest(".hm-col");
+  if (!card || !col) return "no card focused";
+  const c = card.getBoundingClientRect(), k = col.getBoundingClientRect();
+  return c.left - 3 >= k.left && c.right + 3 <= k.right && c.top - 3 >= k.top ? "ok" : `clipped card=${c.left},${c.top},${c.right} col=${k.left},${k.top},${k.right}`;
+});
+check(ringClip === "ok", `focus ring fits inside the column (${ringClip})`);
+await page.screenshot({ path: path.join(shots, "home3-1440.png") });
+await page.evaluate(() => { document.documentElement.dataset.theme = "light"; });
+await page.waitForTimeout(300);
+await page.screenshot({ path: path.join(shots, "home3-light.png") });
+await page.evaluate(() => { delete document.documentElement.dataset.theme; });
+await page.setViewportSize({ width: 940, height: 800 });
+await page.waitForTimeout(400);
+await page.evaluate(() => document.querySelector(".hm-col.needs [data-pane-id]")?.focus());
+await page.keyboard.press("j");
+await page.keyboard.press("k");
+await page.screenshot({ path: path.join(shots, "home3-940.png") });
+await page.setViewportSize({ width: 1440, height: 900 });
+await page.waitForTimeout(400);
 const writesBefore = await page.evaluate(() => window.__calls.filter((x) => x.c === "pty_write").length);
 await approveBtn.click();
 await page.waitForFunction((n) => window.__calls.filter((x) => x.c === "pty_write").length > n, writesBefore, { timeout: 5000 });
