@@ -22,7 +22,8 @@ function focusable(root: HTMLElement): HTMLElement[] {
   );
 }
 
-export function useFocusTrap(ref: RefObject<HTMLElement | null>, active: boolean) {
+/** `shouldRestore`: return false to skip the return-focus step on close (an overlay that moved focus on purpose, e.g. Home opening a pane). */
+export function useFocusTrap(ref: RefObject<HTMLElement | null>, active: boolean, shouldRestore?: () => boolean) {
   useEffect(() => {
     if (!active) return;
     const root = ref.current;
@@ -67,7 +68,7 @@ export function useFocusTrap(ref: RefObject<HTMLElement | null>, active: boolean
     return () => {
       window.removeEventListener("keydown", onKey, true);
       // Return focus where it came from, if that element still exists.
-      if (returnTo && document.contains(returnTo)) returnTo.focus?.();
+      if (returnTo && document.contains(returnTo) && (shouldRestore?.() ?? true)) returnTo.focus?.();
     };
   }, [ref, active]);
 }

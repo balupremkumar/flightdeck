@@ -91,7 +91,21 @@
 .hm-empty strong { font-size: 13px; color: var(--text); font-weight: 600; }
 .hm-empty .hm-btn { margin-top: 8px; }
 
+.hm-col:focus { outline: none; }
+.hm-col:focus-visible .hm-colhead { outline: var(--focus-ring-width) solid var(--focus-ring); outline-offset: 2px; }
+.hm-fold {
+  display: inline-flex; align-items: center; gap: 8px; padding: 0; border: 0; background: transparent;
+  font: inherit; color: inherit; text-transform: inherit; letter-spacing: inherit; cursor: pointer;
+}
+.hm-fold:focus-visible { outline: var(--focus-ring-width) solid var(--focus-ring); outline-offset: 2px; }
+.hm-chev { width: 10px; text-align: center; font-family: var(--font-mono); color: var(--faint); }
+
+/* Below 1100px the five columns become one scrolling column of sections. */
+.hm-panel.stacked .hm-body { display: flex; flex-direction: column; gap: 16px; overflow-y: auto; }
+.hm-panel.stacked .hm-col { flex: none; overflow: visible; }
+
+.hm-others { display: inline-flex; flex-wrap: wrap; gap: 12px; }
 .hm-foot {
-  display: flex; flex-wrap: wrap; align-items: center; gap: 12px; flex: none;
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; flex: none;
   padding: 8px 16px; border-top: 1px solid var(--line); font-size: 11px; color: var(--faint);
 }
