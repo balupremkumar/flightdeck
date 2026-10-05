@@ -919,8 +919,17 @@ mod tests {
         }
         let el = t.elapsed();
         eprintln!("ring throughput: {} bytes in {:?} (debug_assertions={})", pushed, el, cfg!(debug_assertions));
+        // Work done: every byte was accepted and the ring stayed bounded. This is the
+        // part that must hold on any machine under any load.
+        assert_eq!(r.seq(), pushed as u64);
         assert!(r.len() <= DEFAULT_CAPACITY + 64 * 1024);
-        assert!(el.as_secs_f64() < 5.0, "too slow: {:?}", el);
+        // Speed: a wall-clock bound only means something on an idle release build.
+        // Debug is ~10x slower and a parallel cargo build alone pushed it past 5 s
+        // (5.5 s vs 3 s idle), so debug gets a ceiling that only a quadratic
+        // regression reaches. FD_PERF_BUDGET=1 forces the tight bound anywhere.
+        let strict = !cfg!(debug_assertions) || std::env::var_os("FD_PERF_BUDGET").is_some();
+        let limit = if strict { 5.0 } else { 60.0 };
+        assert!(el.as_secs_f64() < limit, "too slow: {:?} (limit {limit}s)", el);
     }
 
     #[test]
