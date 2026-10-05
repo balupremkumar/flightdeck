@@ -51,6 +51,47 @@ describe("redactText (UX-547, mirrors support.rs::redact)", () => {
   });
 });
 
+describe("redactText on real SerializeAddon output (RT-060 M2)", () => {
+  const KEY = "sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123";
+
+  it("redacts a coloured key, keeps the colour codes, CRLF and next row", () => {
+    const out = redactText("\x1b[32msk-ant-api03-abcdefghijklmnopqrstuvwxyz0123\x1b[0m\r\nnext");
+    expect(out).not.toContain("sk-ant-");
+    expect(out).toContain("next");
+    expect(out).toContain("\x1b[0m");
+    expect(out).toContain("\x1b[32m");
+    expect(out).toContain("\r\n");
+  });
+
+  it("redacts a KEY=value glue with a trailing CR and keeps KEY=", () => {
+    const out = redactText("KEY=abc123DEF456ghi789JKL012mno345\r");
+    expect(out).not.toContain("abc123DEF456ghi789JKL012mno345");
+    expect(out).toContain("KEY=");
+    expect(out).toContain("\r");
+  });
+
+  it("redacts keys separated by tab and NBSP", () => {
+    const out = redactText(`a\t${KEY}\u00a0b\u00a0${KEY}\tc`);
+    expect(out).not.toContain("sk-ant-");
+    expect(out).toBe("a\t[REDACTED]\u00a0b\u00a0[REDACTED]\tc");
+  });
+
+  it("redacts a row-final key followed by CRLF", () => {
+    const out = redactText(`token ${KEY}\r\nclean row\r\n`);
+    expect(out).toBe("token [REDACTED]\r\nclean row\r\n");
+  });
+
+  it("redacts quoted and bracketed keys", () => {
+    const out = redactText(`{"k":"${KEY}"} (${KEY}),`);
+    expect(out).not.toContain("sk-ant-");
+  });
+
+  it("still leaves coloured prose, paths and URLs alone", () => {
+    const input = "\x1b[1mcwd\x1b[0m D:\Dev\ai\projects\active\flightdeck\r\nhttps://example.com/a/b/c123456789012345678901234\r\n";
+    expect(redactText(input)).toBe(input);
+  });
+});
+
 describe("extractLastCommand (UX-549)", () => {
   it("picks up a Claude Code Bash(...) tool call, most recent one wins", () => {
     const lines = ["⏺ Bash(npm ci)", "installing…", "⏺ Bash(npm run build)", "build output here"];

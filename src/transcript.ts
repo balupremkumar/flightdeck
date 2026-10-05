@@ -65,14 +65,25 @@ function isSecretToken(word: string): boolean {
   return KEY_PREFIXES.some((p) => core.startsWith(p)) || isKeyShaped(word);
 }
 
+// Token boundaries for real xterm SerializeAddon output (RT-060 M2): CSI and
+// OSC escape sequences (so a colour code glued to a key never joins the token),
+// any other lone ESC, whitespace incl. \r \t and NBSP, and the punctuation that
+// glues keys to their context (KEY=value, "k":"v", (k), [k], {k}, a,b, a;b).
+// The capture group makes String.split keep the separators, so the original
+// text, colour codes included, is reassembled byte for byte around the splices.
+const TOKEN_SEP =
+  /(\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b|[\s\u00a0=:"'`,;()[\]{}<>|]+)/;
+
 /** Strips anything key-shaped (API keys, tokens) out of arbitrary text,
- *  token-by-token, line-by-line — same heuristic as the Rust support-bundle
- *  redactor, not cryptographically precise but catches the common shapes. */
+ *  token-by-token — same heuristic as the Rust support-bundle redactor, but
+ *  tokenised on ANSI/CR-aware boundaries so it holds on serialised terminal
+ *  output. Not cryptographically precise but catches the common shapes. */
 export function redactText(input: string): string {
+  // split with a capture group alternates token, separator, token, ...
   return input
-    .split("\n")
-    .map((line) => line.split(" ").map((tok) => (isSecretToken(tok) ? "[REDACTED]" : tok)).join(" "))
-    .join("\n");
+    .split(TOKEN_SEP)
+    .map((part, i) => (i % 2 === 0 && isSecretToken(part) ? "[REDACTED]" : part))
+    .join("");
 }
 
 // ---------------------------------------------------------------------------

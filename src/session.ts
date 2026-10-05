@@ -47,15 +47,18 @@ export interface PaneSummaryEntry {
   lastLine?: string;
 }
 
+// RT-060 M3: free-text pane fields reach disk, so they get the same pass as scrollback.
+const redactOpt = (s: string | undefined) => (s === undefined ? s : redactText(s));
+
 function summarize(workspaces: Workspace[]): PaneSummaryEntry[] {
   return workspaces.flatMap((w) =>
     w.panes.map((p): PaneSummaryEntry => ({
       workspaceName: w.name,
       vendor: p.vendor,
-      title: p.title,
+      title: redactOpt(p.title),
       cwd: p.cwd,
       state: p.state,
-      lastLine: lastLine.get(p.id),
+      lastLine: redactOpt(lastLine.get(p.id)),
     }))
   );
 }
@@ -220,12 +223,12 @@ export function toDraft(workspaces: Workspace[], activeId: number | null): Sessi
         id: p.id,
         vendor: p.vendor,
         cwd: p.cwd,
-        title: p.title,
+        title: redactOpt(p.title),
         titleManual: p.titleManual || undefined,
         worktreePath: p.worktreePath,
         branch: p.branch,
         baseBranch: p.baseBranch,
-        draft: p.draft,
+        draft: redactOpt(p.draft), // RT-060 M3: unsent input can be a pasted key
       })),
     })),
     // UX-554/561: pane groups and the "what was each pane doing" summary

@@ -53,6 +53,26 @@ describe("session restore (UX-581 draft round-trip / UX-583 restore report)", ()
     expect(draft.workspaces[0].panes.map((p) => p.titleManual)).toEqual([true, undefined]);
   });
 
+  it("redacts draft, title and summary lastLine before they reach the doc (RT-060 M3)", async () => {
+    mockInvoke.mockResolvedValue(null);
+    const key = "sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123";
+    await hydrateFrom(
+      [{ id: 1, name: "ws", root: "D:\proj", panes: [
+        { id: 10, vendor: "claude", cwd: "D:\proj", title: `title ${key}`, draft: key },
+      ] }],
+      1
+    );
+    const { lastLine } = await import("./attention");
+    lastLine.set(10, `\x1b[32m${key}\x1b[0m`);
+    const { toDraft } = await import("./session");
+    const doc = toDraft(useApp.getState().workspaces, 1);
+    lastLine.delete(10);
+    expect(JSON.stringify(doc)).not.toContain("sk-ant-");
+    expect(doc.workspaces[0].panes[0].draft).toBe("[REDACTED]");
+    expect(doc.workspaces[0].panes[0].title).toBe("title [REDACTED]");
+    expect((doc.uiPrefs as { summary: { lastLine: string }[] }).summary[0].lastLine).toContain("[REDACTED]");
+  });
+
   it("reports a plain (non-isolated) pane as status 'plain'", async () => {
     mockInvoke.mockResolvedValue(null);
     await hydrateFrom(
@@ -209,15 +229,11 @@ describe("scrollback sources (QL-762)", () => {
     expect(paneScrollbackCache()[1]).not.toContain("sk-ant-");
   });
 
-  // Recorded, not asserted-as-desired: redactText is a whitespace-token pass
-  // (it mirrors support.rs::redact), so a key glued to a prefix like `KEY=`
-  // survives it — here, and equally in the existing "Save scrollback
-  // (redacted)" export. Persisted scrollback REDUCES exposure, it does not
-  // guarantee a clean file. Flagged to whoever owns transcript.ts.
-  it("known gap: a key glued to an assignment prefix survives the pass", () => {
-    registerScrollbackSource(1, () => "export KEY=sk-ant-abcdefghijklmnopqrstuvwxyz0123");
+  it("redacts a key glued to an assignment prefix", () => {
+    registerScrollbackSource(1, () => "export KEY=sk-ant-abcdefghijklmnopqrstuvwxyz0123\r\n");
     refreshScrollbackCache();
-    expect(paneScrollbackCache()[1]).toContain("sk-ant-");
+    expect(paneScrollbackCache()[1]).not.toContain("sk-ant-");
+    expect(paneScrollbackCache()[1]).toContain("KEY=");
   });
 
   it("skips a pane whose serialiser throws rather than losing the whole save", () => {
