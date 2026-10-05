@@ -39,6 +39,7 @@ import {
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getName } from "@tauri-apps/api/app";
 import { pushMultiwindow } from "./windowBoot";
+import { mergeFirst } from "./windowMerge";
 import "./overlays.css";
 import { TerminalSettings, DEFAULT_TERMINAL_SETTINGS, CONTRAST_RANGE, TERM_LINE_HEIGHT_RANGE, PreviewWidth, ReadingSettings, DEFAULT_READING_SETTINGS, PREVIEW_FONT_RANGE, UI_TEXT_SCALE_RANGE, PREVIEW_LH_RANGE, PREVIEW_WIDTHS, READING_SETTINGS_KEY, getReadingSettings, applyReadingSettings, saveReadingSettings, parseRgb, luminance, adjustForContrast, TERMINAL_FONTS, getTerminalSettings, saveTerminalSettings, FIXED_SHORTCUTS, getShortcuts, saveShortcut, resetShortcuts, formatCombo, AgentSettings, DEFAULT_AGENT_SETTINGS, getAgentSettings, saveAgentSettings, EditorId, EditorSettings, EDITOR_PRESETS, DEFAULT_EDITOR_SETTINGS, getEditorSettings, saveEditorSettings, resolveEditorCommand, StartupBehavior, getStartupBehavior, saveStartupBehavior, getMultiwindow, saveMultiwindow, APP_VERSION, CHANGELOG, MIN_MEMORY_CEILING_MB, MAX_MEMORY_CEILING_MB, getMemoryCeilingMb, setMemoryCeilingMb, setHooksInstalled, HookStatus, hookStatusLine } from "./settingsStore";
 export * from "./settingsStore";
@@ -162,6 +163,7 @@ function SessionSection() {
     }).catch(() => null);
     if (!dest) return;
     try {
+      await mergeFirst(); // the backup holds every window's workspaces
       await exportBackup(dest);
       useUI.getState().pushToast("success", "Backup saved.");
     } catch (e) {
@@ -183,6 +185,7 @@ function SessionSection() {
       danger: true,
       onConfirm: async () => {
         try {
+          await mergeFirst(); // fold other windows in before the import replaces the session
           const doc = await importBackup(src);
           if (doc) {
             await adoptSession(doc);

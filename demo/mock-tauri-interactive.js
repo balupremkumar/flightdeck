@@ -31,7 +31,7 @@
   const BUS_CMDS = [
     "pty_spawn", "pty_attach", "pty_write", "pty_resize", "pty_kill", "pane_pause", "pane_resume",
     "window_boot", "window_heartbeat", "ws_transfer", "window_focus_next", "session_put_slice",
-    "window_close_self", "window_summary", "set_multiwindow",
+    "window_close_self", "window_summary", "set_multiwindow", "merge_all_windows", "window_focus_pane",
   ];
   const listeners = new Map(); // event name -> Set<callback>
   // Offset so pty ids never coincide with store model ids (as after a real restore).
@@ -742,6 +742,8 @@ index 3c92f1a..7d40b2e 100644
     window_close_self: () => null,
     window_summary: () => [],
     set_multiwindow: () => null,
+    merge_all_windows: () => [],
+    window_focus_pane: () => null,
     pane_pause: () => 0,
     pane_resume: () => null,
     list_restore_points: () => [],

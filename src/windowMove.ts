@@ -39,7 +39,15 @@ async function resumeAll(modelIds: number[]): Promise<void> {
   }
 }
 
-export async function moveWorkspaceToNewWindow(wsId: number): Promise<MoveResult> {
+export type MoveTarget = { kind: "new" } | { kind: "label"; label: string };
+
+export const moveWorkspaceToNewWindow = (wsId: number): Promise<MoveResult> => moveWorkspace(wsId, { kind: "new" });
+
+/** "Move workspace to window...": the same pause, serialise, release order; the target
+ *  takes it over `win://adopt` instead of booting with it. */
+export const moveWorkspaceToWindow = (wsId: number, label: string): Promise<MoveResult> => moveWorkspace(wsId, { kind: "label", label });
+
+async function moveWorkspace(wsId: number, target: MoveTarget): Promise<MoveResult> {
   const ws = useApp.getState().workspaces.find((w) => w.id === wsId);
   if (!ws) return refuse("That workspace is gone.", false);
 
@@ -90,12 +98,12 @@ export async function moveWorkspaceToNewWindow(wsId: number): Promise<MoveResult
   try {
     label = await invoke<string>("ws_transfer", {
       wsSnapshot: { workspaceId: wsId, transfer: { workspace: live, panes }, slice: toDraft([live], wsId) },
-      target: { kind: "new" },
+      target,
     });
   } catch (e) {
     await resumeAll(paused);
     logEvent("error", "windowMove", `ws_transfer failed: ${String(e)}`);
-    return refuse("Couldn't open a new window. The workspace stays here.");
+    return refuse(target.kind === "new" ? "Couldn't open a new window. The workspace stays here." : "Couldn't move the workspace to that window. It stays here.");
   }
 
   releaseWorkspace(wsId);

@@ -1055,6 +1055,7 @@ pub fn run() {
             windows::window_close_self,
             windows::window_summary,
             windows::set_multiwindow,
+            windows::merge_all_windows,
             windows::app_quit,
             chatlog::pane_session_info,
             chatlog::session_tail,

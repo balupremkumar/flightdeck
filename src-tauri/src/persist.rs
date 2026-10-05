@@ -449,6 +449,14 @@ fn flush_slices() {
 #[tauri::command(async)]
 pub fn session_put_slice(app: AppHandle, window: tauri::Window, slice: SessionDoc, flush: Option<bool>) -> Result<(), String> {
     let label = window.label().to_string();
+    // A workspace created inside a secondary has no holder yet: assign it to the
+    // window that made it (the registry validates the id partition), or the
+    // ownership check would drop it from the document and from a later merge.
+    let ids: Vec<u32> = slice.workspaces.iter().map(|w| w.id).collect();
+    let claimed = app.state::<crate::windows::WindowState>().lock().claim_unheld(&label, &ids);
+    if !claimed.is_empty() {
+        crate::applog::log("info", "window", &format!("window {label} created workspace(s) {claimed:?}: assigned to it"));
+    }
     let gen = {
         let mut g = SLICES.lock().unwrap_or_else(|e| e.into_inner());
         *g.puts.entry(label.clone()).or_insert(0) += 1;
@@ -513,6 +521,48 @@ pub(crate) fn seed_slice(label: &str, slice: SessionDoc) {
     g.dirty = true;
 }
 
+/// A workspace moved into an existing window: its slice gains the moved workspaces
+/// at once, so the document keeps them if the window dies before its next push.
+pub(crate) fn append_to_slice(label: &str, add: &SessionDoc) {
+    let mut g = SLICES.lock().unwrap_or_else(|e| e.into_inner());
+    append_workspaces(&mut g.by_label, label, add);
+    g.generation += 1;
+    g.dirty = true;
+}
+
+fn append_workspaces(by_label: &mut BTreeMap<String, SessionDoc>, label: &str, add: &SessionDoc) {
+    let slice = by_label.entry(label.to_string()).or_insert_with(|| SessionDoc {
+        version: default_version(),
+        saved_at: 0,
+        active_workspace_id: None,
+        workspaces: Vec::new(),
+        ui_prefs: serde_json::Value::Null,
+        windows: Vec::new(),
+    });
+    for w in &add.workspaces {
+        if !slice.workspaces.iter().any(|m| m.id == w.id) {
+            slice.workspaces.push(w.clone());
+        }
+    }
+    slice.active_workspace_id = add.active_workspace_id.or(slice.active_workspace_id);
+}
+
+/// Undo `append_to_slice` when the target could not be reached.
+pub(crate) fn remove_from_slice(label: &str, ws_id: u32) {
+    let mut g = SLICES.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(s) = g.by_label.get_mut(label) {
+        s.workspaces.retain(|w| w.id != ws_id);
+        g.generation += 1;
+        g.dirty = true;
+    }
+}
+
+/// `label`'s last slice, workspaces only (palette and Home summaries).
+pub(crate) fn slice_workspaces(label: &str) -> Vec<PersistedWorkspace> {
+    let g = SLICES.lock().unwrap_or_else(|e| e.into_inner());
+    g.by_label.get(label).map(|s| s.workspaces.clone()).unwrap_or_default()
+}
+
 /// Undo `seed_slice` when the window could not be created.
 pub(crate) fn drop_slice(label: &str) {
     let mut g = SLICES.lock().unwrap_or_else(|e| e.into_inner());
@@ -525,12 +575,6 @@ pub(crate) fn drop_slice(label: &str) {
 /// Pushes `label` has made so far; see `Slices::puts`.
 pub(crate) fn slice_puts(label: &str) -> u64 {
     SLICES.lock().unwrap_or_else(|e| e.into_inner()).puts.get(label).copied().unwrap_or(0)
-}
-
-/// Pane model ids in `label`'s last slice (the quit guard counts the live ones).
-pub(crate) fn slice_pane_ids(label: &str) -> Vec<u32> {
-    let g = SLICES.lock().unwrap_or_else(|e| e.into_inner());
-    g.by_label.get(label).map(|s| s.workspaces.iter().flat_map(|w| w.panes.iter().map(|p| p.id)).collect()).unwrap_or_default()
 }
 
 /// Does `label`'s last slice hold a workspace other than `moved`?
@@ -858,6 +902,18 @@ mod tests {
         let (doc, _) = merge_slices(&m, |_, id| id == 1 || id == 2);
         assert_eq!(doc.workspaces.iter().map(|w| w.id).collect::<Vec<_>>(), vec![1, 2]);
         assert_eq!(doc.windows[1].workspace_ids, vec![2]);
+    }
+
+    #[test]
+    fn appending_a_moved_workspace_creates_or_extends_the_target_slice_once() {
+        let mut m = BTreeMap::new();
+        m.insert("fw-1".to_string(), slice(vec![ws(1, 10)], Some(1), serde_json::json!({})));
+        append_workspaces(&mut m, "fw-1", &slice(vec![ws(2, 20)], Some(2), serde_json::json!({})));
+        append_workspaces(&mut m, "fw-1", &slice(vec![ws(2, 20)], Some(2), serde_json::json!({})));
+        assert_eq!(m["fw-1"].workspaces.iter().map(|w| w.id).collect::<Vec<_>>(), vec![1, 2]);
+        assert_eq!(m["fw-1"].active_workspace_id, Some(2));
+        append_workspaces(&mut m, "main", &slice(vec![ws(3, 30)], None, serde_json::json!({})));
+        assert_eq!(m["main"].workspaces.len(), 1, "a target that never pushed gets a slice");
     }
 
     #[test]

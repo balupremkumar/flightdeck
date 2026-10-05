@@ -210,8 +210,21 @@ describe("buildHome", () => {
     expect(mergedPanes.has(5)).toBe(true);
   });
 
-  it("v1 reports no other windows", () => {
+  it("no summary rows means no other windows", () => {
     expect(otherWindowSummaries()).toEqual([]);
+    expect(otherWindowSummaries([])).toEqual([]);
+  });
+
+  it("other windows list their workspaces read-only, with live panes not needing you as working", () => {
+    const rows = otherWindowSummaries([
+      { label: "fw-1", livePanes: 3, title: "Window 2", needsYou: 1, workspaces: [{ id: 5, name: "acme", paneId: 9 }, { id: 6, name: "api", paneId: null }] },
+      { label: "fw-2", livePanes: 0 },
+    ]);
+    expect(rows[0]).toEqual({
+      label: "fw-1", title: "Window 2", needsYou: 1, working: 2,
+      workspaces: [{ id: 5, name: "acme", paneId: 9 }, { id: 6, name: "api", paneId: null }],
+    });
+    expect(rows[1]).toEqual({ label: "fw-2", title: "fw-2", needsYou: 0, working: 0, workspaces: [] });
   });
 });
 

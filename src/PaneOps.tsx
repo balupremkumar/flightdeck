@@ -15,6 +15,7 @@ import { useApp, sendToPane, type PaneGroup, type PaneModel } from "./store";
 import { useUI, useOverlayEsc } from "./ui";
 import { closePaneWithCleanup } from "./worktrees";
 import { vendorShort } from "./vendors";
+import { mergeFirst } from "./windowMerge";
 import { IconClose, IconRefresh, IconBroadcast } from "./Icons";
 import {
   listSnapshots, saveSnapshot, deleteSnapshot, renameSnapshot, defPanesToNewPanes,
@@ -242,7 +243,6 @@ export function GroupsPanel({ open, onClose }: { open: boolean; onClose: () => v
 export function SessionSnapshots({ open, onClose }: { open: boolean; onClose: () => void }) {
   useOverlayEsc(open, onClose);
   const workspaces = useApp((s) => s.workspaces);
-  const activeId = useApp((s) => s.activeId);
   const createWorkspace = useApp((s) => s.createWorkspace);
   const pushToast = useUI((s) => s.pushToast);
   const requestConfirm = useUI((s) => s.requestConfirm);
@@ -252,11 +252,15 @@ export function SessionSnapshots({ open, onClose }: { open: boolean; onClose: ()
 
   const refresh = () => setList(listSnapshots());
 
-  const save = () => {
+  const save = async () => {
     if (workspaces.length === 0) { pushToast("info", "Nothing to snapshot — open a workspace first."); return; }
+    // Phase 4: a snapshot is the whole session, so fold the other windows in first and
+    // read the store after, not the render-time list.
+    try { await mergeFirst(); } catch (e) { pushToast("error", String(e instanceof Error ? e.message : e)); return; }
     const name = window.prompt("Name this snapshot:", "");
     if (name == null) return;
-    saveSnapshot(name, workspaces, activeId);
+    const live = useApp.getState();
+    saveSnapshot(name, live.workspaces, live.activeId);
     refresh();
     pushToast("success", "Snapshot saved.");
   };

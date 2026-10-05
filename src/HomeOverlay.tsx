@@ -13,6 +13,8 @@ import { attentionKind, KIND_LABEL, lastLine, lastOutputAt, stateSince, forMins 
 import { useVendors, vendorMeta, vendorShort } from "./vendors";
 import { VendorGlyph } from "./VendorGlyph";
 import { prLabel } from "./chipState";
+import { focusRemoteWorkspace } from "./windowActions";
+import { useWindowSummaries } from "./windowSummary";
 import { buildTargets, useHomePoll, useHomePollStore } from "./homePoll";
 import { IconClose, IconHome } from "./Icons";
 import { entryTail, PEEK_LINES, useHomeTails, type TailEntry } from "./homeTail";
@@ -118,6 +120,7 @@ export function HomeOverlay() {
   const workspaces = useApp((s) => s.workspaces);
   const snoozed = useUI((s) => s.snoozed);
   const vendors = useVendors((s) => s.vendors);
+  const windowRows = useWindowSummaries(open);
   const [now, setNow] = useState(() => Date.now());
   const [wsFilter, setWsFilter] = useState<number | null>(null);
   const [showAllMerged, setShowAllMerged] = useState(false);
@@ -333,7 +336,7 @@ export function HomeOverlay() {
 
   if (!open) return null;
 
-  const others = otherWindowSummaries();
+  const others = otherWindowSummaries(windowRows);
 
   const renderCard = (c: HomeCard) => {
     // The pane's own title, else vendor plus branch; a process name is not an identity.
@@ -498,7 +501,17 @@ export function HomeOverlay() {
           {others.length > 0 && (
             <span className="hm-others">
               {others.map((o) => (
-                <span key={o.label}>{o.title}: {o.needsYou} need you, {o.working} working</span>
+                <span key={o.label}>
+                  {o.title}: {o.needsYou} need you, {o.working} working
+                  {o.workspaces.map((w) => (
+                    <button
+                      key={w.id}
+                      className="hm-more"
+                      title={`Go to ${w.name} in ${o.title}`}
+                      onClick={() => { setOpen(false); void focusRemoteWorkspace(o.label, w.id, w.paneId); }}
+                    >{w.name}</button>
+                  ))}
+                </span>
               ))}
               <span>(read-only)</span>
             </span>

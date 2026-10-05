@@ -27,7 +27,7 @@ const { invoke } = await import("@tauri-apps/api/core");
 const { useApp } = await import("./store");
 const { useUI } = await import("./ui");
 const ps = await import("./paneSessions");
-const { moveWorkspaceToNewWindow } = await import("./windowMove");
+const { moveWorkspaceToNewWindow, moveWorkspaceToWindow } = await import("./windowMove");
 
 const log: string[] = [];
 let ptyOf: Record<number, number> = {};
@@ -157,6 +157,29 @@ describe("moveWorkspaceToNewWindow", () => {
     expect(r.ok).toBe(false);
     expect(log).toEqual(["invoke:pane_pause:1", "invoke:pane_pause:2", "invoke:pane_resume:1"]);
     expect(calls("ws_transfer")).toHaveLength(0);
+    expect(useApp.getState().workspaces.map((w) => w.id)).toContain(7);
+  });
+
+  it("moving to an existing window uses the same order and names the target label", async () => {
+    handlers.ws_transfer = () => "fw-2";
+    const r = await moveWorkspaceToWindow(7, "fw-2");
+    expect(r).toEqual({ ok: true, label: "fw-2" });
+    expect((calls("ws_transfer")[0][1] as { target: unknown }).target).toEqual({ kind: "label", label: "fw-2" });
+    expect(log).toEqual([
+      "invoke:pane_pause:1", "invoke:pane_pause:2",
+      "snapshot:1", "snapshot:2",
+      "invoke:ws_transfer",
+      "release:1", "release:2",
+      "detach",
+    ]);
+    expect(calls("pty_kill")).toHaveLength(0);
+  });
+
+  it("a refused move to a window resumes the panes and keeps the workspace", async () => {
+    handlers.ws_transfer = () => { throw new Error("window fw-9 is not open"); };
+    const r = await moveWorkspaceToWindow(7, "fw-9");
+    expect(r.ok).toBe(false);
+    expect(log.filter((l) => l.startsWith("invoke:pane_resume"))).toEqual(["invoke:pane_resume:1", "invoke:pane_resume:2"]);
     expect(useApp.getState().workspaces.map((w) => w.id)).toContain(7);
   });
 

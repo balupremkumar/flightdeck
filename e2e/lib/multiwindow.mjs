@@ -4,7 +4,8 @@
 // the Playwright Node process, shared by every page of a browser context:
 //
 //   - the window registry (windows.rs: labels, ownership, ordinals, assign_new_window)
-//   - slice acceptance (persist.rs: a label's slice keeps only workspaces it owns)
+//   - slice acceptance (persist.rs: a label's slice keeps only workspaces it owns; an unheld
+//     workspace in the label's id partition is claimed for it first, claim_unheld)
 //   - close semantics (windows.rs): flush then merge into main (closeWindow), merge from
 //     the last slice with no flush (crashWindow), retire a secondary left with nothing
 //   - the pty table and per-pane ring (lib.rs/paneout.rs: spawn, attach, pause/resume,
@@ -44,6 +45,7 @@ export class MultiWindowBus {
     this.transfers = []; // { from, to, workspaceId }
     this.merges = []; // { label, why, flushed, workspaceIds } secondaries folded into main
     this.retired = []; // labels destroyed because their assignment emptied
+    this.focuses = []; // { from, label, wsId, paneId } window_focus_pane calls
     this.multiwindow = false; // set by main's window_boot, like Rust
     this.slicePuts = new Map(); // label -> pushes seen (the flush acknowledgement)
     this.ensureMain();
@@ -83,6 +85,47 @@ export class MultiWindowBus {
     this.windows.get(label).workspaceIds = [wsId];
     this.windows.get(label).activeWs = wsId;
     return label;
+  }
+
+  /** windows.rs claim_unheld: a workspace made in a secondary belongs to that secondary. */
+  claimUnheld(label, ids) {
+    const rec = this.windows.get(label);
+    if (!rec || label === "main" || rec.ordinal === 0) return [];
+    const held = new Set([...this.windows.values()].flatMap((r) => r.workspaceIds));
+    const fresh = ids.filter((id) => id >> 24 === rec.ordinal && !held.has(id));
+    for (const id of fresh) if (!rec.workspaceIds.includes(id)) rec.workspaceIds.push(id);
+    return fresh;
+  }
+
+  /** windows.rs assign_to_window: the target must be another booted window. */
+  assignToWindow(source, target, wsId) {
+    const rec = this.windows.get(target);
+    if (target === source) throw new Error("that workspace is already in this window");
+    if (!this.owns(source, wsId)) throw new Error(`window ${source} does not own workspace ${wsId}`);
+    if (!rec?.booted) throw new Error(`window ${target} is not open`);
+    this.reassign(wsId, target);
+  }
+
+  reassign(wsId, to) {
+    for (const r of this.windows.values()) {
+      r.workspaceIds = r.workspaceIds.filter((i) => i !== wsId);
+      if (r.activeWs === wsId) r.activeWs = null;
+    }
+    const rec = this.windows.get(to);
+    if (rec) { rec.workspaceIds.push(wsId); rec.activeWs = wsId; }
+  }
+
+  /** windows.rs merge_all: flush every booted secondary, fold each into main. Returns the moved ids. */
+  async mergeAll() {
+    const labels = [...this.windows.keys()].filter((l) => l !== "main");
+    const booted = labels.filter((l) => this.windows.get(l).booted);
+    const flushed = new Map(await Promise.all(booted.map(async (l) => [l, await this.flush(l)])));
+    const moved = [];
+    for (const l of labels) {
+      moved.push(...(this.windows.get(l)?.workspaceIds ?? []));
+      await this.merge(l, "merged by Merge all windows", flushed.get(l) ?? false);
+    }
+    return moved;
   }
 
   // ---- close semantics (windows.rs: close_secondary / merge_window / retire_if_empty) ----
@@ -251,16 +294,43 @@ export class MultiWindowBus {
       case "window_heartbeat":
       case "window_focus_next":
         return null;
-      case "set_multiwindow":
+      case "set_multiwindow": {
+        const was = this.multiwindow;
         this.multiwindow = !!a.enabled;
+        // Turning the flag off runs Merge all windows (windows.rs set_multiwindow).
+        if (was && !a.enabled) await this.mergeAll();
         return null;
+      }
+      case "merge_all_windows": {
+        const moved = await this.mergeAll();
+        if (label !== "main") await this.pages.get("main")?.bringToFront().catch(() => {});
+        return moved;
+      }
+      case "window_focus_pane": {
+        const rec = this.windows.get(a.label);
+        const page = this.pages.get(a.label);
+        if (!rec || !page) throw new Error(`window ${a.label} is not registered`);
+        this.focuses.push({ from: label, label: a.label, wsId: a.wsId, paneId: a.paneId });
+        await page.bringToFront().catch(() => {});
+        await this.emitTo(a.label, "app://focus-pane", { wsId: a.wsId, paneId: a.paneId });
+        return null;
+      }
       case "window_summary":
         return [...this.windows.entries()]
           .filter(([l, r]) => l !== label && r.booted)
-          .map(([l]) => ({
-            label: l,
-            livePanes: (this.slices.get(l)?.workspaces ?? []).flatMap((w) => w.panes ?? []).filter((p) => this.byModel.has(p.id)).length,
-          }));
+          .map(([l, r]) => {
+            const workspaces = (this.slices.get(l)?.workspaces ?? []).filter((w) => this.owns(l, w.id)).map((w) => ({
+              id: w.id, name: w.name, root: w.root, paneId: w.panes?.[0]?.id ?? null,
+              livePanes: (w.panes ?? []).filter((p) => this.byModel.has(p.id)).length,
+            }));
+            return {
+              label: l,
+              title: l === "main" ? "Flightdeck" : `Window ${r.ordinal + 1}`,
+              needsYou: 0,
+              workspaces,
+              livePanes: workspaces.reduce((n, w) => n + w.livePanes, 0),
+            };
+          });
       case "window_close_self": {
         if (label === "main") throw new Error("main closes by quitting the app");
         const rec = this.windows.get(label);
@@ -269,6 +339,7 @@ export class MultiWindowBus {
         return null;
       }
       case "session_put_slice": {
+        this.claimUnheld(label, (a.slice.workspaces ?? []).map((w) => w.id));
         const kept = [];
         for (const w of a.slice.workspaces ?? []) {
           if (this.owns(label, w.id)) kept.push(w);
@@ -281,6 +352,20 @@ export class MultiWindowBus {
       case "ws_transfer": {
         if (!this.multiwindow) throw new Error("Multiple windows are turned off in Settings.");
         const snap = a.wsSnapshot;
+        if (a.target?.kind === "label") {
+          // Move to an existing window: same slice seeding, delivered over win://adopt.
+          const to = a.target.label;
+          this.assignToWindow(label, to, snap.workspaceId);
+          const have = this.slices.get(to) ?? { ...snap.slice, workspaces: [] };
+          if (!have.workspaces.some((w) => w.id === snap.workspaceId)) have.workspaces = [...have.workspaces, ...snap.slice.workspaces];
+          this.slices.set(to, have);
+          this.transfers.push({ from: label, to, workspaceId: snap.workspaceId });
+          await this.emitTo(to, "win://adopt", { from: label, workspaceIds: [snap.workspaceId], activeWs: snap.workspaceId, slice: snap.slice, transfer: snap.transfer });
+          await this.pages.get(to)?.bringToFront().catch(() => {});
+          const src = this.windows.get(label);
+          if (label !== "main" && src?.booted && src.workspaceIds.length === 0) setTimeout(() => this.retire(label), 50);
+          return to;
+        }
         const to = this.assignNewWindow(label, snap.workspaceId);
         this.slices.set(to, snap.slice);
         this.pending.set(to, snap.transfer);

@@ -10,7 +10,7 @@
 // Minting, the exiting flag and the geometry-free helpers are used by S8 onward.
 #![allow(dead_code)]
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -214,6 +214,58 @@ impl WindowRegistry {
         rec.workspace_ids = vec![ws_id];
         rec.active_ws = Some(ws_id);
         Ok(label)
+    }
+
+    /// A workspace made inside a secondary has no holder yet (main owns whatever
+    /// nobody lists). Give each unheld id in the partition of `label`'s ordinal to
+    /// `label`, so its slice survives the ownership check and merges back with it.
+    /// Never main (it owns the unheld by default), never an unregistered label, never
+    /// an id from another window's partition. Returns the ids claimed.
+    pub fn claim_unheld(&mut self, label: &str, ids: &[u32]) -> Vec<u32> {
+        let Some(ordinal) = self.windows.get(label).map(|r| r.ordinal) else { return Vec::new() };
+        if label == MAIN || ordinal == 0 {
+            return Vec::new();
+        }
+        let held: HashSet<u32> = self.windows.values().flat_map(|r| r.workspace_ids.iter().copied()).collect();
+        let fresh: Vec<u32> = ids.iter().copied().filter(|id| id >> 24 == ordinal && !held.contains(id)).collect();
+        let rec = self.windows.get_mut(label).expect("checked above");
+        for id in &fresh {
+            if !rec.workspace_ids.contains(id) {
+                rec.workspace_ids.push(*id);
+            }
+        }
+        fresh
+    }
+
+    /// Move `ws_id` to the booted window `target`, which must differ from `source`.
+    /// Errors if `source` does not own it or `target` is not up.
+    pub fn assign_to_window(&mut self, source: &str, target: &str, ws_id: u32) -> Result<(), String> {
+        validate_label(target)?;
+        if source == target {
+            return Err("that workspace is already in this window".into());
+        }
+        if !self.owns(source, ws_id) {
+            return Err(format!("window {source} does not own workspace {ws_id}"));
+        }
+        if !self.windows.get(target).is_some_and(|r| r.booted) {
+            return Err(format!("window {target} is not open"));
+        }
+        self.reassign(ws_id, target);
+        Ok(())
+    }
+
+    /// Make `to` the only owner of `ws_id`.
+    pub fn reassign(&mut self, ws_id: u32, to: &str) {
+        for r in self.windows.values_mut() {
+            r.workspace_ids.retain(|i| *i != ws_id);
+            if r.active_ws == Some(ws_id) {
+                r.active_ws = None;
+            }
+        }
+        if let Some(r) = self.windows.get_mut(to) {
+            r.workspace_ids.push(ws_id);
+            r.active_ws = Some(ws_id);
+        }
     }
 
     /// Refuse window-creating work while the flag is off.
@@ -434,6 +486,8 @@ pub struct WsSnapshot {
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum TransferTarget {
     New,
+    /// An existing, booted window (S9): it receives the workspace over `win://adopt`.
+    Label { label: String },
 }
 
 /// Move a workspace to a new window. Rust assigns it to the new label and parks the
@@ -451,29 +505,62 @@ pub async fn ws_transfer(
     ws_snapshot: WsSnapshot,
     target: TransferTarget,
 ) -> Result<String, String> {
-    let TransferTarget::New = target;
     let source = window.label().to_string();
     validate_label(&source)?;
     let ws_id = ws_snapshot.workspace_id;
-    let label = {
-        let mut reg = state.lock();
-        // The flag lives in JS; this is the second lock on the same door.
-        reg.require_multiwindow()?;
-        reg.ensure_main();
-        let label = reg.assign_new_window(&source, ws_id)?;
-        reg.stamp_created(&label, now_ms());
-        label
+    let label = match target {
+        TransferTarget::New => {
+            let label = {
+                let mut reg = state.lock();
+                // The flag lives in JS; this is the second lock on the same door.
+                reg.require_multiwindow()?;
+                reg.ensure_main();
+                let label = reg.assign_new_window(&source, ws_id)?;
+                reg.stamp_created(&label, now_ms());
+                label
+            };
+            persist::seed_slice(&label, ws_snapshot.slice);
+            pending_put(&label, ws_snapshot.transfer);
+            if let Err(e) = create_window(&app, &label) {
+                pending_take(&label);
+                persist::drop_slice(&label);
+                state.lock().rollback_new_window(&label, &source, ws_id);
+                crate::applog::log("error", "window", &format!("ws_transfer: could not create {label}: {e}"));
+                return Err(e);
+            }
+            crate::applog::log("info", "window", &format!("workspace {ws_id} moved from {source} to new window {label}"));
+            label
+        }
+        TransferTarget::Label { label } => {
+            {
+                let mut reg = state.lock();
+                reg.require_multiwindow()?;
+                reg.assign_to_window(&source, &label, ws_id)?;
+            }
+            persist::append_to_slice(&label, &ws_snapshot.slice);
+            let payload = AdoptPayload {
+                from: source.clone(),
+                workspace_ids: vec![ws_id],
+                active_ws: Some(ws_id),
+                slice: Some(ws_snapshot.slice),
+                transfer: Some(ws_snapshot.transfer),
+            };
+            if let Err(e) = app.emit_to(label.as_str(), ADOPT_EVENT, payload) {
+                state.lock().reassign(ws_id, &source);
+                persist::remove_from_slice(&label, ws_id);
+                crate::applog::log("error", "window", &format!("ws_transfer: could not reach {label}: {e}"));
+                return Err(e.to_string());
+            }
+            // The user just asked for this: follow the workspace.
+            if let Some(w) = app.get_webview_window(&label) {
+                let _ = w.show();
+                let _ = w.unminimize();
+                let _ = w.set_focus();
+            }
+            crate::applog::log("info", "window", &format!("workspace {ws_id} moved from {source} to window {label}"));
+            label
+        }
     };
-    persist::seed_slice(&label, ws_snapshot.slice);
-    pending_put(&label, ws_snapshot.transfer);
-    if let Err(e) = create_window(&app, &label) {
-        pending_take(&label);
-        persist::drop_slice(&label);
-        state.lock().rollback_new_window(&label, &source, ws_id);
-        crate::applog::log("error", "window", &format!("ws_transfer: could not create {label}: {e}"));
-        return Err(e);
-    }
-    crate::applog::log("info", "window", &format!("workspace {ws_id} moved from {source} to new window {label}"));
     // The last workspace left a secondary: nothing to show, so Rust closes it. A
     // slice workspace the registry never heard of (made in that window) keeps it open.
     if source != MAIN && !persist::slice_has_other_workspace(&source, ws_id) && state.lock().retire_if_empty(&source) {
@@ -592,28 +679,79 @@ struct AdoptPayload {
     workspace_ids: Vec<u32>,
     active_ws: Option<u32>,
     slice: Option<SessionDoc>,
+    /// Set when a workspace is moved to this window alive (S9): the paused panes'
+    /// screens and offsets, as `window_boot` hands them to a new window.
+    transfer: Option<serde_json::Value>,
 }
+
+/// Rust to a window: take these workspaces (a merge into main, or a move into it).
+pub const ADOPT_EVENT: &str = "win://adopt";
 
 /// Fold a secondary into main and destroy it. Never called for main. `why` goes
 /// in the log. The window is destroyed even when the registry no longer knows it
 /// (a close we prevented must still end).
-fn merge_window(app: &AppHandle, label: &str, why: &str) {
+fn merge_window(app: &AppHandle, label: &str, why: &str) -> Vec<u32> {
+    let mut moved = Vec::new();
     let adopted = app.state::<WindowState>().lock().adopt_into_main(label);
     if let Some((workspace_ids, active_ws)) = adopted {
         let slice = persist::fold_slice_into_main(label);
         crate::applog::log("info", "window", &format!("window {label} {why}: re-adopting {} workspace(s) into main", workspace_ids.len()));
         if !workspace_ids.is_empty() {
-            let _ = app.emit_to(MAIN, "win://adopt", AdoptPayload { from: label.to_string(), workspace_ids, active_ws, slice });
+            moved = workspace_ids.clone();
+            let _ = app.emit_to(MAIN, ADOPT_EVENT, AdoptPayload { from: label.to_string(), workspace_ids, active_ws, slice, transfer: None });
         }
     }
     if let Some(w) = app.get_webview_window(label) {
         let _ = w.destroy();
     }
+    moved
+}
+
+/// "Merge all windows": flush every booted secondary, then fold each into main.
+/// Returns the workspace ids that moved, so the caller can wait for main to hold
+/// them. Blocking (the flush waits up to CLOSE_FLUSH_MS); call off the async runtime.
+fn merge_all(app: &AppHandle) -> Vec<u32> {
+    let (flush, others): (Vec<String>, Vec<String>) = {
+        let state = app.state::<WindowState>();
+        let reg = state.lock();
+        let mut flush = Vec::new();
+        let mut others = Vec::new();
+        for l in reg.windows.keys() {
+            if let CloseAction::Merge { flush: f } = close_action(&reg, l) {
+                others.push(l.clone());
+                if f {
+                    flush.push(l.clone());
+                }
+            }
+        }
+        (flush, others)
+    };
+    if !flush.is_empty() && !flush_windows(app, &flush, CLOSE_FLUSH_MS) {
+        crate::applog::log("warn", "window", "merge all: a window did not flush in time; using its last slice");
+    }
+    others.iter().flat_map(|l| merge_window(app, l, "merged by Merge all windows")).collect()
+}
+
+/// Palette "Merge all windows". The caller may itself be a secondary and goes away
+/// with the rest; main is then brought forward, since the user just asked.
+#[tauri::command]
+pub async fn merge_all_windows(app: AppHandle, window: tauri::Window) -> Result<Vec<u32>, String> {
+    let caller = window.label().to_string();
+    let a = app.clone();
+    let moved = tauri::async_runtime::spawn_blocking(move || merge_all(&a)).await.map_err(|e| e.to_string())?;
+    if caller != MAIN {
+        if let Some(m) = app.get_webview_window(MAIN) {
+            let _ = m.show();
+            let _ = m.unminimize();
+            let _ = m.set_focus();
+        }
+    }
+    Ok(moved)
 }
 
 /// Re-adopt a dead secondary into main and destroy it.
 fn reap_window(app: &AppHandle, label: &str) {
-    merge_window(app, label, &format!("silent for {}s", HEARTBEAT_TIMEOUT_MS / 1000));
+    let _ = merge_window(app, label, &format!("silent for {}s", HEARTBEAT_TIMEOUT_MS / 1000));
 }
 
 /// Ask `labels` for a final slice and wait until each has pushed one, or the
@@ -634,7 +772,7 @@ fn close_secondary(app: &AppHandle, label: &str) {
         if flush && !flush_windows(app, &[label.to_string()], CLOSE_FLUSH_MS) {
             crate::applog::log("warn", "window", &format!("{label} did not flush within {CLOSE_FLUSH_MS} ms: using its last slice"));
         }
-        merge_window(app, label, "closed");
+        let _ = merge_window(app, label, "closed");
     }
 }
 
@@ -661,7 +799,7 @@ pub fn on_destroyed(app: &AppHandle, label: &str) {
         return;
     }
     if matches!(close_action(&app.state::<WindowState>().lock(), label), CloseAction::Merge { .. }) {
-        merge_window(app, label, "was destroyed without a merge");
+        let _ = merge_window(app, label, "was destroyed without a merge");
     }
 }
 
@@ -679,7 +817,7 @@ fn reap_unbooted(app: &AppHandle, label: &str) {
             }
         }
     }
-    merge_window(app, label, &format!("never booted in {}s", BOOT_TIMEOUT_MS / 1000));
+    let _ = merge_window(app, label, &format!("never booted in {}s", BOOT_TIMEOUT_MS / 1000));
 }
 
 pub fn spawn_watcher(app: AppHandle) {
@@ -713,31 +851,66 @@ pub fn window_close_self(app: AppHandle, window: tauri::Window, state: State<'_,
 }
 
 /// The Settings toggle: Rust's copy of the `flightdeck-multiwindow` flag, which
-/// `ws_transfer` checks. Async like every new command.
+/// `ws_transfer` checks. Turning it off runs "Merge all windows", so a secondary
+/// never outlives the flag. Async like every new command.
 #[tauri::command]
-pub async fn set_multiwindow(state: State<'_, WindowState>, enabled: bool) -> Result<(), String> {
-    state.lock().multiwindow = enabled;
+pub async fn set_multiwindow(app: AppHandle, state: State<'_, WindowState>, enabled: bool) -> Result<(), String> {
+    let was = std::mem::replace(&mut state.lock().multiwindow, enabled);
+    if was && !enabled {
+        let a = app.clone();
+        tauri::async_runtime::spawn_blocking(move || merge_all(&a)).await.map_err(|e| e.to_string())?;
+    }
     Ok(())
 }
 
-/// Live panes in a window other than the caller's, for the quit guard.
+/// One workspace of another window, for the palette's "Go to workspace" and Home.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SummaryWorkspace {
+    pub id: u32,
+    pub name: String,
+    pub root: String,
+    /// The pane to focus: the first one (a slice does not carry focus).
+    pub pane_id: Option<u32>,
+    pub live_panes: u32,
+}
+
+/// A window other than the caller's: live panes (the quit guard), plus its title and
+/// workspaces (palette, Home). Built from each window's last slice, so it trails the
+/// window by the 800 ms save debounce.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WindowSummary {
     pub label: String,
     pub live_panes: u32,
+    pub title: String,
+    pub needs_you: u32,
+    pub workspaces: Vec<SummaryWorkspace>,
 }
 
 #[tauri::command(async)]
-pub fn window_summary(window: tauri::Window, reg: State<'_, crate::Registry>, state: State<'_, WindowState>) -> Vec<WindowSummary> {
-    let labels: Vec<String> = state.lock().windows.iter().filter(|(l, r)| r.booted && l.as_str() != window.label()).map(|(l, _)| l.clone()).collect();
-    labels
-        .into_iter()
-        .map(|label| {
-            let ids = persist::slice_pane_ids(&label);
+pub fn window_summary(app: AppHandle, window: tauri::Window, reg: State<'_, crate::Registry>, state: State<'_, WindowState>) -> Vec<WindowSummary> {
+    let windows = state.lock().clone();
+    windows
+        .windows
+        .iter()
+        .filter(|(l, r)| r.booted && l.as_str() != window.label())
+        .map(|(label, rec)| {
             let by_model = crate::paneout::lock_map(&reg.by_model);
-            let live_panes = ids.iter().filter(|id| by_model.get(**id).is_some()).count() as u32;
-            WindowSummary { label, live_panes }
+            let workspaces: Vec<SummaryWorkspace> = persist::slice_workspaces(label)
+                .into_iter()
+                .filter(|w| windows.owns(label, w.id))
+                .map(|w| SummaryWorkspace {
+                    id: w.id,
+                    pane_id: w.panes.first().map(|p| p.id),
+                    live_panes: w.panes.iter().filter(|p| by_model.get(p.id).is_some()).count() as u32,
+                    name: w.name,
+                    root: w.root,
+                })
+                .collect();
+            let title = app.get_webview_window(label).and_then(|w| w.title().ok()).unwrap_or_else(|| label.clone());
+            let live_panes = workspaces.iter().map(|w| w.live_panes).sum();
+            WindowSummary { label: label.clone(), live_panes, title, needs_you: rec.attention.map_or(0, |a| a.count), workspaces }
         })
         .collect()
 }
@@ -821,6 +994,74 @@ mod tests {
         assert!(r.owns("fw-1", 2));
         assert!(!r.owns("fw-1", 1), "fw-1 owns only what it lists");
         assert!(!r.owns("fw-2", 2));
+    }
+
+    fn reg_with_secondary(ordinal: u32, ids: &[u32]) -> WindowRegistry {
+        let mut r = WindowRegistry::default();
+        r.ensure_main().booted = true;
+        let label = format!("fw-{ordinal}");
+        r.windows.insert(label, WindowRec { ordinal, ..rec(ids, true, 0) });
+        r
+    }
+
+    #[test]
+    fn a_secondary_claims_only_unheld_ids_from_its_own_partition() {
+        let own = (1 << 24) | 5;
+        let other = (2 << 24) | 5;
+        let mut r = reg_with_secondary(1, &[]);
+        r.windows.insert("fw-2".into(), WindowRec { ordinal: 2, ..rec(&[other], true, 0) });
+        assert_eq!(r.claim_unheld("fw-1", &[own, other, 9]), vec![own], "not another window's, not main's partition");
+        assert!(r.owns("fw-1", own));
+        assert!(!r.owns("main", own), "main no longer owns it by default");
+        assert_eq!(r.claim_unheld("fw-1", &[own]), Vec::<u32>::new(), "claiming twice adds nothing");
+        assert_eq!(r.windows["fw-1"].workspace_ids, vec![own]);
+    }
+
+    #[test]
+    fn main_and_unknown_labels_claim_nothing() {
+        let mut r = reg_with_secondary(1, &[]);
+        assert!(r.claim_unheld("main", &[7]).is_empty());
+        assert!(r.claim_unheld("fw-9", &[(9 << 24) | 1]).is_empty());
+    }
+
+    #[test]
+    fn a_workspace_made_in_a_secondary_merges_back_with_it() {
+        let id = (1 << 24) | 3;
+        let mut r = reg_with_secondary(1, &[]);
+        r.claim_unheld("fw-1", &[id]);
+        let (moved, _) = r.adopt_into_main("fw-1").expect("registered");
+        assert_eq!(moved, vec![id]);
+        assert!(r.owns("main", id));
+    }
+
+    #[test]
+    fn moving_to_an_existing_window_hands_over_ownership() {
+        let mut r = reg_with_secondary(1, &[]);
+        r.assign_to_window("main", "fw-1", 4).expect("main owns 4 by default");
+        assert!(r.owns("fw-1", 4) && !r.owns("main", 4));
+        assert_eq!(r.windows["fw-1"].active_ws, Some(4));
+        r.assign_to_window("fw-1", "main", 4).expect("and back");
+        assert!(r.windows["main"].workspace_ids.contains(&4) && r.windows["fw-1"].workspace_ids.is_empty());
+    }
+
+    #[test]
+    fn a_move_to_a_window_refuses_bad_targets_and_foreign_workspaces() {
+        let mut r = reg_with_secondary(1, &[8]);
+        assert!(r.assign_to_window("main", "main", 1).is_err(), "same window");
+        assert!(r.assign_to_window("main", "fw-5", 1).is_err(), "unknown window");
+        assert!(r.assign_to_window("main", "bogus", 1).is_err(), "bad label");
+        assert!(r.assign_to_window("main", "fw-1", 8).is_err(), "fw-1 holds 8, main does not own it");
+        r.windows.get_mut("fw-1").unwrap().booted = false;
+        assert!(r.assign_to_window("main", "fw-1", 1).is_err(), "not booted yet");
+        assert!(r.owns("main", 1), "a refused move changes nothing");
+    }
+
+    #[test]
+    fn transfer_target_parses_both_shapes() {
+        let new: TransferTarget = serde_json::from_str(r#"{"kind":"new"}"#).unwrap();
+        assert!(matches!(new, TransferTarget::New));
+        let to: TransferTarget = serde_json::from_str(r#"{"kind":"label","label":"fw-2"}"#).unwrap();
+        assert!(matches!(to, TransferTarget::Label { label } if label == "fw-2"));
     }
 
     #[test]

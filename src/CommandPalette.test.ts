@@ -14,7 +14,7 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ save: vi.fn(), open: vi.fn() }));
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn() }));
 
-const { fuzzyScore, rankByRecent, buildShortcutMap, ACTION_SHORTCUT_ID, pickTaskVendor, taskLabel, waitForAgentReady, sendTaskWhenReady } =await import("./CommandPalette");
+const { fuzzyScore, rankByRecent, buildShortcutMap, ACTION_SHORTCUT_ID, pickTaskVendor, taskLabel, waitForAgentReady, sendTaskWhenReady, buildWindowItems, buildMoveTargetItems } =await import("./CommandPalette");
 const { getShortcuts, FIXED_SHORTCUTS } = await import("./Settings");
 
 describe("fuzzyScore (command palette search matching)", () => {
@@ -86,6 +86,43 @@ describe("Open Home action (Phase 5)", () => {
   it("no other shortcut claims Ctrl+Shift+H", () => {
     const clash = [...getShortcuts(), ...FIXED_SHORTCUTS].filter((s) => s.combo === "Ctrl+Shift+H");
     expect(clash.map((s) => s.id)).toEqual(["home"]);
+  });
+});
+
+describe("Phase 4 window entries (flag flightdeck-multiwindow)", () => {
+  const others = [
+    { label: "fw-1", livePanes: 2, title: "Window 2", workspaces: [{ id: 5, name: "acme-web", root: "D:\\acme", paneId: 9, livePanes: 2 }] },
+  ];
+  const deps = (enabled: boolean, extra: Partial<Parameters<typeof buildWindowItems>[0]> = {}) =>
+    ({ enabled, hasActiveWs: true, others, startMoveToWindow: () => {}, ...extra });
+
+  it("lists nothing with the flag off, even with other windows known", () => {
+    expect(buildWindowItems(deps(false))).toEqual([]);
+  });
+
+  it("lists move to new window, move to window, merge all, next window and every window's workspaces with the flag on", () => {
+    const items = buildWindowItems(deps(true));
+    const ids = items.map((i) => i.id);
+    expect(ids).toEqual(expect.arrayContaining([
+      "act:move-workspace-window", "act:move-workspace-to-window", "act:merge-windows", "act:next-window", "rws:fw-1:5",
+    ]));
+    const go = items.find((i) => i.id === "rws:fw-1:5")!;
+    expect(go).toMatchObject({ section: "Workspaces", label: "acme-web", hint: "Window 2" });
+    expect(items.find((i) => i.id === "act:move-workspace-to-window")!.stay).toBe(true);
+  });
+
+  it("without an active workspace the move entries go but merge and next stay", () => {
+    const ids = buildWindowItems(deps(true, { hasActiveWs: false })).map((i) => i.id);
+    expect(ids).not.toContain("act:move-workspace-window");
+    expect(ids).not.toContain("act:move-workspace-to-window");
+    expect(ids).toContain("act:merge-windows");
+  });
+
+  it("Move workspace to window… lists the other windows by title", () => {
+    const rows = buildMoveTargetItems(others);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ id: "mv:fw-1", label: "Window 2", hint: "1 workspace" });
+    expect(buildMoveTargetItems([])).toEqual([]);
   });
 });
 

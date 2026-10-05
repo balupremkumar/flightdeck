@@ -10,7 +10,8 @@ import { runWorktreeGc } from "./worktrees";
 import { startAutosave, offerSessionRestore, crashedLastRun, armCleanExitSentinel, lastRestoreReport } from "./session";
 import { armGlobalErrorLog } from "./applog";
 import { syncReadRoots } from "./readscope";
-import { bootWindow, adoptBootInfo, listenForAdopt, closeWhenEmpty } from "./windowBoot";
+import { bootWindow, adoptBootInfo, listenForAdopt, listenForFocusPane, closeWhenEmpty } from "./windowBoot";
+import { armStorageSync } from "./storageSync";
 import { isMainWindow } from "./persist";
 
 // Flight recorder catch-alls FIRST: a throw or rejection anywhere in the boot
@@ -40,6 +41,9 @@ armCleanExitSentinel();
 // main-only), and main starts listening for workspaces folding back into it.
 const booted = bootWindow().then((info) => adoptBootInfo(info)).then(() => closeWhenEmpty());
 listenForAdopt();
+listenForFocusPane();
+// Phase 4: settings changed in another window apply here live (storage events).
+armStorageSync();
 void booted.then(() => offerSessionRestore()).then(() => {
   void runWorktreeGc();
   // UX-583: after a bad shutdown, say exactly what came back and whether each

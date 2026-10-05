@@ -311,10 +311,25 @@ export function markPaneMerged(paneId: number): void {
 // Multi-window seam
 // ---------------------------------------------------------------------------
 
-export interface OtherWindowSummary { label: string; title: string; needsYou: number; working: number }
+export interface OtherWindowSummary {
+  label: string;
+  title: string;
+  needsYou: number;
+  working: number;
+  workspaces: { id: number; name: string; paneId: number | null }[];
+}
 
-/** v1: no other-window data yet, so the footer strip renders nothing. Phase 4
- *  S11 wires this to `win://summary`. */
-export function otherWindowSummaries(): OtherWindowSummary[] {
-  return [];
+/** Other windows' workspaces, read-only, from Rust's `window_summary` (S9). No rows
+ *  (flag off, or one window) means the footer strip renders nothing. `working` is the
+ *  live panes not already counted as needing you. */
+export function otherWindowSummaries(
+  rows: { label: string; livePanes: number; title?: string; needsYou?: number; workspaces?: { id: number; name: string; paneId: number | null }[] }[] = [],
+): OtherWindowSummary[] {
+  return rows.map((r) => ({
+    label: r.label,
+    title: r.title ?? r.label,
+    needsYou: r.needsYou ?? 0,
+    working: Math.max(0, r.livePanes - (r.needsYou ?? 0)),
+    workspaces: (r.workspaces ?? []).map((w) => ({ id: w.id, name: w.name, paneId: w.paneId })),
+  }));
 }

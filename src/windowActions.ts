@@ -2,7 +2,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { getMultiwindow } from "./settingsStore";
 import { useApp } from "./store";
 import { useUI } from "./ui";
-import { moveWorkspaceToNewWindow } from "./windowMove";
+import { moveWorkspaceToNewWindow, moveWorkspaceToWindow } from "./windowMove";
+import { mergeAllWindows } from "./windowMerge";
 
 // Phase 4: the user-facing multi-window commands, shared by the keyboard chords
 // (Cockpit.tsx) and the command palette so both do exactly the same thing. Every
@@ -25,6 +26,34 @@ export async function moveActiveWorkspaceToNewWindow(): Promise<void> {
     return;
   }
   await moveWorkspaceToNewWindow(id);
+}
+
+/** Move the active workspace into an existing window (palette "Move workspace to window..."). */
+export async function moveActiveWorkspaceToWindow(label: string): Promise<void> {
+  if (!multiwindowEnabled()) return;
+  const id = useApp.getState().activeId;
+  if (id == null) {
+    useUI.getState().pushToast("info", "Open a workspace first, then move it to a window.");
+    return;
+  }
+  await moveWorkspaceToWindow(id, label);
+}
+
+/** Palette "Merge all windows": every secondary folds back into main. */
+export async function mergeAllWindowsCommand(): Promise<void> {
+  if (!multiwindowEnabled()) return;
+  const moved = await mergeAllWindows();
+  useUI.getState().pushToast("info", moved.length === 0 ? "There is only one window." : `Merged ${moved.length} workspace${moved.length === 1 ? "" : "s"} into the main window.`);
+}
+
+/** Bring another window forward and select a workspace's pane there. A click in
+ *  Flightdeck, so Rust may take focus. */
+export async function focusRemoteWorkspace(label: string, wsId: number, paneId: number | null): Promise<void> {
+  try {
+    await invoke("window_focus_pane", { label, wsId, paneId: paneId ?? 0 });
+  } catch (e) {
+    useUI.getState().pushToast("info", `Couldn't switch to that window: ${String(e)}`);
+  }
 }
 
 /** Bring the next Flightdeck window to the front (the user just asked for it). */

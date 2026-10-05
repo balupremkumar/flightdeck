@@ -53,6 +53,21 @@ function focusActivePane(ws: Workspace): void {
   }, 100);
 }
 
+/** Take a workspace moved here alive (a new window's boot transfer, or a
+ *  `win://adopt` into an existing window). */
+function adoptTransfer(t: TransferPayload): void {
+  // The panes' ptys are alive in Rust: mark them restored so the terminals
+  // attach instead of spawning, and hand each its source-side screen.
+  for (const p of t.workspace.panes) markRestoredPane(p.id);
+  stageTransfers(t.panes ?? {});
+  const ws: Workspace = { ...t.workspace, panes: t.workspace.panes.map((p) => ({ ...p, state: "starting" as const })) };
+  useApp.getState().adoptWorkspace(ws);
+  // Screen readers hear where the workspace went. Cockpit's live region mounts
+  // after this returns, so announce once it is in the DOM.
+  setTimeout(() => announce(`Workspace ${ws.name} moved to this window. ${ws.panes.length} pane${ws.panes.length === 1 ? "" : "s"}.`), 600);
+  focusActivePane(ws);
+}
+
 /** A secondary window's first job: take the workspace it was created for. Never
  *  throws; a window that cannot hydrate just shows the launcher. */
 export async function adoptBootInfo(info: BootInfo | null): Promise<void> {
@@ -60,16 +75,7 @@ export async function adoptBootInfo(info: BootInfo | null): Promise<void> {
   try {
     const t = info.transfer;
     if (t?.workspace) {
-      // The panes' ptys are alive in Rust: mark them restored so the terminals
-      // attach instead of spawning, and hand each its source-side screen.
-      for (const p of t.workspace.panes) markRestoredPane(p.id);
-      stageTransfers(t.panes ?? {});
-      const ws: Workspace = { ...t.workspace, panes: t.workspace.panes.map((p) => ({ ...p, state: "starting" as const })) };
-      useApp.getState().adoptWorkspace(ws);
-      // Screen readers hear where the workspace went. Cockpit's live region mounts
-      // after this returns, so announce once it is in the DOM.
-      setTimeout(() => announce(`Workspace ${ws.name} moved to this window. ${ws.panes.length} pane${ws.panes.length === 1 ? "" : "s"}.`), 600);
-      focusActivePane(ws);
+      adoptTransfer(t);
     } else if (info.slice && info.slice.workspaces.length > 0) {
       addRestoredUiPrefs(parseUiPrefs(info.slice.uiPrefs));
       await hydrateFrom(info.slice.workspaces, info.slice.activeWorkspaceId);
@@ -81,15 +87,21 @@ export async function adoptBootInfo(info: BootInfo | null): Promise<void> {
 
 /** Sent by Rust to main when a window's workspaces fold into it: the heartbeat
  *  watcher (a dead secondary), and later the close path. */
-interface AdoptPayload { from: string; workspaceIds: number[]; activeWs: number | null; slice: SessionDraft | null }
+interface AdoptPayload { from: string; workspaceIds: number[]; activeWs: number | null; slice: SessionDraft | null; transfer?: TransferPayload | null }
 
-/** Main only. Rebuilds the folded workspaces from the dead window's last slice and
- *  adds them; their ptys are still running in Rust, so the terminals attach. */
+/** Every window listens. A payload with a `transfer` is a workspace moved here alive
+ *  ("Move workspace to window..."): adopt it as a new window does at boot. Otherwise
+ *  it is a fold into main: rebuild the workspaces from the closed window's last slice
+ *  and add them; their ptys are still running in Rust, so the terminals attach. */
 export function listenForAdopt(): void {
-  if (!isMainWindow()) return;
   void listen<AdoptPayload>("win://adopt", async (e) => {
-    const { from, workspaceIds, activeWs, slice } = e.payload;
+    const { from, workspaceIds, activeWs, slice, transfer } = e.payload;
     try {
+      if (transfer?.workspace) {
+        if (!useApp.getState().workspaces.some((w) => w.id === transfer.workspace.id)) adoptTransfer(transfer);
+        return;
+      }
+      if (!isMainWindow()) return;
       if (!slice) { logEvent("warn", "windowBoot", `win://adopt from ${from} carried no slice; its workspaces cannot be restored`); return; }
       const known = new Set(useApp.getState().workspaces.map((w) => w.id));
       const fresh = slice.workspaces.filter((w) => workspaceIds.includes(w.id) && !known.has(w.id));
@@ -103,7 +115,21 @@ export function listenForAdopt(): void {
   }).catch(() => { /* browser preview */ });
 }
 
-/** Tell Rust the Settings toggle changed; ws_transfer refuses while it is off. */
+/** Rust asks this window to select a pane (a palette or Home click in another window,
+ *  which `window_focus_pane` has already brought to the front). */
+export function listenForFocusPane(): void {
+  void listen<{ wsId: number; paneId: number }>("app://focus-pane", (e) => {
+    const { wsId, paneId } = e.payload;
+    const st = useApp.getState();
+    const ws = st.workspaces.find((w) => w.id === wsId);
+    if (!ws) return;
+    st.switchWorkspace(ws.id);
+    if (ws.panes.some((p) => p.id === paneId)) st.focusPane(ws.id, paneId);
+  }).catch(() => { /* browser preview */ });
+}
+
+/** Tell Rust the Settings toggle changed; ws_transfer refuses while it is off, and
+ *  turning it off makes Rust merge every secondary into main. */
 export function pushMultiwindow(enabled: boolean): void {
   void invoke("set_multiwindow", { enabled }).catch(() => { /* browser preview */ });
 }
@@ -123,7 +149,9 @@ export function closeWhenEmpty(): void {
   check();
 }
 
-export interface WindowSummary { label: string; livePanes: number }
+/** A workspace in another window, from that window's last slice. */
+export interface RemoteWorkspace { id: number; name: string; root: string; paneId: number | null; livePanes: number }
+export interface WindowSummary { label: string; livePanes: number; title?: string; needsYou?: number; workspaces?: RemoteWorkspace[] }
 
 /** Live panes in the other windows, for the quit guard. Empty outside Tauri, on a
  *  build without the command, or when this is the only window. */

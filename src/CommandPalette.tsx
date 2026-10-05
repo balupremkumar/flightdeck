@@ -6,7 +6,12 @@ import { closePaneGuarded, spawnPane } from "./worktrees";
 import { agentVendors, vendorShort } from "./vendors";
 import { openSessionLauncher } from "./sessionLauncherLogic";
 import { checkForUpdate } from "./updater";
-import { multiwindowEnabled, moveActiveWorkspaceToNewWindow, focusNextWindow } from "./windowActions";
+import {
+  multiwindowEnabled, moveActiveWorkspaceToNewWindow, moveActiveWorkspaceToWindow, mergeAllWindowsCommand,
+  focusRemoteWorkspace, focusNextWindow,
+} from "./windowActions";
+import { useWindowSummaries } from "./windowSummary";
+import type { WindowSummary } from "./windowBoot";
 import { getShortcuts, FIXED_SHORTCUTS } from "./settingsStore";
 import { IconWorkspace, IconAgent, IconSettings, IconClose } from "./Icons";
 import { VendorGlyph } from "./VendorGlyph";
@@ -174,6 +179,57 @@ export const ACTION_SHORTCUT_ID: Record<string, string> = {
   "act:next-window": "next-window",
 };
 
+/** Phase 4: every multi-window entry, hidden entirely with the flag off. "Go to
+ *  workspace" rows list the other windows' workspaces from `window_summary`. Pure, so
+ *  the palette test can check what shows with the flag off and on. */
+export function buildWindowItems(d: { enabled: boolean; hasActiveWs: boolean; others: WindowSummary[]; startMoveToWindow: () => void }): Item[] {
+  if (!d.enabled) return [];
+  const list: Item[] = [];
+  if (d.hasActiveWs) {
+    list.push({
+      id: "act:move-workspace-window",
+      section: "Actions",
+      label: "Move workspace to new window",
+      keywords: "window detach pop out separate monitor",
+      run: () => { void moveActiveWorkspaceToNewWindow(); },
+    });
+    list.push({
+      id: "act:move-workspace-to-window",
+      section: "Actions",
+      label: "Move workspace to window…",
+      keywords: "window send existing other",
+      stay: true,
+      run: d.startMoveToWindow,
+    });
+  }
+  list.push({ id: "act:merge-windows", section: "Actions", label: "Merge all windows", keywords: "combine join one window", run: () => { void mergeAllWindowsCommand(); } });
+  list.push({ id: "act:next-window", section: "Actions", label: "Next window", keywords: "switch focus window", run: () => { void focusNextWindow(); } });
+  for (const o of d.others) {
+    for (const w of o.workspaces ?? []) {
+      list.push({
+        id: `rws:${o.label}:${w.id}`,
+        section: "Workspaces",
+        label: w.name,
+        hint: o.title ?? o.label,
+        keywords: `${w.root} ${o.title ?? o.label} window`,
+        run: () => { void focusRemoteWorkspace(o.label, w.id, w.paneId); },
+      });
+    }
+  }
+  return list;
+}
+
+/** The "Move workspace to window…" second step: the other windows, by title. */
+export function buildMoveTargetItems(others: WindowSummary[]): Item[] {
+  return others.map((o) => ({
+    id: `mv:${o.label}`,
+    section: "Actions" as const,
+    label: o.title ?? o.label,
+    hint: `${(o.workspaces ?? []).length} workspace${(o.workspaces ?? []).length === 1 ? "" : "s"}`,
+    run: () => { void moveActiveWorkspaceToWindow(o.label); },
+  }));
+}
+
 export function CommandPalette() {
   const workspaces = useApp((s) => s.workspaces);
   const switchWorkspace = useApp((s) => s.switchWorkspace);
@@ -192,6 +248,8 @@ export function CommandPalette() {
   const [query, setQuery] = useState("");
   const [index, setIndex] = useState(0);
   const [taskMode, setTaskMode] = useState(false);
+  const [moveMode, setMoveMode] = useState(false);
+  const others = useWindowSummaries(open);
   const inputRef = useRef<HTMLInputElement>(null);
   const activeRef = useRef<HTMLDivElement>(null);
 
@@ -216,11 +274,13 @@ export function CommandPalette() {
     setQuery("");
     setIndex(0);
     setTaskMode(false);
+    setMoveMode(false);
     const id = requestAnimationFrame(() => inputRef.current?.focus());
     return () => cancelAnimationFrame(id);
   }, [open]);
 
   const items = useMemo<Item[]>(() => {
+    if (moveMode) return buildMoveTargetItems(others);
     const list: Item[] = [];
     for (const w of workspaces) {
       list.push({ id: `ws:${w.id}`, section: "Workspaces", label: w.name, hint: w.root, run: () => switchWorkspace(w.id) });
@@ -363,18 +423,12 @@ export function CommandPalette() {
       });
     }
     // Phase 4: only with Settings > Windows > Multiple windows (preview) on.
-    if (multiwindowEnabled()) {
-      if (activeWs) {
-        list.push({
-          id: "act:move-workspace-window",
-          section: "Actions",
-          label: "Move workspace to new window",
-          keywords: "window detach pop out separate monitor",
-          run: () => { void moveActiveWorkspaceToNewWindow(); },
-        });
-      }
-      list.push({ id: "act:next-window", section: "Actions", label: "Next window", keywords: "switch focus window", run: () => { void focusNextWindow(); } });
-    }
+    list.push(...buildWindowItems({
+      enabled: multiwindowEnabled(),
+      hasActiveWs: !!activeWs,
+      others,
+      startMoveToWindow: () => { setMoveMode(true); setQuery(""); requestAnimationFrame(() => inputRef.current?.focus()); },
+    }));
     // UX-530: attach the real bound combo where one exists, read fresh off
     // Settings.tsx's registries on every recompute (open/close, workspace
     // changes) so a rebind is reflected without a special cache-bust path.
@@ -388,6 +442,7 @@ export function CommandPalette() {
     workspaces, switchWorkspace, focusPane, restartPane, startCreate,
     setSettingsOpen, pushToast, requestConfirm, explorerOpen, setExplorerOpen, setBroadcastOpen, setReviewPane,
     open, // recompute on each open so the multiwindow flag is read fresh
+    others, moveMode,
   ]);
 
   const results = useMemo(() => {
@@ -470,7 +525,7 @@ export function CommandPalette() {
           <input
             ref={inputRef}
             className="cmdp-input"
-            placeholder={taskMode ? "Describe the task, then press Enter…" : "Jump to a workspace, pane, or action…"}
+            placeholder={taskMode ? "Describe the task, then press Enter…" : moveMode ? "Move to which window…" : "Jump to a workspace, pane, or action…"}
             aria-label={taskMode ? "New task description" : undefined}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
@@ -484,7 +539,10 @@ export function CommandPalette() {
               New task: starts a {vendorShort(pickTaskVendor(agentVendors()))} pane in the active workspace, named after your text.
             </div>
           )}
-          {!taskMode && results.length === 0 && (
+          {moveMode && results.length === 0 && (
+            <div className="cmdp-empty">No other window is open. Use "Move workspace to new window" instead.</div>
+          )}
+          {!taskMode && !moveMode && results.length === 0 && (
             <div className="cmdp-empty">
               {/* QOL 352: a bare "no matches" is a dead end — say what CAN be
                   searched, since that's the question the user actually has. */}

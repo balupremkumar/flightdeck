@@ -12,7 +12,7 @@ import { listen } from "@tauri-apps/api/event";
 import { useApp, type PaneModel, type PaneGroup, type Workspace } from "./store";
 import { useUI } from "./ui";
 import {
-  loadSession, isSafeMode, hasPreviousSession, makeDebouncedSave, isMainWindow,
+  loadSession, isSafeMode, hasPreviousSession, makeDebouncedSave, isMainWindow, putSlice,
   type SessionDraft, type PersistedWorkspace,
 } from "./persist";
 import { repoToplevel, closeWorkspaceWithCleanup, type WorktreeInfo } from "./worktrees";
@@ -21,6 +21,7 @@ import { markRestoredPane } from "./ptyAttach";
 import { lastLine } from "./attention";
 import { redactText } from "./transcript";
 import { parsePaneColors } from "./paneStyle";
+import { mergeFirst, registerSliceFlush } from "./windowMerge";
 
 // UX-581: `draft` (the pane's unsent input line) isn't on persist.ts's
 // PersistedPane type yet — that file belongs to the persist.rs wiring, not
@@ -351,6 +352,15 @@ export function startAutosave() {
     saver.schedule(draft);
     saver.flush(true);
   }).catch(() => { /* browser preview */ });
+  // Phase 4 merge-first: after secondaries fold into main, put the merged slice on disk
+  // (and wait for it) before a session-wide operation reads the document.
+  registerSliceFlush(async () => {
+    refreshScrollbackCache();
+    const s = useApp.getState();
+    const draft = toDraft(s.workspaces, s.activeId);
+    lastSavedJson = JSON.stringify(draft);
+    await putSlice(draft, true);
+  });
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "hidden") finalSave();
   });
@@ -472,8 +482,11 @@ export async function hydrateFrom(persisted: PersistedWorkspace[], activeId: num
 
 /** UI-191: adopt a restore point / imported backup as the live session.
  *  Closes what's open first (cleaning up its worktrees) so nothing is stranded,
- *  then hydrates and persists the adopted document as current. */
+ *  then hydrates and persists the adopted document as current.
+ *  Phase 4: every window's workspaces fold into main first, so "what's open" and
+ *  what gets closed here is the whole session. Throws in a secondary. */
 export async function adoptSession(doc: { workspaces: PersistedWorkspace[]; activeWorkspaceId: number | null }) {
+  await mergeFirst();
   for (const w of useApp.getState().workspaces) {
     closeWorkspaceWithCleanup({ id: w.id, panes: w.panes });
   }
