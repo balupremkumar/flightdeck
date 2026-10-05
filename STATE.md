@@ -1,15 +1,16 @@
 ---
-hub_updated: 2026-10-04
-hub_status: paused
+hub_updated: 2026-10-05
+hub_status: active
 hub_lane: products
-hub_last: "Phase 6 + TN (Claude output one line per action) + Phase 4 S1-S3 merged to main, gated; not released."
-hub_next: "Resume from docs/plans/RESUME-2026-10-05.md: Phase 4 S4-S10, Phase 5 Home, Fable red team, 0.6.0 Canary."
-hub_you: "Say go for Phase 4; install and run the 0.6.0 checklist when it is cut."
+hub_last: "Phase 4 S4 (pane release, detach/adopt, dark) on qol/phase-4; S5 readscope and S6 session doc v2 in flight."
+hub_next: "Phase 4 S7-S10, Phase 5 Home, Fable red team, 0.6.0 Canary, run end to end without phase stops."
+hub_you: "Install the 0.6.0 Canary and run the checklist once it is cut."
 ---
 # STATE — Flightdeck
 
 Vault: [[HOME]] | [[PORTFOLIO|Portfolio]] | [[projects/active/flightdeck/BACKLOG|Backlog]]
 
+UPDATE 2026-10-05: qol/phase-4 from main; S4 merged (1db7b87, vitest 1340); S5 + S6/S6b in agent worktrees; stale worktrees removed.
 Updated: 2026-09-19 (lag root-caused and fixed on branch flightdeck/pfi232, uncommitted; full roadmap written to BACKLOG.md section N).
 
 ## CURRENT 2026-09-19: the "laggy with Antigravity" bug is root-caused and fixed on this branch (uncommitted, not yet cut)
