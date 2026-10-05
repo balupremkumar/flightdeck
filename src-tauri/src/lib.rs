@@ -980,6 +980,11 @@ pub fn run() {
                 .build(),
         )
         .manage(Registry::default())
+        .on_window_event(|window, event| {
+            if matches!(event, tauri::WindowEvent::Destroyed) {
+                readscope::drop_label(window.label());
+            }
+        })
         .on_page_load(|webview, payload| {
             if webview.label() == "main" && matches!(payload.event(), tauri::webview::PageLoadEvent::Started) {
                 on_main_webview_load(webview.app_handle());

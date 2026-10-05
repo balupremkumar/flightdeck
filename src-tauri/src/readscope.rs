@@ -5,6 +5,7 @@
 //! Directory listing (fs_list_dir) is deliberately NOT scoped.
 
 use crate::pathguard;
+use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
 use std::sync::{OnceLock, RwLock};
 
@@ -13,7 +14,37 @@ pub const OUTSIDE_SCOPE_ERR: &str = "outside-read-scope";
 /// Always-allowed vault. TODO: make this a setting.
 const VAULT_ROOT: &str = r"D:\Dev\ai";
 
-static WORKSPACE_ROOTS: RwLock<Vec<PathBuf>> = RwLock::new(Vec::new());
+/// Per-window roots (window label -> roots). Reads are authorised against the
+/// UNION of every label, so one window pushing never narrows another's scope.
+static WORKSPACE_ROOTS: RwLock<Option<HashMap<String, Vec<PathBuf>>>> = RwLock::new(None);
+
+fn union_roots(m: &Option<HashMap<String, Vec<PathBuf>>>) -> Vec<PathBuf> {
+    let mut out: Vec<PathBuf> = Vec::new();
+    for r in m.iter().flat_map(|m| m.values()).flatten() {
+        if !out.contains(r) {
+            out.push(r.clone());
+        }
+    }
+    out
+}
+
+fn set_label_roots(label: &str, roots: Vec<PathBuf>) -> Result<(), String> {
+    WORKSPACE_ROOTS
+        .write()
+        .map_err(|e| e.to_string())?
+        .get_or_insert_with(HashMap::new)
+        .insert(label.to_string(), roots);
+    Ok(())
+}
+
+/// Drops a destroyed window's roots; the other labels keep theirs.
+pub fn drop_label(label: &str) {
+    if let Ok(mut g) = WORKSPACE_ROOTS.write() {
+        if let Some(m) = g.as_mut() {
+            m.remove(label);
+        }
+    }
+}
 static DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
 
 /// Called once from setup with `app_data_dir()`.
@@ -91,7 +122,7 @@ fn check_against(path: &Path, workspace: &[PathBuf], fixed: &[PathBuf]) -> Resul
 /// Err(`outside-read-scope`) unless `path` canonicalises inside the allowed set.
 /// A path that does not exist cannot be canonicalised and is reported as outside.
 pub fn check_read(path: &Path) -> Result<PathBuf, String> {
-    let ws = WORKSPACE_ROOTS.read().map_err(|e| e.to_string())?;
+    let ws = union_roots(&*WORKSPACE_ROOTS.read().map_err(|e| e.to_string())?);
     check_against(path, &ws, &fixed_roots())
 }
 
@@ -141,13 +172,13 @@ pub fn grant_fixed_asset_roots<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     grant_asset_roots(app, &fixed_roots());
 }
 
-/// Replaces the workspace roots. Unsafe or non-existent entries are dropped.
+/// Replaces the CALLING window's roots (the label comes from the IPC caller,
+/// never from JS). Unsafe or non-existent entries are dropped.
 #[tauri::command(async)]
-pub fn set_read_roots(app: tauri::AppHandle, roots: Vec<String>) -> Result<(), String> {
+pub fn set_read_roots(app: tauri::AppHandle, window: tauri::Window, roots: Vec<String>) -> Result<(), String> {
     let clean = sanitize_roots(roots);
     grant_asset_roots(&app, &clean);
-    *WORKSPACE_ROOTS.write().map_err(|e| e.to_string())? = clean;
-    Ok(())
+    set_label_roots(window.label(), clean)
 }
 
 #[cfg(test)]
@@ -281,6 +312,47 @@ mod tests {
             d.to_string_lossy().into_owned(),
         ]);
         assert_eq!(out, vec![canon(&d).unwrap()]);
+    }
+
+    #[test]
+    fn union_across_labels_and_drop_restores_only_the_other() {
+        let (a, b, outside) = (tmp("union-a"), tmp("union-b"), tmp("union-out"));
+        let (fa, fb, fo) = (a.join("x.txt"), b.join("x.txt"), outside.join("x.txt"));
+        for f in [&fa, &fb, &fo] {
+            std::fs::write(f, "x").unwrap();
+        }
+        // local map so parallel tests never touch the global
+        let mut m: Option<HashMap<String, Vec<PathBuf>>> = Some(HashMap::new());
+        m.as_mut().unwrap().insert("main".into(), roots(&a));
+        m.as_mut().unwrap().insert("fw-1".into(), roots(&b));
+        let u = union_roots(&m);
+        assert!(check_against(&fa, &u, &[]).is_ok());
+        assert!(check_against(&fb, &u, &[]).is_ok());
+        assert_eq!(check_against(&fo, &u, &[]).unwrap_err(), OUTSIDE_SCOPE_ERR);
+        // re-pushing one label replaces only that label
+        m.as_mut().unwrap().insert("fw-1".into(), vec![]);
+        let u = union_roots(&m);
+        assert!(check_against(&fa, &u, &[]).is_ok());
+        assert_eq!(check_against(&fb, &u, &[]).unwrap_err(), OUTSIDE_SCOPE_ERR);
+        // removing main leaves nothing
+        m.as_mut().unwrap().remove("main");
+        assert_eq!(check_against(&fa, &union_roots(&m), &[]).unwrap_err(), OUTSIDE_SCOPE_ERR);
+    }
+
+    #[test]
+    fn global_map_set_and_drop_label() {
+        let (a, b) = (tmp("glob-a"), tmp("glob-b"));
+        let (fa, fb) = (a.join("x.txt"), b.join("x.txt"));
+        std::fs::write(&fa, "x").unwrap();
+        std::fs::write(&fb, "x").unwrap();
+        set_label_roots("t-main", roots(&a)).unwrap();
+        set_label_roots("t-fw-9", roots(&b)).unwrap();
+        assert!(check_read(&fa).is_ok() && check_read(&fb).is_ok());
+        drop_label("t-fw-9");
+        assert!(check_read(&fa).is_ok());
+        assert_eq!(check_read(&fb).unwrap_err(), OUTSIDE_SCOPE_ERR);
+        drop_label("t-main");
+        assert_eq!(check_read(&fa).unwrap_err(), OUTSIDE_SCOPE_ERR);
     }
 
     #[test]
