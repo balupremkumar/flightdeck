@@ -47,6 +47,14 @@ pub fn lock_map(m: &Mutex<ByModel>) -> std::sync::MutexGuard<'_, ByModel> {
     m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
+/// What `PaneOut::attach` hands the target window.
+pub enum AttachBody {
+    /// Only the bytes after the source window's serialised snapshot.
+    Delta(Vec<u8>, u64),
+    /// The whole ring (reload, crash re-adopt, or the delta point was evicted).
+    Full(RingSnapshot),
+}
+
 pub struct PaneOut {
     ring: PaneRing,
     paused: bool,
@@ -124,6 +132,19 @@ impl PaneOut {
 
     pub fn is_paused(&self) -> bool {
         self.paused
+    }
+
+    /// A frontend claims the pane. Always ends buffer-only mode: the target is
+    /// about to own live emits. With `since` (the seq `pause` returned, which the
+    /// source's serialised snapshot covers) only the bytes after it come back;
+    /// when that point is gone from the ring the full snapshot does, and the
+    /// caller must repaint from it.
+    pub fn attach(&mut self, since: Option<u64>) -> AttachBody {
+        self.paused = false;
+        if let Some((bytes, next)) = since.and_then(|s| self.ring.bytes_since(s)) {
+            return AttachBody::Delta(bytes, next);
+        }
+        AttachBody::Full(self.ring.snapshot())
     }
 }
 
@@ -551,5 +572,35 @@ mod tests {
         assert_eq!((o.cols, o.rows), (120, 40));
         let s = o.snapshot();
         assert_eq!(s.body, b"partial");
+    }
+
+    #[test]
+    fn attach_since_returns_only_the_bytes_after_the_pause_point() {
+        let mut o = PaneOut::with_capacity(1024);
+        o.push(b"before\n");
+        let seq = o.pause();
+        assert_eq!(seq, 7, "pane_pause reports the ring offset live emits stopped at");
+        assert!(o.push(b"while paused\n").is_none(), "buffer-only while paused");
+        match o.attach(Some(seq)) {
+            AttachBody::Delta(b, next) => {
+                assert_eq!(b, b"while paused\n");
+                assert_eq!(next, o.seq());
+            }
+            AttachBody::Full(_) => panic!("delta expected"),
+        }
+        assert!(!o.is_paused(), "attach resumes live emits");
+        assert_eq!(o.push(b"after\n"), Some(o.seq()), "live again");
+    }
+
+    #[test]
+    fn attach_without_since_or_past_the_ring_is_the_full_ring_and_still_resumes() {
+        let mut o = PaneOut::with_capacity(1024);
+        o.push(b"abc\n");
+        o.pause();
+        assert!(matches!(o.attach(None), AttachBody::Full(_)));
+        assert!(!o.is_paused());
+        o.pause();
+        assert!(matches!(o.attach(Some(u64::MAX)), AttachBody::Full(_)), "a seq past the ring is not a delta");
+        assert!(!o.is_paused());
     }
 }

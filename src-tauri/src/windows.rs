@@ -10,12 +10,12 @@
 // Minting, the exiting flag and the geometry-free helpers are used by S8 onward.
 #![allow(dead_code)]
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Mutex;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
 
 use crate::persist::{self, SessionDoc};
 
@@ -185,6 +185,48 @@ impl WindowRegistry {
             r.last_heartbeat_ms = now;
         }
     }
+
+    /// Transfer step 1: mint a window for workspace `ws_id` and make it the only
+    /// owner. The source keeps no claim, so from here persist drops any slice data
+    /// the source still pushes for it. Errors if `source` does not own the workspace.
+    pub fn assign_new_window(&mut self, source: &str, ws_id: u32) -> Result<String, String> {
+        if !self.owns(source, ws_id) {
+            return Err(format!("window {source} does not own workspace {ws_id}"));
+        }
+        let label = self.mint_label()?;
+        for r in self.windows.values_mut() {
+            r.workspace_ids.retain(|i| *i != ws_id);
+            if r.active_ws == Some(ws_id) {
+                r.active_ws = None;
+            }
+        }
+        let rec = self.windows.get_mut(&label).expect("minted above");
+        rec.workspace_ids = vec![ws_id];
+        rec.active_ws = Some(ws_id);
+        Ok(label)
+    }
+
+    /// The new window could not be created: forget it and give the workspace back.
+    pub fn rollback_new_window(&mut self, label: &str, source: &str, ws_id: u32) {
+        self.windows.remove(label);
+        if let Some(r) = self.windows.get_mut(source) {
+            if !r.workspace_ids.contains(&ws_id) {
+                r.workspace_ids.push(ws_id);
+            }
+        }
+    }
+}
+
+/// Window to focus after `current` in a stable ring: main first, then `fw-<n>`
+/// by ordinal. None when there is nowhere else to go.
+pub fn next_label(labels: &[String], current: &str) -> Option<String> {
+    let mut ring: Vec<&String> = labels.iter().collect();
+    ring.sort_by_key(|l| validate_label(l).unwrap_or(u32::MAX));
+    if ring.len() < 2 {
+        return None;
+    }
+    let at = ring.iter().position(|l| l.as_str() == current).unwrap_or(ring.len() - 1);
+    Some(ring[(at + 1) % ring.len()].clone())
 }
 
 /// Which secondaries are dead: booted, `fw-*`, and silent past the timeout.
@@ -218,6 +260,22 @@ pub struct BootInfo {
     /// The workspaces assigned to this window. None for main, which loads the
     /// session document itself.
     pub slice: Option<SessionDoc>,
+    /// Set for a window created by a workspace transfer, once: the workspace and
+    /// its per-pane terminal snapshots exactly as the source handed them over.
+    pub transfer: Option<serde_json::Value>,
+}
+
+/// Transfers waiting for their new window's `window_boot`, by label. Kept out of
+/// the registry because it holds serialised terminals (up to ~1 MB a pane) and the
+/// registry is cloned on every session write.
+static PENDING: Mutex<Option<HashMap<String, serde_json::Value>>> = Mutex::new(None);
+
+fn pending_put(label: &str, v: serde_json::Value) {
+    PENDING.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).insert(label.to_string(), v);
+}
+
+fn pending_take(label: &str) -> Option<serde_json::Value> {
+    PENDING.lock().unwrap_or_else(|e| e.into_inner()).as_mut().and_then(|m| m.remove(label))
 }
 
 /// Registry copy for `persist` to decide slice ownership against.
@@ -264,7 +322,94 @@ pub fn window_boot(
         rec.workspace_ids.clone()
     };
     let slice = if label == MAIN { None } else { persist::boot_slice(&app, &label, &ids) };
-    Ok(BootInfo { label, ordinal, slice })
+    let transfer = if label == MAIN { None } else { pending_take(&label) };
+    Ok(BootInfo { label, ordinal, slice, transfer })
+}
+
+/// What the source window sends to `ws_transfer`.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WsSnapshot {
+    pub workspace_id: u32,
+    /// Handed to the target's `window_boot` untouched.
+    pub transfer: serde_json::Value,
+    /// Persisted-shape slice, so the document keeps the workspace if the new
+    /// window dies before its first push.
+    pub slice: SessionDoc,
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum TransferTarget {
+    New,
+}
+
+/// Move a workspace to a new window. Rust assigns it to the new label and parks the
+/// snapshot, then creates the window; the target reads both in `window_boot`.
+/// The source releases its panes and detaches AFTER this returns.
+///
+/// Async is mandatory: creating a window from a sync command deadlocks on Windows
+/// (tauri docs, wry#583). Focus is taken here and nowhere else because the user
+/// just ran the command that opened this window.
+#[tauri::command]
+pub async fn ws_transfer(
+    app: AppHandle,
+    window: tauri::Window,
+    state: State<'_, WindowState>,
+    ws_snapshot: WsSnapshot,
+    target: TransferTarget,
+) -> Result<String, String> {
+    let TransferTarget::New = target;
+    let source = window.label().to_string();
+    validate_label(&source)?;
+    let ws_id = ws_snapshot.workspace_id;
+    let label = {
+        let mut reg = state.lock();
+        reg.ensure_main();
+        reg.assign_new_window(&source, ws_id)?
+    };
+    persist::seed_slice(&label, ws_snapshot.slice);
+    pending_put(&label, ws_snapshot.transfer);
+    if let Err(e) = create_window(&app, &label) {
+        pending_take(&label);
+        persist::drop_slice(&label);
+        state.lock().rollback_new_window(&label, &source, ws_id);
+        crate::applog::log("error", "window", &format!("ws_transfer: could not create {label}: {e}"));
+        return Err(e);
+    }
+    crate::applog::log("info", "window", &format!("workspace {ws_id} moved from {source} to new window {label}"));
+    Ok(label)
+}
+
+fn create_window(app: &AppHandle, label: &str) -> Result<(), String> {
+    // Same minimum as tauri.conf.json; created hidden, shown once built.
+    let w = WebviewWindowBuilder::new(app, label, WebviewUrl::App("index.html".into()))
+        .title("Flightdeck")
+        .inner_size(1200.0, 800.0)
+        .min_inner_size(940.0, 620.0)
+        .visible(false)
+        .build()
+        .map_err(|e| e.to_string())?;
+    w.show().map_err(|e| e.to_string())?;
+    let _ = w.set_focus();
+    Ok(())
+}
+
+/// Focus the next window in the ring (the "Next window" chord). A direct reply to
+/// the user's keypress, so taking focus here is allowed.
+#[tauri::command]
+pub async fn window_focus_next(app: AppHandle, window: tauri::Window, state: State<'_, WindowState>) -> Result<Option<String>, String> {
+    let labels: Vec<String> = {
+        let reg = state.lock();
+        reg.windows.iter().filter(|(l, r)| r.booted && app.get_webview_window(l).is_some()).map(|(l, _)| l.clone()).collect()
+    };
+    let Some(next) = next_label(&labels, window.label()) else { return Ok(None) };
+    if let Some(w) = app.get_webview_window(&next) {
+        let _ = w.unminimize();
+        let _ = w.show();
+        w.set_focus().map_err(|e| e.to_string())?;
+    }
+    Ok(Some(next))
 }
 
 #[tauri::command(async)]
@@ -472,6 +617,58 @@ mod tests {
         r.heartbeat("fw-9", 50_000);
         assert!(dead_windows(&r, 50_000 + HEARTBEAT_TIMEOUT_MS).is_empty());
         assert!(!r.windows.contains_key("fw-9"));
+    }
+
+    #[test]
+    fn transfer_assigns_the_workspace_to_a_fresh_window_only() {
+        let mut r = WindowRegistry::default();
+        r.windows.insert("main".into(), rec(&[1, 2], true, 0));
+        r.windows.get_mut("main").unwrap().active_ws = Some(2);
+        let label = r.assign_new_window("main", 2).unwrap();
+        assert_eq!(label, "fw-1");
+        assert_eq!(r.windows["fw-1"].workspace_ids, vec![2]);
+        assert_eq!(r.windows["fw-1"].active_ws, Some(2));
+        assert_eq!(r.windows["main"].workspace_ids, vec![1], "the source keeps no claim");
+        assert_eq!(r.windows["main"].active_ws, None);
+        assert!(r.owns("fw-1", 2) && !r.owns("main", 2), "persist now rejects the source's slice data for it");
+        assert!(!r.windows["fw-1"].booted, "booted only when window_boot arrives");
+    }
+
+    #[test]
+    fn transfer_works_for_a_workspace_main_owns_by_default_and_refuses_foreign_ones() {
+        let mut r = WindowRegistry::default();
+        r.ensure_main();
+        r.windows.insert("fw-1".into(), rec(&[5], true, 0));
+        r.next_ordinal = 2;
+        assert!(r.assign_new_window("main", 5).is_err(), "main does not own what fw-1 lists");
+        assert!(r.assign_new_window("fw-9", 7).is_err(), "an unknown window owns nothing");
+        let label = r.assign_new_window("main", 7).unwrap();
+        assert_eq!(label, "fw-2");
+        assert!(r.owns("fw-2", 7) && !r.owns("main", 7));
+        assert_eq!(r.windows["fw-1"].workspace_ids, vec![5], "other windows untouched");
+    }
+
+    #[test]
+    fn rollback_forgets_the_window_and_gives_the_workspace_back() {
+        let mut r = WindowRegistry::default();
+        r.windows.insert("fw-1".into(), rec(&[3], true, 0));
+        r.next_ordinal = 2;
+        let label = r.assign_new_window("fw-1", 3).unwrap();
+        assert!(!r.windows["fw-1"].workspace_ids.contains(&3));
+        r.rollback_new_window(&label, "fw-1", 3);
+        assert!(!r.windows.contains_key(&label));
+        assert_eq!(r.windows["fw-1"].workspace_ids, vec![3]);
+        assert_eq!(r.mint_label().unwrap(), "fw-3", "the ordinal is spent, never reused");
+    }
+
+    #[test]
+    fn next_window_walks_a_stable_ring() {
+        let l = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let all = l(&["fw-10", "main", "fw-2"]);
+        assert_eq!(next_label(&all, "main").as_deref(), Some("fw-2"), "ordinal order, not string order");
+        assert_eq!(next_label(&all, "fw-2").as_deref(), Some("fw-10"));
+        assert_eq!(next_label(&all, "fw-10").as_deref(), Some("main"));
+        assert_eq!(next_label(&l(&["main"]), "main"), None, "nowhere else to go");
     }
 
     // A missing capability on fw-* shows only at the boot gate, and the gate

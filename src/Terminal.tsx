@@ -19,6 +19,7 @@ import "@xterm/xterm/css/xterm.css";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { OutputPipe, attachFirst, attachPlan, isRestoredPane, type OutputEvt } from "./ptyAttach";
+import { takeTransfer } from "./transferSnap";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { terminalThemeFor } from "./terminal-theme";
 import { claudeThemeForSpawn } from "./themes";
@@ -41,6 +42,7 @@ import {
   acquire, attach, detach, get as getSession, setSessionFactory, fitIfSane, FALLBACK_COLS, FALLBACK_ROWS,
   type PaneHandlers, type PaneSession, type SessionLive, type SpawnSpec,
 } from "./paneSessions";
+import type { SerializeAddon } from "@xterm/addon-serialize";
 
 // Reads the app's active theme straight off the DOM — the app dispatches no
 // theme-change event, so this (plus the MutationObserver below) is how the
@@ -562,6 +564,28 @@ const SCROLLBACK_SAVE_STEPS = [2000, 800, 300, 100];
  *  much as a memory one. */
 const SCROLLBACK_SAVE_MAX_CHARS = 1_000_000;
 
+/** The pane's buffer as replayable ANSI under the session-doc caps, or null when
+ *  the buffer is mid-teardown or cannot be squeezed under them. Shared by session
+ *  persistence (serializeScrollback) and the workspace-move snapshot. Modes and the
+ *  alt buffer are deliberately excluded: this string is replayed into a fresh
+ *  terminal BEFORE its pty attaches, and restoring (say) an alt buffer or
+ *  bracketed-paste mode the live process knows nothing about would leave the pane
+ *  in a state it can't undo. */
+function serializeCapped(addon: SerializeAddon): string | null {
+  for (const scrollback of SCROLLBACK_SAVE_STEPS) {
+    try {
+      const out = addon.serialize({ scrollback, excludeModes: true, excludeAltBuffer: true });
+      if (out.length <= SCROLLBACK_SAVE_MAX_CHARS) return out;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+/** How long a workspace move waits for pre-pause output to land in the old xterm. */
+const SNAPSHOT_CATCHUP_MS = 1500;
+
 interface TerminalProps {
   /** The store's PaneModel.id. NOT the Rust pty id (that is the effect-local
    *  `paneId`): store actions such as setPaneDraft match on the model id. */
@@ -804,10 +828,10 @@ function createSession(modelId: number, gen: string, spec: SpawnSpec, handlers: 
     // fetch (offline dev server, torn-down window) costs only this pane's
     // scrollback persistence, never the pane.
     let serializeIdle = 0;
-    const loadSerializer = () => {
+    const loadSerializer = (): Promise<void> => {
       serializeIdle = 0;
-      if (entry.disposed || entry.serialize) return;
-      import("@xterm/addon-serialize")
+      if (entry.disposed || entry.serialize) return Promise.resolve();
+      return import("@xterm/addon-serialize")
         .then(({ SerializeAddon }) => {
           if (entry.disposed || entry.serialize) return;
           const addon = new SerializeAddon();
@@ -1404,6 +1428,30 @@ function createSession(modelId: number, gen: string, spec: SpawnSpec, handlers: 
     }, { threshold: 0 });
     io.observe(host);
 
+    // Phase 4 workspace move, source half. Rust has already paused the pane (buffer
+    // only, no more emits) and answered `seq`. Output emitted before that may still
+    // be on its way to this webview, so wait for it, push everything pending (hidden
+    // buffer, coalescing queue) into xterm, let the parser drain, then serialise. The
+    // target paints this and asks pty_attach for the bytes after `seq`.
+    entry.api.snapshot = async (seq) => {
+      const deadline = Date.now() + SNAPSHOT_CATCHUP_MS;
+      while (pipe.seqSeen < seq && Date.now() < deadline && !entry.disposed) {
+        await new Promise<void>((res) => setTimeout(res, 10));
+      }
+      if (entry.disposed || pipe.seqSeen < seq) return null; // a gap: the ring replays instead
+      flushHidden();
+      if (writeRaf) { cancelAnimationFrame(writeRaf); flushWrites(); }
+      await new Promise<void>((res) => term.write("", res));
+      if (!entry.serialize) {
+        if (serializeIdle) { clearTimeout(serializeIdle); serializeIdle = 0; }
+        await loadSerializer();
+      }
+      const addon = entry.serialize;
+      if (!addon) return null;
+      const serialized = serializeCapped(addon);
+      return serialized === null ? null : { serialized, cols: term.cols, rows: term.rows };
+    };
+
     // Frontend-computed "waiting" (configurable quiet-threshold): the backend
     // still tells us starting/running/error/idle, but "waiting" is superseded
     // here so it can be tuned per-pane without a Rust round-trip.
@@ -1505,7 +1553,14 @@ function createSession(modelId: number, gen: string, spec: SpawnSpec, handlers: 
     // parsed for marks, progress or the permission-prompt tail. The separator
     // is the honesty bit — without it there is no way to tell last week's
     // output from this second's.
-    if (spec.restoredScrollback) {
+    // A workspace moved from another window brings its own serialised screen (no
+    // separator: it is not old history, it is this pane a moment ago). It is painted
+    // at the source's size, and the attach below asks only for bytes after its seq.
+    const transfer = takeTransfer(modelId);
+    if (transfer?.serialized) {
+      if (transfer.cols >= 2 && transfer.rows >= 2) term.resize(transfer.cols, transfer.rows);
+      term.write(transfer.serialized);
+    } else if (spec.restoredScrollback) {
       const text = spec.restoredScrollback;
       term.write(text.endsWith("\n") ? text : `${text}\r\n`);
       term.write("\x1b[2m— restored scrollback ends here —\x1b[0m\r\n");
@@ -1558,7 +1613,7 @@ function createSession(modelId: number, gen: string, spec: SpawnSpec, handlers: 
       // Attach first: after a webview reload the agent is still running in Rust.
       // Reconnect to it (snapshot, then live events past snapshot.next_seq)
       // instead of spawning a second one.
-      const hit = await attachFirst<OutputEvt>(<T,>(c: string, a?: Record<string, unknown>) => invoke<T>(c, a), pipe, modelId, gen, !isRestoredPane(modelId));
+      const hit = await attachFirst<OutputEvt>(<T,>(c: string, a?: Record<string, unknown>) => invoke<T>(c, a), pipe, modelId, gen, !isRestoredPane(modelId), undefined, transfer?.serialized ? transfer.seq : undefined);
       if (entry.disposed) {
         if (hit) invoke("pty_kill", { paneId: hit.info.pty_id });
         return;
@@ -1613,18 +1668,25 @@ function createSession(modelId: number, gen: string, spec: SpawnSpec, handlers: 
         // not live output, so no bell / progress / mark parsing. Only the last
         // ~600 bytes prime the permission-prompt tail.
         const { cols, rows, snapshot, proc_name } = hit.info;
-        if (cols && rows && cols >= 2 && rows >= 2) { term.resize(cols, rows); attachSize = { cols, rows }; }
+        // A delta continues the screen painted from the transfer, so it keeps that
+        // terminal's size; anything else is painted at the width the ring was written for.
+        const delta = !!snapshot.delta;
+        if (!delta && cols && rows && cols >= 2 && rows >= 2) { term.resize(cols, rows); attachSize = { cols, rows }; }
         const head = decodeB64(snapshot.head);
         const body = decodeB64(snapshot.body);
         attachBodyLen = body.length;
         // A tiny snapshot (resized plain shell) would wipe the restored
         // scrollback and leave a blank pane: keep it, the agent is nudged below.
-        if (attachPlan(body.length, !!spec.restoredScrollback, false).reset) term.reset();
+        // A delta never resets (it extends the transferred screen); a transfer whose
+        // delta point was evicted resets and replays the whole ring.
+        if (!delta && attachPlan(body.length, !!spec.restoredScrollback && !transfer, false).reset) term.reset();
         const replay = new Uint8Array(head.length + body.length);
         replay.set(head, 0);
         replay.set(body, head.length);
         term.write(replay);
-        outTail = textDecoder.decode(replay.subarray(Math.max(0, replay.length - 600))).slice(-600);
+        const replayText = textDecoder.decode(replay.subarray(Math.max(0, replay.length - 600)));
+        // The delta alone can be shorter than the tail the permission check needs.
+        outTail = (delta && transfer?.serialized ? transfer.serialized.slice(-600) + replayText : replayText).slice(-600);
         bumpActivity();
         if (proc_name) entry.handlers.onProc?.(proc_name);
       }
@@ -1651,7 +1713,7 @@ function createSession(modelId: number, gen: string, spec: SpawnSpec, handlers: 
         fitSane();
         if (!attachSize || attachSize.cols !== term.cols || attachSize.rows !== term.rows) {
           invoke("pty_resize", { paneId, cols: term.cols, rows: term.rows });
-        } else if (attachPlan(attachBodyLen, !!spec.restoredScrollback, true).nudge && term.cols > 2) {
+        } else if (!transfer && attachPlan(attachBodyLen, !!spec.restoredScrollback, true).nudge && term.cols > 2) {
           // Same size, so no SIGWINCH would fire: wiggle one column to make the
           // agent redraw into the (now sparse) terminal.
           invoke("pty_resize", { paneId, cols: term.cols - 1, rows: term.rows });
@@ -1839,19 +1901,7 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
     serializeScrollback: () => {
       const addon = sess()?.serialize;
       if (!addon) return "";
-      for (const scrollback of SCROLLBACK_SAVE_STEPS) {
-        try {
-          // Modes and the alt buffer are deliberately excluded: this string is
-          // replayed into a fresh terminal BEFORE its shell attaches, and
-          // restoring (say) an alt-buffer or bracketed-paste mode the new shell
-          // knows nothing about would leave the pane in a state it can't undo.
-          const out = addon.serialize({ scrollback, excludeModes: true, excludeAltBuffer: true });
-          if (out.length <= SCROLLBACK_SAVE_MAX_CHARS) return out;
-        } catch {
-          return ""; // buffer mid-teardown — no history is better than a throw
-        }
-      }
-      return "";
+      return serializeCapped(addon) ?? ""; // mid-teardown or too big: no history beats a throw
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }), [modelId]);

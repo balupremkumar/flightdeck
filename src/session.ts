@@ -163,6 +163,10 @@ let restoredScrollback: Record<number, string> = {};
 export function setRestoredScrollback(map: Record<number, string>): void {
   restoredScrollback = map;
 }
+/** Phase 4: workspaces adopted from a window that died bring their last scrollback too. */
+export function addRestoredScrollback(map: Record<number, string>): void {
+  restoredScrollback = { ...restoredScrollback, ...map };
+}
 export function restoredScrollbackFor(paneId: number): string | undefined {
   return restoredScrollback[paneId];
 }
@@ -195,7 +199,7 @@ export function setRestoredPaneChat(map: Record<number, PaneChatPref>): void {
   restoredPaneChat = map;
 }
 
-function toDraft(workspaces: Workspace[], activeId: number | null): SessionDraft {
+export function toDraft(workspaces: Workspace[], activeId: number | null): SessionDraft {
   return {
     activeWorkspaceId: activeId,
     workspaces: workspaces.map((w): DraftWorkspace => ({
@@ -401,7 +405,9 @@ async function reconcilePane(
   };
 }
 
-export async function hydrateFrom(persisted: PersistedWorkspace[], activeId: number | null) {
+/** `additive` (Phase 4: a secondary's workspaces folded into this window) adds to the
+ *  open workspaces instead of replacing them, and leaves the restore report alone. */
+export async function hydrateFrom(persisted: PersistedWorkspace[], activeId: number | null, additive = false) {
   const workspaces: Workspace[] = [];
   const report: RestoredPane[] = [];
   for (const w of persisted) {
@@ -436,6 +442,11 @@ export async function hydrateFrom(persisted: PersistedWorkspace[], activeId: num
       });
     }
     workspaces.push({ id: w.id, name: w.name, root: w.root, setupCmd: w.setupCmd, panes, focused: panes[0]?.id ?? null });
+  }
+  if (additive) {
+    for (const ws of workspaces) useApp.getState().adoptWorkspace(ws);
+    if (activeId != null && workspaces.some((w) => w.id === activeId)) useApp.getState().switchWorkspace(activeId);
+    return;
   }
   restoreReport = report;
   useApp.getState().hydrate(workspaces, activeId);

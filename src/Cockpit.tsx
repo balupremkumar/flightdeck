@@ -23,6 +23,9 @@ import { spawnPane, closePaneGuarded, closeWorkspaceGuarded } from "./worktrees"
 import { isTypingTarget } from "./isTypingTarget";
 import { attentionQueue, mostRecentOutputPane } from "./attention";
 import { homeKeyAllowed } from "./home";
+import { isMainWindow } from "./persist";
+import { useAnnouncement } from "./windowAnnounce";
+import { multiwindowEnabled, moveActiveWorkspaceToNewWindow, focusNextWindow, MOVE_WINDOW_CHORD, NEXT_WINDOW_CHORD } from "./windowActions";
 
 // Rarely-opened panels are lazy chunks so they stay out of the first-paint
 // bundle. Ones gated on store state mount only while that state is set; the
@@ -177,6 +180,14 @@ export function Cockpit() {
         return;
       }
       if (e.ctrlKey && e.key === ",") { e.preventDefault(); setSettingsOpen(true); return; }
+      // Phase 4 (flag: Multiple windows): Ctrl+Shift+N moves the active workspace to a
+      // new window, Ctrl+Shift+O goes to the next window. Nothing else in the app or
+      // the agent TUIs binds either, so like Ctrl+Shift+A they work from a terminal too.
+      if (e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey && multiwindowEnabled()) {
+        const k = e.key.toLowerCase();
+        if (k === MOVE_WINDOW_CHORD.key) { e.preventDefault(); void moveActiveWorkspaceToNewWindow(); return; }
+        if (k === NEXT_WINDOW_CHORD.key) { e.preventDefault(); void focusNextWindow(); return; }
+      }
       // Attention queue (UI-1 v2). Deliberately NOT skipped when a terminal has
       // focus: this is a global "what needs me" shortcut, and no agent TUI binds
       // Ctrl+Shift+A. Guarding it meant the app's own advertised shortcut did
@@ -337,17 +348,21 @@ export function Cockpit() {
   // Canary keeps its product name in the title, or the two side-by-side
   // installs become indistinguishable in the taskbar (getName resolves
   // "Flightdeck" / "Flightdeck Canary" from the flavour's config).
+  const announcement = useAnnouncement();
   const [appName, setAppName] = useState("Flightdeck");
   useEffect(() => {
     getName().then((n) => setAppName(n)).catch(() => { /* browser preview */ });
   }, []);
+  // A secondary window is named after what it holds, so the taskbar tells windows apart.
+  const wsNames = isMainWindow() ? "" : workspaces.map((w) => w.name).join(", ");
   useEffect(() => {
     const bits = [appName];
+    if (wsNames) bits.push(wsNames);
     if (permissionCount > 0) bits.push(`${permissionCount} need${permissionCount === 1 ? "s" : ""} approval`);
     if (waitingCount > 0) bits.push(`${waitingCount} waiting`);
     if (errorCount > 0) bits.push(`${errorCount} error${errorCount === 1 ? "" : "s"}`);
     try { void getCurrentWindow().setTitle(bits.join(" — ")); } catch { /* browser preview */ }
-  }, [appName, waitingCount, permissionCount, errorCount]);
+  }, [appName, wsNames, waitingCount, permissionCount, errorCount]);
 
   return (
     <div className="cockpit-root">
@@ -428,6 +443,7 @@ export function Cockpit() {
 
       <ConfirmDialog />
       <ToastHost />
+      <span className="sr-only" role="status" aria-live="polite">{announcement}</span>
       <CommandPalette />
       {settingsOpen && <Settings />}
       <QuickOpen />

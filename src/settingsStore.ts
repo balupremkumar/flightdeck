@@ -184,6 +184,9 @@ export const FIXED_SHORTCUTS: ShortcutDef[] = [
   { id: "zoom-in", label: "Zoom in (whole app)", combo: "Ctrl+=" },
   { id: "zoom-out", label: "Zoom out (whole app)", combo: "Ctrl+-" },
   { id: "zoom-reset", label: "Reset zoom", combo: "Ctrl+0" },
+  // Phase 4: active only with Settings > Windows > Multiple windows (preview) on.
+  { id: "move-workspace-window", label: "Move workspace to new window (multiple windows preview)", combo: "Ctrl+Shift+N" },
+  { id: "next-window", label: "Next window (multiple windows preview)", combo: "Ctrl+Shift+O" },
 ];
 // Bound only while a specific surface has focus, so they're listed separately
 // in the cheat sheet rather than implying they work everywhere.

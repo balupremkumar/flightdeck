@@ -21,6 +21,17 @@
 // takes it from there.
 
 (() => {
+  // Phase 4 multi-window: `?label=fw-1` makes this page a secondary window (the real
+  // app's label comes from Tauri window metadata). Window and pty commands then go
+  // through window.__fdBus, a JS port of the Rust registry/slices/rings that e2e/lib/
+  // multiwindow.mjs exposes from the Playwright process, so two pages share one
+  // "Rust side". Without a bus every command stays local to this page as before.
+  const WINDOW_LABEL = new URLSearchParams(location.search).get("label") || "main";
+  const ordinalOf = (l) => (l === "main" ? 0 : Number(String(l).replace("fw-", "")) || 0);
+  const BUS_CMDS = [
+    "pty_spawn", "pty_attach", "pty_write", "pty_resize", "pty_kill", "pane_pause", "pane_resume",
+    "window_boot", "window_heartbeat", "ws_transfer", "window_focus_next", "session_put_slice",
+  ];
   const listeners = new Map(); // event name -> Set<callback>
   // Offset so pty ids never coincide with store model ids (as after a real restore).
   let nextPaneId = 100;
@@ -723,15 +734,28 @@ index 3c92f1a..7d40b2e 100644
     load_session: () => JSON.parse(JSON.stringify(SESSION_DOC)),
     save_session: () => null, // demo never persists — Reset always returns to this same boot state
     session_put_slice: () => null,
-    window_boot: () => ({ label: "main", ordinal: 0, slice: null }),
+    window_boot: () => ({ label: WINDOW_LABEL, ordinal: ordinalOf(WINDOW_LABEL), slice: null }),
     window_heartbeat: () => null,
+    ws_transfer: () => { throw new Error("mock: ws_transfer needs the multiwindow bus"); },
+    window_focus_next: () => null,
+    pane_pause: () => 0,
+    pane_resume: () => null,
     list_restore_points: () => [],
     restore_from_point: () => JSON.parse(JSON.stringify(SESSION_DOC)),
     export_backup: () => null,
     import_backup: () => null,
   };
 
+  if (typeof window.__fdBus === "function") {
+    for (const cmd of BUS_CMDS) handlers[cmd] = (args) => window.__fdBus({ cmd, args: args ?? {}, label: WINDOW_LABEL });
+  }
+
   window.__TAURI_INTERNALS__ = {
+    // getCurrentWindow().label reads this; only set for an explicit ?label so every
+    // other e2e keeps the old "no metadata, so main" behaviour.
+    ...(new URLSearchParams(location.search).has("label")
+      ? { metadata: { currentWindow: { label: WINDOW_LABEL }, currentWebview: { windowLabel: WINDOW_LABEL, label: WINDOW_LABEL } } }
+      : {}),
     transformCallback: (cb) => {
       const id = Math.floor(Math.random() * 1e9);
       window[`_${id}`] = cb;

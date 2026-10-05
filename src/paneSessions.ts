@@ -64,6 +64,8 @@ export interface SessionLive {
   ligatures: { current: boolean };
 }
 
+export interface TerminalSnapshot { serialized: string; cols: number; rows: number }
+
 export interface PaneSession {
   modelId: number;
   /** `${epoch}|${vendor}|${cwd}`; a mismatch on acquire means restart. */
@@ -89,6 +91,10 @@ export interface PaneSession {
     foldAll?: (on: boolean) => void;
     /** Called after every attach: the factory re-creates WebGL only if this session's context was lost. */
     onAttach: () => void;
+    /** Workspace move: wait until this pane's output has reached `seq` (pane_pause's
+     *  answer), drain every pending write into xterm, then serialise the screen with
+     *  the same caps as session persistence. Null = could not (the target replays the ring). */
+    snapshot?: (seq: number) => Promise<TerminalSnapshot | null>;
   };
   /** Current attach token; null while parked. */
   owner: symbol | null;

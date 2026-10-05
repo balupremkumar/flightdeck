@@ -1,12 +1,22 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { getMultiwindow } from "./settingsStore";
-import { setWindowOrdinal } from "./store";
-import type { SessionDraft } from "./persist";
+import { setWindowOrdinal, useApp, type Workspace } from "./store";
+import { useUI } from "./ui";
+import { isMainWindow, type SessionDraft } from "./persist";
+import { addRestoredScrollback, hydrateFrom, parseUiPrefs } from "./session";
+import { markRestoredPane } from "./ptyAttach";
+import { stageTransfers, type PaneTransfer } from "./transferSnap";
+import { get as getSession } from "./paneSessions";
+import { logEvent } from "./applog";
+import { announce } from "./windowAnnounce";
 
 // Phase 4: tell Rust this window is up, learn its label/ordinal (pane-id
 // partition) and, for a secondary, its slice. Then keep a heartbeat going so
 // Rust can re-adopt this window's workspaces if the webview dies silently.
-export interface BootInfo { label: string; ordinal: number; slice?: SessionDraft | null }
+/** What a window created by a workspace move boots with (windows.rs ws_transfer). */
+export interface TransferPayload { workspace: Workspace; panes: Record<number, PaneTransfer> }
+export interface BootInfo { label: string; ordinal: number; slice?: SessionDraft | null; transfer?: TransferPayload | null }
 
 export const HEARTBEAT_MS = 2000;
 
@@ -25,4 +35,71 @@ export async function bootWindow(): Promise<BootInfo | null> {
   } catch {
     return null;
   }
+}
+
+/** Wait until every pane of the workspace has a pty, then put keyboard focus on the
+ *  active pane. Each terminal calls term.focus() as it finishes attaching, so a short
+ *  settle delay lets the last of those land first. Gives up after ~6 s. */
+function focusActivePane(ws: Workspace): void {
+  const target = ws.focused ?? ws.panes[0]?.id;
+  if (target == null) return;
+  let tries = 0;
+  const timer = setInterval(() => {
+    tries++;
+    const ready = ws.panes.every((p) => !!getSession(p.id)?.ptyId);
+    if (!ready && tries < 60) return;
+    clearInterval(timer);
+    setTimeout(() => getSession(target)?.term.focus(), 200);
+  }, 100);
+}
+
+/** A secondary window's first job: take the workspace it was created for. Never
+ *  throws; a window that cannot hydrate just shows the launcher. */
+export async function adoptBootInfo(info: BootInfo | null): Promise<void> {
+  if (!info || info.label === "main") return;
+  try {
+    const t = info.transfer;
+    if (t?.workspace) {
+      // The panes' ptys are alive in Rust: mark them restored so the terminals
+      // attach instead of spawning, and hand each its source-side screen.
+      for (const p of t.workspace.panes) markRestoredPane(p.id);
+      stageTransfers(t.panes ?? {});
+      const ws: Workspace = { ...t.workspace, panes: t.workspace.panes.map((p) => ({ ...p, state: "starting" as const })) };
+      useApp.getState().adoptWorkspace(ws);
+      // Screen readers hear where the workspace went. Cockpit's live region mounts
+      // after this returns, so announce once it is in the DOM.
+      setTimeout(() => announce(`Workspace ${ws.name} moved to this window. ${ws.panes.length} pane${ws.panes.length === 1 ? "" : "s"}.`), 600);
+      focusActivePane(ws);
+    } else if (info.slice && info.slice.workspaces.length > 0) {
+      const prefs = parseUiPrefs(info.slice.uiPrefs);
+      addRestoredScrollback(prefs.scrollback);
+      await hydrateFrom(info.slice.workspaces, info.slice.activeWorkspaceId);
+    }
+  } catch (e) {
+    logEvent("error", "windowBoot", `could not adopt the boot slice: ${String(e)}`);
+  }
+}
+
+/** Sent by Rust to main when a window's workspaces fold into it: the heartbeat
+ *  watcher (a dead secondary), and later the close path. */
+interface AdoptPayload { from: string; workspaceIds: number[]; activeWs: number | null; slice: SessionDraft | null }
+
+/** Main only. Rebuilds the folded workspaces from the dead window's last slice and
+ *  adds them; their ptys are still running in Rust, so the terminals attach. */
+export function listenForAdopt(): void {
+  if (!isMainWindow()) return;
+  void listen<AdoptPayload>("win://adopt", async (e) => {
+    const { from, workspaceIds, activeWs, slice } = e.payload;
+    try {
+      if (!slice) { logEvent("warn", "windowBoot", `win://adopt from ${from} carried no slice; its workspaces cannot be restored`); return; }
+      const known = new Set(useApp.getState().workspaces.map((w) => w.id));
+      const fresh = slice.workspaces.filter((w) => workspaceIds.includes(w.id) && !known.has(w.id));
+      if (fresh.length === 0) return;
+      addRestoredScrollback(parseUiPrefs(slice.uiPrefs).scrollback);
+      await hydrateFrom(fresh, activeWs, true);
+      useUI.getState().pushToast("info", `Window ${from} closed: ${fresh.map((w) => w.name).join(", ")} moved back here`);
+    } catch (err) {
+      logEvent("error", "windowBoot", `win://adopt from ${from} failed: ${String(err)}`);
+    }
+  }).catch(() => { /* browser preview */ });
 }

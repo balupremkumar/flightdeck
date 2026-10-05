@@ -26,6 +26,9 @@ export interface AttachSnapshot {
   body: string;
   start_seq: number;
   next_seq: number;
+  /** True when `body` holds only the bytes after the `sinceSeq` the caller sent
+   *  (hybrid workspace transfer); absent from older backends. */
+  delta?: boolean;
 }
 
 export interface AttachInfo {
@@ -50,6 +53,14 @@ export class OutputPipe<E extends { pane_id: number; seq?: number }> {
   private early: E[] = [];
   private paneId = 0;
   private minSeq = 0;
+  private maxSeq = 0;
+
+  /** Highest ring offset this pane's events have reached us at (or the attach
+   *  snapshot covered). A workspace move waits for it to reach pane_pause's seq,
+   *  so no pre-pause event is still in flight when the screen is serialised. */
+  get seqSeen(): number {
+    return this.maxSeq;
+  }
 
   /** Before a pty id is known: hold the event. Returns true if held. */
   hold(e: E): boolean {
@@ -62,6 +73,7 @@ export class OutputPipe<E extends { pane_id: number; seq?: number }> {
   /** Live path: is this event for our pane and not already in the snapshot? */
   accept(e: E): boolean {
     if (e.pane_id !== this.paneId) return false;
+    if (e.seq !== undefined && e.seq > this.maxSeq) this.maxSeq = e.seq;
     return !this.seen(e);
   }
 
@@ -70,6 +82,8 @@ export class OutputPipe<E extends { pane_id: number; seq?: number }> {
   bind(paneId: number, afterSeq = 0): E[] {
     this.paneId = paneId;
     this.minSeq = afterSeq;
+    this.maxSeq = afterSeq;
+    for (const e of this.early) if (e.pane_id === paneId && e.seq !== undefined && e.seq > this.maxSeq) this.maxSeq = e.seq;
     const held = this.early.filter((e) => e.pane_id === paneId && !this.seen(e));
     this.early = [];
     return held;
@@ -105,6 +119,8 @@ export async function attachFirst<E extends { pane_id: number; seq?: number }>(
   gen: string,
   fresh = false,
   timeoutMs = ATTACH_TIMEOUT_MS,
+  /** Workspace transfer: the pane_pause seq the caller's snapshot covers. */
+  sinceSeq?: number,
 ): Promise<{ info: AttachInfo; early: E[] } | null> {
   if (fresh) return null;
   let info: AttachInfo | null;
@@ -113,7 +129,7 @@ export async function attachFirst<E extends { pane_id: number; seq?: number }>(
     // A hung attach must never leave a pane dead: after the timeout we spawn, and
     // the spawn supersedes whatever entry the late attach may have claimed.
     info = await Promise.race([
-      inv<AttachInfo | null>("pty_attach", { modelId, gen }),
+      inv<AttachInfo | null>("pty_attach", sinceSeq === undefined ? { modelId, gen } : { modelId, gen, sinceSeq }),
       new Promise<null>((res) => { timer = setTimeout(() => res(null), timeoutMs); }),
     ]);
   } catch {

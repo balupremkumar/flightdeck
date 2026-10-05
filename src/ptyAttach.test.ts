@@ -113,6 +113,32 @@ describe("attach-then-subscribe", () => {
     await attachFirst(async <T,>(_c: string, a?: Record<string, unknown>) => { seen = a; return null as T; }, pipe, 42, "7|codex|D:\\p");
     expect(seen).toEqual({ modelId: 42, gen: "7|codex|D:\\p" });
   });
+
+  it("a workspace transfer passes sinceSeq so Rust returns only the bytes after the paused point", async () => {
+    const pipe = new OutputPipe<OutputEvt>();
+    let seen: unknown;
+    await attachFirst(async <T,>(_c: string, a?: Record<string, unknown>) => { seen = a; return null as T; }, pipe, 4, "0|claude|c", false, 50, 1234);
+    expect(seen).toEqual({ modelId: 4, gen: "0|claude|c", sinceSeq: 1234 });
+  });
+});
+
+describe("seqSeen (the source window waits on it before serialising)", () => {
+  it("tracks the highest seq delivered to a bound pane and ignores other panes", () => {
+    const pipe = new OutputPipe<OutputEvt>();
+    expect(pipe.seqSeen).toBe(0);
+    pipe.bind(5);
+    pipe.accept(evt(5, "a", 10));
+    pipe.accept(evt(6, "other pane", 999));
+    pipe.accept(evt(5, "b", 25));
+    pipe.accept(evt(5, "late duplicate", 12));
+    expect(pipe.seqSeen).toBe(25);
+  });
+  it("counts held events and the attach snapshot as seen", () => {
+    const pipe = new OutputPipe<OutputEvt>();
+    pipe.hold(evt(5, "x", 40));
+    pipe.bind(5, 30);
+    expect(pipe.seqSeen).toBe(40);
+  });
 });
 
 describe("attachPlan", () => {

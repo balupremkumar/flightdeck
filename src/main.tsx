@@ -10,7 +10,8 @@ import { runWorktreeGc } from "./worktrees";
 import { startAutosave, offerSessionRestore, crashedLastRun, armCleanExitSentinel, lastRestoreReport } from "./session";
 import { armGlobalErrorLog } from "./applog";
 import { syncReadRoots } from "./readscope";
-import { bootWindow } from "./windowBoot";
+import { bootWindow, adoptBootInfo, listenForAdopt } from "./windowBoot";
+import { isMainWindow } from "./persist";
 
 // Flight recorder catch-alls FIRST: a throw or rejection anywhere in the boot
 // sequence below must reach the on-disk log (the v0.5.3 failure didn't).
@@ -35,7 +36,11 @@ const didCrash = crashedLastRun();
 armCleanExitSentinel();
 // Phase 4: window_boot first (ordinal for the pane-id partition, heartbeat), so
 // hydrate never runs before the id counters know their partition.
-void bootWindow().then(() => offerSessionRestore()).then(() => {
+// A secondary then takes the workspace it was created for (offerSessionRestore is
+// main-only), and main starts listening for workspaces folding back into it.
+const booted = bootWindow().then((info) => adoptBootInfo(info));
+listenForAdopt();
+void booted.then(() => offerSessionRestore()).then(() => {
   void runWorktreeGc();
   // UX-583: after a bad shutdown, say exactly what came back and whether each
   // worktree survived, rather than a vague "restored" that leaves you guessing.
@@ -74,10 +79,14 @@ try {
   if (Number.isFinite(s) && s > 0 && s !== 1) applyUiScale(s);
 } catch { /* non-persistent */ }
 
-ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
+const mount = () => ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
     <ErrorBoundary>
       <App />
     </ErrorBoundary>
   </React.StrictMode>,
 );
+// A secondary renders only once its workspace is in the store, or it would flash
+// the launcher screen first. The cap keeps a stuck boot from leaving a blank window.
+if (isMainWindow()) mount();
+else void Promise.race([booted, new Promise<void>((res) => setTimeout(res, 5000))]).then(mount, mount);

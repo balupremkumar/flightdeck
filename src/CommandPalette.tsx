@@ -6,6 +6,7 @@ import { closePaneGuarded, spawnPane } from "./worktrees";
 import { agentVendors, vendorShort } from "./vendors";
 import { openSessionLauncher } from "./sessionLauncherLogic";
 import { checkForUpdate } from "./updater";
+import { multiwindowEnabled, moveActiveWorkspaceToNewWindow, focusNextWindow } from "./windowActions";
 import { getShortcuts, FIXED_SHORTCUTS } from "./settingsStore";
 import { IconWorkspace, IconAgent, IconSettings, IconClose } from "./Icons";
 import { VendorGlyph } from "./VendorGlyph";
@@ -169,6 +170,8 @@ export const ACTION_SHORTCUT_ID: Record<string, string> = {
   "act:zoom-out": "zoom-out",
   "act:zoom-reset": "zoom-reset",
   "act:cheat-sheet": "cheat-sheet",
+  "act:move-workspace-window": "move-workspace-window",
+  "act:next-window": "next-window",
 };
 
 export function CommandPalette() {
@@ -359,6 +362,19 @@ export function CommandPalette() {
         run: () => setReviewPane(focusedPane.id),
       });
     }
+    // Phase 4: only with Settings > Windows > Multiple windows (preview) on.
+    if (multiwindowEnabled()) {
+      if (activeWs) {
+        list.push({
+          id: "act:move-workspace-window",
+          section: "Actions",
+          label: "Move workspace to new window",
+          keywords: "window detach pop out separate monitor",
+          run: () => { void moveActiveWorkspaceToNewWindow(); },
+        });
+      }
+      list.push({ id: "act:next-window", section: "Actions", label: "Next window", keywords: "switch focus window", run: () => { void focusNextWindow(); } });
+    }
     // UX-530: attach the real bound combo where one exists, read fresh off
     // Settings.tsx's registries on every recompute (open/close, workspace
     // changes) so a rebind is reflected without a special cache-bust path.
@@ -371,6 +387,7 @@ export function CommandPalette() {
   }, [
     workspaces, switchWorkspace, focusPane, restartPane, startCreate,
     setSettingsOpen, pushToast, requestConfirm, explorerOpen, setExplorerOpen, setBroadcastOpen, setReviewPane,
+    open, // recompute on each open so the multiwindow flag is read fresh
   ]);
 
   const results = useMemo(() => {

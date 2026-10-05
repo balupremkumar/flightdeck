@@ -448,6 +448,9 @@ struct AttachSnapshot {
     body: String,
     start_seq: u64,
     next_seq: u64,
+    /// True when `body` is only the bytes after the caller's `since_seq` (the
+    /// hybrid workspace transfer): the caller already painted everything before.
+    delta: bool,
 }
 
 #[derive(Serialize)]
@@ -464,7 +467,13 @@ struct AttachInfo {
 /// reload). None when there is none, or its vendor/cwd differ from `gen`.
 /// Async so a 4 MiB snapshot never runs on the main thread.
 #[tauri::command]
-async fn pty_attach(window: tauri::Window, reg: State<'_, Registry>, model_id: u32, gen: String) -> Result<Option<AttachInfo>, String> {
+async fn pty_attach(
+    window: tauri::Window,
+    reg: State<'_, Registry>,
+    model_id: u32,
+    gen: String,
+    since_seq: Option<u64>,
+) -> Result<Option<AttachInfo>, String> {
     let (req_epoch, vendor, cwd) = paneout::parse_gen(&gen);
     // Registry ids first (panes is never taken while by_model is held).
     let live: std::collections::HashSet<u32> = reg.panes.lock().unwrap().keys().copied().collect();
@@ -472,9 +481,29 @@ async fn pty_attach(window: tauri::Window, reg: State<'_, Registry>, model_id: u
     let Some((pty_id, out)) = claimed else { return Ok(None) };
     // Snapshot under the PaneOut lock: any chunk is either inside it (its event
     // seq <= next_seq, which the frontend drops) or after it (delivered live).
+    // `attach` also ends a pane_pause (workspace transfer): live emits resume here,
+    // under the same lock, so nothing is lost between the delta and the first live event.
     let (snap, cols, rows) = {
-        let o = paneout::lock_out(&out);
-        (o.snapshot(), o.cols, o.rows)
+        let mut o = paneout::lock_out(&out);
+        let body = o.attach(since_seq);
+        let (cols, rows) = (o.cols, o.rows);
+        let snap = match body {
+            paneout::AttachBody::Delta(bytes, next) => AttachSnapshot {
+                head: String::new(),
+                body: STANDARD.encode(&bytes),
+                start_seq: since_seq.unwrap_or(0),
+                next_seq: next,
+                delta: true,
+            },
+            paneout::AttachBody::Full(s) => AttachSnapshot {
+                head: STANDARD.encode(&s.head),
+                body: STANDARD.encode(&s.body),
+                start_seq: s.start_seq,
+                next_seq: s.next_seq,
+                delta: false,
+            },
+        };
+        (snap, cols, rows)
     };
     let proc_name = reg
         .panes
@@ -485,12 +514,7 @@ async fn pty_attach(window: tauri::Window, reg: State<'_, Registry>, model_id: u
         .unwrap_or_default();
     Ok(Some(AttachInfo {
         pty_id,
-        snapshot: AttachSnapshot {
-            head: STANDARD.encode(&snap.head),
-            body: STANDARD.encode(&snap.body),
-            start_seq: snap.start_seq,
-            next_seq: snap.next_seq,
-        },
+        snapshot: snap,
         cols,
         rows,
         proc_name,
@@ -533,6 +557,7 @@ async fn pane_resume(app: AppHandle, reg: State<'_, Registry>, model_id: u32) ->
                 body: STANDARD.encode(&snap.body),
                 start_seq: snap.start_seq,
                 next_seq: snap.next_seq,
+                delta: false,
             }))
         }
         paneout::Resumed::Nothing => Ok(None),
@@ -1008,6 +1033,8 @@ pub fn run() {
             windows::window_heartbeat,
             windows::attention_report,
             windows::window_focus_pane,
+            windows::ws_transfer,
+            windows::window_focus_next,
             chatlog::pane_session_info,
             chatlog::session_tail,
             usage::session_subagents,

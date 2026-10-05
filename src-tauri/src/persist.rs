@@ -500,6 +500,24 @@ pub(crate) fn boot_slice(app: &AppHandle, label: &str, ids: &[u32]) -> Option<Se
     Some(doc)
 }
 
+/// A workspace transfer: the new window's slice exists from the moment the
+/// workspace is assigned to it, so a crash before its first push loses nothing.
+pub(crate) fn seed_slice(label: &str, slice: SessionDoc) {
+    let mut g = SLICES.lock().unwrap_or_else(|e| e.into_inner());
+    g.by_label.insert(label.to_string(), slice);
+    g.generation += 1;
+    g.dirty = true;
+}
+
+/// Undo `seed_slice` when the window could not be created.
+pub(crate) fn drop_slice(label: &str) {
+    let mut g = SLICES.lock().unwrap_or_else(|e| e.into_inner());
+    if g.by_label.remove(label).is_some() {
+        g.generation += 1;
+        g.dirty = true;
+    }
+}
+
 /// A secondary died: drop its slice and fold its workspaces into main's, so the
 /// next write keeps them until main pushes a slice of its own. Returns the slice.
 pub(crate) fn fold_slice_into_main(label: &str) -> Option<SessionDoc> {
