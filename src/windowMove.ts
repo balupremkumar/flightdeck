@@ -117,6 +117,7 @@ async function moveWorkspace(wsId: number, target: MoveTarget): Promise<MoveResu
     return refuse(target.kind === "new" ? "Couldn't open a new window. The workspace stays here." : "Couldn't move the workspace to that window. It stays here.");
   }
 
-  releaseWorkspace(wsId);
+  // The source stayed interactive during that await: release only what was snapshotted.
+  releaseWorkspace(wsId, snapped);
   return { ok: true, label };
 }

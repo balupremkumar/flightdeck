@@ -291,12 +291,30 @@ export function release(modelId: number): void {
 
 /** Move-out half of a workspace transfer: release every pane, THEN detach from
  *  the store, in that order, so the orphan sweep finds nothing to dispose.
- *  Returns the detached workspace for the target window to adopt. */
-export function releaseWorkspace(id: number): Workspace | undefined {
-  const ws = useApp.getState().workspaces.find((w) => w.id === id);
+ *  Returns the detached workspace for the target window to adopt.
+ *  `moved`: the pane ids that actually travelled (the snapshot). Only those are
+ *  released; a pane added after the snapshot is not in the transfer, so it stays
+ *  here, live: moved to another workspace if one exists, else it keeps the
+ *  workspace shell (the moved panes are removed from it). */
+export function releaseWorkspace(id: number, moved?: ReadonlySet<number>): Workspace | undefined {
+  const st = useApp.getState();
+  const ws = st.workspaces.find((w) => w.id === id);
   if (!ws) return undefined;
-  for (const p of ws.panes) release(p.id);
-  useApp.getState().detachWorkspace(id);
+  const leaving = ws.panes.filter((p) => !moved || moved.has(p.id));
+  const staying = ws.panes.filter((p) => !leaving.includes(p));
+  for (const p of leaving) release(p.id);
+  if (staying.length === 0) {
+    st.detachWorkspace(id);
+    return ws;
+  }
+  const dest = st.workspaces.find((w) => w.id !== id);
+  if (dest) {
+    for (const p of staying) st.movePaneToWorkspace(id, p.id, dest.id);
+    st.detachWorkspace(id);
+  } else {
+    for (const p of leaving) st.closePane(id, p.id);
+    st.focusPane(id, staying[0].id);
+  }
   return ws;
 }
 

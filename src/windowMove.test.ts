@@ -170,6 +170,45 @@ describe("moveWorkspaceToNewWindow", () => {
     expect(useUI.getState().toasts.some((t: { text: string }) => /changed|still starting/.test(t.text))).toBe(true);
   });
 
+  const addPane3During = () => {
+    handlers.ws_transfer = () => {
+      useApp.setState((s) => ({
+        workspaces: s.workspaces.map((w) => (w.id === 7 ? { ...w, panes: [...w.panes, { id: 3, vendor: "pwsh", cwd: "C:\\repo", state: "running", epoch: 0 }] } : w)),
+      }));
+      ptyOf[3] = 0;
+      ps.acquire(3, { ...spec, vendor: "pwsh" }, {}, container);
+      return "fw-1";
+    };
+  };
+
+  it("a pane added during the ws_transfer await stays alive in the source (moved to another workspace), never killed", async () => {
+    addPane3During();
+    const r = await moveWorkspaceToNewWindow(7);
+    expect(r.ok).toBe(true);
+    expect(ps.get(3)?.disposed).toBe(false);
+    expect(log).not.toContain("release:3");
+    expect(calls("pty_kill")).toHaveLength(0);
+    const ws = useApp.getState().workspaces;
+    expect(ws.map((w) => w.id)).toEqual([8]);
+    expect(ws[0].panes.map((p) => p.id)).toEqual([3]);
+    expect(ps.size()).toBe(1);
+  });
+
+  it("with no other workspace the extra pane keeps the source workspace shell", async () => {
+    useApp.setState((s) => ({ workspaces: s.workspaces.filter((w) => w.id === 7) }));
+    addPane3During();
+    const r = await moveWorkspaceToNewWindow(7);
+    expect(r.ok).toBe(true);
+    expect(ps.get(3)?.disposed).toBe(false);
+    expect(calls("pty_kill")).toHaveLength(0);
+    const ws = useApp.getState().workspaces;
+    expect(ws.map((w) => w.id)).toEqual([7]);
+    expect(ws[0].panes.map((p) => p.id)).toEqual([3]);
+    expect(ws[0].focused).toBe(3);
+    expect(log).toContain("release:1");
+    expect(log).toContain("release:2");
+  });
+
   it("a pane whose pty went away during the drain aborts the move", async () => {
     snapshotOf = async (id, seq) => {
       if (id === 2) ps.get(1)!.ptyId = 0;
