@@ -400,6 +400,34 @@ pub fn dead_windows(reg: &WindowRegistry, now: u64) -> Vec<String> {
         .collect()
 }
 
+/// The watcher's memory between ticks. A sleep, clock jump or paused webview
+/// makes every heartbeat look old at once, so a silent window is only reaped on
+/// its second consecutive miss, and a tick that arrives long after the last one
+/// judges nothing (finding 1).
+#[derive(Debug, Default)]
+pub struct Judge {
+    last_tick: Option<u64>,
+    misses: BTreeMap<String, u32>,
+}
+
+impl Judge {
+    /// Windows to reap this tick.
+    pub fn tick(&mut self, reg: &WindowRegistry, now: u64) -> Vec<String> {
+        let gap = self.last_tick.map(|t| now.saturating_sub(t));
+        self.last_tick = Some(now);
+        if gap.is_some_and(|g| g > 2 * WATCH_TICK_MS) {
+            self.misses.clear();
+            return Vec::new();
+        }
+        let dead = dead_windows(reg, now);
+        self.misses.retain(|l, _| dead.contains(l));
+        for l in &dead {
+            *self.misses.entry(l.clone()).or_insert(0) += 1;
+        }
+        dead.into_iter().filter(|l| self.misses.get(l).copied().unwrap_or(0) >= 2).collect()
+    }
+}
+
 /// Secondaries that never booted: minted, then silent past the boot timeout.
 /// Nothing is judged while the app is exiting.
 pub fn stalled_boots(reg: &WindowRegistry, now: u64) -> Vec<String> {
@@ -944,15 +972,24 @@ fn reap_unbooted(app: &AppHandle, label: &str) {
 }
 
 pub fn spawn_watcher(app: AppHandle) {
-    std::thread::spawn(move || loop {
+    std::thread::spawn(move || {
+        let mut judge = Judge::default();
+        loop {
         std::thread::sleep(Duration::from_millis(WATCH_TICK_MS));
-        let dead = dead_windows(&app.state::<WindowState>().lock(), now_ms());
+        let dead = judge.tick(&app.state::<WindowState>().lock(), now_ms());
         for label in dead {
+            // A webview that answers a flush is alive (its timers were throttled):
+            // revive it instead of merging. Only a silent one is folded into main.
+            if flush_windows(&app, &[label.clone()], CLOSE_FLUSH_MS) {
+                app.state::<WindowState>().lock().heartbeat(&label, now_ms());
+                continue;
+            }
             reap_window(&app, &label);
         }
         let stuck = stalled_boots(&app.state::<WindowState>().lock(), now_ms());
         for label in stuck {
             reap_unbooted(&app, &label);
+        }
         }
     });
 }
@@ -1265,6 +1302,42 @@ mod tests {
         assert_eq!(dead_windows(&r, 5_000 + HEARTBEAT_TIMEOUT_MS + 1), vec!["fw-1".to_string(), "fw-2".to_string()]);
         r.exiting = true;
         assert!(dead_windows(&r, u64::MAX).is_empty(), "nothing is judged while exiting");
+    }
+
+    #[test]
+    fn a_silent_window_is_reaped_only_on_its_second_miss() {
+        let mut r = WindowRegistry::default();
+        r.windows.insert("fw-1".into(), rec(&[2], true, 0));
+        let mut j = Judge::default();
+        let t1 = HEARTBEAT_TIMEOUT_MS + 1;
+        assert!(j.tick(&r, t1).is_empty(), "first miss only counts");
+        assert_eq!(j.tick(&r, t1 + WATCH_TICK_MS), vec!["fw-1".to_string()]);
+    }
+
+    #[test]
+    fn a_heartbeat_between_ticks_clears_the_miss() {
+        let mut r = WindowRegistry::default();
+        r.windows.insert("fw-1".into(), rec(&[2], true, 0));
+        let mut j = Judge::default();
+        let t1 = HEARTBEAT_TIMEOUT_MS + 1;
+        assert!(j.tick(&r, t1).is_empty());
+        r.heartbeat("fw-1", t1 + 10);
+        assert!(j.tick(&r, t1 + WATCH_TICK_MS).is_empty());
+        assert!(j.tick(&r, t1 + 2 * WATCH_TICK_MS).is_empty(), "the earlier miss no longer counts");
+    }
+
+    #[test]
+    fn a_tick_after_a_long_gap_judges_nothing_and_resets() {
+        let mut r = WindowRegistry::default();
+        r.windows.insert("fw-1".into(), rec(&[2], true, 0));
+        let mut j = Judge::default();
+        let t1 = HEARTBEAT_TIMEOUT_MS + 1;
+        assert!(j.tick(&r, t1).is_empty());
+        // The machine slept: the next tick lands far past the interval.
+        let t2 = t1 + 60_000;
+        assert!(j.tick(&r, t2).is_empty(), "a sleep gap is not evidence of death");
+        assert!(j.tick(&r, t2 + WATCH_TICK_MS).is_empty(), "the miss count restarted");
+        assert_eq!(j.tick(&r, t2 + 2 * WATCH_TICK_MS), vec!["fw-1".to_string()]);
     }
 
     #[test]
