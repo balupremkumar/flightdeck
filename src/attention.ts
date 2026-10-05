@@ -73,7 +73,7 @@ const STANDARD_PROMPT_RE = [
  *  edits?" / "...grant these permissions?" (already caught by the shared
  *  "would you like to"), "Do you want to approve network access to ..." (shared
  *  "do you want to"), plus the ones the shared list misses below. */
-const CODEX_PROMPT_RE = [
+export const CODEX_PROMPT_RE = [
   /no, and tell codex what to do differently/i,
   /yes, and don'?t ask again/i,
   /yes, just this once/i,
