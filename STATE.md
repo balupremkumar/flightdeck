@@ -3,7 +3,7 @@ hub_updated: 2026-10-06
 hub_status: active
 hub_lane: products
 hub_last: "Fable red team fixed (H1, M1-M4, L2) and on main; gate tsc 0, vitest 1491, cargo 446, build OK, e2e 21/21."
-hub_next: "Cut 0.6.0 Canary (release.ps1 from plain PowerShell, Canary closed), then Balu runs release-0.6.0-checklist.md."
+hub_next: "After Balu's release.ps1 0.6.0 run: commit the version bump on main, tag v0.6.0, push main + tag, update PORTFOLIO row and LOG; Balu installs Canary and runs release-0.6.0-checklist.md."
 hub_you: "Run release.ps1 for 0.6.0 from a plain PowerShell window with Canary closed (boot gate refuses a running Canary)."
 ---
 # STATE — Flightdeck
