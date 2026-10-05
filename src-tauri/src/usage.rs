@@ -1551,6 +1551,8 @@ pub fn search_sessions_with(projects_root: &Path, cwd: &str, query: &str, opts: 
     out
 }
 
+// Only the tests call the default-options form; the command uses search_sessions_with.
+#[cfg(test)]
 pub fn search_sessions(projects_root: &Path, cwd: &str, query: &str) -> SearchResults {
     search_sessions_with(projects_root, cwd, query, &SearchOpts::default())
 }
