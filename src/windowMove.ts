@@ -93,6 +93,17 @@ async function moveWorkspace(wsId: number, target: MoveTarget): Promise<MoveResu
     await resumeAll(paused);
     return refuse("That workspace was closed while it was being moved.");
   }
+  // The drain awaited: a pane may have been added, removed, or caught mid-spawn. Releasing
+  // a pane that is not in the snapshot, or one still spawning, kills it (entry.disposed).
+  const snapped = new Set(ws.panes.map((p) => p.id));
+  const stable = live.panes.length === snapped.size && live.panes.every((p) => {
+    const s = getSession(p.id);
+    return snapped.has(p.id) && !!s && !s.disposed && !!s.ptyId;
+  });
+  if (!stable) {
+    await resumeAll(paused);
+    return refuse("The workspace changed while it was being moved. Try again once its panes are running.");
+  }
 
   let label: string;
   try {

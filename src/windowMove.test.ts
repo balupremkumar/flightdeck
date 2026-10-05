@@ -151,6 +151,37 @@ describe("moveWorkspaceToNewWindow", () => {
     expect(ps.size()).toBe(2);
   });
 
+  it("a pane added during the snapshot drain aborts the move: everything paused is resumed, nothing released", async () => {
+    snapshotOf = async (id, seq) => {
+      if (id === 2) {
+        useApp.setState((s) => ({
+          workspaces: s.workspaces.map((w) => (w.id === 7 ? { ...w, panes: [...w.panes, { id: 3, vendor: "pwsh", cwd: "C:\repo", state: "starting", epoch: 0 }] } : w)),
+        }));
+      }
+      return { serialized: `screen-${id}@${seq}`, cols: 100, rows: 30 };
+    };
+    const r = await moveWorkspaceToNewWindow(7);
+    expect(r.ok).toBe(false);
+    expect(calls("ws_transfer")).toHaveLength(0);
+    expect(log.filter((l) => l.startsWith("invoke:pane_resume"))).toEqual(["invoke:pane_resume:1", "invoke:pane_resume:2"]);
+    expect(log.some((l) => l.startsWith("release:") || l === "detach")).toBe(false);
+    expect(useApp.getState().workspaces.map((w) => w.id)).toContain(7);
+    expect(ps.size()).toBe(2);
+    expect(useUI.getState().toasts.some((t: { text: string }) => /changed|still starting/.test(t.text))).toBe(true);
+  });
+
+  it("a pane whose pty went away during the drain aborts the move", async () => {
+    snapshotOf = async (id, seq) => {
+      if (id === 2) ps.get(1)!.ptyId = 0;
+      return { serialized: `screen-${id}@${seq}`, cols: 100, rows: 30 };
+    };
+    const r = await moveWorkspaceToNewWindow(7);
+    expect(r.ok).toBe(false);
+    expect(calls("ws_transfer")).toHaveLength(0);
+    expect(log.filter((l) => l.startsWith("invoke:pane_resume"))).toEqual(["invoke:pane_resume:1", "invoke:pane_resume:2"]);
+    expect(ps.size()).toBe(2);
+  });
+
   it("a pane that cannot be paused aborts the move and resumes the ones already paused", async () => {
     handlers.pane_pause = (a) => { if (a.modelId === 2) throw new Error("no live pty"); return 1000; };
     const r = await moveWorkspaceToNewWindow(7);
