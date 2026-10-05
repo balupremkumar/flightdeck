@@ -22,7 +22,7 @@ import type { SearchAddon } from "@xterm/addon-search";
 import type { SerializeAddon } from "@xterm/addon-serialize";
 import type { LigaturesAddon } from "@xterm/addon-ligatures";
 import { invoke } from "@tauri-apps/api/core";
-import { useApp } from "./store";
+import { useApp, type Workspace } from "./store";
 import { logEvent } from "./applog";
 
 /** Latest callbacks from the mounted PaneView. Replaced on every render, so the
@@ -243,6 +243,36 @@ export function dispose(modelId: number): void {
   }
   try { s.term.dispose(); } catch { /* already disposed */ }
   s.host.remove();
+}
+
+/** Tear the session down WITHOUT pty_kill: the pty keeps running in Rust and
+ *  its ring keeps buffering, so another window can pty_attach to it. Idempotent.
+ *  Must run BEFORE the pane leaves the store (see releaseWorkspace): the session
+ *  is gone from the registry by then, so the orphan sweep never sees it.
+ *  Caveat: a release while pty_spawn is still in flight (ptyId 0) hits the
+ *  `entry.disposed` guard in Terminal.tsx and kills the just-spawned pty. */
+export function release(modelId: number): void {
+  const s = sessions.get(modelId);
+  if (!s || s.disposed) { sessions.delete(modelId); return; }
+  s.disposed = true;
+  sessions.delete(modelId);
+  for (const d of s.disposers.splice(0)) {
+    try { d(); } catch { /* keep tearing down */ }
+  }
+  s.ptyId = 0; // forget, never kill
+  try { s.term.dispose(); } catch { /* already disposed */ }
+  s.host.remove();
+}
+
+/** Move-out half of a workspace transfer: release every pane, THEN detach from
+ *  the store, in that order, so the orphan sweep finds nothing to dispose.
+ *  Returns the detached workspace for the target window to adopt. */
+export function releaseWorkspace(id: number): Workspace | undefined {
+  const ws = useApp.getState().workspaces.find((w) => w.id === id);
+  if (!ws) return undefined;
+  for (const p of ws.panes) release(p.id);
+  useApp.getState().detachWorkspace(id);
+  return ws;
 }
 
 /** Safety net: dispose any session whose pane no longer exists in the store.

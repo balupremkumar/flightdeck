@@ -58,6 +58,11 @@ interface AppState {
   cancelCreate: () => void;
   createWorkspace: (root: string, panes: NewPane[], setupCmd?: string) => void;
   closeWorkspace: (id: number) => void;
+  /** Phase 4 move: remove a workspace with no kill/cleanup funnels. Callers
+   *  release its pane sessions first (paneSessions.releaseWorkspace). */
+  detachWorkspace: (id: number) => void;
+  /** Phase 4 move: additive hydrate of one workspace; no reconcile, no cleanup funnels. */
+  adoptWorkspace: (ws: Workspace) => void;
   switchWorkspace: (id: number) => void;
   addPane: (wsId: number, vendor: string, cwd: string, wt?: WorktreeRef, needsSetup?: boolean) => void;
   clearNeedsSetup: (paneId: number) => void;
@@ -213,6 +218,29 @@ export const useApp = create<AppState>((set) => ({
         activeId,
         selectedPaneIds: s.selectedPaneIds.filter((pid) => !closed.has(pid)),
         groups: s.groups.map((g) => ({ ...g, paneIds: g.paneIds.filter((pid) => !closed.has(pid)) })),
+      };
+    }),
+
+  detachWorkspace: (id) =>
+    set((s) => {
+      const gone = new Set(s.workspaces.find((w) => w.id === id)?.panes.map((p) => p.id) ?? []);
+      const workspaces = s.workspaces.filter((w) => w.id !== id);
+      return {
+        workspaces,
+        activeId: s.activeId === id ? (workspaces[workspaces.length - 1]?.id ?? null) : s.activeId,
+        selectedPaneIds: s.selectedPaneIds.filter((pid) => !gone.has(pid)),
+      };
+    }),
+
+  adoptWorkspace: (ws) =>
+    set((s) => {
+      wseq = Math.max(wseq, ws.id);
+      for (const p of ws.panes) pseq = Math.max(pseq, p.id);
+      return {
+        workspaces: [...s.workspaces.filter((w) => w.id !== ws.id), ws],
+        activeId: ws.id,
+        creating: false,
+        selectedPaneIds: [],
       };
     }),
 

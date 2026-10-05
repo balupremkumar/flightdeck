@@ -165,6 +165,51 @@ describe("paneSessions", () => {
     expect(kills()).toEqual([["pty_kill", { paneId: 47 }]]);
   });
 
+  describe("release / detach / adopt (Phase 4 move)", () => {
+    const mkPane = (id: number) => ({ id, vendor: "claude", cwd: "C:\repo", state: "idle" as const, epoch: 0 });
+    const seedWs = (ids: number[]) => {
+      useApp.setState({ workspaces: [{ id: 1, name: "w", root: "C:\repo", panes: ids.map(mkPane), focused: ids[0] } as never], activeId: 1 });
+      for (const id of ids) ps.acquire(id, spec(), {}, container);
+    };
+
+    it("release tears down without pty_kill and is idempotent", () => {
+      const s = ps.acquire(1, spec(), {}, container);
+      ps.release(1);
+      ps.release(1);
+      expect(kills()).toHaveLength(0);
+      expect(s.term.dispose).toHaveBeenCalledTimes(1);
+      expect(s.disposers).toHaveLength(0);
+      expect(ps.get(1)).toBeUndefined();
+    });
+
+    it("releaseWorkspace then detach never calls pty_kill; the sweep finds nothing", () => {
+      seedWs([1, 2]);
+      const ws = ps.releaseWorkspace(1);
+      expect(ws?.panes.map((p) => p.id)).toEqual([1, 2]);
+      expect(useApp.getState().workspaces).toHaveLength(0);
+      expect(ps.size()).toBe(0);
+      expect(kills()).toHaveLength(0);
+    });
+
+    it("the sweep still disposes a genuine orphan alongside a released workspace", () => {
+      seedWs([1, 2]);
+      ps.acquire(9, spec(), {}, container); // not in any workspace
+      ps.releaseWorkspace(1);
+      expect(kills()).toEqual([["pty_kill", { paneId: 49 }]]);
+    });
+
+    it("adopt of a detached workspace re-adds it with the same pane ids", () => {
+      seedWs([1, 2]);
+      const ws = ps.releaseWorkspace(1)!;
+      useApp.getState().adoptWorkspace(ws);
+      const back = useApp.getState().workspaces;
+      expect(back).toHaveLength(1);
+      expect(back[0].panes.map((p) => p.id)).toEqual([1, 2]);
+      expect(useApp.getState().activeId).toBe(1);
+      expect(kills()).toHaveLength(0);
+    });
+  });
+
   describe("close funnels", () => {
     const mkPane = (id: number) => ({ id, vendor: "claude", cwd: "C:\repo", state: "idle" as const, epoch: 0 });
     const seed = (ids: number[]) => {
