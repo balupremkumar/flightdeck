@@ -79,6 +79,10 @@ impl PaneOut {
         self.ring.snapshot()
     }
 
+    pub fn tail(&self, max: usize) -> (Vec<u8>, u64) {
+        self.ring.tail(max)
+    }
+
     pub fn seq(&self) -> u64 {
         self.ring.seq()
     }

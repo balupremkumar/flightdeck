@@ -23,6 +23,7 @@ mod pathcheck;
 mod pathguard;
 mod overlay;
 mod persist;
+mod plaintail;
 mod ports;
 mod procname;
 mod readscope;
@@ -1000,6 +1001,7 @@ pub fn run() {
             pty_spawn,
             pty_attach,
             pane_pause,
+            plaintail::pane_tail,
             pane_resume,
             pty_reap_unclaimed,
             windows::window_boot,

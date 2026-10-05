@@ -425,6 +425,19 @@ impl PaneRing {
         }
     }
 
+    /// Last `max` live bytes plus the ring seq, for the peek. Copies only the window.
+    /// A window that does not reach the buffer start begins after its first LF (or
+    /// at the window start when it has none), so the first line is never a fragment.
+    pub fn tail(&self, max: usize) -> (Vec<u8>, u64) {
+        let live = &self.buf[self.start..];
+        if live.len() <= max {
+            return (live.to_vec(), self.seq);
+        }
+        let win = &live[live.len() - max..];
+        let from = win.iter().position(|&b| b == b'\n').map_or(0, |i| i + 1);
+        (win[from..].to_vec(), self.seq)
+    }
+
     /// Bytes after `seq` plus the new next_seq. None if `seq` was already evicted
     /// or is in the future.
     pub fn bytes_since(&self, seq: u64) -> Option<(Vec<u8>, u64)> {

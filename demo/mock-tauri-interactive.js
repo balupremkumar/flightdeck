@@ -30,7 +30,13 @@
   // count for the pane, AFTER this chunk. Stamped here so every emit site (and
   // __mockPrint) gets it.
   const outSeq = new Map(); // pane_id -> bytes emitted so far
+  const peekText = new Map(); // pty id -> recent plain text (pane_tail)
+  const peekPty = new Map(); // modelId -> pty id (pty_spawn)
   const emit = (event, payload) => {
+    if (event === "pty://output" && payload) {
+      const t = (peekText.get(payload.pane_id) ?? "") + atob(payload.b64).replace(/\x1b\[[0-9;?]*[ -\/]*[@-~]/g, "").replace(/\r/g, "");
+      peekText.set(payload.pane_id, t.slice(-8192));
+    }
     if (event === "pty://output" && payload && payload.seq === undefined) {
       const next = (outSeq.get(payload.pane_id) ?? 0) + atob(payload.b64).length;
       outSeq.set(payload.pane_id, next);
@@ -630,7 +636,12 @@ index 3c92f1a..7d40b2e 100644
     // window.__fdMockAttach(modelId, gen) -> AttachInfo | null before page load.
     pty_attach: ({ modelId, gen }) => (typeof window.__fdMockAttach === "function" ? window.__fdMockAttach(modelId, gen) : null),
     pty_reap_unclaimed: () => 0,
-    pty_spawn: ({ vendor, cwd }) => { const id = ++nextPaneId; startPane(id, vendor, cwd); return id; },
+    pty_spawn: ({ modelId, vendor, cwd }) => { const id = ++nextPaneId; peekPty.set(modelId, id); startPane(id, vendor, cwd); return id; },
+    pane_tail: ({ modelId }) => {
+      const pid = peekPty.get(modelId);
+      if (pid === undefined) throw "no live pty for pane model " + modelId;
+      return { lines: (peekText.get(pid) ?? "").split("\n").map((x) => x.trimEnd()).filter(Boolean).slice(-40), seq: outSeq.get(pid) ?? 0 };
+    },
     pty_write: ({ paneId, data }) => { handleInput(paneId, String(data ?? "")); return null; },
     pty_resize: () => null,
     pty_kill: ({ paneId }) => { const p = panes.get(paneId); p?.timers.forEach(clearTimeout); panes.delete(paneId); return null; },
