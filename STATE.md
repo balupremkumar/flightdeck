@@ -10,7 +10,7 @@ hub_you: "Install the 0.6.0 Canary and run the checklist once it is cut."
 
 Vault: [[HOME]] | [[PORTFOLIO|Portfolio]] | [[projects/active/flightdeck/BACKLOG|Backlog]]
 
-UPDATE 2026-10-05: qol/phase-4 has S4-S8a, S10 Rust core, Home 1-7 (feature complete), pty_write fix, release docs draft; cargo 409, tsc 0. In flight: S8b close/crash/quit, Home critique. Queued: chatlog cargo flake, S9, S10b, gates, Fable, 0.6.0 Canary.
+UPDATE 2026-10-05: qol/phase-4 has S4-S8b, S10 Rust core, Home 1-7 + critique doc, pty_write fix, chatlog settings-file race fix, release docs draft. In flight: S9, persist coalescer flake. Queued: Home critique fixes, S10b, gates, Fable, 0.6.0 Canary.
 Updated: 2026-09-19 (lag root-caused and fixed on branch flightdeck/pfi232, uncommitted; full roadmap written to BACKLOG.md section N).
 
 ## CURRENT 2026-09-19: the "laggy with Antigravity" bug is root-caused and fixed on this branch (uncommitted, not yet cut)
