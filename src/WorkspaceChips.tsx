@@ -60,9 +60,9 @@ export default function WorkspaceChips({ workspace }: { workspace: Workspace }) 
           className={"wsc wsc-pr " + (pr.state.toUpperCase() === "OPEN" ? pr.checks : "done")}
           disabled={!prUrl}
           onClick={() => prUrl && open(prUrl)}
-          title={prUrl ?? "Pull request"}
+          title={`${prLabel(pr)}${prUrl ? `\n${prUrl}` : ""}`}
         >
-          <span className="wsc-dot" />{prLabel(pr)}
+          <span className="wsc-dot" /><span className="wsc-text">{prLabel(pr)}</span>
         </button>
       )}
     </div>

@@ -6,6 +6,7 @@
 .ws-chips .wsc-x { padding: 0 8px 0 2px; height: 100%; opacity: .7; flex: none; }
 .ws-chips .wsc-x:hover { color: var(--st-error); opacity: 1; }
 .ws-chips .wsc-pr { padding: 0 9px; gap: 6px; text-overflow: ellipsis; }
+.ws-chips .wsc-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ws-chips .wsc-pr:hover:not(:disabled) { color: var(--text); }
 .ws-chips .wsc-pr:disabled { cursor: default; }
 .ws-chips .wsc-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--tmuted); }
