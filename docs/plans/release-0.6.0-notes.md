@@ -4,12 +4,27 @@
 
 - Reloading the window (Ctrl+R) reattaches running panes instead of restarting them.
 - After a reload, a pane's scrollback history is the last 4 MiB.
-- Broadcast, Review "send to agent" and palette "New task" now reach the right pane after a restore.
+
+## Home
+
+- Home is a one-screen view of every agent across all workspaces, opened with Ctrl+Shift+H, the button beside the bell, or the palette entry "Open Home".
+- Five columns: Needs you, Working, Ready to review, Idle, Merged.
+- Space on a card peeks at the last lines of that pane, even if the pane is not on screen.
+- You can reply to a question from the card, and the reply goes to that pane only.
+- Approve answers a Claude permission prompt from the card. Prompts Flightdeck does not recognise offer Open only.
+- Escape closes Home and keeps drafts.
 
 ## Multiple windows (preview)
 
 - Workspaces can live in their own windows. It is a preview behind a setting: Settings > Windows > "Multiple windows (preview)", off by default, takes effect after a restart.
+- Move a workspace to a new window (Ctrl+Shift+N) or to an existing one (Ctrl+Shift+O). Agents keep running through the move.
+- "Merge all windows" brings everything back to the main window.
+- Closing a secondary window merges its workspaces back into the main window.
+- Secondary windows reopen on launch at their saved size and position.
+- The taskbar badge and summon (Ctrl+Alt+F) work across all windows, and clicking a notification opens the right window and pane.
+- Session-wide operations from a secondary window ask you to switch to the main window.
 - A hung window is detected and its workspaces return to the main window.
+- With the setting off, everything stays in one window.
 
 ## Chat view
 
@@ -49,6 +64,10 @@
 ## Fixes
 
 - Pane header keeps its branch label at narrow widths.
+- Broadcast, Review "send to agent" and palette "New task" now reach the right pane after a restore.
+- A race that could lose Claude's settings file when two agents start at once is fixed.
+- A pane name you type now survives a restart.
+- The PR chip in the top bar truncates with an ellipsis and shows the full text on hover.
 - Right-click paste and MCP notices no longer misfire on prompts and TUI borders.
 
 Hand checks: docs/plans/release-0.6.0-checklist.md

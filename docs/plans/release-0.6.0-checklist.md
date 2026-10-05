@@ -99,8 +99,17 @@ With the flag off, none of these commands exist and the app behaves as one windo
 - [ ] Taskbar badge reflects attention across all windows.
 - [ ] Summon (Ctrl+Alt+F) reaches the right window, including with a fullscreen app on screen.
 - [ ] Turn the flag off and restart: every workspace is in main.
+- [ ] Taskbar badge shows the same number on both windows.
+- [ ] The bell footer row jumps to the pane in window 2.
+- [ ] Click an OS toast: the right window and pane take focus.
+- [ ] With a fullscreen game up, nothing steals focus on attention, output or launch restore.
+- [ ] Summon lands on the global top pane.
+- [ ] Drag a window across monitors with different DPI: terminals remeasure.
+- [ ] A secondary reopens at its saved size and position on launch.
+- [ ] Flag off with a v2 session doc: everything opens in one window.
+- [ ] Sleep the PC for 30 s with two windows open: neither window is closed on wake.
 
-## Phase 5 Home (build pending, run after it merges)
+## Phase 5 Home
 
 - [ ] Ctrl+Shift+H opens Home, as does the button beside the bell and the palette entry "Open Home".
 - [ ] The Home count matches the bell count.
