@@ -3,7 +3,7 @@ import { useApp, type PaneModel } from "./store";
 import { useUI } from "./ui";
 import { dispose as disposePaneSession } from "./paneSessions";
 import { vendorShort } from "./vendors";
-import { loadSession } from "./persist";
+import { loadSession, isMainWindow } from "./persist";
 import { ensureTrusted } from "./trust";
 
 // worktrees.ts — frontend side of per-agent git worktree isolation (Tier 0).
@@ -253,6 +253,7 @@ async function cleanupWorktree(worktreePath: string) {
 /** Launch-time GC (D6): reap worktrees no persisted or live pane claims.
  *  Stray work is keep-committed to its branch by the backend, never destroyed. */
 export async function runWorktreeGc() {
+  if (!isMainWindow()) return; // GC is a launch-time job for the main window only
   try {
     const keep = new Set<string>();
     for (const w of useApp.getState().workspaces)

@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 
 // Typed client for the Rust `persist` module (src-tauri/src/persist.rs).
 // JSON-document session persistence in the app-data dir; not wired into
@@ -79,6 +80,13 @@ export async function saveSession(doc: SessionDraft): Promise<void> {
 // per-window slices and owns the document. The window label is taken from the
 // calling window on the Rust side, never sent from here. `flush` skips Rust's
 // own 800 ms debounce (beforeunload).
+/** Phase 4: boot-only work (restore prompt, worktree GC, clean-exit sentinel,
+ *  what's-new) belongs to the "main" window. True outside Tauri (browser
+ *  preview, tests) where there is no window label. */
+export function isMainWindow(): boolean {
+  try { return getCurrentWindow().label === "main"; } catch { return true; }
+}
+
 export async function putSlice(slice: SessionDraft, flush = false): Promise<void> {
   try {
     await invoke("session_put_slice", { slice, flush });
@@ -105,8 +113,9 @@ export function makeDebouncedSave(delayMs = 800): DebouncedSave {
     if (pending) {
       const doc = pending;
       pending = undefined;
-      void saveSession(doc);
-      void putSlice(doc, final); // S6 shadow: Rust writes session.v2.json beside the line above
+      // S6b: Rust is the single writer of session.json. saveSession stays
+      // exported for one release for import/export paths only.
+      void putSlice(doc, final);
     }
   }
 

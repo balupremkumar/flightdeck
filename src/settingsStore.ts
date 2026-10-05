@@ -4,6 +4,7 @@
 import { useEffect } from "react";
 import { relTime } from "./format";
 import { useUI } from "./ui";
+import { isMainWindow } from "./persist";
 import { getPendingReleaseNotes, clearPendingReleaseNotes } from "./updater";
 
 // ---------------------------------------------------------------------
@@ -326,6 +327,7 @@ export const WHATSNEW_SEEN_KEY = "flightdeck-whatsnew-seen-version";
 // which is a lazy chunk mounted only while open, so the boot toast never fired.
 export function useWhatsNew() {
   useEffect(() => {
+    if (!isMainWindow()) return; // secondary windows never show the update banner
     let seen: string | null = null;
     try { seen = localStorage.getItem(WHATSNEW_SEEN_KEY); } catch { /* non-persistent */ }
     const pending = getPendingReleaseNotes();

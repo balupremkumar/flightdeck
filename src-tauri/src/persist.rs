@@ -286,9 +286,9 @@ pub fn save_session(app: AppHandle, mut doc: SessionDoc) -> Result<(), String> {
 const MAIN_LABEL: &str = "main";
 const SLICE_DEBOUNCE_MS: u64 = 800;
 const SHADOW_FILE: &str = "session.v2.json";
-// Shadow mode writes session.v2.json beside the unchanged save_session path.
-// S6b flips this so the slice writer owns session.json.
-const SLICE_WRITER_PRIMARY: bool = false;
+// S6b: the slice writer owns session.json (save_session stays one release for
+// import/export paths). Set false for shadow mode: session.v2.json beside it.
+const SLICE_WRITER_PRIMARY: bool = true;
 
 /// Seam for the S7 WindowRegistry: does `label` own workspace `ws_id`? Until the
 /// registry exists only main owns anything, so foreign slices are dropped.
@@ -795,6 +795,28 @@ mod tests {
         m.insert("fw-1".to_string(), slice(vec![], None, serde_json::json!({ "scrollback": {} })));
         let (doc, _) = merge_slices(&m, |_, _| true);
         assert_eq!(doc.ui_prefs["scrollback"], serde_json::json!({ "10": "a" }));
+    }
+
+    // S6b: a single-window save through the slice writer yields the same
+    // document as the old save_session path (same workspaces, activeWorkspaceId, uiPrefs).
+    #[test]
+    fn single_window_slice_matches_the_old_save_path() {
+        let prefs = serde_json::json!({
+            "groups": [{ "id": 1 }], "summary": [{ "p": 1 }],
+            "scrollback": { "10": "a" }, "paneChat": { "10": { "view": "chat" } }, "paneColor": { "10": "red" }
+        });
+        let draft = slice(vec![ws(1, 10), ws(2, 20)], Some(2), prefs);
+        // Old path: save_session stamps version and savedAt on the draft as-is.
+        let old = serde_json::to_value(&draft).unwrap();
+        let mut m = BTreeMap::new();
+        m.insert("main".to_string(), draft);
+        let (new, rejected) = merge_slices(&m, assigned);
+        assert!(rejected.is_empty());
+        let new = serde_json::to_value(&new).unwrap();
+        for k in ["workspaces", "activeWorkspaceId", "uiPrefs"] {
+            assert_eq!(old[k], new[k], "{k} differs");
+        }
+        assert_eq!(new["windows"][0]["workspaceIds"], serde_json::json!([1, 2]));
     }
 
     // The v1 reader, as it was before `windows` existed: no deny_unknown_fields.

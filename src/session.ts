@@ -11,7 +11,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useApp, type PaneModel, type PaneGroup, type Workspace } from "./store";
 import { useUI } from "./ui";
 import {
-  loadSession, isSafeMode, hasPreviousSession, makeDebouncedSave,
+  loadSession, isSafeMode, hasPreviousSession, makeDebouncedSave, isMainWindow,
   type SessionDraft, type PersistedWorkspace,
 } from "./persist";
 import { repoToplevel, closeWorkspaceWithCleanup, type WorktreeInfo } from "./worktrees";
@@ -326,7 +326,7 @@ export function startAutosave() {
   const finalSave = () => {
     refreshScrollbackCache();
     scheduleIfChanged();
-    saver.flush(true); // writes save_session and pushes the slice to Rust
+    saver.flush(true); // pushes the slice to Rust, skipping its debounce
   };
   window.addEventListener("beforeunload", finalSave);
   document.addEventListener("visibilitychange", () => {
@@ -458,6 +458,7 @@ const CLEAN_EXIT_KEY = "flightdeck-clean-exit";
 
 /** True when the previous run ended without going through the quit path. */
 export function crashedLastRun(): boolean {
+  if (!isMainWindow()) return false;
   try {
     // Absent = first run ever, which is not a crash.
     const v = localStorage.getItem(CLEAN_EXIT_KEY);
@@ -467,6 +468,7 @@ export function crashedLastRun(): boolean {
 
 /** Call once at boot, AFTER reading crashedLastRun(). */
 export function armCleanExitSentinel() {
+  if (!isMainWindow()) return; // one sentinel per app, owned by main
   try {
     localStorage.setItem(CLEAN_EXIT_KEY, "0");
   } catch { /* non-persistent */ }
@@ -480,6 +482,7 @@ export function armCleanExitSentinel() {
 /** Boot entry: offer to reopen the previous session. Mounting a restored pane
  *  respawns its PTY, so "reopen" relaunches the agents in place. */
 export async function offerSessionRestore() {
+  if (!isMainWindow()) return;
   try {
     if (await isSafeMode()) {
       useUI.getState().pushToast("info", "Started in safe mode — previous session not restored.");
