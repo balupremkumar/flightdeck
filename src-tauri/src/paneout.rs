@@ -214,6 +214,11 @@ impl ByModel {
         self.live.get(&model_id)
     }
 
+    /// Every model id with a live pty, whichever window holds it.
+    pub fn live_ids(&self) -> Vec<u32> {
+        self.live.keys().copied().collect()
+    }
+
     pub fn mark_attached(&mut self, model_id: u32, label: &str) {
         if let Some(e) = self.live.get_mut(&model_id) {
             e.attached = Some(label.to_string());

@@ -17,7 +17,7 @@ import { announce } from "./windowAnnounce";
 // Rust can re-adopt this window's workspaces if the webview dies silently.
 /** What a window created by a workspace move boots with (windows.rs ws_transfer). */
 export interface TransferPayload { workspace: Workspace; panes: Record<number, PaneTransfer> }
-export interface BootInfo { label: string; ordinal: number; slice?: SessionDraft | null; transfer?: TransferPayload | null }
+export interface BootInfo { label: string; ordinal: number; idFloor?: number; slice?: SessionDraft | null; transfer?: TransferPayload | null }
 
 export const HEARTBEAT_MS = 2000;
 
@@ -28,7 +28,7 @@ export async function bootWindow(): Promise<BootInfo | null> {
   try {
     const info = await invoke<BootInfo>("window_boot", { multiwindow: getMultiwindow() });
     if (!info || typeof info.ordinal !== "number") return null;
-    setWindowOrdinal(info.ordinal);
+    setWindowOrdinal(info.ordinal, info.idFloor);
     if (heartbeat === undefined) {
       heartbeat = setInterval(() => { void invoke("window_heartbeat").catch(() => { /* Rust gone or reloading */ }); }, HEARTBEAT_MS);
     }

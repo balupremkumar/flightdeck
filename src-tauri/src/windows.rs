@@ -148,6 +148,13 @@ pub fn max_ordinal(ids: impl IntoIterator<Item = u32>) -> u32 {
     ids.into_iter().map(|i| i >> 24).max().unwrap_or(0)
 }
 
+/// Highest id in `ordinal`'s partition among `ids`, or the partition base when
+/// none is there. The window seeds its id counters from it so it never mints an
+/// id another window (or a live pty) still holds.
+pub fn partition_id_floor(ordinal: u32, ids: impl IntoIterator<Item = u32>) -> u32 {
+    ids.into_iter().filter(|i| i >> 24 == ordinal).max().unwrap_or(ordinal << 24)
+}
+
 impl WindowRegistry {
     /// Does `label` own workspace `ws_id`? A workspace belongs to the window that
     /// lists it; main owns every workspace nobody else lists.
@@ -635,6 +642,9 @@ impl WindowState {
 pub struct BootInfo {
     pub label: String,
     pub ordinal: u32,
+    /// Highest id already used in this window's partition anywhere (all windows,
+    /// live ptys); the window's id counters start at or above it.
+    pub id_floor: u32,
     /// The workspaces assigned to this window. None for main, which loads the
     /// session document itself.
     pub slice: Option<SessionDoc>,
@@ -680,6 +690,7 @@ pub fn window_boot(
     app: AppHandle,
     window: tauri::Window,
     state: State<'_, WindowState>,
+    reg: State<'_, crate::Registry>,
     multiwindow: bool,
 ) -> Result<BootInfo, String> {
     let label = window.label().to_string();
@@ -712,7 +723,15 @@ pub fn window_boot(
     };
     let slice = if label == MAIN { None } else { persist::boot_slice(&app, &label, &ids) };
     let transfer = if label == MAIN { None } else { pending_take(&label) };
-    Ok(BootInfo { label, ordinal, slice, transfer })
+    // Id floor for this window's partition: the full doc, every window's slice, the
+    // workspaces the registry assigns anywhere and every live pty. Ids this window
+    // does not hold itself (a workspace moved away, a pane live in a secondary) must
+    // still never be minted again, or pty_spawn supersedes and kills that agent.
+    let mut known = persist::all_known_ids(&app);
+    known.extend(state.lock().windows.values().flat_map(|r| r.workspace_ids.iter().copied()));
+    known.extend(crate::paneout::lock_map(&reg.by_model).live_ids());
+    let id_floor = partition_id_floor(ordinal, known);
+    Ok(BootInfo { label, ordinal, id_floor, slice, transfer })
 }
 
 /// What the source window sends to `ws_transfer`.
@@ -1389,6 +1408,17 @@ mod tests {
         r.next_ordinal = MAX_ORDINAL;
         assert_eq!(r.mint_label().unwrap(), "fw-127");
         assert!(r.mint_label().is_err());
+    }
+
+    #[test]
+    fn partition_id_floor_is_the_max_local_id_in_the_partition() {
+        let p1 = |n: u32| (1 << 24) | n;
+        // Main's floor sees ids held by a secondary's moved workspace (5, 6) and ignores other partitions.
+        assert_eq!(partition_id_floor(0, [1, 2, 3, 4, 5, 6, p1(9)]), 6);
+        assert_eq!(partition_id_floor(1, [1, 6, p1(9), p1(3)]), p1(9));
+        // Nothing in the partition: its base, so counters start at the partition's first id.
+        assert_eq!(partition_id_floor(0, []), 0);
+        assert_eq!(partition_id_floor(2, [1, p1(9)]), 2 << 24);
     }
 
     #[test]

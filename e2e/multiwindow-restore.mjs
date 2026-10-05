@@ -53,11 +53,25 @@ const doc = {
 const browser = await chromium.launch();
 const pageErrors = [];
 
-async function launch(multiwindow) {
+// RT-H1 fixture: a moved workspace keeps its partition-0 ids (main minted them), so fw-1 holds pane 2.
+const MOVED = 2;
+const docMoved = {
+  ...doc,
+  workspaces: [
+    { id: 1, name: "acme-api", root: "C:\\dev\\acme-api", setupCmd: "npm ci", panes: [{ id: 1, vendor: "claude", cwd: "C:\\dev\\acme-api" }] },
+    { id: MOVED, name: "far-away", root: "C:\\dev\\scratch", setupCmd: "", panes: [{ id: MOVED, vendor: "claude", cwd: "C:\\dev\\scratch" }] },
+  ],
+  windows: [
+    { label: "main", workspaceIds: [1], activeWorkspaceId: 1 },
+    { label: "fw-1", workspaceIds: [MOVED], activeWorkspaceId: MOVED },
+  ],
+};
+
+async function launch(multiwindow, seed = doc) {
   const context = await browser.newContext({ viewport: { width: 1600, height: 900 } });
   const bus = new MultiWindowBus(context, URL);
   await bus.install();
-  bus.seedDoc(doc);
+  bus.seedDoc(seed);
   const boot = `localStorage.setItem("flightdeck-startup","reopen");${multiwindow ? `localStorage.setItem("flightdeck-multiwindow","1");` : ""}`;
   await context.addInitScript(`if (/^https?:/.test(location.protocol)) {\n${boot}\n${mock}\n}`);
   context.on("page", (p) => p.on("pageerror", (e) => pageErrors.push(e.message)));
@@ -116,6 +130,25 @@ const storeState = (page) => page.evaluate(async () => {
     useApp.setState({ activeId: id });
   }, FW_WS);
   check(!!(await until(async () => /TICK-\d+-\d+/.test((await termText(main, FW_PANE)) ?? ""), 8000, "the merged pane's output in main")), "flag off: the merged workspace's pane prints output in main");
+  await context.close();
+}
+
+// ---- C. RT-H1: main must not mint an id a secondary's moved workspace still holds ----
+{
+  const { context, bus, main } = await launch(true, docMoved);
+  await until(async () => bus.restores.includes("fw-1"), 10000, "restore_windows to create fw-1");
+  const fw = bus.pages.get("fw-1");
+  if (fw) await fw.waitForLoadState("networkidle").catch(() => {});
+  check(!!(await until(async () => fw && /TICK-\d+-\d+/.test((await termText(fw, MOVED)) ?? ""), 8000, "fw-1 pane output")), "fw-1 pane 2 is live");
+  await main.evaluate(async () => {
+    const { useApp } = await import("/src/store.ts");
+    useApp.getState().addPane(1, "claude", "C:\\dev\\acme-api");
+  });
+  await sleep(1500);
+  const m = await storeState(main);
+  const ids = m.workspaces.flatMap((w) => w.panes);
+  check(ids.length === 2 && !ids.includes(MOVED), `main minted a fresh pane id, not fw-1's (${JSON.stringify(ids)})`);
+  check(bus.kills.length === 0, `adding a pane in main killed nothing (${JSON.stringify(bus.kills)})`);
   await context.close();
 }
 

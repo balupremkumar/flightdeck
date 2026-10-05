@@ -122,10 +122,15 @@ let pseq = 0;
 let gseq = 0;
 
 /** Set once at boot from `window_boot`. Moves the counters to this window's
- *  partition; call before anything mints an id (hydrate may follow). */
-export function setWindowOrdinal(n: number): void {
+ *  partition; call before anything mints an id (hydrate may follow).
+ *  `floor` is the highest id Rust knows in this partition across every window and
+ *  live pty: this window's own view can miss ids a secondary still holds (a moved
+ *  workspace), and minting one supersedes and kills that pane's agent. */
+export function setWindowOrdinal(n: number, floor?: number): void {
   ordinal = n;
-  wseq = pseq = gseq = n * ORDINAL_SPAN;
+  const base = n * ORDINAL_SPAN;
+  const start = typeof floor === "number" && Math.floor(floor / ORDINAL_SPAN) === n ? Math.max(base, floor) : base;
+  wseq = pseq = gseq = start;
 }
 
 /** Counter after seeing a persisted id: only ids in OUR partition move it, so an

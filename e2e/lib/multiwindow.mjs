@@ -350,7 +350,11 @@ export class MultiWindowBus {
         if (label === "main") { this.multiwindow = !!a.multiwindow; this.planRestore(); }
         const transfer = this.pending.get(label) ?? null;
         this.pending.delete(label);
-        return { label, ordinal: rec.ordinal, slice: label === "main" ? null : (this.slices.get(label) ?? null), transfer };
+        // windows.rs partition_id_floor: highest id in this partition in the doc, every slice, the registry and live ptys.
+        const known = [...(this.doc?.workspaces ?? []), ...[...this.slices.values()].flatMap((s) => s.workspaces ?? [])].flatMap((w) => [w.id, ...(w.panes ?? []).map((p) => p.id)]);
+        known.push(...[...this.windows.values()].flatMap((r) => r.workspaceIds), ...this.byModel.keys());
+        const idFloor = Math.max(rec.ordinal * 2 ** 24, ...known.filter((i) => Math.floor(i / 2 ** 24) === rec.ordinal));
+        return { label, ordinal: rec.ordinal, idFloor, slice: label === "main" ? null : (this.slices.get(label) ?? null), transfer };
       }
       case "window_adopted": {
         // windows.rs AdoptLedger::ack: only a transfer still waiting may be adopted.

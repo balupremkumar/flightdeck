@@ -68,4 +68,26 @@ describe("window id partition", () => {
     expect(made.id).toBe(2 * SPAN + 4);
     expect(made.panes[0].id).toBe(2 * SPAN + 9);
   });
+
+  it("RT-H1: an id floor from window_boot keeps main off ids a secondary still holds", async () => {
+    const main = await context(0);
+    // Main's view of the doc holds only ws 1 (panes 1-4); fw-1 holds ws 2 with panes 5-6.
+    // Rust computes the floor from the full doc (6) and hands it over with the ordinal.
+    main.setWindowOrdinal(0, 6);
+    const pane = (id: number) => ({ id, vendor: "claude", cwd: "D:\\x", state: "idle" as const, epoch: 0 });
+    main.useApp.getState().hydrate([{ id: 1, name: "a", root: "D:\\a", panes: [1, 2, 3, 4].map(pane), focused: 1 }], 1);
+    main.useApp.getState().addPane(1, "claude", "D:\\a");
+    const added = main.useApp.getState().workspaces[0].panes.slice(-1)[0];
+    expect(added.id).toBe(7);
+    main.useApp.getState().createWorkspace("D:\\n", [{ vendor: "claude", cwd: "D:\\n" }]);
+    const made = main.useApp.getState().workspaces.slice(-1)[0];
+    expect(made.id).toBe(7);
+  });
+
+  it("RT-H1: a floor from another partition is ignored", async () => {
+    const fw = await context(1);
+    fw.setWindowOrdinal(1, 9);
+    fw.useApp.getState().createWorkspace("D:\\n", [{ vendor: "claude", cwd: "D:\\n" }]);
+    expect(fw.useApp.getState().workspaces[0].panes[0].id).toBe(SPAN + 1);
+  });
 });

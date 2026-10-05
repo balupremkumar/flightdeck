@@ -568,6 +568,26 @@ pub(crate) fn session_id_ordinal_floor(app: &AppHandle) -> u32 {
     crate::windows::max_ordinal(doc.workspaces.iter().flat_map(|w| std::iter::once(w.id).chain(w.panes.iter().map(|p| p.id))))
 }
 
+/// Every workspace and pane id any window holds: the full session doc (main's
+/// `main_view` strips the secondaries') plus the in-memory slices, which can be
+/// newer than the file. Feeds the id floor `window_boot` hands each window.
+pub(crate) fn all_known_ids(app: &AppHandle) -> Vec<u32> {
+    let mut ids = Vec::new();
+    let mut take = |workspaces: &[PersistedWorkspace]| {
+        for w in workspaces {
+            ids.push(w.id);
+            ids.extend(w.panes.iter().map(|p| p.id));
+        }
+    };
+    if let Some(doc) = read_session_file(app).ok().flatten() {
+        take(&doc.workspaces);
+    }
+    for s in SLICES.lock().unwrap_or_else(|e| e.into_inner()).by_label.values() {
+        take(&s.workspaces);
+    }
+    ids
+}
+
 /// The slice a secondary boots with: the last one it pushed, else its assigned
 /// workspaces cut out of the session document.
 pub(crate) fn boot_slice(app: &AppHandle, label: &str, ids: &[u32]) -> Option<SessionDoc> {
