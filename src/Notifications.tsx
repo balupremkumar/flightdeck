@@ -30,6 +30,9 @@ import {
   hooksInstalled,
 } from "./settingsStore";
 import { playNeedsYouChime } from "./needsYouSound";
+import { buildAttentionReport, reportKey, sendAttentionReport, summonPane, type SummonPayload } from "./attentionReport";
+import { useWindowSummaries, windowFooterRows } from "./windowSummary";
+import { focusRemoteWorkspace } from "./windowActions";
 import "./Notifications.css";
 
 // All configurable states, approval/waiting/error first since those are the
@@ -53,12 +56,24 @@ const KIND_ORDER: AttentionKind[] = ["permission", "error", "question"];
 // OS toast via the standard web Notification API (no Tauri notification
 // plugin is registered in src-tauri; this works inside the webview without
 // backend changes). Degrades silently if unsupported or denied.
-async function osToast(title: string, body: string) {
+// Phase 4 S10: clicking the toast is a click on Flightdeck, so Rust may bring the
+// owning window forward and select the pane (window_focus_pane).
+async function osToast(title: string, body: string, target?: { wsId: number; paneId: number }) {
   try {
     if (typeof Notification === "undefined") return;
     if (Notification.permission === "default") await Notification.requestPermission();
-    if (Notification.permission === "granted") new Notification(title, { body });
+    if (Notification.permission === "granted") {
+      const n = new Notification(title, { body });
+      if (target) n.onclick = () => { void focusOwnPane(target.wsId, target.paneId); };
+    }
   } catch { /* no OS notification surface available */ }
+}
+
+/** Bring this window forward and select the pane. Only from a toast click. */
+export async function focusOwnPane(wsId: number, paneId: number): Promise<void> {
+  try {
+    await invoke("window_focus_pane", { label: getCurrentWindow().label, wsId, paneId });
+  } catch { /* browser preview, or the window is gone */ }
 }
 
 // Taskbar flash via the Tauri window API. `core:window:allow-request-user-attention`
@@ -134,15 +149,6 @@ export const TASKBAR_PROGRESS_MIN_MS = 250;
 // src-tauri/src/summon.rs) whenever it brings the window forward, never on the
 // dismiss leg. Kept in step with SUMMON_EVENT on the Rust side.
 export const SUMMON_EVENT = "app://summon";
-
-/** QL-780: where a summon lands. `needsHumanQueue` is already ranked by
- *  urgency in attention.ts (approvals, then errors, then questions; oldest
- *  first within a kind), so "the neediest pane" is simply its head. Null when
- *  nothing needs a human — summoning then leaves focus exactly where the user
- *  left it, rather than yanking them onto a merely-quiet pane. */
-export function summonTarget(queue: AttentionItem[]): AttentionItem | null {
-  return queue[0] ?? null;
-}
 
 /** QL-742: a pane over the memory ceiling, resolved back to where it lives.
  *  AMBIENT by the 2026-08-01 ruling — a heavy pane is a fact worth seeing, not
@@ -515,7 +521,8 @@ export function Notifications() {
           const ask = lastLine.get(p.id);
           void osToast(
             `${w.name} — ${p.title || vendorShort(p.vendor)}`,
-            ask ? `${KIND_LABEL[kind]}: ${ask}` : KIND_LABEL[kind]
+            ask ? `${KIND_LABEL[kind]}: ${ask}` : KIND_LABEL[kind],
+            { wsId: w.id, paneId: p.id }
           );
           void flashTaskbar();
         }
@@ -570,9 +577,16 @@ export function Notifications() {
   // point of the attention queue reaching you when you're not looking at it.
   // QL-778: routed through the overlay-icon command; setBadgeCount never
   // reached Windows at all. Same call site, same condition.
+  // Phase 4 S10: with several windows the count on the taskbar is the SUM across
+  // them, so each window reports its own queue to Rust (attention_report) and Rust
+  // draws the total on every window's overlay. Identical reports are dropped; where
+  // the command is missing, this window's own count goes out as before.
+  const reportSig = reportKey(buildAttentionReport(needsAttention));
+  const needsRef = useRef(needsAttention);
+  needsRef.current = needsAttention;
   useEffect(() => {
-    void setAttentionOverlay(needsAttention.length);
-  }, [needsAttention.length]);
+    void sendAttentionReport(needsRef.current, setAttentionOverlay);
+  }, [reportSig]);
 
   // QL-782: the same "reach the user when Flightdeck isn't the front window"
   // job, for progress rather than attention. Aggregation rules are above.
@@ -616,27 +630,29 @@ export function Notifications() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [needsAttention, followAttention]);
 
-  // QL-780: the global summon chord (Ctrl+Alt+F) brings the window forward and
-  // emits `app://summon`. Land the user on the pane that needs them most —
-  // the same switchWorkspace + focusPane pathway the bell rows, the attention
-  // queue, and LeftPanel's open-workspace-and-focus-its-neediest-pane all use.
-  // Read through a ref so the listener is registered once and still sees the
-  // live queue; re-subscribing on every queue change would drop presses.
-  const queueRef = useRef(needsAttention);
-  queueRef.current = needsAttention;
+  // QL-780: the global summon chord (Ctrl+Alt+F) brings a window forward and
+  // emits `app://summon`. Phase 4 S10: Rust picks the window holding the GLOBAL top
+  // item and sends its pane in the payload, so the ranking across windows is not
+  // redone here. Land the user on that pane through the same switchWorkspace +
+  // focusPane pathway the bell rows and the attention queue use. Read the
+  // workspaces through the store at event time so the listener is registered once;
+  // re-subscribing on every change would drop presses.
   useEffect(() => {
     let stop: (() => void) | undefined;
     let cancelled = false;
-    void listen(SUMMON_EVENT, () => {
-      const top = summonTarget(queueRef.current);
-      if (!top) return;
-      switchWorkspace(top.w.id);
-      focusPane(top.w.id, top.p.id);
+    void listen<SummonPayload>(SUMMON_EVENT, (e) => {
+      const target = summonPane(e.payload, useApp.getState().workspaces);
+      if (!target) return;
+      switchWorkspace(target.wsId);
+      if (target.paneId != null) focusPane(target.wsId, target.paneId);
     })
       .then((un) => { if (cancelled) un(); else stop = un; })
       .catch(() => { /* not running under Tauri */ });
     return () => { cancelled = true; stop?.(); };
   }, [switchWorkspace, focusPane]);
+
+  // Other windows' counts, polled only while the dropdown is open (flag off: none).
+  const footerRows = windowFooterRows(useWindowSummaries(panel === "feed"));
 
   const jump = (wsId: number, paneId: number) => {
     switchWorkspace(wsId);
@@ -763,6 +779,30 @@ export function Notifications() {
               })
             )}
           </div>
+
+          {/* Phase 4 S10: other windows' pending items, one row each. The local
+              rows above are untouched; a click is a user click, so Rust may bring
+              that window forward. Absent with one window or nothing pending. */}
+          {footerRows.length > 0 && (
+            <div className="ntf-section" aria-label="Other windows">
+              <div className="ntf-label-row">
+                <span className="ntf-label">Other windows</span>
+              </div>
+              {footerRows.map((r) => (
+                <div
+                  className="ntf-item"
+                  key={r.label}
+                  role="menuitem"
+                  tabIndex={0}
+                  onClick={() => { void focusRemoteWorkspace(r.label, r.wsId ?? 0, r.paneId); setPanel("none"); }}
+                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); void focusRemoteWorkspace(r.label, r.wsId ?? 0, r.paneId); setPanel("none"); } }}
+                >
+                  <span className="ntf-dot waiting" />
+                  <span className="ntf-ws">{r.text}</span>
+                </div>
+              ))}
+            </div>
+          )}
 
           {/* QL-742: ambient tier — visible in the queue, silent everywhere
               else. No badge, no chime, no toast; the note says so out loud so

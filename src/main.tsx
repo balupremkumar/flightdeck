@@ -10,7 +10,7 @@ import { runWorktreeGc } from "./worktrees";
 import { startAutosave, offerSessionRestore, crashedLastRun, armCleanExitSentinel, lastRestoreReport } from "./session";
 import { armGlobalErrorLog } from "./applog";
 import { syncReadRoots } from "./readscope";
-import { bootWindow, adoptBootInfo, listenForAdopt, listenForFocusPane, closeWhenEmpty } from "./windowBoot";
+import { bootWindow, adoptBootInfo, listenForAdopt, listenForFocusPane, listenForScaleChange, closeWhenEmpty } from "./windowBoot";
 import { armStorageSync } from "./storageSync";
 import { isMainWindow } from "./persist";
 
@@ -42,6 +42,7 @@ armCleanExitSentinel();
 const booted = bootWindow().then((info) => adoptBootInfo(info)).then(() => closeWhenEmpty());
 listenForAdopt();
 listenForFocusPane();
+listenForScaleChange();
 // Phase 4: settings changed in another window apply here live (storage events).
 armStorageSync();
 void booted.then(() => offerSessionRestore()).then(() => {

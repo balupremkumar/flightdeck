@@ -162,6 +162,15 @@ export function writeToPane(modelId: number, data: string): Promise<unknown> {
   return Promise.resolve(invoke("pty_write", { paneId: ptyId, data }));
 }
 
+/** A DPI change (window dragged to another monitor, display scaling changed): re-measure
+ *  every session that is on screen. Parked sessions have no layout to measure. */
+export function remeasureAttached(): void {
+  for (const s of sessions.values()) {
+    if (s.owner === null || s.disposed) continue;
+    try { s.api.remeasure(); } catch { /* mid-teardown */ }
+  }
+}
+
 export function size(): number {
   return sessions.size;
 }

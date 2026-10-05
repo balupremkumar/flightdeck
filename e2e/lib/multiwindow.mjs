@@ -46,6 +46,9 @@ export class MultiWindowBus {
     this.merges = []; // { label, why, flushed, workspaceIds } secondaries folded into main
     this.retired = []; // labels destroyed because their assignment emptied
     this.focuses = []; // { from, label, wsId, paneId } window_focus_pane calls
+    this.reports = new Map(); // label -> { count, top } from attention_report
+    this.badge = 0; // the summed count Rust puts on every window's overlay
+    this.badges = []; // every value badge took, in order
     this.multiwindow = false; // set by main's window_boot, like Rust
     this.slicePuts = new Map(); // label -> pushes seen (the flush acknowledgement)
     this.ensureMain();
@@ -153,6 +156,7 @@ export class MultiWindowBus {
     const page = this.pages.get(label);
     if (rec && label !== "main") {
       this.windows.delete(label);
+      this.reports.delete(label);
       const main = this.windows.get("main");
       for (const id of rec.workspaceIds) if (!main.workspaceIds.includes(id)) main.workspaceIds.push(id);
       const slice = this.slices.get(label) ?? null;
@@ -181,6 +185,7 @@ export class MultiWindowBus {
   /** A secondary left with nothing assigned is destroyed by Rust; nothing folds back. */
   async retire(label) {
     this.windows.delete(label);
+    this.reports.delete(label);
     this.slices.delete(label);
     this.slicePuts.delete(label);
     this.retired.push(label);
@@ -315,6 +320,15 @@ export class MultiWindowBus {
         await this.emitTo(a.label, "app://focus-pane", { wsId: a.wsId, paneId: a.paneId });
         return null;
       }
+      case "attention_report": {
+        // windows.rs attention_report: remember this window's report; the badge is the
+        // sum across windows and goes on every window's overlay (here: bus.badge).
+        if (!this.windows.has(label)) throw new Error(`window ${label} is not registered`);
+        this.reports.set(label, { count: a.count, top: a.top ?? null });
+        this.badge = [...this.reports.entries()].filter(([l]) => this.windows.has(l)).reduce((n, [, r]) => n + r.count, 0);
+        this.badges.push(this.badge);
+        return null;
+      }
       case "window_summary":
         return [...this.windows.entries()]
           .filter(([l, r]) => l !== label && r.booted)
@@ -326,7 +340,8 @@ export class MultiWindowBus {
             return {
               label: l,
               title: l === "main" ? "Flightdeck" : `Window ${r.ordinal + 1}`,
-              needsYou: 0,
+              needsYou: this.reports.get(l)?.count ?? 0,
+              top: this.reports.get(l)?.top ?? null,
               workspaces,
               livePanes: workspaces.reduce((n, w) => n + w.livePanes, 0),
             };

@@ -196,6 +196,14 @@ impl WindowRegistry {
         }
     }
 
+    /// A window gained focus (any way: click, Alt+Tab, summon). Feeds "last focused"
+    /// for the summon fallback and the next-window ring. Unknown labels are ignored.
+    pub fn note_focus(&mut self, label: &str, now: u64) {
+        if let Some(r) = self.windows.get_mut(label) {
+            r.last_focus_ms = now;
+        }
+    }
+
     /// Transfer step 1: mint a window for workspace `ws_id` and make it the only
     /// owner. The source keeps no claim, so from here persist drops any slice data
     /// the source still pushes for it. Errors if `source` does not own the workspace.
@@ -803,6 +811,13 @@ pub fn on_destroyed(app: &AppHandle, label: &str) {
     }
 }
 
+/// `on_window_event` hook for Focused(true). Only records the time; never focuses.
+pub fn on_focused(app: &AppHandle, label: &str) {
+    if validate_label(label).is_ok() {
+        app.state::<WindowState>().lock().note_focus(label, now_ms());
+    }
+}
+
 pub fn mark_exiting(app: &AppHandle) {
     app.state::<WindowState>().lock().exiting = true;
 }
@@ -885,6 +900,8 @@ pub struct WindowSummary {
     pub live_panes: u32,
     pub title: String,
     pub needs_you: u32,
+    /// Its most urgent item, so the bell footer can jump to the exact pane.
+    pub top: Option<AttentionTop>,
     pub workspaces: Vec<SummaryWorkspace>,
 }
 
@@ -910,7 +927,7 @@ pub fn window_summary(app: AppHandle, window: tauri::Window, reg: State<'_, crat
                 .collect();
             let title = app.get_webview_window(label).and_then(|w| w.title().ok()).unwrap_or_else(|| label.clone());
             let live_panes = workspaces.iter().map(|w| w.live_panes).sum();
-            WindowSummary { label: label.clone(), live_panes, title, needs_you: rec.attention.map_or(0, |a| a.count), workspaces }
+            WindowSummary { label: label.clone(), live_panes, title, needs_you: rec.attention.map_or(0, |a| a.count), top: rec.attention.and_then(|a| a.top), workspaces }
         })
         .collect()
 }
@@ -1091,6 +1108,18 @@ mod tests {
         assert_eq!(dead_windows(&r, 5_000 + HEARTBEAT_TIMEOUT_MS + 1), vec!["fw-1".to_string(), "fw-2".to_string()]);
         r.exiting = true;
         assert!(dead_windows(&r, u64::MAX).is_empty(), "nothing is judged while exiting");
+    }
+
+    #[test]
+    fn focus_event_updates_last_focus_and_ignores_unknown() {
+        let mut r = WindowRegistry::default();
+        r.windows.insert("main".into(), rec(&[1], true, 0));
+        r.windows.insert("fw-1".into(), rec(&[2], true, 0));
+        r.note_focus("fw-1", 7_000);
+        r.note_focus("fw-9", 8_000);
+        assert_eq!(r.windows["fw-1"].last_focus_ms, 7_000);
+        assert_eq!(r.windows["main"].last_focus_ms, 0);
+        assert!(!r.windows.contains_key("fw-9"));
     }
 
     #[test]

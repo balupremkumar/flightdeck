@@ -1026,6 +1026,7 @@ pub fn run() {
                 readscope::drop_label(window.label());
                 windows::on_destroyed(window.app_handle(), window.label());
             }
+            tauri::WindowEvent::Focused(true) => windows::on_focused(window.app_handle(), window.label()),
             // A secondary closes through Rust (flush, merge into main, destroy).
             tauri::WindowEvent::CloseRequested { api, .. } => {
                 if windows::on_close_requested(window.app_handle(), window.label()) {

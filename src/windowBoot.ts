@@ -7,7 +7,8 @@ import { isMainWindow, type SessionDraft } from "./persist";
 import { addRestoredUiPrefs, hydrateFrom, parseUiPrefs } from "./session";
 import { markRestoredPane } from "./ptyAttach";
 import { stageTransfers, type PaneTransfer } from "./transferSnap";
-import { get as getSession } from "./paneSessions";
+import { get as getSession, remeasureAttached } from "./paneSessions";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { logEvent } from "./applog";
 import { announce } from "./windowAnnounce";
 
@@ -128,6 +129,13 @@ export function listenForFocusPane(): void {
   }).catch(() => { /* browser preview */ });
 }
 
+/** Each window re-measures its terminals when its own scale factor changes. */
+export function listenForScaleChange(): void {
+  try {
+    void getCurrentWindow().onScaleChanged(() => remeasureAttached()).catch(() => { /* browser preview */ });
+  } catch { /* browser preview */ }
+}
+
 /** Tell Rust the Settings toggle changed; ws_transfer refuses while it is off, and
  *  turning it off makes Rust merge every secondary into main. */
 export function pushMultiwindow(enabled: boolean): void {
@@ -151,7 +159,7 @@ export function closeWhenEmpty(): void {
 
 /** A workspace in another window, from that window's last slice. */
 export interface RemoteWorkspace { id: number; name: string; root: string; paneId: number | null; livePanes: number }
-export interface WindowSummary { label: string; livePanes: number; title?: string; needsYou?: number; workspaces?: RemoteWorkspace[] }
+export interface WindowSummary { label: string; livePanes: number; title?: string; needsYou?: number; top?: { wsId: number; paneId: number } | null; workspaces?: RemoteWorkspace[] }
 
 /** Live panes in the other windows, for the quit guard. Empty outside Tauri, on a
  *  build without the command, or when this is the only window. */

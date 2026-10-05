@@ -25,15 +25,13 @@ vi.stubGlobal("localStorage", {
 });
 
 const {
-  setAttentionOverlay, summonTarget, SUMMON_EVENT, heavyPaneItems, aggregateProgress, setTaskbarProgress,
+  setAttentionOverlay, SUMMON_EVENT, heavyPaneItems, aggregateProgress, setTaskbarProgress,
   // QL-720
   HOOK_EVENT, HOOK_PANE_STATE, HOOK_STALE_GRACE_MS, classifyHookEvent, hookOverrideState, hookTargetPane, normaliseCwd,
 } = await import("./Notifications");
 import type { HookEventPayload, HookRecord } from "./Notifications";
 const { ProgressBarStatus } = await import("@tauri-apps/api/window");
 import type { PaneProgress } from "./Terminal";
-const { needsHumanQueue } = await import("./attention");
-import type { AttentionItem } from "./attention";
 import type { PaneState, Workspace } from "./store";
 
 beforeEach(() => {
@@ -150,30 +148,6 @@ function pane(id: number, state: PaneState, since: number) {
 function ws(id: number, panes: Workspace["panes"]): Workspace {
   return { id, name: `ws${id}`, panes, focused: panes[0]?.id, cwd: "C:\\repo" } as unknown as Workspace;
 }
-
-describe("summonTarget (QL-780)", () => {
-  it("is the head of the ranked queue — approvals beat errors and questions", () => {
-    const workspaces = [
-      ws(1, [pane(10, "error", Date.now() - 60_000)]),
-      ws(2, [pane(20, "permission", Date.now() - 1_000)]),
-    ];
-    const queue = needsHumanQueue(workspaces, {});
-    const top = summonTarget(queue);
-    expect(top?.p.id).toBe(20);
-    expect(top?.w.id).toBe(2);
-  });
-
-  it("is null when nothing needs a human, so a summon doesn't move focus", () => {
-    expect(summonTarget([])).toBeNull();
-    expect(summonTarget(needsHumanQueue([ws(1, [pane(10, "running", Date.now())])], {}))).toBeNull();
-  });
-
-  it("never invents a target from a queue of quiet panes", () => {
-    // "waiting" with no question is ambient, not needs-you (UX-601).
-    const queue: AttentionItem[] = needsHumanQueue([ws(1, [pane(10, "idle", Date.now())])], {});
-    expect(summonTarget(queue)).toBeNull();
-  });
-});
 
 // QL-742: memory warnings are AMBIENT. These pin the resolution step; the
 // "never rings" half is structural — heavyPaneItems feeds a list in the

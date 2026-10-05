@@ -9,6 +9,28 @@ import { otherWindows, type WindowSummary } from "./windowBoot";
 
 export const SUMMARY_POLL_MS = 2500;
 
+/** One bell footer row: another window with something waiting on you. */
+export interface WindowFooterRow { label: string; text: string; wsId: number | null; paneId: number | null }
+
+/** Phase 4 S10: the bell keeps its own rows for this window's panes; this adds one
+ *  row per OTHER window that has anything needing you ("2 need you in Window 2").
+ *  Windows with nothing pending produce no row. The jump goes to that window's top
+ *  item, else its first workspace. */
+export function windowFooterRows(rows: WindowSummary[]): WindowFooterRow[] {
+  return rows
+    .filter((r) => (r.needsYou ?? 0) > 0)
+    .map((r) => {
+      const n = r.needsYou ?? 0;
+      const first = r.workspaces?.[0];
+      return {
+        label: r.label,
+        text: `${n} ${n === 1 ? "needs" : "need"} you in ${r.title || r.label}`,
+        wsId: r.top?.wsId ?? first?.id ?? null,
+        paneId: r.top?.paneId ?? first?.paneId ?? null,
+      };
+    });
+}
+
 export function useWindowSummaries(active: boolean): WindowSummary[] {
   const [rows, setRows] = useState<WindowSummary[]>([]);
   useEffect(() => {
