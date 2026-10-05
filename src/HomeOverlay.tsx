@@ -3,21 +3,23 @@
 // The model lives in home.ts; this file only renders it. An overlay, not a
 // route: terminals underneath stay mounted, Escape closes it through the shared
 // overlay stack (ui.ts), and the bell and attention queue are untouched.
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
 import { useApp } from "./store";
 import { useUI, useOverlayEsc } from "./ui";
 import { isTypingTarget } from "./isTypingTarget";
-import { get as getPaneSession } from "./paneSessions";
+import { get as getPaneSession, writeToPane } from "./paneSessions";
 import { useFocusTrap } from "./useFocusTrap";
-import { KIND_LABEL, lastLine, lastOutputAt, stateSince, forMins } from "./attention";
+import { attentionKind, KIND_LABEL, lastLine, lastOutputAt, stateSince, forMins } from "./attention";
 import { useVendors, vendorMeta, vendorShort } from "./vendors";
 import { VendorGlyph } from "./VendorGlyph";
 import { prLabel } from "./chipState";
 import { buildTargets, useHomePoll, useHomePollStore } from "./homePoll";
 import { IconClose, IconHome } from "./Icons";
+import { entryTail, PEEK_LINES, useHomeTails, type TailEntry } from "./homeTail";
 import {
-  buildHome, COLUMN_EMPTY, COLUMN_LABEL, HOME_COLUMNS, mergedPanes, otherWindowSummaries,
-  type HomeCard, type HomeColumn, type HomeCtx,
+  approveKeyFor, buildHome, cardStateKey, COLUMN_EMPTY, COLUMN_LABEL, effectiveSend, HOME_COLUMNS, mergedPanes,
+  otherWindowSummaries, replyDrafts, sendsReducer,
+  type HomeCard, type HomeColumn, type HomeCtx, type SendState,
 } from "./home";
 import "./HomeOverlay.css";
 
@@ -45,6 +47,70 @@ function useStacked(): boolean {
 }
 
 const snoozeLabel = (until: number, now: number) => `Snoozed ${Math.max(1, Math.ceil((until - now) / 60_000))}m`;
+
+const SEND_FAILED = "Could not send to this pane. Try again or open it.";
+const APPROVE_STALE = "The prompt changed, so nothing was sent. Check it and approve again.";
+
+/** The reply box on a question card: auto-grows to 4 lines, Enter sends,
+ *  Shift+Enter is a newline. The draft lives in `replyDrafts`, so Escape (which
+ *  closes Home) and reopening never lose it. A failed send keeps the text. */
+function ReplyField({ paneId, name, phase, error, onSend }: {
+  paneId: number; name: string; phase: "idle" | "sending" | "failed"; error?: string; onSend: (text: string) => void;
+}) {
+  const [text, setText] = useState(() => replyDrafts.get(paneId) ?? "");
+  const ref = useRef<HTMLTextAreaElement>(null);
+  const sending = phase === "sending";
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = el.scrollHeight + 2 + "px"; // CSS max-height caps it at 4 lines
+  }, [text]);
+  // A rejected send re-enables the field: put the caret back in it.
+  useEffect(() => { if (phase === "failed") ref.current?.focus(); }, [phase]);
+  const submit = () => { if (text.trim() && !sending) onSend(text.trim()); };
+  return (
+    <div className="hm-reply" onClick={(e) => e.stopPropagation()}>
+      <div className="hm-replyrow">
+        <textarea
+          ref={ref}
+          className="hm-field"
+          rows={1}
+          value={text}
+          disabled={sending}
+          placeholder="Reply…"
+          aria-label={`Reply to ${name}`}
+          onChange={(e) => { setText(e.target.value); if (e.target.value) replyDrafts.set(paneId, e.target.value); else replyDrafts.delete(paneId); }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); submit(); }
+          }}
+        />
+        <button className="hm-btn primary" disabled={sending || !text.trim()} onClick={submit}>{sending ? "Sending…" : "Send"}</button>
+      </div>
+      {phase === "failed" && <div className="hm-err" role="alert">{error}</div>}
+    </div>
+  );
+}
+
+/** Last lines of a pane's output. Loading holds the place with fixed bars,
+ *  empty and error say so, and a stale tail stays up while a refetch runs. */
+function PeekBody({ entry, onRetry }: { entry: TailEntry | undefined; onRetry: () => void }) {
+  const tail = entryTail(entry);
+  const failed = entry?.status === "error";
+  if (!tail && !failed) {
+    return <div className="hm-peek" aria-busy="true" aria-label="Loading output"><span className="hm-skel wide" /><span className="hm-skel wide" /><span className="hm-skel wide" /></div>;
+  }
+  if (!tail) {
+    return <div className="hm-peek note" role="alert">Could not read this pane&apos;s output. <button className="hm-more" onClick={onRetry}>Retry</button></div>;
+  }
+  const lines = tail.lines.slice(-PEEK_LINES);
+  return (
+    <div className="hm-peek" aria-label="Recent output">
+      {lines.length === 0 ? <span className="note">No recent output</span> : <pre>{lines.join("\n")}</pre>}
+      {failed && <span className="note">Out of date. <button className="hm-more" onClick={onRetry}>Retry</button></span>}
+    </div>
+  );
+}
 
 export function HomeOverlay() {
   const open = useUI((s) => s.homeOpen);
@@ -98,6 +164,65 @@ export function HomeOverlay() {
     return m;
   }, [columns]);
   useHomePoll(open, buildTargets(workspaces, columnOf));
+
+  // Peek: the tail of every card whose peek is open, plus permission cards (the
+  // Approve key is read off the prompt). Refetched when a card's state key moves.
+  const [peeking, setPeeking] = useState<ReadonlySet<number>>(() => new Set());
+  const togglePeek = (id: number) => setPeeking((s) => { const n = new Set(s); if (!n.delete(id)) n.add(id); return n; });
+  useEffect(() => { if (!open) setPeeking((s) => (s.size ? new Set() : s)); }, [open]);
+  const wants = useMemo(() => {
+    const out: { paneId: number; key: string }[] = [];
+    for (const c of HOME_COLUMNS) {
+      for (const card of columns[c]) {
+        if (peeking.has(card.paneId) || (card.column === "needs" && card.kind === "permission")) {
+          out.push({ paneId: card.paneId, key: cardStateKey(card) });
+        }
+      }
+    }
+    return out;
+  }, [columns, peeking]);
+  const { entries: tails, refresh: refreshTail } = useHomeTails(open, wants);
+
+  // Reply and Approve share one send state per pane. Writes go through
+  // writeToPane (the live pty id), never a model id.
+  const [sends, dispatchSend] = useReducer(sendsReducer, {} as Record<number, SendState>);
+  const run = async (c: HomeCard, action: () => Promise<string | null>) => {
+    dispatchSend({ paneId: c.paneId, type: "start" });
+    try {
+      const refusal = await action();
+      if (refusal) dispatchSend({ paneId: c.paneId, type: "fail", error: refusal });
+      else dispatchSend({ paneId: c.paneId, type: "ok", key: cardStateKey(c) });
+      return refusal === null;
+    } catch {
+      dispatchSend({ paneId: c.paneId, type: "fail", error: SEND_FAILED });
+      return false;
+    }
+  };
+  // After a send, focus moves to the next Needs you card (Home stays open).
+  const focusNextNeeds = (paneId: number) => requestAnimationFrame(() => {
+    const cards = [...(panelRef.current?.querySelectorAll<HTMLElement>(".hm-col.needs [data-pane-id]") ?? [])];
+    const at = cards.findIndex((el) => el.dataset.paneId === String(paneId));
+    (cards[at + 1] ?? cards[at - 1] ?? cards[at])?.focus();
+  });
+  const sendReply = async (c: HomeCard, text: string) => {
+    const ok = await run(c, async () => { await writeToPane(c.paneId, text + "\r"); return null; });
+    if (ok) { replyDrafts.delete(c.paneId); focusNextNeeds(c.paneId); }
+  };
+  const approve = async (c: HomeCard) => {
+    const shown = entryTail(tails[c.paneId]);
+    const ok = await run(c, async () => {
+      // Re-check at click time: still a permission prompt, and the output has
+      // not moved since the prompt Approve was drawn from. Otherwise re-peek, send nothing.
+      const fresh = await refreshTail(c.paneId);
+      const pane = useApp.getState().workspaces.flatMap((w) => w.panes).find((p) => p.id === c.paneId);
+      if (!fresh || !shown || fresh.seq !== shown.seq || !pane || attentionKind(pane) !== "permission") return APPROVE_STALE;
+      const key = approveKeyFor(c.vendor, fresh.lines);
+      if (key === null) return APPROVE_STALE;
+      await writeToPane(c.paneId, key);
+      return null;
+    });
+    if (ok) focusNextNeeds(c.paneId);
+  };
 
   const total = HOME_COLUMNS.reduce((n, c) => n + columns[c].length, 0);
   const visible = useMemo(() => {
@@ -183,6 +308,8 @@ export function HomeOverlay() {
         }
         return;
       }
+      // Space on a focused card (not on a button inside it) toggles its peek.
+      if (e.key === " " && cur && e.target === cur) { e.preventDefault(); togglePeek(Number(cur.dataset.paneId)); return; }
       if (/^[1-5]$/.test(e.key)) {
         e.preventDefault();
         const col = HOME_COLUMNS[parseInt(e.key, 10) - 1];
@@ -235,6 +362,12 @@ export function HomeOverlay() {
           <div className="hm-r1">
             <VendorGlyph id={c.vendor} size={16} />
             <span className="hm-name" title={name}>{name}</span>
+            <button
+              className="hm-peekbtn"
+              aria-expanded={peeking.has(c.paneId)}
+              title="Show recent output (Space)"
+              onClick={(e) => { e.stopPropagation(); togglePeek(c.paneId); }}
+            >Peek</button>
             <span className="hm-since" title="Time in this state">{forMins(c.since, now)}</span>
           </div>
           <div className="hm-where" title={where}>{where}</div>
@@ -248,11 +381,39 @@ export function HomeOverlay() {
               {c.snoozedUntil && <span className="hm-snooze">{snoozeLabel(c.snoozedUntil, now)}</span>}
             </div>
           )}
-          {c.column === "needs" && (
-            <div className="hm-actions">
-              <button className="hm-btn" onClick={(e) => { e.stopPropagation(); openPane(c); }}>Open</button>
+          {peeking.has(c.paneId) && (
+            <div onClick={(e) => e.stopPropagation()}>
+              <PeekBody entry={tails[c.paneId]} onRetry={() => { void refreshTail(c.paneId); }} />
             </div>
           )}
+          {c.column === "needs" && (() => {
+            const send = effectiveSend(sends[c.paneId], cardStateKey(c));
+            const canApprove = c.kind === "permission" && approveKeyFor(c.vendor, entryTail(tails[c.paneId])?.lines ?? []) !== null;
+            const sending = send.phase === "sending";
+            return (
+              <>
+                {c.kind === "question" && send.phase !== "sent" && (
+                  <ReplyField
+                    paneId={c.paneId}
+                    name={name}
+                    phase={send.phase}
+                    error={send.phase === "failed" ? send.error : undefined}
+                    onSend={(t) => { void sendReply(c, t); }}
+                  />
+                )}
+                {send.phase === "sent" && <div className="hm-sent" role="status">Sent. Waiting for the agent.</div>}
+                {c.kind !== "question" && send.phase === "failed" && <div className="hm-err" role="alert">{send.error}</div>}
+                <div className="hm-actions">
+                  {canApprove && send.phase !== "sent" && (
+                    <button className="hm-btn primary" disabled={sending} onClick={(e) => { e.stopPropagation(); void approve(c); }}>
+                      {sending ? "Approving…" : "Approve"}
+                    </button>
+                  )}
+                  <button className="hm-btn" onClick={(e) => { e.stopPropagation(); openPane(c); }}>Open</button>
+                </div>
+              </>
+            );
+          })()}
         </div>
       </li>
     );
@@ -329,7 +490,7 @@ export function HomeOverlay() {
         )}
 
         <div className="hm-foot">
-          <span>J/K or arrows move, Enter opens, 1-5 jump to a column, Esc closes</span>
+          <span>J/K or arrows move, Enter opens, Space peeks, 1-5 jump to a column, Esc closes</span>
           {others.length > 0 && (
             <span className="hm-others">
               {others.map((o) => (

@@ -236,6 +236,101 @@ const closedBefore = await callsFor("git_diff_summary", "billing");
 await page.waitForTimeout(16500);
 check((await callsFor("git_diff_summary", "billing")) === closedBefore, "no Home polling while closed (diff cycle is 15s)");
 
+// --- Steps 6 and 7: peek, reply, Approve -------------------------------------
+// Restart pane 3 first, so its pty id is no longer the one it spawned with: a
+// reply that went to the model id (or the old pty) would land on the wrong pane.
+await page.getByText("acme-api", { exact: true }).first().click();
+await page.waitForTimeout(1500);
+await page.locator(".pane:visible").nth(2).locator("button.pmenubtn").click();
+await page.locator(".pmenu-item", { hasText: "Restart" }).first().click();
+await page.waitForTimeout(2500);
+const newPty3 = await page.evaluate(() => window.__model2pty[3]);
+check(newPty3 !== pty3, `pane 3 restarted onto a new pty (${pty3} -> ${newPty3})`);
+await page.evaluate((id) => window.__mockPrint(id, "Which test runner should I use?"), newPty3);
+await page.waitForTimeout(9000);
+
+const card3 = '.hm-col.needs [data-pane-id="3"]';
+await page.keyboard.press("Control+Shift+H");
+await page.waitForSelector(`${card3} .hm-field`, { timeout: 15000 });
+check(true, "question card shows a reply field");
+check((await page.locator(`${card3} .hm-peek`).count()) === 0, "peek starts closed");
+await page.locator(card3).focus();
+await page.keyboard.press("Space");
+await page.waitForSelector(`${card3} .hm-peek pre`, { timeout: 5000 });
+check(/Which test runner should I use\?/.test(await page.locator(`${card3} .hm-peek pre`).innerText()), "Space opens a peek with the pane's last output");
+check((await page.locator(`${card3} [aria-expanded="true"]`).count()) === 1, "Peek button reports expanded");
+check((await page.locator(".hm-panel").count()) === 1, "Space did not close or open anything else");
+
+// Field: Shift+Enter is a newline, Enter would send, drafts survive Escape.
+const field = page.locator(`${card3} .hm-field`);
+await field.click();
+await page.keyboard.type("line one");
+await page.keyboard.press("Shift+Enter");
+await page.keyboard.type("line two");
+check((await field.inputValue()) === "line one\nline two", "Shift+Enter inserts a newline");
+const h2 = await field.evaluate((e) => e.getBoundingClientRect().height);
+check(h2 > 24, `field auto-grew for two lines (${h2}px)`);
+check((await page.evaluate(() => window.__calls.filter((x) => x.c === "pty_write" && String(x.a.data).includes("line one")).length)) === 0, "Shift+Enter sent nothing");
+await field.fill("pnpm please");
+await page.keyboard.press("Escape");
+await page.waitForTimeout(300);
+check(!(await homeOpen()), "Escape in the field closes Home");
+await page.keyboard.press("Control+Shift+H");
+await page.waitForSelector(`${card3} .hm-field`);
+check((await page.locator(`${card3} .hm-field`).inputValue()) === "pnpm please", "the draft came back after reopening");
+await page.locator(`${card3} [aria-expanded]`).click();
+await page.waitForSelector(`${card3} .hm-peek pre`);
+await page.screenshot({ path: path.join(shots, "home2-1440.png") });
+await page.setViewportSize({ width: 940, height: 800 });
+await page.waitForTimeout(400);
+await page.screenshot({ path: path.join(shots, "home2-940.png") });
+await page.setViewportSize({ width: 1440, height: 900 });
+await page.waitForTimeout(400);
+
+// Failure: the write rejects, the text stays, the error is plain, Send retries.
+await page.evaluate(() => { window.__mockOverrides.pty_write = () => { throw "boom"; }; });
+await page.keyboard.press("Escape");
+await page.keyboard.press("Control+Shift+H");
+await page.waitForSelector(`${card3} .hm-field`);
+await page.locator(`${card3} .hm-field`).focus();
+await page.keyboard.press("Enter");
+await page.waitForSelector(`${card3} .hm-err`, { timeout: 5000 });
+check(/Could not send to this pane/.test(await page.locator(`${card3} .hm-err`).innerText()), "a rejected write shows the inline error");
+check((await page.locator(`${card3} .hm-field`).inputValue()) === "pnpm please", "failed send keeps the text");
+check(await page.evaluate(() => document.activeElement?.classList.contains("hm-field")), "failed send returns the caret to the field");
+await page.evaluate(() => { delete window.__mockOverrides.pty_write; });
+
+// Success: lands on the restarted pty and nowhere else.
+const REPLY = "pnpm please\r";
+const callsBefore = await page.evaluate(() => window.__calls.length); // the rejected attempt is already in __calls
+await page.keyboard.press("Enter");
+await page.waitForFunction(([d, n]) => window.__calls.slice(n).some((x) => x.c === "pty_write" && x.a.data === d), [REPLY, callsBefore], { timeout: 5000 });
+const wrote = await page.evaluate(([d, n]) => window.__calls.slice(n).filter((x) => x.c === "pty_write" && x.a.data === d).map((x) => x.a.paneId), [REPLY, callsBefore]);
+await page.waitForFunction((sel) => !document.querySelector(sel), `${card3} .hm-field`, { timeout: 5000 });
+await page.waitForTimeout(150);
+check(wrote.length === 1 && wrote[0] === newPty3, `reply reached pty ${newPty3} only (writes to: ${wrote})`);
+// Either the Sent note holds, or the pane's state already flipped and the card moved on by itself.
+check((await page.locator(`${card3} .hm-field`).count()) === 0, "the field is gone after Send (Sent note, or the card moved column)");
+check(await page.evaluate(() => !!document.activeElement?.closest("[data-pane-id]")), "focus moved to a card after Send");
+await page.keyboard.press("Escape");
+await page.waitForTimeout(300);
+
+// Approve: a `1. Yes` menu on pane 5 (claude, acme-web) sends Enter to that pty only.
+await page.getByText("acme-web", { exact: true }).first().click();
+await page.waitForTimeout(1000);
+const pty5 = await page.evaluate(() => window.__model2pty[5]);
+await page.evaluate((id) => window.__mockPrint(id, "Bash command\n  rm -rf build\nDo you want to proceed?\n❯ 1. Yes\n  2. Yes, and don't ask again\n  3. No, tell Claude what to do differently"), pty5);
+await page.waitForTimeout(9000);
+await page.keyboard.press("Control+Shift+H");
+const approveBtn = page.locator('.hm-col.needs [data-pane-id="5"] button', { hasText: "Approve" });
+await approveBtn.waitFor({ timeout: 15000 });
+const writesBefore = await page.evaluate(() => window.__calls.filter((x) => x.c === "pty_write").length);
+await approveBtn.click();
+await page.waitForFunction((n) => window.__calls.filter((x) => x.c === "pty_write").length > n, writesBefore, { timeout: 5000 });
+const newWrites = await page.evaluate((n) => window.__calls.filter((x) => x.c === "pty_write").slice(n), writesBefore);
+check(newWrites.length === 1 && newWrites[0].a.paneId === pty5 && newWrites[0].a.data === "\r", `Approve sent Enter to pty ${pty5} only (${JSON.stringify(newWrites.map((w) => [w.a.paneId, w.a.data]))})`);
+await page.keyboard.press("Escape");
+
 check(pageErrors.length === 0, `no page errors ${pageErrors.join("|")}`);
 await browser.close();
 if (failures.length) { console.error(`\n${failures.length} failure(s)`); process.exit(1); }

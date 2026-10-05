@@ -84,6 +84,35 @@
 .hm-snooze { color: var(--faint); border: 1px solid var(--line); border-radius: var(--r-pill); padding: 0 6px; }
 .hm-actions { display: flex; gap: 8px; margin-top: 4px; }
 
+.hm-peekbtn {
+  flex: none; font: inherit; font-size: 11px; line-height: 14px; padding: 0 6px; color: var(--muted);
+  background: transparent; border: 1px solid var(--line); border-radius: var(--r-pill); cursor: pointer;
+}
+.hm-peekbtn:hover, .hm-peekbtn[aria-expanded="true"] { color: var(--text); border-color: var(--line-strong); }
+.hm-peekbtn:focus-visible { outline: var(--focus-ring-width) solid var(--focus-ring); outline-offset: 1px; }
+.hm-peek {
+  display: flex; flex-direction: column; gap: 4px; padding: 8px; cursor: default;
+  background: var(--abyss); border: 1px solid var(--line); border-radius: var(--r-sm);
+}
+.hm-peek pre {
+  margin: 0; font-family: var(--font-mono); font-size: 11px; line-height: 14px; color: var(--muted);
+  white-space: pre-wrap; overflow-wrap: anywhere; max-height: 168px; overflow-y: auto; /* 12 lines */
+}
+.hm-peek .note, .hm-peek.note { font-size: 11px; line-height: 14px; color: var(--faint); }
+.hm-skel.wide { width: 100%; }
+.hm-reply { display: flex; flex-direction: column; gap: 4px; margin-top: 4px; cursor: default; }
+.hm-replyrow { display: flex; align-items: flex-end; gap: 8px; }
+.hm-field {
+  flex: 1; min-width: 0; resize: none; font: inherit; font-size: 12px; line-height: 16px; color: var(--text);
+  background: var(--abyss); border: 1px solid var(--line-strong); border-radius: var(--r-sm); padding: 4px 8px;
+  max-height: 74px; /* 4 lines + padding + border */ overflow-y: auto;
+}
+.hm-field:focus-visible { outline: var(--focus-ring-width) solid var(--focus-ring); outline-offset: 1px; }
+.hm-field:disabled { opacity: .6; }
+.hm-btn:disabled { opacity: .5; cursor: default; }
+.hm-err { font-size: 11px; line-height: 14px; color: var(--st-error); }
+.hm-sent { margin-top: 4px; font-size: 11px; line-height: 14px; color: var(--st-running); }
+
 .hm-btn {
   font: inherit; font-size: 12px; padding: 4px 10px; color: var(--text); background: transparent;
   border: 1px solid var(--line-strong); border-radius: var(--r-sm); cursor: pointer;

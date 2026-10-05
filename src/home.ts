@@ -198,6 +198,50 @@ export function homeKeyAllowed(
 }
 
 // ---------------------------------------------------------------------------
+// Send state (reply and Approve), per pane
+// ---------------------------------------------------------------------------
+
+/** `key` on "sent" is the card's state key at send time (column, kind, since):
+ *  the "Sent" note holds until that changes, i.e. until the pane's next state
+ *  change, which also moves the card by itself. */
+export type SendState =
+  | { phase: "idle" }
+  | { phase: "sending" }
+  | { phase: "sent"; key: string }
+  | { phase: "failed"; error: string };
+
+export type SendAction =
+  | { type: "start" }
+  | { type: "ok"; key: string }
+  | { type: "fail"; error: string }
+  | { type: "reset" };
+
+export const SEND_IDLE: SendState = { phase: "idle" };
+
+export function sendReducer(s: SendState, a: SendAction): SendState {
+  switch (a.type) {
+    case "start": return s.phase === "sending" ? s : { phase: "sending" }; // never a double send
+    case "ok": return s.phase === "sending" ? { phase: "sent", key: a.key } : s;
+    case "fail": return s.phase === "sending" ? { phase: "failed", error: a.error } : s;
+    case "reset": return SEND_IDLE;
+  }
+}
+
+/** What a card shows now: a "sent" whose state key has moved on is idle again. */
+export function effectiveSend(s: SendState | undefined, key: string): SendState {
+  if (!s) return SEND_IDLE;
+  return s.phase === "sent" && s.key !== key ? SEND_IDLE : s;
+}
+
+export const sendsReducer = (m: Record<number, SendState>, a: SendAction & { paneId: number }): Record<number, SendState> => {
+  const { paneId, ...act } = a;
+  const next = sendReducer(m[paneId] ?? SEND_IDLE, act as SendAction);
+  return next === (m[paneId] ?? SEND_IDLE) ? m : { ...m, [paneId]: next };
+};
+
+export const cardStateKey = (c: Pick<HomeCard, "column" | "kind" | "since">): string => `${c.column}|${c.kind}|${c.since}`;
+
+// ---------------------------------------------------------------------------
 // Session-only state
 // ---------------------------------------------------------------------------
 

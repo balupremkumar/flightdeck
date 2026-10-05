@@ -45,7 +45,7 @@
   const peekPty = new Map(); // modelId -> pty id (pty_spawn)
   const emit = (event, payload) => {
     if (event === "pty://output" && payload) {
-      const t = (peekText.get(payload.pane_id) ?? "") + atob(payload.b64).replace(/\x1b\[[0-9;?]*[ -\/]*[@-~]/g, "").replace(/\r/g, "");
+      const t = (peekText.get(payload.pane_id) ?? "") + new TextDecoder().decode(Uint8Array.from(atob(payload.b64), (ch) => ch.charCodeAt(0))).replace(/\x1b\[[0-9;?]*[ -\/]*[@-~]/g, "").replace(/\r/g, "");
       peekText.set(payload.pane_id, t.slice(-8192));
     }
     if (event === "pty://output" && payload && payload.seq === undefined) {
