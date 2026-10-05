@@ -2,7 +2,8 @@
 //   #2: a move into an existing window whose win://adopt listener is not up yet. The target
 //       never acks, so the source keeps the workspace and resumes its panes (no kill, output
 //       still flowing); a later move to the same window still works.
-//   #3: a pane added to the workspace during the snapshot drain aborts the move.
+//   #3: a pane added to the workspace during the snapshot drain aborts the move (3a); a pane
+//       added during the ws_transfer await (RT-060 M1) stays alive in the source (3b).
 //
 // Run from e2e/ with a Vite dev server: FD_URL=http://localhost:1444 node multiwindow-rtfix.mjs
 import { chromium } from "playwright";
@@ -22,9 +23,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const until = async (fn, ms, what) => {
   const end = Date.now() + ms;
   for (;;) {
-    const v = await fn().catch(() => null);
+    const v = await Promise.resolve().then(fn).catch(() => null);
     if (v) return v;
-    if (Date.now() > end) { check(false, `timed out waiting for ${what}`); return null; }
+    if (Date.now() > end) { check(false, `timed out waiting for ${what}`); console.log(`FAILED: ${failures.length} check(s)`); await browser.close().catch(() => {}); process.exit(1); }
     await sleep(100);
   }
 };
@@ -136,6 +137,74 @@ check(ok.ok === true, `#2: a retry with a live target succeeds (${JSON.stringify
 await until(async () => (await storeState(mv.target)).workspaces.some((w) => w.id === 1), 15000, "fw-1 to adopt acme-api");
 check(bus.transfers.length > n2, "#2: the retry reached the bus");
 await expectIntact(mv.target, "page 2", W1, "#2 retry");
+
+// ---- #3. a pane added while the move is in flight -------------------------------------------
+// Both workspaces now live in fw-1 (mv.target). Drive the moves from there.
+const fw1 = mv.target;
+const addPaneIn = (page, wsId) => page.evaluate(async (wsId) => {
+  const { useApp } = await import("/src/store.ts");
+  const before = new Set(useApp.getState().workspaces.flatMap((w) => w.panes.map((p) => p.id)));
+  useApp.getState().addPane(wsId, "pwsh", "C:\\");
+  return useApp.getState().workspaces.flatMap((w) => w.panes.map((p) => p.id)).find((id) => !before.has(id)) ?? null;
+}, wsId);
+const moveFrom = (page, wsId) => page.evaluate(async (wsId) => (await import("/src/windowMove.ts")).moveWorkspaceToNewWindow(wsId), wsId);
+const paneWs = async (page, id) => (await storeState(page)).workspaces.find((w) => w.panes.includes(id))?.id ?? null;
+
+// #3a: added during the snapshot drain: the move aborts, everything resumes, nothing is killed.
+await fw1.bringToFront();
+await setActive(fw1, 1);
+await until(() => hasPty(fw1, W1), 15000, "#3a: acme-api panes live in fw-1");
+await fw1.evaluate(async () => {
+  const ps = await import("/src/paneSessions.ts");
+  const { useApp } = await import("/src/store.ts");
+  const s = ps.get(4);
+  const orig = s.api.snapshot;
+  s.api.snapshot = async (seq) => {
+    s.api.snapshot = orig;
+    useApp.getState().addPane(1, "pwsh", "C:\\");
+    return orig(seq);
+  };
+});
+const nA = bus.transfers.length;
+const rA = await moveFrom(fw1, 1);
+check(rA.ok === false, `#3a: a pane added during the drain aborts the move (${JSON.stringify(rA)})`);
+check(bus.transfers.length === nA, "#3a: ws_transfer never reached the bus");
+check((await storeState(fw1)).workspaces.find((w) => w.id === 1)?.panes.length === 5, "#3a: fw-1 still holds acme-api with its new pane");
+check(![...bus.ptys.values()].some((p) => p.paused), "#3a: no pane left paused");
+await expectIntact(fw1, "fw-1", W1, "#3a");
+
+// #3b (M1): added during the ws_transfer await. The pane is not in the transfer, so it must
+// stay alive in the source (moved to another workspace there), never be released and killed.
+await setActive(fw1, 2);
+await until(() => hasPty(fw1, W2), 15000, "#3b: acme-web panes live in fw-1");
+await fw1.evaluate(async () => {
+  const { useApp } = await import("/src/store.ts");
+  const orig = window.__fdBus;
+  window.__fdBus = (m) => {
+    if (m.cmd === "ws_transfer") {
+      window.__fdBus = orig;
+      const ids = () => useApp.getState().workspaces.flatMap((w) => w.panes.map((p) => p.id));
+      const before = new Set(ids());
+      useApp.getState().addPane(2, "pwsh", "C:\\");
+      window.__extraPane = ids().find((id) => !before.has(id));
+    }
+    return orig(m);
+  };
+});
+const nB = bus.transfers.length;
+const rB = await moveFrom(fw1, 2);
+check(rB.ok === true, `#3b: the move itself succeeds (${JSON.stringify(rB)})`);
+check(bus.transfers.length === nB + 1, "#3b: ws_transfer reached the bus");
+const stB = await storeState(fw1);
+const extra = await fw1.evaluate(() => window.__extraPane);
+check(!stB.workspaces.some((w) => w.id === 2), "#3b: acme-web left fw-1");
+check(extra !== undefined && (await paneWs(fw1, extra)) === 1, `#3b: the pane added mid-move stayed in fw-1, in acme-web's sibling workspace (pane ${extra})`);
+await until(async () => bus.spawns.some((s) => s.modelId === extra), 8000, "#3b: the extra pane to spawn");
+await fw1.waitForTimeout(800);
+check(bus.kills.length === 0, `#3b: no pty_kill anywhere (saw ${JSON.stringify(bus.kills)})`);
+check(await fw1.evaluate(async (id) => { const s = (await import("/src/paneSessions.ts")).get(id); return !!s && !s.disposed; }, extra), "#3b: the extra pane's session is live, not disposed");
+await until(() => bus.pages.get("fw-2"), 10000, "fw-2's page");
+await expectIntact(bus.pages.get("fw-2"), "fw-2", W2, "#3b");
 
 check(await page1.getByText("Something broke in the cockpit UI").count() === 0, "no ErrorBoundary crash screen");
 check(pageErrors.length === 0, `no page errors${pageErrors.length ? ": " + pageErrors.slice(0, 3).join(" | ") : ""}`);

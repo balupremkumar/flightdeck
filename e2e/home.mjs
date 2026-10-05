@@ -265,8 +265,8 @@ await page.waitForTimeout(9000);
 
 const card3 = '.hm-col.needs [data-pane-id="3"]';
 await page.keyboard.press("Control+Shift+H");
-await page.waitForSelector(`${card3} .hm-field`, { timeout: 15000 });
-check(true, "question card shows a reply field");
+await page.waitForSelector(`${card3} .hm-field`, { timeout: 15000 }).catch(() => {});
+check((await page.locator(`${card3} .hm-field`).count()) === 1, "question card shows a reply field");
 check((await page.locator(`${card3} .hm-peek`).count()) === 0, "peek starts closed");
 await page.locator(card3).focus();
 await page.keyboard.press("Space");

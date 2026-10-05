@@ -125,7 +125,8 @@ Step "Pane-mount smoke" {
         Push-Location (Join-Path $root "e2e")
         if (-not (Test-Path node_modules)) { npm install --no-audit --no-fund | Out-Null }
         $smokeExit = 0
-        foreach ($t in "pane-smoke.mjs", "reflow-keeps-agents.mjs", "draft-survives-restart.mjs", "links.mjs", "viewers.mjs", "review-collapse.mjs", "chat-view.mjs", "chat-density.mjs") {
+        $env:FD_URL = "http://localhost:1420" # the multiwindow scripts default to their own ports
+        foreach ($t in "pane-smoke.mjs", "reflow-keeps-agents.mjs", "draft-survives-restart.mjs", "links.mjs", "viewers.mjs", "review-collapse.mjs", "chat-view.mjs", "chat-density.mjs", "reload-keeps-agents.mjs", "home.mjs", "multiwindow-move.mjs", "multiwindow-close.mjs", "multiwindow-attention.mjs", "multiwindow-restore.mjs", "multiwindow-rtfix.mjs", "multiwindow-s9.mjs") {
             node $t
             if ($LASTEXITCODE -ne 0) { $smokeExit = 1; break }
         }

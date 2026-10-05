@@ -31,9 +31,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const until = async (fn, ms, what) => {
   const end = Date.now() + ms;
   for (;;) {
-    const v = await fn().catch(() => null);
+    const v = await Promise.resolve().then(fn).catch(() => null);
     if (v) return v;
-    if (Date.now() > end) { check(false, `timed out waiting for ${what}`); return null; }
+    if (Date.now() > end) { check(false, `timed out waiting for ${what}`); console.log(`FAILED: ${failures.length} check(s)`); await browser.close().catch(() => {}); process.exit(1); }
     await sleep(100);
   }
 };
