@@ -19,6 +19,7 @@ const invokeMock = vi.fn();
 vi.mock("@tauri-apps/api/core", () => ({ invoke: (...a: unknown[]) => invokeMock(...a) }));
 
 const { cachedInvoke, invalidateCwd, refreshMemoryHealth, MEMORY_POLL_MS } = await import("./poll");
+const { runDiffCycle, runPrCycle, resetHomePoll, HOME_POLL_CONCURRENCY } = await import("./homePoll");
 
 // ---------------------------------------------------------------------------
 // Steady state
@@ -129,6 +130,55 @@ describe("steady-state IPC budget (UX-595)", () => {
       ),
     );
     expect(invokeMock).toHaveBeenCalledTimes(PANE_COUNT * PANE_POLLS.length);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Home open (Phase 5): the shared diff + PR poll store
+// ---------------------------------------------------------------------------
+
+/** What Home asks for while it is open, per cycle: one git_diff_summary per
+ *  distinct (cwd, base) and one pr_status per distinct PR cwd. It costs nothing
+ *  while closed (useHomePoll hands usePoll enabled=false). */
+const homeTarget = (cwd: string, prCwd: string, i: number) =>
+  ({ diffKey: cwd + "|", cwd, baseBranch: null, prCwd, priority: i % 4 });
+
+describe("Home-open IPC budget (Phase 5)", () => {
+  beforeEach(() => {
+    invokeMock.mockReset();
+    invokeMock.mockResolvedValue(null);
+    invalidateCwd("");
+    resetHomePoll();
+  });
+
+  it("50 panes on one repo cost 2 invokes per cycle (1 diff + 1 PR), not 100", async () => {
+    const targets = Array.from({ length: 50 }, (_, i) => homeTarget("D:/repo", "D:/repo", i));
+    await runDiffCycle(targets);
+    await runPrCycle(targets);
+    expect(invokeMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("a pane's own diff poll and Home's share one round trip inside the TTL", async () => {
+    await cachedInvoke("git_diff_summary", { cwd: "D:/repo", base: null }, 7_500);
+    await runDiffCycle([homeTarget("D:/repo", "D:/repo", 0)]);
+    expect(invokeMock).toHaveBeenCalledTimes(1);
+  });
+
+  it(`worst case, 50 separate worktrees, is 100 invokes per cycle but never more than ${HOME_POLL_CONCURRENCY} at once`, async () => {
+    let inFlight = 0;
+    let peak = 0;
+    invokeMock.mockImplementation(async () => {
+      inFlight++;
+      peak = Math.max(peak, inFlight);
+      await Promise.resolve();
+      inFlight--;
+      return null;
+    });
+    const targets = Array.from({ length: 50 }, (_, i) => homeTarget(`D:/wt/${i}`, `D:/wt/${i}`, i));
+    await runDiffCycle(targets);
+    await runPrCycle(targets);
+    expect(invokeMock).toHaveBeenCalledTimes(100);
+    expect(peak).toBeLessThanOrEqual(HOME_POLL_CONCURRENCY);
   });
 });
 

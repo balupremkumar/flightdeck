@@ -35,15 +35,35 @@ const browser = await chromium.launch();
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
 const pageErrors = [];
 page.on("pageerror", (e) => pageErrors.push(e.message));
-await page.addInitScript(boot + "\n" + mock + "\n" + wrap);
+// Populated data for the poll store: a diff on pane 2's cwd, an open PR with
+// running checks on acme-api (so its idle panes stay idle), a merged PR on
+// acme-web, and a rejecting repo for pane 4 (kimi) to exercise the failure memo.
+const overrides = `(()=>{
+  window.__homeDelay = 0;
+  window.__mockOverrides = {
+    git_diff_summary: ({cwd}) => {
+      const out = String(cwd).endsWith("billing")
+        ? {base:"main",files:[{path:"a.ts"},{path:"b.ts"}],totalAdded:84,totalDeleted:12}
+        : {base:"main",files:[],totalAdded:0,totalDeleted:0};
+      if (String(cwd).endsWith("web") && String(cwd).includes("acme-api")) return Promise.reject(new Error("not a repo"));
+      return window.__homeDelay ? new Promise((r)=>setTimeout(()=>r(out), window.__homeDelay)) : out;
+    },
+    pr_status: ({cwd}) => {
+      const out = cwd === "C:\\\\dev\\\\acme-api" ? {number:12,url:"https://github.com/acme/acme-api/pull/12",state:"OPEN",checks:"running"}
+        : cwd === "C:\\\\dev\\\\acme-web" ? {number:41,url:"https://github.com/acme/acme-web/pull/41",state:"MERGED",checks:"passed"} : null;
+      return window.__homeDelay ? new Promise((r)=>setTimeout(()=>r(out), window.__homeDelay)) : out;
+    },
+  };
+})();`;
+await page.addInitScript(boot + "\n" + mock + "\n" + wrap + "\n" + overrides);
 await page.goto(URL, { waitUntil: "networkidle" });
 await page.waitForTimeout(2500);
 await page.getByText("acme-web", { exact: true }).first().click();
 await page.waitForTimeout(2500);
 
-// A genuine question on pane 6, so Needs you has a question next to pane 5's approval.
-const pty6 = await page.evaluate(() => window.__model2pty[6]);
-await page.evaluate((id) => window.__mockPrint(id, "Which package manager should I use?"), pty6);
+// A genuine question on pane 3 (codex, acme-api); pane 6 (codex, acme-web) stays quiet so a merged PR can land it in Merged.
+const pty3 = await page.evaluate(() => window.__model2pty[3]);
+await page.evaluate((id) => window.__mockPrint(id, "Which package manager should I use?"), pty3);
 await page.waitForTimeout(9000);
 
 const bellCount = () => page.evaluate(() =>
@@ -160,7 +180,6 @@ await page.keyboard.press("Control+Shift+H");
 await page.waitForSelector(".hm-panel");
 const boxes = await page.locator(".hm-col").evaluateAll((els) => els.map((e) => e.getBoundingClientRect().x));
 check(new Set(boxes.map(Math.round)).size === 5 && !(await page.locator(".hm-panel.stacked").count()), `1440: five side-by-side columns (${boxes.map(Math.round)})`);
-await page.screenshot({ path: path.join(shots, "home-1440.png") });
 await page.keyboard.press("Escape");
 
 await page.setViewportSize({ width: 940, height: 800 });
@@ -177,9 +196,45 @@ check(noOverflow, "940: no horizontal overflow");
 await page.keyboard.press("4");
 await page.waitForTimeout(200);
 check((await page.locator(".hm-col.idle [data-pane-id]").count()) > 0 && (await activeColumn()) === "idle", "940: 4 unfolds Idle and focuses its first card");
+await page.waitForTimeout(800); // polls landed, rows populated
 await page.screenshot({ path: path.join(shots, "home-940.png") });
 await page.keyboard.press("Escape");
 await page.setViewportSize({ width: 1440, height: 900 });
+
+// --- Step 4: poll store, diff and PR rows -------------------------------------
+const callsFor = (cmd, cwdEnd) => page.evaluate(([c, e]) => window.__calls.filter((x) => x.c === c && String(x.a?.cwd).endsWith(e)).length, [cmd, cwdEnd]);
+await page.waitForTimeout(8000); // let the PaneView / chip polls from earlier steps age out of their TTLs
+const billingBefore = await callsFor("git_diff_summary", "billing");
+
+// Skeletons hold the place of values still loading (fixed size, no spinner).
+await page.evaluate(() => { window.__homeDelay = 900; });
+await page.keyboard.press("Control+Shift+H");
+await page.waitForSelector(".hm-panel");
+await page.waitForTimeout(250);
+check((await page.locator(".hm-skel").count()) > 0, "skeleton bars show while diff and PR are loading");
+const skelBox = await page.locator(".hm-skel").first().boundingBox();
+check(skelBox && Math.round(skelBox.width) === 60 && Math.round(skelBox.height) === 12, `skeleton is 60x12 (${skelBox?.width}x${skelBox?.height})`);
+check((await page.locator(".hm-card").count()) > 0, "cards render immediately from local state, before any poll lands");
+await page.waitForTimeout(1800);
+check((await page.locator(".hm-skel").count()) === 0, "no skeleton left once the polls land");
+
+const review = page.locator('.hm-col.review [data-pane-id="2"]');
+check((await review.count()) === 1, "pane 2 (diff on its cwd) is in Ready to review");
+const reviewText = (await review.innerText()).replace(/\s+/g, " ");
+check(/\+84 -12 2 files/.test(reviewText), `diff row reads +84 -12 2 files (${reviewText})`);
+check(/PR #12 · checks running/.test(reviewText), "PR chip uses prLabel");
+check((await page.locator(".hm-col.merged .hm-pr").first().innerText()) === "PR #41 · merged", "Merged column shows the merged PR chip");
+check((await page.locator('[data-pane-id="4"] .hm-diff').count()) === 0 && (await page.locator('[data-pane-id="4"] .hm-skel').count()) === 0, "a repo whose diff rejects shows no diff row and no skeleton");
+check((await callsFor("git_diff_summary", "billing")) > billingBefore, "opening Home polled the diff for a pane no PaneView is showing");
+await page.screenshot({ path: path.join(shots, "home-1440.png") });
+await page.keyboard.press("Escape");
+await page.waitForTimeout(500);
+
+// Stops when closed: no new diff calls for that cwd across a full 15s cycle.
+await page.evaluate(() => { window.__homeDelay = 0; });
+const closedBefore = await callsFor("git_diff_summary", "billing");
+await page.waitForTimeout(16500);
+check((await callsFor("git_diff_summary", "billing")) === closedBefore, "no Home polling while closed (diff cycle is 15s)");
 
 check(pageErrors.length === 0, `no page errors ${pageErrors.join("|")}`);
 await browser.close();

@@ -23,6 +23,7 @@ import { closePaneGuarded } from "./worktrees";
 import { mapPatchLines } from "./difflines";
 import { nextUnreviewed } from "./reviewstate";
 import { buildExplainPrompt, buildLineCommentPrompt } from "./reviewprompt";
+import { markPaneMerged } from "./home";
 import {
   applyFolds, autoCollapseThreshold, AUTO_COLLAPSE_KEY, collapseReason, foldRuns, hashPatch, parseViewed,
   reconcileViewed, shouldAutoCollapse, viewedStorageKey, whitespaceStorageKey, type ViewedMap,
@@ -470,6 +471,8 @@ export function Review() {
         invoke<MergeOutcome>("git_merge_back", { worktreePath: pane.worktreePath, files })
           .then((m) => {
             if (m.status === "merged") {
+              // Phase 5 Home: a full merge moves this pane to Home's Merged column.
+              if (allSelected) markPaneMerged(pane.id);
               // UX-578: name what actually landed — the same file/line
               // delta the preflight showed — rather than just "merged" —
               // and link straight to the merge commit when the remote is a

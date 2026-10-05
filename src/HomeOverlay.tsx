@@ -12,6 +12,8 @@ import { useFocusTrap } from "./useFocusTrap";
 import { KIND_LABEL, lastLine, lastOutputAt, stateSince, forMins } from "./attention";
 import { useVendors, vendorMeta, vendorShort } from "./vendors";
 import { VendorGlyph } from "./VendorGlyph";
+import { prLabel } from "./chipState";
+import { buildTargets, useHomePoll, useHomePollStore } from "./homePoll";
 import { IconClose, IconHome } from "./Icons";
 import {
   buildHome, COLUMN_EMPTY, COLUMN_LABEL, HOME_COLUMNS, mergedPanes, otherWindowSummaries,
@@ -23,9 +25,6 @@ import "./HomeOverlay.css";
 const MERGED_CAP = 5;
 /** The workspace filter appears once there are more cards than this. */
 const FILTER_ABOVE = 20;
-
-const NO_DIFF: HomeCtx["diff"] = {};
-const NO_PR: HomeCtx["pr"] = {};
 
 /** Below this width the five columns become stacked sections (spec section 4). */
 const STACK_BELOW_PX = 1100;
@@ -71,6 +70,11 @@ export function HomeOverlay() {
     return () => clearInterval(id);
   }, [open]);
 
+  // Diff stat and PR/CI come from the shared poll store, which only polls while
+  // Home is open. undefined = not fetched yet (skeleton), null = none (omitted).
+  const diff = useHomePollStore((s) => s.diff);
+  const pr = useHomePollStore((s) => s.pr);
+
   const { columns, needsCount } = useMemo(() => {
     const ctx: HomeCtx = {
       now,
@@ -78,15 +82,22 @@ export function HomeOverlay() {
       lastLine,
       stateSince,
       lastOutputAt,
-      diff: NO_DIFF,
-      pr: NO_PR,
+      diff,
+      pr,
       merged: mergedPanes,
       isAgent: (v) => vendorMeta(v).kind === "agent",
     };
     return buildHome(workspaces, ctx);
     // `vendors` is a dependency so a manifest hot-reload reclassifies shells.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workspaces, snoozed, now, vendors]);
+  }, [workspaces, snoozed, now, vendors, diff, pr]);
+
+  const columnOf = useMemo(() => {
+    const m = new Map<number, HomeColumn>();
+    for (const c of HOME_COLUMNS) for (const card of columns[c]) m.set(card.paneId, c);
+    return m;
+  }, [columns]);
+  useHomePoll(open, buildTargets(workspaces, columnOf));
 
   const total = HOME_COLUMNS.reduce((n, c) => n + columns[c].length, 0);
   const visible = useMemo(() => {
@@ -200,6 +211,18 @@ export function HomeOverlay() {
   const renderCard = (c: HomeCard) => {
     const name = c.title || vendorShort(c.vendor);
     const where = c.branch ? `${c.wsName} / ${c.branch}` : c.wsName;
+    // Row 3: only what is known. A fixed-size bar holds the place of a value
+    // still loading; a fetched "none" omits its part.
+    const diffPart = c.diff === undefined
+      ? <span className="hm-skel" aria-hidden="true" />
+      : c.diff && c.diff.files > 0
+        ? <span className="hm-diff"><span className="add">+{c.diff.added}</span> <span className="del">-{c.diff.deleted}</span> {c.diff.files} {c.diff.files === 1 ? "file" : "files"}</span>
+        : null;
+    const prPart = c.pr === undefined
+      ? <span className="hm-skel" aria-hidden="true" />
+      : c.pr
+        ? <span className={"hm-pr " + (c.pr.state.toUpperCase() === "OPEN" ? c.pr.checks : "done")}>{prLabel(c.pr)}</span>
+        : null;
     return (
       <li key={c.paneId}>
         <div
@@ -216,6 +239,9 @@ export function HomeOverlay() {
           </div>
           <div className="hm-where" title={where}>{where}</div>
           <div className={"hm-act" + (c.activity ? "" : " none")}>{c.activity ?? "No output yet"}</div>
+          {(diffPart || prPart) && (
+            <div className="hm-meta" aria-busy={c.diff === undefined || c.pr === undefined}>{diffPart}{prPart}</div>
+          )}
           {(c.kind || c.snoozedUntil) && (
             <div className="hm-tags">
               {c.kind && <span className={"hm-kind " + c.kind}><span className={"ntf-dot " + c.kind} />{KIND_LABEL[c.kind]}</span>}

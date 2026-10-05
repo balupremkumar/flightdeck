@@ -65,6 +65,17 @@
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere;
 }
 .hm-act.none { color: var(--faint); font-style: italic; font-family: inherit; }
+.hm-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-height: 14px; font-size: 11px; line-height: 14px; color: var(--muted); }
+.hm-diff { font-family: var(--font-mono); }
+.hm-diff .add { color: var(--st-running); }
+.hm-diff .del { color: var(--st-error); }
+.hm-pr { color: var(--muted); }
+.hm-pr.passed { color: var(--st-running); }
+.hm-pr.failed { color: var(--st-error); }
+.hm-pr.running { color: var(--st-waiting); }
+.hm-pr.done { color: var(--faint); }
+/* Fixed 60x12 so a value arriving never resizes the row. */
+.hm-skel { width: 60px; height: 12px; border-radius: var(--r-sm); background: color-mix(in srgb, var(--text) 8%, transparent); }
 .hm-tags { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 11px; line-height: 14px; }
 .hm-kind { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; color: var(--muted); }
 .hm-kind.permission { color: var(--st-waiting); }
