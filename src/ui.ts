@@ -143,6 +143,9 @@ interface UIState {
   // Standalone attention-queue overlay (UI-1 v2).
   attentionOpen: boolean;
   setAttentionOpen: (open: boolean) => void;
+  // Phase 5 Home overlay. Mutually exclusive with the attention queue: each setter closes the other.
+  homeOpen: boolean;
+  setHomeOpen: (open: boolean) => void;
   // UI-145: which pane (if any) is maximised. Owned by PaneGrid, mirrored here
   // so Notifications can treat focus mode as do-not-disturb.
   maximizedPaneId: number | null;
@@ -366,7 +369,9 @@ export const useUI = create<UIState>((set, get) => ({
   broadcastOpen: false,
   setBroadcastOpen: (broadcastOpen) => set({ broadcastOpen }),
   attentionOpen: false,
-  setAttentionOpen: (attentionOpen) => set({ attentionOpen }),
+  setAttentionOpen: (attentionOpen) => set(attentionOpen ? { attentionOpen, homeOpen: false } : { attentionOpen }),
+  homeOpen: false,
+  setHomeOpen: (homeOpen) => set(homeOpen ? { homeOpen, attentionOpen: false } : { homeOpen }),
   maximizedPaneId: null,
   setMaximizedPaneId: (maximizedPaneId) => set({ maximizedPaneId }),
   autoQueue: (() => { try { return localStorage.getItem("flightdeck-auto-queue") === "1"; } catch { return false; } })(),

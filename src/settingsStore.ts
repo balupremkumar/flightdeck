@@ -175,6 +175,7 @@ export const FIXED_SHORTCUTS: ShortcutDef[] = [
   { id: "cycle-workspace", label: "Cycle workspaces (most-recent first)", combo: "Ctrl+Tab" },
   { id: "cycle-workspace-back", label: "Cycle workspaces backwards", combo: "Ctrl+Shift+Tab" },
   { id: "attention-queue", label: "Open attention queue", combo: "Ctrl+Shift+A" },
+  { id: "home", label: "Open Home", combo: "Ctrl+Shift+H" },
   { id: "focus-pane-n", label: "Focus pane 1-9 in this workspace", combo: "Alt+1..9" },
   { id: "focus-pane-arrows", label: "Move pane focus", combo: "Ctrl+Alt+Arrows" },
   { id: "close-pane", label: "Close the focused pane", combo: "Ctrl+W" },

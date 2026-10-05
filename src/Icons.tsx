@@ -114,6 +114,9 @@ export const IconTheme = (p: IconProps) => (
 
 // Broadcast — radio-waves fanning off a beacon dot, matching IconAgent's
 // footprint so it can drop into the same topbar slot.
+export const IconHome = (p: IconProps) => (
+  <Svg {...p}><path d="M3.5 9.5 L10 4 L16.5 9.5" /><path d="M5 8.5 V15.5 a1 1 0 0 0 1 1 H8.5 V12 H11.5 V16.5 H14 a1 1 0 0 0 1 -1 V8.5" /></Svg>
+);
 export const IconBroadcast = (p: IconProps) => (
   <Svg {...p}>
     <circle cx="10" cy="10" r="1.7" fill="currentColor" stroke="none" />

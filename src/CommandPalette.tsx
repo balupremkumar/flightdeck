@@ -160,10 +160,11 @@ function openCheatSheet() {
 // UX-530: maps a palette action's id to the shortcut-registry id it
 // represents (Settings.tsx's DEFAULT_SHORTCUTS/FIXED_SHORTCUTS) — kept as one
 // small table here rather than hand-typing each combo a second time.
-const ACTION_SHORTCUT_ID: Record<string, string> = {
+export const ACTION_SHORTCUT_ID: Record<string, string> = {
   "act:settings": "settings",
   "act:toggle-panel": "toggle-panel",
   "act:attention-queue": "attention-queue",
+  "act:home": "home",
   "act:zoom-in": "zoom-in",
   "act:zoom-out": "zoom-out",
   "act:zoom-reset": "zoom-reset",
@@ -309,6 +310,7 @@ export function CommandPalette() {
     list.push({ id: "act:theme-light", section: "Actions", label: "Switch to light theme", run: () => setTheme("light") });
     list.push({ id: "act:toggle-panel", section: "Actions", label: "Toggle side panel", run: toggleSidePanel });
     list.push({ id: "act:attention-queue", section: "Actions", label: "Open attention queue", run: () => useUI.getState().setAttentionOpen(true) });
+    list.push({ id: "act:home", section: "Actions", label: "Open Home", run: () => useUI.getState().setHomeOpen(true) });
     list.push({
       id: "act:toggle-explorer",
       section: "Actions",

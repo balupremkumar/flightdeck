@@ -3,7 +3,7 @@ import { lazyOverlay } from "./LazyOverlay";
 import { useApp } from "./store";
 import { LeftPanel } from "./LeftPanel";
 import { PaneGrid } from "./PaneGrid";
-import { IconBrand, IconPanel, IconSettings, IconTheme, IconFile, IconBroadcast, IconTerminalPlus } from "./Icons";
+import { IconBrand, IconPanel, IconSettings, IconTheme, IconFile, IconBroadcast, IconTerminalPlus, IconHome } from "./Icons";
 import { useVendors, accentCss, vendorShort } from "./vendors";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { ToastHost } from "./ToastHost";
@@ -22,6 +22,7 @@ import { getName } from "@tauri-apps/api/app";
 import { spawnPane, closePaneGuarded, closeWorkspaceGuarded } from "./worktrees";
 import { isTypingTarget } from "./isTypingTarget";
 import { attentionQueue, mostRecentOutputPane } from "./attention";
+import { homeKeyAllowed } from "./home";
 
 // Rarely-opened panels are lazy chunks so they stay out of the first-paint
 // bundle. Ones gated on store state mount only while that state is set; the
@@ -34,6 +35,7 @@ const Broadcast = lazyOverlay(() => import("./Broadcast"), "Broadcast", "Broadca
 const Explorer = lazyOverlay(() => import("./Explorer"), "Explorer", "the file explorer");
 const Review = lazyOverlay(() => import("./Review"), "Review", "Review");
 const AttentionQueue = lazyOverlay(() => import("./AttentionQueue"), "AttentionQueue", "the attention queue");
+const HomeOverlay = lazyOverlay(() => import("./HomeOverlay"), "HomeOverlay", "Home");
 const Shortcuts = lazyOverlay(() => import("./Shortcuts"), "Shortcuts", "keyboard shortcuts");
 const SessionLauncher = lazyOverlay(() => import("./SessionLauncher"), "SessionLauncher", "the session launcher");
 const PreviewHost = lazyOverlay(() => import("./PreviewHost"), "PreviewHost", "the preview");
@@ -58,6 +60,7 @@ export function Cockpit() {
   const settingsOpen = useUI((s) => s.settingsOpen);
   const reviewOpen = useUI((s) => s.reviewPaneId !== null);
   const attentionOpen = useUI((s) => s.attentionOpen);
+  const homeOpen = useUI((s) => s.homeOpen);
   const hasPreview = useUI((s) => s.previewTabs.length > 0);
   const setShowExplorer = useUI((s) => s.setExplorerOpen);
   const setSettingsOpen = useUI((s) => s.setSettingsOpen);
@@ -107,6 +110,10 @@ export function Cockpit() {
         if (closeTopOverlay()) { e.preventDefault(); }
         return;
       }
+      // Phase 5 Home: while it is open only its own chords, Ctrl+Shift+A, Ctrl+,
+      // and zoom act here. Backtick, bare/Alt digits, Ctrl+Alt arrows, Ctrl+Tab,
+      // Ctrl+W and Ctrl+B must not touch the panes behind the sheet.
+      if (useUI.getState().homeOpen && !homeKeyAllowed(e)) return;
       // UX-537: one key, no modifier — jump straight to whichever pane most
       // recently produced output, the pane you'd otherwise go hunting for.
       // Guarded the same way "?" (Shortcuts.tsx) is: never steals the literal
@@ -179,6 +186,13 @@ export function Cockpit() {
       if (e.ctrlKey && e.shiftKey && (e.key === "a" || e.key === "A")) {
         e.preventDefault();
         useUI.getState().setAttentionOpen(!useUI.getState().attentionOpen);
+        return;
+      }
+      // Phase 5 Home: global like Ctrl+Shift+A above (no agent TUI binds the
+      // Shift variant of Ctrl+H), so it works while a terminal has focus.
+      if (e.ctrlKey && e.shiftKey && !e.altKey && (e.key === "h" || e.key === "H")) {
+        e.preventDefault();
+        useUI.getState().setHomeOpen(!useUI.getState().homeOpen);
         return;
       }
       // UI-156: Ctrl+Tab cycles workspaces most-recently-used first, like a
@@ -374,6 +388,15 @@ export function Cockpit() {
         {active && <Suspense fallback={null}><WorkspaceChips workspace={active} /></Suspense>}
         <span className="sp" />
         <Suspense fallback={null}><QuotaGauge /></Suspense>
+        <button
+          className={"tb-ic" + (homeOpen ? " on" : "")}
+          title="Home (Ctrl+Shift+H)"
+          aria-label="Home"
+          aria-pressed={homeOpen}
+          onClick={() => useUI.getState().setHomeOpen(!homeOpen)}
+        >
+          <IconHome size={17} />
+        </button>
         <Notifications />
         <button
           className={"tb-ic" + (showExplorer ? " on" : "")}
@@ -412,6 +435,7 @@ export function Cockpit() {
       {reviewOpen && <Review />}
       {!splitActive && hasPreview && <PreviewHost mode="drawer" />}
       {attentionOpen && <AttentionQueue />}
+      {homeOpen && <HomeOverlay />}
       <Shortcuts />
       {/* QL-764: resume/fork launcher. Owns its own open state and Ctrl+Shift+R
           listener, the same way CommandPalette and Shortcuts do. */}

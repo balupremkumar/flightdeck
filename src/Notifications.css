@@ -44,6 +44,7 @@
 .ntf-label-row { display: flex; align-items: center; justify-content: space-between; }
 .ntf-clear { border: 0; background: transparent; color: var(--azure); font: inherit; font-size: 11px; cursor: pointer; padding: 0; }
 .ntf-clear:hover { text-decoration: underline; }
+.ntf-links { display: flex; align-items: center; gap: 10px; }
 .ntf-empty { padding: 6px 0; font-size: 12px; color: var(--faint); }
 
 .ntf-item {

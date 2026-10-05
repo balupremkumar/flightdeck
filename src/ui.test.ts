@@ -122,6 +122,32 @@ describe("navigation stack (ui.ts, UX-531)", () => {
   });
 });
 
+describe("Home overlay state (Phase 5)", () => {
+  beforeEach(() => useUI.setState({ homeOpen: false, attentionOpen: false }));
+
+  it("opening Home closes the attention queue", () => {
+    useUI.getState().setAttentionOpen(true);
+    useUI.getState().setHomeOpen(true);
+    expect(useUI.getState().homeOpen).toBe(true);
+    expect(useUI.getState().attentionOpen).toBe(false);
+  });
+
+  it("opening the attention queue closes Home: they never stack", () => {
+    useUI.getState().setHomeOpen(true);
+    useUI.getState().setAttentionOpen(true);
+    expect(useUI.getState().attentionOpen).toBe(true);
+    expect(useUI.getState().homeOpen).toBe(false);
+  });
+
+  it("closing one leaves the other untouched", () => {
+    useUI.getState().setHomeOpen(true);
+    useUI.getState().setAttentionOpen(false);
+    expect(useUI.getState().homeOpen).toBe(true);
+    useUI.getState().setHomeOpen(false);
+    expect(useUI.getState().homeOpen).toBe(false);
+  });
+});
+
 // UX-542/543: the overlay stack — Esc must close exactly the top-most
 // registered overlay, never more than one. useOverlayEsc itself (the
 // React-hook wrapper) needs a DOM to exercise; these are the ordering rules

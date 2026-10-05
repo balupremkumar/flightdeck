@@ -718,15 +718,24 @@ export function Notifications() {
           <div className="ntf-section">
             <div className="ntf-label-row">
               <span className="ntf-label">Needs you</span>
-              {needsAttention.length > 0 && (
+              <span className="ntf-links">
+                {needsAttention.length > 0 && (
+                  <button
+                    className="ntf-clear"
+                    title="Open the full attention queue (Ctrl+Shift+A)"
+                    onClick={() => { setPanel("none"); useUI.getState().setAttentionOpen(true); }}
+                  >
+                    See all
+                  </button>
+                )}
                 <button
                   className="ntf-clear"
-                  title="Open the full attention queue (Ctrl+Shift+A)"
-                  onClick={() => { setPanel("none"); useUI.getState().setAttentionOpen(true); }}
+                  title="Open Home: every agent by state (Ctrl+Shift+H)"
+                  onClick={() => { setPanel("none"); useUI.getState().setHomeOpen(true); }}
                 >
-                  See all
+                  Open Home
                 </button>
-              )}
+              </span>
             </div>
 
             {needsAttention.length === 0 ? (

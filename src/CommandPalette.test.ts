@@ -14,7 +14,7 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ save: vi.fn(), open: vi.fn() }));
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn() }));
 
-const { fuzzyScore, rankByRecent, buildShortcutMap, pickTaskVendor, taskLabel, waitForAgentReady, sendTaskWhenReady } =await import("./CommandPalette");
+const { fuzzyScore, rankByRecent, buildShortcutMap, ACTION_SHORTCUT_ID, pickTaskVendor, taskLabel, waitForAgentReady, sendTaskWhenReady } =await import("./CommandPalette");
 const { getShortcuts, FIXED_SHORTCUTS } = await import("./Settings");
 
 describe("fuzzyScore (command palette search matching)", () => {
@@ -74,6 +74,18 @@ describe("buildShortcutMap (UX-530, single source of truth)", () => {
     const after = buildShortcutMap();
     expect(after["settings"]).toBe("Ctrl+.");
     localStorage.removeItem("flightdeck-shortcuts");
+  });
+});
+
+describe("Open Home action (Phase 5)", () => {
+  it("act:home maps to a registered shortcut and shows Ctrl+Shift+H as its hint", () => {
+    expect(ACTION_SHORTCUT_ID["act:home"]).toBe("home");
+    expect(buildShortcutMap()[ACTION_SHORTCUT_ID["act:home"]]).toBe("Ctrl+Shift+H");
+  });
+
+  it("no other shortcut claims Ctrl+Shift+H", () => {
+    const clash = [...getShortcuts(), ...FIXED_SHORTCUTS].filter((s) => s.combo === "Ctrl+Shift+H");
+    expect(clash.map((s) => s.id)).toEqual(["home"]);
   });
 });
 
