@@ -1006,6 +1006,8 @@ pub fn run() {
             pty_reap_unclaimed,
             windows::window_boot,
             windows::window_heartbeat,
+            windows::attention_report,
+            windows::window_focus_pane,
             chatlog::pane_session_info,
             chatlog::session_tail,
             usage::session_subagents,

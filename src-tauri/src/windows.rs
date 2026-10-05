@@ -14,7 +14,7 @@ use std::collections::BTreeMap;
 use std::sync::Mutex;
 use std::time::Duration;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::persist::{self, SessionDoc};
@@ -29,7 +29,7 @@ const WATCH_TICK_MS: u64 = 2_000;
 /// at 127 or below keeps every id inside a signed 32-bit int.
 pub const MAX_ORDINAL: u32 = 127;
 
-fn now_ms() -> u64 {
+pub(crate) fn now_ms() -> u64 {
     use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64
 }
@@ -42,6 +42,28 @@ pub struct WindowRec {
     pub last_focus_ms: u64,
     pub last_heartbeat_ms: u64,
     pub ordinal: u32,
+    /// Last `attention_report` from this window (S10).
+    pub attention: Option<AttentionReport>,
+}
+
+/// The window's most urgent attention item. JS owns the ranking; Rust only
+/// compares the tuple `(kind_rank, since, ws_id, pane_id)`, smallest wins.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AttentionTop {
+    #[serde(alias = "kind_rank")]
+    pub kind_rank: u32,
+    pub since: u64,
+    #[serde(alias = "ws_id")]
+    pub ws_id: u32,
+    #[serde(alias = "pane_id")]
+    pub pane_id: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AttentionReport {
+    pub count: u32,
+    pub top: Option<AttentionTop>,
 }
 
 #[derive(Clone, Debug)]
@@ -51,11 +73,13 @@ pub struct WindowRegistry {
     pub exiting: bool,
     /// The `flightdeck-multiwindow` flag as main last reported it at boot.
     pub multiwindow: bool,
+    /// Windows the last summon dismiss hid; the next bring shows only these.
+    pub summon_hidden: Vec<String>,
 }
 
 impl Default for WindowRegistry {
     fn default() -> Self {
-        WindowRegistry { windows: BTreeMap::new(), next_ordinal: 1, exiting: false, multiwindow: false }
+        WindowRegistry { windows: BTreeMap::new(), next_ordinal: 1, exiting: false, multiwindow: false, summon_hidden: Vec::new() }
     }
 }
 
@@ -128,6 +152,32 @@ impl WindowRegistry {
             }
         }
         Some((rec.workspace_ids, rec.active_ws))
+    }
+
+    /// Store (replace, never add) one window's report. Unknown labels are refused.
+    pub fn set_attention(&mut self, label: &str, report: AttentionReport) -> bool {
+        match self.windows.get_mut(label) {
+            Some(r) => {
+                r.attention = Some(report);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Global badge count and the window holding the global top item. Reports
+    /// replace per label, so a resend is idempotent. If two windows claim the
+    /// same top tuple (mid-transfer), the one that owns the workspace wins, then
+    /// the lower label.
+    pub fn global_attention(&self) -> (u32, Option<(String, AttentionTop)>) {
+        let count = self.windows.values().filter_map(|r| r.attention).fold(0u32, |a, r| a.saturating_add(r.count));
+        let top = self
+            .windows
+            .iter()
+            .filter_map(|(l, r)| r.attention.and_then(|a| a.top).map(|t| (l, t)))
+            .min_by_key(|(l, t)| ((t.kind_rank, t.since, t.ws_id, t.pane_id), !self.owns(l, t.ws_id), (*l).clone()))
+            .map(|(l, t)| (l.clone(), t));
+        (count, top)
     }
 
     pub fn heartbeat(&mut self, label: &str, now: u64) {
@@ -220,6 +270,69 @@ pub fn window_boot(
 #[tauri::command(async)]
 pub fn window_heartbeat(window: tauri::Window, state: State<'_, WindowState>) {
     state.lock().heartbeat(window.label(), now_ms());
+}
+
+/// Each window reports its own attention count and top item when its queue
+/// changes. Rust merges across windows and puts the global count on every
+/// window's taskbar overlay. Never focuses anything.
+#[tauri::command(async)]
+pub fn attention_report(
+    app: AppHandle,
+    window: tauri::Window,
+    state: State<'_, WindowState>,
+    count: u32,
+    top: Option<AttentionTop>,
+) -> Result<(), String> {
+    validate_label(window.label())?;
+    let total = {
+        let mut reg = state.lock();
+        if !reg.set_attention(window.label(), AttentionReport { count, top }) {
+            return Err(format!("window {} is not registered", window.label()));
+        }
+        reg.global_attention().0
+    };
+    crate::overlay::apply_all(&app, total);
+    Ok(())
+}
+
+pub const FOCUS_PANE_EVENT: &str = "app://focus-pane";
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FocusPanePayload {
+    ws_id: u32,
+    pane_id: u32,
+}
+
+/// Is `label` a registered window? Validates the shape first.
+pub fn check_registered(reg: &WindowRegistry, label: &str) -> Result<(), String> {
+    validate_label(label)?;
+    if reg.windows.contains_key(label) {
+        Ok(())
+    } else {
+        Err(format!("window {label} is not registered"))
+    }
+}
+
+/// Focus `label` and ask it to select a pane. Only for a user click or a
+/// notification click inside/from Flightdeck.
+#[tauri::command(async)]
+pub fn window_focus_pane(
+    app: AppHandle,
+    state: State<'_, WindowState>,
+    label: String,
+    ws_id: u32,
+    pane_id: u32,
+) -> Result<(), String> {
+    check_registered(&state.lock(), &label)?;
+    let win = app.get_webview_window(&label).ok_or_else(|| format!("window {label} has no webview"))?;
+    let _ = win.show();
+    let _ = win.unminimize();
+    let _ = win.set_focus();
+    if let Some(r) = state.lock().windows.get_mut(&label) {
+        r.last_focus_ms = now_ms();
+    }
+    app.emit_to(label.as_str(), FOCUS_PANE_EVENT, FocusPanePayload { ws_id, pane_id }).map_err(|e| e.to_string())
 }
 
 #[derive(Clone, Serialize)]
@@ -369,5 +482,66 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(raw).expect("default.json parses");
         let windows: Vec<&str> = v["windows"].as_array().expect("windows array").iter().filter_map(|w| w.as_str()).collect();
         assert_eq!(windows, vec!["main", "fw-*"]);
+    }
+
+    fn top(rank: u32, since: u64, ws: u32, pane: u32) -> Option<AttentionTop> {
+        Some(AttentionTop { kind_rank: rank, since, ws_id: ws, pane_id: pane })
+    }
+
+    fn reg_with(reports: &[(&str, u32, Option<AttentionTop>)]) -> WindowRegistry {
+        let mut reg = WindowRegistry::default();
+        reg.ensure_main();
+        for (l, count, t) in reports {
+            if *l != MAIN {
+                reg.windows.insert(l.to_string(), WindowRec::default());
+            }
+            assert!(reg.set_attention(l, AttentionReport { count: *count, top: *t }));
+        }
+        reg
+    }
+
+    #[test]
+    fn attention_sums_counts_and_picks_smallest_tuple() {
+        let reg = reg_with(&[("main", 2, top(1, 50, 1, 2)), ("fw-1", 3, top(0, 90, 1 << 24, (1 << 24) | 1))]);
+        let (count, t) = reg.global_attention();
+        assert_eq!(count, 5);
+        assert_eq!(t.unwrap().0, "fw-1", "permission (rank 0) beats error");
+    }
+
+    #[test]
+    fn attention_ties_break_on_since_then_ids() {
+        let reg = reg_with(&[("main", 1, top(0, 20, 1, 2)), ("fw-1", 1, top(0, 10, 9, 9))]);
+        assert_eq!(reg.global_attention().1.unwrap().0, "fw-1");
+        let reg = reg_with(&[("main", 1, top(0, 10, 1, 3)), ("fw-1", 1, top(0, 10, 1, 2))]);
+        assert_eq!(reg.global_attention().1.unwrap().0, "fw-1");
+    }
+
+    #[test]
+    fn attention_resend_replaces_and_duplicate_top_goes_to_owner() {
+        let mut reg = reg_with(&[("main", 4, top(0, 5, 7, 8)), ("fw-1", 1, top(0, 5, 7, 8))]);
+        reg.windows.get_mut("fw-1").unwrap().workspace_ids = vec![7];
+        assert_eq!(reg.global_attention().1.unwrap().0, "fw-1");
+        reg.set_attention("main", AttentionReport { count: 4, top: None });
+        assert_eq!(reg.global_attention().0, 5, "replacing, not adding");
+        reg.set_attention("fw-1", AttentionReport { count: 0, top: None });
+        assert_eq!(reg.global_attention(), (4, None));
+    }
+
+    #[test]
+    fn attention_refuses_unknown_labels_and_drops_with_window() {
+        let mut reg = reg_with(&[("fw-1", 2, top(0, 1, 1, 1))]);
+        assert!(!reg.set_attention("fw-9", AttentionReport { count: 1, top: None }));
+        reg.adopt_into_main("fw-1");
+        assert_eq!(reg.global_attention(), (0, None));
+    }
+
+    #[test]
+    fn focus_pane_label_validation() {
+        let reg = reg_with(&[("fw-1", 0, None)]);
+        assert!(check_registered(&reg, "main").is_ok());
+        assert!(check_registered(&reg, "fw-1").is_ok());
+        assert!(check_registered(&reg, "fw-2").is_err(), "well formed but not registered");
+        assert!(check_registered(&reg, "fw-01").is_err());
+        assert!(check_registered(&reg, "evil").is_err());
     }
 }

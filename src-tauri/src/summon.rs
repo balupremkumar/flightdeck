@@ -68,25 +68,127 @@ fn chord() -> tauri_plugin_global_shortcut::Shortcut {
 /// the user isn't already looking at.
 #[cfg(desktop)]
 fn toggle<R: Runtime>(app: &AppHandle<R>) {
-    let Some(win) = app.get_webview_window("main") else {
-        return;
-    };
-    let action = decide(
-        win.is_focused().unwrap_or(false),
-        win.is_visible().unwrap_or(true),
-        win.is_minimized().unwrap_or(false),
-    );
-    match action {
-        SummonAction::Dismiss => {
-            let _ = win.hide();
+    use crate::windows::{WindowState, MAIN};
+    let state = app.state::<WindowState>();
+    let labels: Vec<String> = {
+        let reg = state.lock();
+        let mut l: Vec<String> = reg.windows.keys().cloned().collect();
+        if !l.iter().any(|x| x == MAIN) {
+            l.push(MAIN.to_string());
         }
-        SummonAction::Bring => {
-            let _ = win.show();
-            let _ = win.unminimize();
-            let _ = win.set_focus();
-            let _ = app.emit(SUMMON_EVENT, ());
+        l
+    };
+    let views: Vec<WinView> = labels
+        .iter()
+        .filter_map(|l| {
+            let w = app.get_webview_window(l)?;
+            Some(WinView {
+                label: l.clone(),
+                focused: w.is_focused().unwrap_or(false),
+                visible: w.is_visible().unwrap_or(true),
+                minimized: w.is_minimized().unwrap_or(false),
+            })
+        })
+        .collect();
+    let plan = {
+        let mut reg = state.lock();
+        let last_focus: Vec<(String, u64)> = reg.windows.iter().map(|(l, r)| (l.clone(), r.last_focus_ms)).collect();
+        let top = reg.global_attention().1;
+        let plan = plan(&views, &reg.summon_hidden, top.as_ref().map(|(l, _)| l.as_str()), &last_focus);
+        match &plan {
+            SummonPlan::Dismiss { hide, focused } => {
+                reg.summon_hidden = hide.clone();
+                if let Some(r) = focused.as_ref().and_then(|f| reg.windows.get_mut(f)) {
+                    r.last_focus_ms = crate::windows::now_ms();
+                }
+            }
+            SummonPlan::Bring { target, .. } => {
+                reg.summon_hidden.clear();
+                if let Some(r) = reg.windows.get_mut(target) {
+                    r.last_focus_ms = crate::windows::now_ms();
+                }
+            }
+        }
+        (plan, top)
+    };
+    match plan {
+        (SummonPlan::Dismiss { hide, .. }, _) => {
+            for l in hide {
+                if let Some(w) = app.get_webview_window(&l) {
+                    let _ = w.hide();
+                }
+            }
+        }
+        (SummonPlan::Bring { show, target }, top) => {
+            for l in show {
+                if let Some(w) = app.get_webview_window(&l) {
+                    let _ = w.show();
+                }
+            }
+            if let Some(w) = app.get_webview_window(&target) {
+                let _ = w.show();
+                let _ = w.unminimize();
+                // The only set_focus in the cross-window attention path: it is
+                // the summon chord, a direct user action.
+                let _ = w.set_focus();
+            }
+            let payload = SummonPayload {
+                ws_id: top.as_ref().map(|(_, t)| t.ws_id),
+                pane_id: top.as_ref().map(|(_, t)| t.pane_id),
+            };
+            let _ = app.emit_to(target.as_str(), SUMMON_EVENT, payload);
         }
     }
+}
+
+/// `app://summon` payload: the global top attention item, if any.
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SummonPayload {
+    pub ws_id: Option<u32>,
+    pub pane_id: Option<u32>,
+}
+
+/// One window as the chord sees it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct WinView {
+    pub label: String,
+    pub focused: bool,
+    pub visible: bool,
+    pub minimized: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum SummonPlan {
+    /// Hide these (visible, not minimised) and remember them; `focused` is the
+    /// window the user was in, kept as "last focused".
+    Dismiss { hide: Vec<String>, focused: Option<String> },
+    /// Show `show` (the remembered set, still existing) and focus `target`.
+    Bring { show: Vec<String>, target: String },
+}
+
+/// Pure decision for one chord press across every Flightdeck window.
+/// `last_focus` is `(label, last_focus_ms)`; `top_label` is the window holding
+/// the global top attention item. With only main registered this reduces to
+/// `decide`: dismiss when focused, otherwise show, unminimise and focus main.
+pub(crate) fn plan(views: &[WinView], remembered: &[String], top_label: Option<&str>, last_focus: &[(String, u64)]) -> SummonPlan {
+    let any_focused = views.iter().any(|v| decide(v.focused, v.visible, v.minimized) == SummonAction::Dismiss);
+    if any_focused {
+        // Minimised windows are ones the user put away: leave them alone.
+        let hide = views.iter().filter(|v| v.visible && !v.minimized).map(|v| v.label.clone()).collect();
+        let focused = views.iter().find(|v| v.focused).map(|v| v.label.clone());
+        return SummonPlan::Dismiss { hide, focused };
+    }
+    let exists = |l: &str| views.iter().any(|v| v.label == l);
+    let target = top_label
+        .filter(|l| exists(l))
+        .map(str::to_string)
+        .or_else(|| {
+            last_focus.iter().filter(|(l, _)| exists(l)).max_by_key(|(_, t)| *t).map(|(l, _)| l.clone())
+        })
+        .unwrap_or_else(|| crate::windows::MAIN.to_string());
+    let show = remembered.iter().filter(|l| exists(l) && **l != target).cloned().collect();
+    SummonPlan::Bring { show, target }
 }
 
 /// Register the plugin and the chord. Never fatal: an unavailable hotkey costs
@@ -147,6 +249,57 @@ mod tests {
     #[test]
     fn a_background_window_is_brought_forward_not_hidden() {
         assert_eq!(decide(false, true, false), SummonAction::Bring);
+    }
+
+    fn v(label: &str, focused: bool, visible: bool, minimized: bool) -> WinView {
+        WinView { label: label.into(), focused, visible, minimized }
+    }
+
+    fn s(x: &[&str]) -> Vec<String> {
+        x.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn single_window_matches_decide() {
+        assert_eq!(
+            plan(&[v("main", true, true, false)], &[], None, &[]),
+            SummonPlan::Dismiss { hide: s(&["main"]), focused: Some("main".into()) }
+        );
+        assert_eq!(plan(&[v("main", false, false, false)], &[], None, &[]), SummonPlan::Bring { show: vec![], target: "main".into() });
+        assert_eq!(plan(&[v("main", true, true, true)], &[], None, &[]), SummonPlan::Bring { show: vec![], target: "main".into() });
+    }
+
+    #[test]
+    fn dismiss_hides_every_visible_window_but_not_minimised_ones() {
+        let views = [v("main", false, true, false), v("fw-1", true, true, false), v("fw-2", false, true, true)];
+        assert_eq!(plan(&views, &[], None, &[]), SummonPlan::Dismiss { hide: s(&["main", "fw-1"]), focused: Some("fw-1".into()) });
+    }
+
+    #[test]
+    fn bring_shows_only_the_remembered_set_and_targets_the_top_item() {
+        let views = [v("main", false, false, false), v("fw-1", false, false, false), v("fw-2", false, false, false)];
+        let p = plan(&views, &s(&["main", "fw-2", "gone"]), Some("fw-2"), &[("main".into(), 9)]);
+        assert_eq!(p, SummonPlan::Bring { show: s(&["main"]), target: "fw-2".into() });
+    }
+
+    #[test]
+    fn bring_without_top_uses_last_focused_and_never_shows_unremembered() {
+        let views = [v("main", false, false, false), v("fw-1", false, false, false)];
+        let lf = [("main".to_string(), 5), ("fw-1".to_string(), 8)];
+        assert_eq!(plan(&views, &s(&["main"]), None, &lf), SummonPlan::Bring { show: s(&["main"]), target: "fw-1".into() });
+        // top item in a window that no longer exists falls back to last focused
+        assert_eq!(plan(&views, &[], Some("fw-7"), &lf), SummonPlan::Bring { show: vec![], target: "fw-1".into() });
+    }
+
+    #[test]
+    fn a_minimised_window_is_not_shown_by_bring() {
+        // fw-1 was minimised by the user after the dismiss was recorded: it
+        // is not in the remembered set (dismiss skipped it), so it stays put.
+        let views = [v("main", false, false, false), v("fw-1", false, true, true)];
+        let dismiss = plan(&[v("main", true, true, false), v("fw-1", false, true, true)], &[], None, &[]);
+        let SummonPlan::Dismiss { hide, .. } = dismiss else { panic!("expected dismiss") };
+        assert_eq!(hide, s(&["main"]));
+        assert_eq!(plan(&views, &hide, None, &[]), SummonPlan::Bring { show: vec![], target: "main".into() });
     }
 
     /// Two presses from the front must land back where they started.

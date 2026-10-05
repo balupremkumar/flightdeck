@@ -168,6 +168,25 @@ pub fn set_attention_overlay(window: tauri::Window, count: u32) -> Result<(), St
     Ok(())
 }
 
+/// Put the same badge on EVERY registered window. Windows groups same-app
+/// buttons and shows whichever window's overlay it likes, so they must agree.
+pub(crate) fn apply_all(app: &tauri::AppHandle, count: u32) {
+    #[cfg(target_os = "windows")]
+    {
+        use tauri::Manager;
+        let labels: Vec<String> = app.state::<crate::windows::WindowState>().lock().windows.keys().cloned().collect();
+        for label in labels {
+            if let Some(w) = app.get_webview_window(&label) {
+                let _ = w.set_overlay_icon(badge_image(count));
+            }
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = (app, count);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
