@@ -10,7 +10,7 @@ hub_you: "Install the 0.6.0 Canary and run the checklist once it is cut."
 
 Vault: [[HOME]] | [[PORTFOLIO|Portfolio]] | [[projects/active/flightdeck/BACKLOG|Backlog]]
 
-UPDATE 2026-10-05: qol/phase-4 from main; S4 (1db7b87) + S5 readscope per label merged, cargo 366; S6/S6b in agent worktree; Home UX spec docs/plans/phase5-home-design.md written, plan in progress.
+UPDATE 2026-10-05: qol/phase-4 has S4-S7, pty_write wrong-id fix (writeToPane), Home spec+plan, 0.6.0 checklist/notes draft; tsc 0, vitest 1348, cargo 382. In flight: S8a, Home 1-4, pane_tail, S10 Rust core.
 Updated: 2026-09-19 (lag root-caused and fixed on branch flightdeck/pfi232, uncommitted; full roadmap written to BACKLOG.md section N).
 
 ## CURRENT 2026-09-19: the "laggy with Antigravity" bug is root-caused and fixed on this branch (uncommitted, not yet cut)
