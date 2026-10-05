@@ -109,9 +109,37 @@ fn compute_fixed_roots() -> Vec<PathBuf> {
     v
 }
 
+pub const DENIED_SECRET_ERR: &str = "denied-secret-file";
+
+/// Secret file names / extensions refused under `%USERPROFILE%\.claude` (OAuth
+/// tokens, key material). Compared lower-cased on the canonical path.
+const SECRET_NAMES: &[&str] = &[".credentials.json"];
+const SECRET_EXTS: &[&str] = &["key", "pem"];
+
+fn is_secret(canonical: &Path) -> bool {
+    let Some(name) = canonical.file_name().map(|n| n.to_string_lossy().to_lowercase()) else {
+        return false;
+    };
+    SECRET_NAMES.contains(&name.as_str())
+        || Path::new(&name).extension().is_some_and(|e| SECRET_EXTS.contains(&e.to_string_lossy().as_ref()))
+}
+
+/// Canonical `%USERPROFILE%\.claude`, the only root the secret deny applies to.
+fn claude_root() -> Option<PathBuf> {
+    canon(&Path::new(&std::env::var_os("USERPROFILE")?).join(".claude"))
+}
+
+#[cfg(test)]
 fn check_against(path: &Path, workspace: &[PathBuf], fixed: &[PathBuf]) -> Result<PathBuf, String> {
+    check_against_deny(path, workspace, fixed, &[])
+}
+
+fn check_against_deny(path: &Path, workspace: &[PathBuf], fixed: &[PathBuf], deny_roots: &[PathBuf]) -> Result<PathBuf, String> {
     pathguard::check(&path.to_string_lossy())?;
     let c = canon(path).ok_or_else(|| OUTSIDE_SCOPE_ERR.to_string())?;
+    if is_secret(&c) && deny_roots.iter().any(|r| is_under(&c, r)) {
+        return Err(DENIED_SECRET_ERR.to_string());
+    }
     if workspace.iter().chain(fixed.iter()).any(|r| is_under(&c, r)) {
         Ok(c)
     } else {
@@ -123,7 +151,7 @@ fn check_against(path: &Path, workspace: &[PathBuf], fixed: &[PathBuf]) -> Resul
 /// A path that does not exist cannot be canonicalised and is reported as outside.
 pub fn check_read(path: &Path) -> Result<PathBuf, String> {
     let ws = union_roots(&*WORKSPACE_ROOTS.read().map_err(|e| e.to_string())?);
-    check_against(path, &ws, &fixed_roots())
+    check_against_deny(path, &ws, &fixed_roots(), &claude_root().into_iter().collect::<Vec<_>>())
 }
 
 fn sanitize_roots(roots: Vec<String>) -> Vec<PathBuf> {
@@ -170,6 +198,17 @@ pub fn grant_asset_roots<R: tauri::Runtime>(app: &tauri::AppHandle<R>, roots: &[
 /// Grants the always-allowed roots (vault, ~/.claude, app data). Call from setup.
 pub fn grant_fixed_asset_roots<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     grant_asset_roots(app, &fixed_roots());
+    // forbid wins over allow in Tauri's FsScope; the asset handler canonicalises
+    // before matching. Mirrors `is_secret` for the protocol, which bypasses check_read.
+    if let Some(root) = claude_root() {
+        use tauri::Manager;
+        let scope = app.asset_protocol_scope();
+        let mut pats: Vec<String> = SECRET_NAMES.iter().map(|n| format!("**/{n}")).collect();
+        pats.extend(SECRET_EXTS.iter().map(|e| format!("**/*.{e}")));
+        for p in pats {
+            let _ = scope.forbid_file(root.join(p));
+        }
+    }
 }
 
 /// Replaces the CALLING window's roots (the label comes from the IPC caller,
@@ -353,6 +392,31 @@ mod tests {
         assert_eq!(check_read(&fb).unwrap_err(), OUTSIDE_SCOPE_ERR);
         drop_label("t-main");
         assert_eq!(check_read(&fa).unwrap_err(), OUTSIDE_SCOPE_ERR);
+    }
+
+    #[test]
+    fn claude_root_secrets_denied_but_app_files_allowed() {
+        let d = tmp("claude-secrets");
+        let sub = d.join("projects").join("p");
+        std::fs::create_dir_all(&sub).unwrap();
+        let (fixed, deny) = (roots(&d), roots(&d));
+        for name in [".credentials.json", ".CREDENTIALS.JSON", "id.pem", "ID.KEY"] {
+            std::fs::write(d.join(name), "x").unwrap();
+        }
+        std::fs::write(sub.join("nested.key"), "x").unwrap();
+        for ok in ["settings.json", "CLAUDE.md"] {
+            std::fs::write(d.join(ok), "x").unwrap();
+            assert!(check_against_deny(&d.join(ok), &[], &fixed, &deny).is_ok(), "{ok}");
+        }
+        std::fs::write(sub.join("s.jsonl"), "x").unwrap();
+        assert!(check_against_deny(&sub.join("s.jsonl"), &[], &fixed, &deny).is_ok());
+        for bad in [d.join(".credentials.json"), d.join(".CREDENTIALS.JSON"), d.join("id.pem"), d.join("ID.KEY"), sub.join("nested.key"), sub.join("..").join("..").join(".credentials.json")] {
+            assert_eq!(check_against_deny(&bad, &[], &fixed, &deny).unwrap_err(), DENIED_SECRET_ERR, "{bad:?}");
+        }
+        // same file name outside the deny root is untouched
+        let other = tmp("claude-other");
+        std::fs::write(other.join("a.pem"), "x").unwrap();
+        assert!(check_against_deny(&other.join("a.pem"), &roots(&other), &[], &deny).is_ok());
     }
 
     #[test]
