@@ -33,6 +33,7 @@
     "window_boot", "window_heartbeat", "ws_transfer", "window_adopted", "window_focus_next", "session_put_slice",
     "window_close_self", "window_summary", "set_multiwindow", "merge_all_windows", "window_focus_pane", "attention_report",
     "restore_windows",
+    "discard_pending_restores",
   ];
   const listeners = new Map(); // event name -> Set<callback>
   // Offset so pty ids never coincide with store model ids (as after a real restore).
@@ -742,6 +743,7 @@ index 3c92f1a..7d40b2e 100644
     ws_transfer: () => { throw new Error("mock: ws_transfer needs the multiwindow bus"); },
     window_focus_next: () => null,
     restore_windows: () => [],
+    discard_pending_restores: () => [],
     window_close_self: () => null,
     window_summary: () => [],
     set_multiwindow: () => null,

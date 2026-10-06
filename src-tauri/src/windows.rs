@@ -213,6 +213,16 @@ impl WindowRegistry {
         v.into_iter().map(|(_, l)| l).collect()
     }
 
+    /// The user declined the launch restore: forget every restored window still
+    /// waiting to be created. Returns their labels. `next_ordinal` stays past them.
+    pub fn discard_pending_restores(&mut self) -> Vec<String> {
+        let labels = self.pending_restores();
+        for l in &labels {
+            self.windows.remove(l);
+        }
+        labels
+    }
+
     /// Raise `next_ordinal` past ordinals that persisted ids already use.
     pub fn floor_ordinal(&mut self, used: u32) {
         self.next_ordinal = self.next_ordinal.max(used + 1);
@@ -969,6 +979,24 @@ pub async fn restore_windows(app: AppHandle, window: tauri::Window, state: State
     Ok(created)
 }
 
+/// Launch restore declined ("Reopen last session?" answered Cancel): forget the
+/// secondaries `restore_windows` would have created and drop their slices, then
+/// write, so the document and the next launch no longer carry them. Main only.
+#[tauri::command]
+pub async fn discard_pending_restores(app: AppHandle, window: tauri::Window, state: State<'_, WindowState>) -> Result<Vec<String>, String> {
+    if window.label() != MAIN {
+        return Err("only main discards restores".into());
+    }
+    let labels = state.lock().discard_pending_restores();
+    for label in &labels {
+        persist::drop_slice(label);
+    }
+    if !labels.is_empty() {
+        persist::write_now(&app)?;
+    }
+    Ok(labels)
+}
+
 /// Focus the next window in the ring (the "Next window" chord). A direct reply to
 /// the user's keypress, so taking focus here is allowed.
 #[tauri::command]
@@ -1429,6 +1457,18 @@ mod tests {
         r.apply_restore(&restore_plan(&[pw("fw-2", &[5], Some(5))], true));
         assert!(r.windows["fw-2"].booted);
         assert_eq!(r.mint_label().unwrap(), "fw-6");
+    }
+
+    #[test]
+    fn discarding_pending_restores_forgets_only_the_uncreated_secondaries() {
+        let mut r = WindowRegistry::default();
+        r.ensure_main().workspace_ids = vec![1];
+        r.apply_restore(&restore_plan(&[pw("fw-1", &[5], None), pw("fw-2", &[6], None)], true));
+        r.stamp_created("fw-1", 10);
+        assert_eq!(r.discard_pending_restores(), vec!["fw-2"]);
+        assert!(r.windows.contains_key("fw-1") && r.windows.contains_key(MAIN) && !r.windows.contains_key("fw-2"));
+        assert!(r.pending_restores().is_empty());
+        assert_eq!(r.mint_label().unwrap(), "fw-3", "a discarded label is never minted again");
     }
 
     #[test]
