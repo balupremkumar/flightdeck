@@ -212,6 +212,8 @@ export function HomeOverlay() {
     if (ok) { replyDrafts.delete(c.paneId); focusNextNeeds(c.paneId); }
   };
   const approve = async (c: HomeCard) => {
+    // Only an agent's own prompt is approvable; a shell's "(y/n)" could be anything (a deploy, a delete). Ruled 2026-10-06.
+    if (vendorMeta(c.vendor).kind !== "agent") return;
     const shown = entryTail(tails[c.paneId]);
     const ok = await run(c, () => approveGuarded({
       vendor: c.vendor,
@@ -425,7 +427,7 @@ export function HomeOverlay() {
                 {send.phase === "sent" && <div className="hm-sent" role="status">Sent. Waiting for the agent.</div>}
                 {c.kind !== "question" && send.phase === "failed" && <div className="hm-err" role="alert">{send.error}</div>}
                 <div className="hm-actions">
-                  {c.kind === "permission" && send.phase !== "sent" && (
+                  {c.kind === "permission" && send.phase !== "sent" && vendorMeta(c.vendor).kind === "agent" && (
                     <button
                       className="hm-btn primary"
                       disabled={sending || !approveReady}

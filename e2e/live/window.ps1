@@ -45,6 +45,9 @@ public static class FdWin {
   public static bool ShowNoActivate(IntPtr h, int x, int y, int w, int hh) { return SetWindowPos(h, IntPtr.Zero, x, y, w, hh, 0x0040 | 0x0010 | 0x0004); }
   // WS_EX_NOACTIVATE on the Canary window only: the system never activates it (no click, SetFocus or SetActiveWindow can raise it
   // to the foreground). Observed twice that page-side focus work (a pane click, a failed restart) briefly took foreground without it.
+  public static long ClearNoActivate(IntPtr h) { long ex = (long)GetWindowLongPtr(h, -20); SetWindowLongPtr(h, -20, (IntPtr)(ex & ~0x08000000L)); return (long)GetWindowLongPtr(h, -20); }
+  // HWND_TOPMOST then HWND_NOTOPMOST: lands on top of the z-order without staying always-on-top.
+  public static void Raise(IntPtr h, int x, int y, int w, int hh) { SetWindowPos(h, (IntPtr)(-1), x, y, w, hh, 0x0040); SetWindowPos(h, (IntPtr)(-2), x, y, w, hh, 0x0040); }
   public static long SetNoActivate(IntPtr h) { long ex = (long)GetWindowLongPtr(h, -20); SetWindowLongPtr(h, -20, (IntPtr)(ex | 0x08000000L)); return (long)GetWindowLongPtr(h, -20); }
   public static string Class(IntPtr h) { var sb = new StringBuilder(256); GetClassName(h, sb, 256); return sb.ToString(); }
   public static bool IsForeground(IntPtr h) { return GetForegroundWindow() == h; }
@@ -71,6 +74,12 @@ if ($Mode -eq "list") {
   # Every top-level window of the pid with a title (visible or not), for multi-window and drag checks.
   $vis = @([FdWin]::ForPid([uint32]$ProcessId, $true) | ForEach-Object { [int64]$_ })
   ConvertTo-Json -Compress -InputObject @(foreach ($h in [FdWin]::ForPid([uint32]$ProcessId, $false)) { $t = [FdWin]::Title($h); if ($t) { $r = [FdWin]::Rect($h); @{ hwnd = [int64]$h; title = $t; x = $r[0]; y = $r[1]; w = $r[2]; h = $r[3]; iconic = [FdWin]::Iconic($h); visible = $vis -contains [int64]$h } } })
+  return
+}
+if ($Mode -eq "present") {
+  # Balu drives the mouse himself: clear WS_EX_NOACTIVATE and put the window on screen at the top of the z-order.
+  $h = [IntPtr]$Hwnd; $ex = [FdWin]::ClearNoActivate($h); [FdWin]::Raise($h, $X, $Y, $Width, $Height); $r = [FdWin]::Rect($h)
+  @{ hwnd = $Hwnd; exStyle = $ex; x = $r[0]; y = $r[1]; w = $r[2]; h = $r[3] } | ConvertTo-Json -Compress
   return
 }
 if ($Mode -eq "closehwnd") {

@@ -117,7 +117,7 @@ With the flag off, none of these commands exist and the app behaves as one windo
 - [x] Cards sit in the right columns (Needs you, Working, Ready to review, Idle, Merged). PASS live 2026-10-06 (e2e/live/results/2026-10-06/w1b-d-home.json): Claude permission and pwsh y/n in Needs you, idle Claude with a diff in Ready to review.
 - [x] Peek (Space on a card) shows the last lines of that pane, including a pane not currently mounted. PASS live 2026-10-06 (e2e/live/results/2026-10-06/w1b-d-home.json): peek button shows the idle pane tail (Space key covered by e2e/home.mjs).
 - [ ] Reply to a question lands in that pane only, also after restarting the pane.
-- [ ] Approve on a Claude permission prompt answers it; on an unfamiliar prompt only Open is offered. PARTIAL live 2026-10-06 (e2e/live/results/2026-10-06/w1b-d-home.json): Approve answered a real Claude Bash prompt (command ran). OPEN QUESTION: a pwsh Read-Host "(y/n)" card also offers Approve (home.ts:244 approves any y/n line for any vendor); Balu to rule.
+- [x] Approve on a Claude permission prompt answers it; on an unfamiliar prompt only Open is offered. PASS live 2026-10-06 (e2e/live/results/2026-10-06/w1b-d-home.json): Approve answered a real Claude Bash prompt; a pwsh Read-Host (y/n) card offers only Open (Approve limited to agent panes, ruled by Balu 2026-10-06).
 - [ ] Escape closes Home and keeps typed drafts; reopening restores them and focus returns to where it was.
 - [x] At the 940 px minimum width the columns become stacked sections and nothing is clipped. PASS live 2026-10-06 (e2e/live/results/2026-10-06/w1b-d-home.json): stacked, 0 cards clipped.
 
@@ -152,14 +152,14 @@ Scripted (Canary, live, user mouse untouched):
 
 Real mouse (OS cursor):
 
-- [ ] Press, drag and release across the window edge with the real mouse: new window opens under the cursor.
-- [ ] Ghost is smooth, sits clear of the cursor, never flickers, never takes focus from the window you are in, and clicks fall through it.
+- [x] Press, drag and release across the window edge with the real mouse: new window opens under the cursor. PASS 2026-10-06, Balu with the real mouse, recorded by e2e/live/w4-assist.mjs (e2e/live/results/2026-10-06/w3-assist.json).
+- [x] Ghost is smooth, sits clear of the cursor, never flickers, never takes focus from the window you are in, and clicks fall through it. PASS 2026-10-06, Balu: looked right; ghost visible during the drag in e2e/live/results/2026-10-06/w3-assist.json.
 - [ ] Release over a different app that overlaps a Flightdeck window: counts as desktop, a new window opens.
 - [ ] Two monitors at different DPI (100% and 150% or 200%): ghost size, cursor offset and the new window size look right on both; the ghost flips away from the monitor edge.
-- [ ] Escape mid-drag cancels with the real mouse and nothing moves.
+- [x] Escape mid-drag cancels with the real mouse and nothing moves. PASS 2026-10-06, Balu with the real mouse, recorded by e2e/live/w4-assist.mjs (e2e/live/results/2026-10-06/w3-assist.json).
 - [ ] Explorer folder dragged onto the rail still creates a workspace.
-- [ ] Plain click on a tile still opens the workspace after the drag change; a short wiggle (under 4 px) is a click, not a drag.
-- [ ] Rail reorder by dragging inside the window works with the real mouse (it may never have worked with the old HTML5 drag, see below).
+- [x] Plain click on a tile still opens the workspace after the drag change; a short wiggle (under 4 px) is a click, not a drag. PASS 2026-10-06, Balu with the real mouse, recorded by e2e/live/w4-assist.mjs (e2e/live/results/2026-10-06/w3-assist.json).
+- [x] Rail reorder by dragging inside the window works with the real mouse (it may never have worked with the old HTML5 drag, see below). PASS 2026-10-06, Balu with the real mouse, recorded by e2e/live/w4-assist.mjs (e2e/live/results/2026-10-06/w3-assist.json).
 - [ ] Multiple windows on by default: a fresh profile (no `flightdeck-multiwindow` key) shows the window commands and drag without visiting Settings; switching it off and restarting returns to one window.
 
 Possibly dead HTML5 drag (D0 finding):
