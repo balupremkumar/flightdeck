@@ -29,7 +29,7 @@
 
 ## Chat view
 
-- New Claude panes open in Chat by default, with a setting to open in the terminal instead.
+- New Claude panes open in the terminal by default. Settings > Agents can open them in a Quiet terminal (Claude's focus view) or in Chat instead.
 - Normal detail folds tool steps into one activity line; Verbose shows everything.
 - Subagents show as one line each.
 - Each turn has a change row with total lines added and removed; click it to open Review.

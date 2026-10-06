@@ -6,7 +6,7 @@ Lands on `qol/phase-6`, gated with Phase 6, ships in the one 0.6.0 release.
 
 ## What it is
 
-- Claude panes open in Chat by default (setting), the terminal stays live underneath (Ctrl+Shift+M).
+- Claude panes open in the terminal by default (0.6.1; setting: Terminal, Quiet terminal or Chat), the terminal stays live underneath (Ctrl+Shift+M).
 - Chat Normal density: each run of consecutive tool calls between two pieces of agent prose is ONE line ("Edited 4 files, ran 3 commands, read 6 files"), click to expand into today's chips; a chip expands to its diff/output.
 - Subagents are one line each with live counts; expand shows their own activity at the same density.
 - Each turn ends with one "Changed 5 files +120 -18" row that opens Review.

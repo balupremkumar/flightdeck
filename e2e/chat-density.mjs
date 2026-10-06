@@ -121,6 +121,7 @@ await page.evaluate(async () => {
 const paneId = await page.evaluate(() => window.__app.getState().workspaces[0].panes[0].id);
 const pane = page.locator(".pane").first();
 check(await cond(() => window.__calls.some((x) => x.c === "pty_spawn")), "pane PTY spawned");
+// Terminal is the default since 0.6.1 (and the mock restores its panes), so switch to Chat explicitly.
 await pane.locator('.pview-toggle button[aria-label^="Chat"]').click();
 check(await has(".chat-activity"), "Chat opens with the turn folded into an activity line");
 
