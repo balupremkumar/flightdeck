@@ -29,6 +29,7 @@ mod persist;
 mod plaintail;
 mod ports;
 mod procname;
+mod ptyexit;
 mod readscope;
 mod reveal;
 mod ring;
@@ -42,7 +43,7 @@ mod windows;
 mod worktree;
 
 use std::collections::HashMap;
-use std::io::{Read, Write};
+use std::io::Write;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -96,6 +97,8 @@ struct OutputPayload {
 struct ExitPayload {
     pane_id: u32,
     crashed: bool,
+    /// Process exit code when known.
+    code: Option<u32>,
 }
 
 #[derive(Clone, Serialize)]
@@ -249,11 +252,12 @@ async fn pty_spawn(
     // Windows Job Object (R2): join the shared job so this tree is reaped even
     // if Flightdeck.exe itself hard-crashes. Clean-exit reaping (below /
     // RunEvent::ExitRequested) already covers the graceful-shutdown path.
-    if let Some(pid) = child.process_id() {
+    let child_pid = child.process_id();
+    if let Some(pid) = child_pid {
         job::assign(pid);
     }
 
-    let mut reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
+    let reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
     let writer = pair.master.take_writer().map_err(|e| e.to_string())?;
 
     let id = {
@@ -337,61 +341,24 @@ async fn pty_spawn(
         reap_pane(reg.inner(), old.pty_id);
     }
 
-    // Reader thread: blocking read -> coalescer, plus activity bookkeeping.
-    // Emitting the output event is the flusher thread's job now, so a flood
-    // of small reads can't turn into a flood of IPC events.
-    let (app_r, last_r, waiting_r, alive_r, coal_r, out_r, osc_r) = (
-        app.clone(),
-        last.clone(),
-        waiting.clone(),
-        alive.clone(),
-        coalescer.clone(),
-        out.clone(),
-        osc_busy_until.clone(),
+    // Reader + child-wait threads (ptyexit.rs): output -> coalescer plus activity
+    // bookkeeping, and a natural exit is detected from the process, not only from
+    // reader EOF (a ConPTY pipe does not EOF until the master is dropped).
+    ptyexit::start(
+        child_pid,
+        reader,
+        std::sync::Arc::new(LivePane {
+            app: app.clone(),
+            id,
+            last: last.clone(),
+            waiting: waiting.clone(),
+            alive: alive.clone(),
+            coal: coalescer.clone(),
+            out: out.clone(),
+            osc_busy_until: osc_busy_until.clone(),
+            osc: Mutex::new(oscprogress::ProgressScanner::default()),
+        }),
     );
-    std::thread::spawn(move || {
-        let mut buf = [0u8; 8192];
-        let mut osc = oscprogress::ProgressScanner::default();
-        loop {
-            match reader.read(&mut buf) {
-                Ok(0) => break,
-                Ok(n) => {
-                    last_r.store(now_ms(), Ordering::Relaxed);
-                    if waiting_r.swap(0, Ordering::Relaxed) != 0 {
-                        let _ = app_r.emit("pty://state", StatePayload { pane_id: id, state: "running".into() });
-                    }
-                    if let Some(p) = osc.feed(&buf[..n]) {
-                        osc_r.store(if p.busy { now_ms() + 60_000 } else { 0 }, Ordering::Relaxed);
-                    }
-                    coal_r.push(&buf[..n]);
-                }
-                Err(_) => break,
-            }
-        }
-        alive_r.store(false, Ordering::Relaxed);
-        // Flush whatever's still buffered now, synchronously, so the pane's
-        // last output reaches the frontend BEFORE the exit event — the async
-        // flusher thread would otherwise race it by up to one flush interval.
-        if let Some(chunk) = coal_r.drain() {
-            emit_output(&app_r, &out_r, id, &chunk);
-        }
-        // Natural-exit path (pty_kill is NOT called here): read the child's exit
-        // status to tell a crash from a clean quit, prune the dead pane from the
-        // registry so its master/writer/child handles don't leak, then notify.
-        let reg = app_r.state::<Registry>();
-        let crashed = {
-            let mut panes = reg.panes.lock().unwrap();
-            let crashed = panes
-                .get_mut(&id)
-                .and_then(|p| p.child.try_wait().ok().flatten())
-                .map(|status| !status.success())
-                .unwrap_or(false);
-            panes.remove(&id);
-            crashed
-        };
-        paneout::lock_map(&reg.by_model).remove_pty(id);
-        let _ = app_r.emit("pty://exit", ExitPayload { pane_id: id, crashed });
-    });
 
     // Monitor thread: emit "waiting" once output has been quiet past the threshold.
     let (app_m, last_m, waiting_m, alive_m, osc_m) =
@@ -430,6 +397,69 @@ async fn pty_spawn(
     });
 
     Ok(id)
+}
+
+/// The real `ptyexit::PaneIo`: what a pty's reader/child-wait threads do to the app.
+struct LivePane {
+    app: AppHandle,
+    id: u32,
+    last: std::sync::Arc<AtomicU64>,
+    waiting: std::sync::Arc<AtomicU8>,
+    alive: std::sync::Arc<AtomicBool>,
+    coal: std::sync::Arc<outbuf::OutputCoalescer>,
+    out: std::sync::Arc<Mutex<paneout::PaneOut>>,
+    osc_busy_until: std::sync::Arc<AtomicU64>,
+    osc: Mutex<oscprogress::ProgressScanner>,
+}
+
+impl ptyexit::PaneIo for LivePane {
+    fn on_data(&self, chunk: &[u8]) {
+        self.last.store(now_ms(), Ordering::Relaxed);
+        if self.waiting.swap(0, Ordering::Relaxed) != 0 {
+            let _ = self.app.emit("pty://state", StatePayload { pane_id: self.id, state: "running".into() });
+        }
+        if let Some(p) = self.osc.lock().unwrap_or_else(|e| e.into_inner()).feed(chunk) {
+            self.osc_busy_until.store(if p.busy { now_ms() + 60_000 } else { 0 }, Ordering::Relaxed);
+        }
+        self.coal.push(chunk);
+    }
+
+    fn release(&self) {
+        // The child is gone: drop the pane (master, writer, child handles) so the
+        // pseudoconsole closes and the reader drains to EOF. Taken out of the map
+        // first so a blocking ClosePseudoConsole never holds the registry lock.
+        let reg = self.app.state::<Registry>();
+        let pane = reg.panes.lock().unwrap().remove(&self.id);
+        drop(pane);
+    }
+
+    fn flush(&self) {
+        self.alive.store(false, Ordering::Relaxed);
+        // Flush whatever's still buffered now, synchronously, so the pane's
+        // last output reaches the frontend BEFORE the exit event; the async
+        // flusher thread would otherwise race it by up to one flush interval.
+        if let Some(chunk) = self.coal.drain() {
+            emit_output(&self.app, &self.out, self.id, &chunk);
+        }
+    }
+
+    fn on_exit(&self, code: Option<u32>) {
+        // Natural-exit path (pty_kill is NOT called here): tell a crash from a
+        // clean quit (the waiter's exit code, else try_wait), prune the dead pane
+        // from the registry so its handles don't leak, then notify.
+        let reg = self.app.state::<Registry>();
+        let crashed = {
+            let mut panes = reg.panes.lock().unwrap();
+            let from_wait = panes
+                .get_mut(&self.id)
+                .and_then(|p| p.child.try_wait().ok().flatten())
+                .map(|status| !status.success());
+            panes.remove(&self.id);
+            code.map(|c| c != 0).or(from_wait).unwrap_or(false)
+        };
+        paneout::lock_map(&reg.by_model).remove_pty(self.id);
+        let _ = self.app.emit("pty://exit", ExitPayload { pane_id: self.id, crashed, code });
+    }
 }
 
 /// Feed a chunk to the pane's ring and, unless the pane is buffer-only, emit it.
