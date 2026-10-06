@@ -72,7 +72,7 @@ async function launch(multiwindow, seed = doc) {
   const bus = new MultiWindowBus(context, URL);
   await bus.install();
   bus.seedDoc(seed);
-  const boot = `localStorage.setItem("flightdeck-startup","reopen");${multiwindow ? `localStorage.setItem("flightdeck-multiwindow","1");` : ""}`;
+  const boot = `localStorage.setItem("flightdeck-startup","reopen");localStorage.setItem("flightdeck-multiwindow","${multiwindow ? 1 : 0}");`;
   await context.addInitScript(`if (/^https?:/.test(location.protocol)) {\n${boot}\n${mock}\n}`);
   context.on("page", (p) => p.on("pageerror", (e) => pageErrors.push(e.message)));
   const main = await context.newPage();
