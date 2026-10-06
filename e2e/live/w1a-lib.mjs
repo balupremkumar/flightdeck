@@ -270,7 +270,7 @@ export async function renamePaneJs(page, i, name) {
   const pane = page.locator(".pane").nth(i);
   await pane.locator(".pname").evaluate((el) => el.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true })));
   const input = pane.locator("input.prename");
-  await input.waitFor({ timeout: 4000 });
+  await input.waitFor({ state: "attached", timeout: 4000 });
   await jsFill(input, name);
   await input.evaluate((el) => el.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })));
   await sleep(300);
