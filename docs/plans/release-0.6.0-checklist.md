@@ -74,10 +74,10 @@ Each phase's red team adds its items here; the final release note links this fil
 
 - [ ] New Claude pane opens in Quiet terminal (focus mode on) by default; with Settings > Agents set to Terminal it opens in the full terminal, and set to Chat it opens in Chat and the folder trust prompt is reachable via "Switch to Terminal".
 - [ ] Pane menu "Quiet terminal" checkbox switches a pane either way, after a turn has happened the restart reopens the same conversation (history visible, Chat view follows it), and a pane with no turn yet restarts plain.
-- [ ] Quiet terminal pane: permission prompt and an AskUserQuestion dialog are still visible in Claude's focus view.
-- [ ] Never run through pwsh yet (agent sandbox blocked it): a Claude pane launches with `--settings '<app-data>\claude-view\claude-view-focus.json'`; also with the setup wrapper on (double quoting). Quick check from a plain PowerShell window: `pwsh -NoProfile -Command "claude --settings '<that path>' --version"` prints the version.
-- [ ] Focus pane: Ctrl+O shows the full transcript; `/focus off` inside the pane still works.
-- [ ] After `/focus` in one pane, a classic pane still shows full output.
+- [x] Quiet terminal pane: permission prompt and an AskUserQuestion dialog are still visible in Claude's focus view. PASS live 2026-10-06 (e2e/live/results/2026-10-06/w1b-b3-prompts.json): Bash permission prompt with its options and AskUserQuestion option rows visible in Quiet; both declined with Esc.
+- [ ] Never run through pwsh yet (agent sandbox blocked it): a Claude pane launches with `--settings '<app-data>\claude-view\claude-view-focus.json'`; also with the setup wrapper on (double quoting). Quick check from a plain PowerShell window: `pwsh -NoProfile -Command "claude --settings '<that path>' --version"` prints the version. PARTIAL live 2026-10-06: Quiet pane command line carries --settings '<app-data>claude-viewclaude-view-focus.json' (w1b-b1-defaults.json); plain PowerShell `claude --settings '<path>' --version` prints 2.1.290. Setup-wrapper variant not run (Claude panes paused, see resume note).
+- [x] Focus pane: Ctrl+O shows the full transcript; `/focus off` inside the pane still works. PASS live 2026-10-06: Ctrl+O (w1b-b2-switch.json); /focus toggles focus view off in the pane (w1b-b3-prompts.json). Never type /focus on Balu's machine again: turning it ON writes briefTranscript into ~/.claude.json (brain risks 28).
+- [x] After `/focus` in one pane, a classic pane still shows full output. PASS live 2026-10-06 (e2e/live/results/2026-10-06/w1b-b3-prompts.json): classic pane still shows "Read 1 file" after /focus in another pane.
 - [ ] `<app-data>\claude-view\` holds the two files; nothing under `~/.claude` changed.
 
 ## Phase 4 multi-window (flag on by default since 0.6.1)
@@ -85,21 +85,21 @@ Each phase's red team adds its items here; the final release note links this fil
 The flag is on unless Settings > Windows > "Multiple windows (preview)" was switched off and the app restarted.
 With the flag off, none of these commands exist and the app behaves as one window.
 
-- [ ] Capability: a `fw-*` window can run panes, read files and use the dialogs (no "not allowed" errors in the console).
+- [x] Capability: a `fw-*` window can run panes, read files and use the dialogs (no "not allowed" errors in the console). PASS live 2026-10-06 (e2e/live/results/2026-10-06/w3-drag.json): fw-* windows run panes, no pageerror in any window.
 - [ ] Window creation is async: opening a second window does not freeze the first or any pane.
-- [ ] Storage events: a setting changed in one window shows in the other without a reload.
+- [x] Storage events: a setting changed in one window shows in the other without a reload. PASS live 2026-10-06 (e2e/live/results/2026-10-06/w3-windows.json): accent changed in main applied in fw-1 without a reload.
 - [ ] A secondary window restored at launch never steals focus (test with a fullscreen game in front).
-- [ ] Emit to a destroyed window: close a secondary while its agent is printing; no error, main keeps running.
-- [ ] Heartbeat: kill one `msedgewebview2` renderer of a secondary; within about 10 s its workspaces are back in main with agents alive.
+- [x] Emit to a destroyed window: close a secondary while its agent is printing; no error, main keeps running. PASS live 2026-10-06 (e2e/live/results/2026-10-06/w3-windows.json): fw-1 closed (WM_CLOSE) while its pwsh printed 300 lines; output reached line 300, same ptys, no pageerror.
+- [x] Heartbeat: kill one `msedgewebview2` renderer of a secondary; within about 10 s its workspaces are back in main with agents alive. PASS live 2026-10-06 (e2e/live/results/2026-10-06/w3-windows.json): secondary renderer crashed via CDP Page.crash; main survived, workspace back in main in 11 s, agent alive.
 - [ ] Claude Code TUI replay on the main screen: move a workspace with a live Claude pane, the last 20 lines match and nothing is doubled.
 - [ ] Claude Code TUI replay on the alt screen (vim, lazygit): the screen redraws cleanly after a move.
 - [ ] Ctrl+R on a live Claude pane reattaches with its history (reload survival, works with the flag off too).
-- [ ] Move workspace to new window, then back: agents keep running, no restart, no duplicate panes.
-- [ ] Close a secondary window: its workspaces merge back into main.
-- [ ] Close the main window: the whole app quits, secondaries included.
+- [x] Move workspace to new window, then back: agents keep running, no restart, no duplicate panes. PASS live 2026-10-06 (e2e/live/results/2026-10-06/w3-drag.json): out and back by drag, same pty ids, history intact, no duplicate panes.
+- [x] Close a secondary window: its workspaces merge back into main. PASS live 2026-10-06 (e2e/live/results/2026-10-06/w3-windows.json).
+- [x] Close the main window: the whole app quits, secondaries included. PASS live 2026-10-06 (e2e/live/results/2026-10-06/w3-windows.json): Quit confirm, process gone in about 1 s with its secondary.
 - [ ] Taskbar badge reflects attention across all windows.
 - [ ] Summon (Ctrl+Alt+F) reaches the right window, including with a fullscreen app on screen.
-- [ ] Turn the flag off and restart: every workspace is in main.
+- [x] Turn the flag off and restart: every workspace is in main. PASS live 2026-10-06 (e2e/live/results/2026-10-06/w3-windows.json).
 - [ ] Taskbar badge shows the same number on both windows.
 - [ ] The bell footer row jumps to the pane in window 2.
 - [ ] Click an OS toast: the right window and pane take focus.
@@ -139,16 +139,16 @@ The scripted checks run on the Canary with `drag_debug_script` and do not touch 
 
 Scripted (Canary, live, user mouse untouched):
 
-- [ ] Scripted tear to empty desktop opens a new window at that point with the workspace, agents still running, no restart.
-- [ ] Scripted tear onto a second monitor point on a 150% monitor: window lands on that monitor at the right size, title bar on screen, window-state plugin does not move it.
-- [ ] Scripted drop onto another Flightdeck window moves the workspace in, appended and active, and that window comes forward; output intact.
-- [ ] Scripted release back over the source, and a scripted Escape: nothing moves, ghost gone, no stuck hover outline.
-- [ ] Scripted drag of a secondary's only workspace to a new spot moves that window instead of recreating it; into another window it moves and the empty secondary closes.
-- [ ] Scripted drag of the only workspace of main: main shows the launcher and the whole window is a drop target.
-- [ ] Ghost: appears only after the 8 px tear, follows the point, flips its line between "new window", "move into this window" and "cancel", and is destroyed on drop, cancel, timeout and source close (no `drag-ghost` window left in the process).
-- [ ] Ghost focus: with fgwatch running, Canary never becomes foreground during a scripted drag, except the new or target window the drop opens.
-- [ ] A pane still starting: dragging its workspace out shows one toast, no ghost, nothing moves.
-- [ ] Drag with Settings > Windows > "Drag workspaces between windows" off: the old rail drag runs and no ghost or drag_arm happens.
+- [x] Scripted tear to empty desktop opens a new window at that point with the workspace, agents still running, no restart. PASS live 2026-10-06 (e2e/live/results/2026-10-06/w3-drag.json S1): window at cursor minus grab offset on DISPLAY3, same ptys.
+- [ ] Scripted tear onto a second monitor point on a 150% monitor: window lands on that monitor at the right size, title bar on screen, window-state plugin does not move it. NOT RUN: all three monitors here are the same DPI (2560x1440 at x -2560, 0, 2560).
+- [x] Scripted drop onto another Flightdeck window moves the workspace in, appended and active, and that window comes forward; output intact. PASS live 2026-10-06 (e2e/live/results/2026-10-06/w3-drag.json S2/S4a). Was FAILING before 138d2e3: the source acked the target's win://adopt and the workspace vanished.
+- [x] Scripted release back over the source, and a scripted Escape: nothing moves, ghost gone, no stuck hover outline. PASS live 2026-10-06 (e2e/live/results/2026-10-06/w3-drag.json S3a/S3b).
+- [x] Scripted drag of a secondary's only workspace to a new spot moves that window instead of recreating it; into another window it moves and the empty secondary closes. PASS live 2026-10-06 (e2e/live/results/2026-10-06/w3-drag.json S4b/S4c).
+- [x] Scripted drag of the only workspace of main: main shows the launcher and the whole window is a drop target. PASS live 2026-10-06 (e2e/live/results/2026-10-06/w3-drag.json S2): launcher shown; "whole window is a drop target" not separately checked.
+- [ ] Ghost: appears only after the 8 px tear, follows the point, flips its line between "new window", "move into this window" and "cancel", and is destroyed on drop, cancel, timeout and source close (no `drag-ghost` window left in the process). PARTIAL live 2026-10-06 (w3-drag.json): ghost visible while torn and while held, destroyed on drop, cancel and Escape; mode-line flips not asserted.
+- [ ] Ghost focus: with fgwatch running, Canary never becomes foreground during a scripted drag, except the new or target window the drop opens. PARTIAL: foreground recorded (w3-drag-foreground.jsonl) but not asserted, because drops legitimately raise their window.
+- [ ] A pane still starting: dragging its workspace out shows one toast, no ghost, nothing moves. NOT RUN.
+- [x] Drag with Settings > Windows > "Drag workspaces between windows" off: the old rail drag runs and no ghost or drag_arm happens. PASS live 2026-10-06 (e2e/live/results/2026-10-06/w3-drag.json S5).
 
 Real mouse (OS cursor):
 
