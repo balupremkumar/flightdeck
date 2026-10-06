@@ -70,6 +70,36 @@ describe("needsYouSound", () => {
       expect(getEnabledState()).toBe(false);
     });
 
+    it("disables when Settings stores '0'", () => {
+      localStorage.setItem("flightdeck-sound-needs-you", "0");
+      expect(getEnabledState()).toBe(false);
+      playNeedsYouChime(1, null, []);
+      expect(_getLastGlobalSoundAtForTest()).toBe(-Infinity);
+    });
+
+    it("enables when Settings stores '1'", () => {
+      localStorage.setItem("flightdeck-sound-needs-you", "1");
+      expect(getEnabledState()).toBe(true);
+      playNeedsYouChime(1, null, []);
+      expect(_getLastGlobalSoundAtForTest()).toBeGreaterThanOrEqual(0);
+    });
+
+    it("defaults to enabled for other stored values", () => {
+      localStorage.setItem("flightdeck-sound-needs-you", "unexpected");
+      expect(getEnabledState()).toBe(true);
+    });
+
+    it("defaults to enabled when localStorage throws", () => {
+      const getItem = vi.spyOn(localStorage, "getItem").mockImplementation(() => {
+        throw new Error("Storage unavailable");
+      });
+      try {
+        expect(getEnabledState()).toBe(true);
+      } finally {
+        getItem.mockRestore();
+      }
+    });
+
     it("enables when flightdeck-sound-needs-you is 'true'", () => {
       localStorage.setItem("flightdeck-sound-needs-you", "true");
       expect(getEnabledState()).toBe(true);
