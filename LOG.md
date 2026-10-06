@@ -35,3 +35,29 @@ main af0412d..4d50752 pushed. Gate: tsc 0, vitest 1339, cargo 364, build OK, 13 
 Balu ran release.ps1 for 0.6.0; all gates passed and both installers (stable + Canary) landed in releases\ with latest.json.
 Version bump committed (6168417), tagged v0.6.0, main and tag pushed.
 Balu installed Canary 0.6.0; first look clean. Next: the hand checklist (docs/plans/release-0.6.0-checklist.md), then stable.
+
+## 2026-10-06 (afternoon to night): 0.6.1 Canary rework
+- Balu rejected 0.6.0's Chat default (terminal hidden). Rulings: Quiet terminal default, switchable in Settings and per pane; workspace drag-out/drag-back in 0.6.1 with multiple windows on by default; CLI flags wiring backlogged (K9).
+- Built on qol/rel-061: terminal-back, quiet-default (switch resumes the session), sound toggle (Codex), drag-out D1-D6 + D8 (Rust core Sonnet, rail drag Codex, ghost Sonnet), Reopen-session fix (null title/draft, 0.6.0 regression from RT-060 M3), agent pane titles (Codex), natural exit detection (ptyexit.rs, pre-0.6.0 bug).
+- Live harness e2e/live/ drives a real Canary via WebView2 CDP, launched off-screen with FLIGHTDECK_HARNESS_NO_SHOW + WS_EX_NOACTIVATE and an fgwatch foreground guard; two ~1 s focus grabs in W1a traced to CDP input on panes, harness changed to synthetic events.
+- Sweep: W0 done, W1a 7 PASS, W1b partial PASS (reopen, Quiet defaults, per-pane switch). Resume: docs/plans/RESUME-2026-10-07.md.
+
+## 2026-10-06 (afternoon, Balu away): 0.6.1 live sweep continued
+Rebuilt the Canary from rel-061; gate re-run.
+W1b-B3 Quiet prompts PASS by evidence; W1c exit 9/9.
+Scripted drag (W3) found that a workspace dropped into another window vanished: every window heard `win://adopt` (global `listen()` targets Any) and the source acked first. Fixed with `listenHere()` (138d2e3); the same scoping applied to focus-pane, summon and flush.
+Restore found two more: Cancel on "Reopen last session?" still recreated secondary windows (71828c1), and a reload or quit while the prompt was open erased main's saved workspaces, already true in 0.6.0 (fcaf53d).
+Fable red team on the 0.6.1 delta: H1 (Quiet switch could resume another process's conversation) and M1 (exited pane switch started fresh), fixed in b8cf0db; four lows written up.
+AdoptQueue ack now has e2e (5951389).
+Final: tsc 0, vitest 1556, cargo 482, e2e 22/22; live W3 drag 19/19, windows 9/9, restore 15/15.
+Incident: typing `/focus` in a Canary Claude pane wrote `briefTranscript: true` into the real `~/.claude.json`; the classifier blocked the fix and further Claude-pane live runs (brain risks 28). Balu to clear it.
+
+## 2026-10-06 (17:30): Claude-pane checks resumed
+Balu cleared briefTranscript. B3 re-run ALL PASS; B4 found the H1 fix left staged-arg panes unpinned and relied on a /clear record Claude 2.1.291 never writes; reworked (bb6c4c4) to follow the launch session_id stamped in the pane's own transcripts, then B4 ALL PASS live.
+Antigravity copy, interrupt and lag investigated (docs/plans/antigravity-qol-findings.md); refined list in BACKLOG section AG.
+
+## 2026-10-06 (18:10): live scripts finished by Claude
+Three Codex Sol jobs for the remaining live scripts stopped on the repo's stop-on-any-failure rule without writing code (about 15% of the Codex window); discarded. Claude wrote and ran W1b-E (red team), W1c sweep, W1b-D (Home): all pass except Home offering Approve on a shell (y/n) prompt, put to Balu.
+
+## 2026-10-06 (19:40): v0.6.1 cut
+Balu ran the real-mouse drag checks (all pass, drag ships on); Home Approve limited to agent panes after a live check found Approve on a shell (y/n) prompt. main fast-forwarded to rel-061 (57444f5); release.ps1 -Version 0.6.1 passed every gate including the boot gate. Bump committed, tag v0.6.1 local; push waits for Balu.
