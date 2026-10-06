@@ -110,6 +110,9 @@ export const SESSION_KEYS = [
   // user's Claude config changed, and the backend is the authority anyway.
   "flightdeck-hooks-installed",
   "flightdeck-hooks-changed",
+  // 0.6.1: one-shot flag for the terminal-default migration. Bookkeeping, not a
+  // preference: a settings reset must not re-run it and flip a deliberate Chat choice.
+  "flightdeck-migrated-terminal-default",
 ] as const;
 
 /**

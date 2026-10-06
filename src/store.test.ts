@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { getAgentSettings, migrateTerminalDefault } from "./settingsStore";
 import { paneHasUnsentInput, registerPaneSend, sendToPane, unregisterPaneSend, useApp } from "./store";
 
 // The store is a singleton; reset the observable slice before each test.
@@ -351,12 +352,54 @@ describe("TN1 new Claude panes default view", () => {
   });
   const views = () => useApp.getState().workspaces[0].panes.map((p) => p.view);
 
-  it("opens new Claude panes in Chat by default, other vendors in the terminal", () => {
+  const focus = () => useApp.getState().workspaces[0].panes.map((p) => p.focusMode);
+
+  it("opens new Claude panes in the terminal by default", () => {
+    useApp.getState().createWorkspace("/a", [{ vendor: "claude", cwd: "/a" }, { vendor: "codex", cwd: "/a" }]);
+    expect(views()).toEqual([undefined, undefined]);
+    expect(focus()).toEqual([undefined, undefined]);
+  });
+
+  it("opens new Claude panes in Chat when chosen, other vendors in the terminal", () => {
+    localStorage.setItem("flightdeck-agent-settings", JSON.stringify({ openClaudeIn: "chat" }));
     useApp.getState().createWorkspace("/a", [{ vendor: "claude", cwd: "/a" }, { vendor: "codex", cwd: "/a" }]);
     expect(views()).toEqual(["chat", undefined]);
     const ws = useApp.getState().workspaces[0];
     useApp.getState().addPane(ws.id, "claude", "/a");
     expect(views()[2]).toBe("chat");
+  });
+
+  it("Quiet terminal opens new Claude panes in the terminal with focus mode on", () => {
+    localStorage.setItem("flightdeck-agent-settings", JSON.stringify({ openClaudeIn: "quiet" }));
+    useApp.getState().createWorkspace("/a", [{ vendor: "claude", cwd: "/a" }, { vendor: "codex", cwd: "/a" }]);
+    expect(views()).toEqual([undefined, undefined]);
+    expect(focus()).toEqual([true, undefined]);
+    const ws = useApp.getState().workspaces[0];
+    useApp.getState().addPane(ws.id, "claude", "/a");
+    expect(focus()[2]).toBe(true);
+  });
+
+  it("coerces an unknown stored openClaudeIn to terminal", () => {
+    localStorage.setItem("flightdeck-agent-settings", JSON.stringify({ openClaudeIn: "bogus" }));
+    expect(getAgentSettings().openClaudeIn).toBe("terminal");
+  });
+
+  it("0.6.1 migration flips a stored Chat default to terminal exactly once", () => {
+    localStorage.setItem("flightdeck-agent-settings", JSON.stringify({ openClaudeIn: "chat", chatDetail: "verbose" }));
+    expect(migrateTerminalDefault()).toBe(true);
+    expect(getAgentSettings().openClaudeIn).toBe("terminal");
+    expect(getAgentSettings().chatDetail).toBe("verbose");
+    // A deliberate Chat choice after the migration survives later boots.
+    localStorage.setItem("flightdeck-agent-settings", JSON.stringify({ openClaudeIn: "chat" }));
+    expect(migrateTerminalDefault()).toBe(false);
+    expect(getAgentSettings().openClaudeIn).toBe("chat");
+  });
+
+  it("migration on a fresh profile does nothing but still burns the one-off", () => {
+    expect(migrateTerminalDefault()).toBe(false);
+    localStorage.setItem("flightdeck-agent-settings", JSON.stringify({ openClaudeIn: "chat" }));
+    expect(migrateTerminalDefault()).toBe(false);
+    expect(getAgentSettings().openClaudeIn).toBe("chat");
   });
 
   it("honours Settings > Agents > Open Claude panes in: Terminal", () => {
