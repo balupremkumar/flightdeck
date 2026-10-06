@@ -118,6 +118,10 @@ jobs:
         working-directory: e2e
         run: node multiwindow-s9.mjs
 
+      - name: Multi-window adopt ack
+        working-directory: e2e
+        run: node multiwindow-adopt-ack.mjs
+
   backend:
     name: Backend (Cargo)
     # The Rust crate calls Win32 APIs (Job Objects, process/thread control),

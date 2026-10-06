@@ -32,7 +32,7 @@
     "pty_spawn", "pty_attach", "pty_write", "pty_resize", "pty_kill", "pane_pause", "pane_resume",
     "window_boot", "window_heartbeat", "ws_transfer", "window_adopted", "window_focus_next", "session_put_slice",
     "window_close_self", "window_summary", "set_multiwindow", "merge_all_windows", "window_focus_pane", "attention_report",
-    "restore_windows",
+    "restore_windows", "main_adopt_done", "main_pending_adopts",
   ];
   const listeners = new Map(); // event name -> Set<callback>
   // Offset so pty ids never coincide with store model ids (as after a real restore).
