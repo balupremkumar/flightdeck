@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const PORT = 9333;
 const EXE = process.env.FD_CANARY_EXE
-  ?? "D:\\Dev\\ai\\projects\\active\\flightdeck\\src-tauri\\target-canary\\release\\projectsactivefd-scaffold.exe";
+  ?? "D:\\Dev\\ai\\projects\\active\\flightdeck\\src-tauri\\target-drag\\release\\projectsactivefd-scaffold.exe";
 const PID_FILE = path.join(here, ".canary.pid");
 const ps = (file, args) => execFileSync("pwsh", ["-NoProfile", "-NonInteractive", "-File", path.join(here, file), ...args], { encoding: "utf8" }).trim();
 

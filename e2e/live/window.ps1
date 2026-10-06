@@ -23,6 +23,8 @@ public static class FdWin {
   [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint f);
   [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
   [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr h, int cmd);
+  [DllImport("user32.dll")] static extern bool PostMessage(IntPtr h, uint msg, IntPtr w, IntPtr l);
+  public static bool Close(IntPtr h) { return PostMessage(h, 0x0010, IntPtr.Zero, IntPtr.Zero); }
   [StructLayout(LayoutKind.Sequential)] public struct RECT { public int L, T, R, B; }
   public static List<IntPtr> ForPid(uint pid, bool visibleOnly) {
     var r = new List<IntPtr>();
@@ -51,6 +53,18 @@ public static class FdWin {
   }
 }
 "@
+if ($Mode -in @("close","minimise","unminimise")) {
+  # close = WM_CLOSE posted to the main window (the app's own close-requested path, so its quit dialog and save run).
+  # minimise = SW_SHOWMINNOACTIVE (7); unminimise = SW_SHOWNOACTIVATE (4) then NOACTIVATE move. None activates anything.
+  $cand = @([FdWin]::ForPid([uint32]$ProcessId, $false) | Where-Object { $t = [FdWin]::Title($_); $t -like "Flightdeck*" -and $t -notlike "*-siw" } | Sort-Object { -([FdWin]::Rect($_)[2]) })
+  if (-not $cand.Count) { throw "no Flightdeck window for pid $ProcessId" }
+  $h = $cand[0]
+  if ($Mode -eq "close") { [FdWin]::Close($h) }
+  elseif ($Mode -eq "minimise") { [FdWin]::Show($h, 7) }
+  else { [FdWin]::Show($h, 4); if ($Width -gt 0) { [void][FdWin]::Move($h, $X, $Y, $Width, $Height) } }
+  @{ mode = $Mode; hwnd = [int64]$h; iconic = [FdWin]::Iconic($h) } | ConvertTo-Json -Compress
+  return
+}
 if ($Mode -eq "foreground") { [FdWin]::Foreground(); return }
 if ($Mode -eq "release") {
   foreach ($h in [FdWin]::ForPid([uint32]$ProcessId, $true)) {

@@ -7,6 +7,7 @@ import * as d from "./drive.mjs";
 
 export { d };
 export const here = path.dirname(fileURLToPath(import.meta.url));
+export const PREFIX = process.env.FD_PREFIX ?? "w1a";
 export const DATE = process.env.FD_RESULTS_DATE ?? "2026-10-06";
 export const OUT = path.join(here, "results", DATE);
 export const REPO = process.env.FD_SWEEP_REPO
@@ -58,23 +59,24 @@ export async function fgStop() {
 
 /** Result collector: results/<date>/w1a-<name>.json */
 export function result(name) {
-  const file = path.join(OUT, `w1a-${name}.json`);
+  const file = path.join(OUT, `${PREFIX}-${name}.json`);
   const r = { name, startedAt: new Date().toISOString(), checks: [], evidence: {}, shots: [] };
   r.check = (label, pass, evidence) => { r.checks.push({ label, pass: !!pass, evidence }); console.log(`[${name}] ${pass ? "PASS" : "FAIL"} ${label}${evidence !== undefined ? " :: " + JSON.stringify(evidence).slice(0, 300) : ""}`); return !!pass; };
   r.shot = (p) => { r.shots.push(p); return p; };
   r.save = () => { r.pass = r.checks.length > 0 && r.checks.every((c) => c.pass); r.finishedAt = new Date().toISOString(); writeFileSync(file, JSON.stringify(r, null, 2)); return r; };
   return r;
 }
-export const shotPath = (n) => path.join(OUT, `w1a-${n}.png`);
+export const shotPath = (n) => path.join(OUT, `${PREFIX}-${n}.png`);
 
 
 /** Fresh Canary: tear down any previous, launch, connect, mute, decline restore, size the window. */
-export async function boot({ width = 2400, height = 1200, keepSession = false } = {}) {
+export async function boot({ width = 2400, height = 1200, keepSession = false, openClaudeIn = "terminal", beforeSettings = null } = {}) {
   if (existsSync(path.join(here, ".canary.pid"))) { console.log("[boot]", execFileSync("node", [path.join(here, "teardown.mjs")], { encoding: "utf8" }).trim()); }
   console.log("[boot]", execFileSync("node", [path.join(here, "launch.mjs")], { encoding: "utf8" }).trim().split(/\r?\n/).join(" | "));
   const c = await d.connect();
   if (!keepSession) await jsDeclineRestore(c.page);
-  await d.applyTestSettings(c.page, { flags: {}, openClaudeIn: "terminal" });
+  if (beforeSettings) await beforeSettings(c.page);
+  await d.applyTestSettings(c.page, { flags: {}, openClaudeIn });
   if (!keepSession) await jsDeclineRestore(c.page);
   d.setWindow({ width, height });
   await c.page.waitForTimeout(1500);
@@ -200,7 +202,7 @@ export const step = (label) => { lastStep = label; console.log(`[step] ${label}`
  *  run (tearing Canary down at once) the first time a Canary window is seen in the foreground. */
 export async function main(name, fn) {
   const r = result(name);
-  fgStart(`w1a-${name}`);
+  fgStart(`${PREFIX}-${name}`);
   let breached = false;
   const live = setInterval(() => {
     if (breached) return;
@@ -223,7 +225,7 @@ export async function main(name, fn) {
   clearInterval(live);
   try { const g = await fgStop(); r.evidence.foreground = g; r.check("foreground never held by a Canary process", g.canaryForegroundSamples === 0, { samples: g.samples, distinct: g.distinct }); } catch (e) { r.check("foreground guard readable", false, String(e)); }
   r.save();
-  console.log(`[${name}] ${r.pass ? "ALL PASS" : "HAS FAILURES"} -> ${path.join(OUT, `w1a-${name}.json`)}`);
+  console.log(`[${name}] ${r.pass ? "ALL PASS" : "HAS FAILURES"} -> ${path.join(OUT, `${PREFIX}-${name}.json`)}`);
   process.exit(0);
 }
 
