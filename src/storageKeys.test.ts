@@ -32,6 +32,10 @@ const usedKeys = new Set([...source.matchAll(LITERAL)].map((m) => m[1]));
 const usedPrefixes = new Set([...source.matchAll(PREFIX)].map((m) => m[1]));
 
 describe("persisted storage keys", () => {
+  it("registers workspace window drag as a resettable preference", () => {
+    expect(PREFERENCE_KEYS).toContain("flightdeck-window-drag");
+    expect(SESSION_KEYS).not.toContain("flightdeck-window-drag");
+  });
   it("finds keys to check (the scanner itself works)", () => {
     expect(usedKeys.size).toBeGreaterThan(10);
     expect(usedKeys.has("flightdeck-theme-id")).toBe(true);

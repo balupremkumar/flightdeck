@@ -13,6 +13,7 @@ import { lazyOverlay } from "./LazyOverlay";
 import { logEvent } from "./applog";
 import { useWhatsNew } from "./settingsStore";
 import { isMainWindow } from "./persist";
+import { DragDropHint } from "./DragDropHint";
 
 const Settings = lazyOverlay(() => import("./Settings"), "Settings", "Settings");
 
@@ -92,11 +93,10 @@ export default function App() {
   const count = useApp((s) => s.workspaces.length);
   const creating = useApp((s) => s.creating);
   // A secondary window never shows the launcher: empty means Rust is about to close it.
-  if (count === 0) return isMainWindow() ? <LauncherChrome /> : null;
   return (
     <>
-      <Cockpit />
-      {creating && <NewWorkspace />}
+      {count === 0 ? (isMainWindow() ? <LauncherChrome /> : null) : <><Cockpit />{creating && <NewWorkspace />}</>}
+      <DragDropHint />
     </>
   );
 }
