@@ -106,3 +106,10 @@ D1 to D3 and D4 to D5 can proceed in parallel once the section 3 contract is fix
 | Pane header HTML5 drag conflicts | Tile drag is pointer-only so no element carries both; pane-to-tile drops keep their handler |
 | Workspace name in ghost URL | Local only, query-encoded, `textContent`, no IPC, no capability |
 | Default-on multiwindow reaches users unverified | Condition on checklist pass; kill switch in Settings; existing merge-on-off behaviour (windows.rs:1239) |
+
+## D0 notes (read-only half, 2026-10-06, from ~/.cargo/registry/src)
+
+- `AppHandle::cursor_position() -> Result<PhysicalPosition<f64>>` exists (tauri-2.11.5 src/app.rs:908). tao implements it with `GetCursorPos` (tao-0.35.3 windows/util.rs:216), so it is virtual-desktop physical pixels, negative on monitors left of or above the primary. Valid only because the process is per-monitor DPI aware (tauri's manifest); a system-DPI-aware process would get virtualised coordinates.
+- `AppHandle::monitor_from_point(x: f64, y: f64) -> Result<Option<Monitor>>` exists (app.rs:879). tao casts to i32 and calls `MonitorFromPoint(.., MONITOR_DEFAULTTONULL)` (windows/monitor.rs:127), so physical pixels, and None when the point is off every monitor.
+- `Monitor::work_area() -> &PhysicalRect<i32, u32>` exists (tauri-2.11.5 src/window/mod.rs:96), physical, taskbar excluded. `position()`/`size()` are physical too, `scale_factor()` is f64. So cursor, monitor rect and work area all share one space; only window logical sizes need the scale.
+- Drag-drop: wry-0.55.1 webview2/mod.rs:150-158 handles `drag_drop_handler` by calling `SetAllowExternalDrop(false)` and `RegisterDragDrop` on the webview's HWNDs (webview2/drag_drop.rs:67-70, `RevokeDragDrop` first), replacing WebView2's own drop target. tauri-utils `WebviewAttributes::drag_drop_enabled` doc says: "Disabling it is required to use HTML5 drag and drop on the frontend on Windows." Tauri sets the handler whenever `drag_drop_handler_enabled` (default true) is set (tauri-runtime-wry lib.rs:4862). So the source confirms the likely bug; whether it is dead in the real app is still D0's live half.
