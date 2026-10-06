@@ -42,6 +42,8 @@ const treeUnion = new Set();
 export function fgStart(label) {
   fgFile = path.join(OUT, `${label}-foreground.jsonl`);
   fgProc = spawn("pwsh", ["-NoProfile", "-NonInteractive", "-File", path.join(here, "fgwatch.ps1"), "-Out", fgFile, "-Seconds", "7200"], { stdio: "ignore" });
+  // Never leave the watcher behind (it would keep appending to the same file in the next run): stop it however this script ends.
+  process.on("exit", () => { try { process.kill(fgProc.pid); } catch { /* already gone */ } });
 }
 export function fgNoteTree() { try { for (const r of tree().rows) treeUnion.add(r.pid); } catch { /* tree gone */ } }
 export async function fgStop() {
@@ -89,7 +91,12 @@ export async function launchWorkspace(page, { root = REPO, vendors, stageClaude 
   if (await tile.count()) await jsClick(tile.first());
   else {
     const plus = page.locator(".launcher .stepper button").last();
-    for (let i = 0; i < 12 && Number(await page.locator(".launcher .step-n").innerText()) < count; i++) await jsClick(plus);
+    const minus = page.locator(".launcher .stepper button").first();
+    for (let i = 0; i < 16; i++) {
+      const n = Number(await page.locator(".launcher .step-n").innerText());
+      if (n === count) break;
+      await jsClick(n < count ? plus : minus);
+    }
   }
   await jsFill(page.locator(".launcher .dir .path"), root);
   await page.waitForTimeout(800);
@@ -99,7 +106,7 @@ export async function launchWorkspace(page, { root = REPO, vendors, stageClaude 
   for (let i = 0; i < count; i++) await sels.nth(i).selectOption(vendors[i]);
   if (stageClaude && vendors.includes("claude")) await d.invoke(page, "stage_launch_args", { vendor: "claude", cwd: root, args: FLAGS });
   await jsClick(page.locator(".launcher .btn-primary"));
-  await page.waitForSelector(".pane", { timeout: 30000 });
+  await page.waitForSelector(".pane", { state: "attached", timeout: 30000 });
 }
 
 /** Model ids that currently have a live pty in Rust (pane_tail answers). T.invoke is frozen, so spawn calls cannot be recorded. */
@@ -122,18 +129,26 @@ export async function waitModels(page, n, timeoutMs = 30000) {
 export const health = (page) => d.invoke(page, "pane_health", {});
 const PTY = new Map();   // modelId -> pty id, valid until that pane restarts
 /** Map pwsh pane model ids to pty ids: write a harmless comment line to each pwsh pty and see whose ring shows it. */
+let MAP_CALLS = 0;
+export const MAP_DIAG = [];
 export async function mapPwsh(page, modelIds) {
+  const call = ++MAP_CALLS;
   const h = (await health(page)).filter((p) => /pwsh|powershell/i.test(p.procName ?? "") || !p.procName);
   PTY.clear();
-  for (const p of h) {
-    const tag = `FDMAP${p.paneId}X`;
-    await d.invoke(page, "pty_write", { paneId: p.paneId, data: `#${tag}\r` });
-  }
-  await sleep(1200);
+  for (const p of h) await d.invoke(page, "pty_write", { paneId: p.paneId, data: `#FDMAP${call}N${p.paneId}X\r` });
+  await sleep(1500);
+  const diag = { call, ptys: h.map((p) => p.paneId), crossTalk: [], unmapped: [] };
   for (const m of modelIds) {
-    const text = (await d.tail(page, m)).join(" ");
-    for (const p of h) if (text.includes(`FDMAP${p.paneId}X`)) PTY.set(m, p.paneId);
+    const text = (await d.tail(page, m, 65536)).join(" ");
+    const hits = h.filter((p) => text.includes(`FDMAP${call}N${p.paneId}X`)).map((p) => p.paneId);
+    if (hits.length === 1) PTY.set(m, hits[0]);
+    else if (hits.length > 1) diag.crossTalk.push({ model: m, ptysSeenInItsRing: hits });
+    else diag.unmapped.push(m);
   }
+  const owners = {};
+  for (const [m, pid] of PTY) (owners[pid] ??= []).push(m);
+  diag.sharedPtys = Object.entries(owners).filter(([, ms]) => ms.length > 1).map(([pid, ms]) => ({ pty: pid, models: ms }));
+  MAP_DIAG.push(diag);
   return Object.fromEntries(PTY);
 }
 export const ptyOf = (modelId) => { const v = PTY.get(modelId); if (!v) throw new Error(`no pty mapped for model ${modelId}; call mapPwsh first`); return v; };
@@ -165,7 +180,7 @@ export async function reloadAndWait(page, { settle = 3000, restore = "reopen" } 
   if (restore !== "none") {
     const reopen = page.getByRole("button", { name: "Reopen session" });
     await reopen.waitFor({ timeout: 30000 });
-    if (restore === "reopen") { tReopen = Date.now(); await jsClick(reopen); await page.waitForSelector(".pane", { timeout: 30000 }); }
+    if (restore === "reopen") { tReopen = Date.now(); await jsClick(reopen); await page.waitForSelector(".pane", { state: "attached", timeout: 30000 }); }
     else await jsClick(page.getByRole("button", { name: "Cancel" }));
   }
   const ms = Date.now() - t0;

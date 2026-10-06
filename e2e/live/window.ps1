@@ -17,6 +17,8 @@ public static class FdWin {
   [DllImport("user32.dll")] static extern bool IsIconic(IntPtr h);
   [DllImport("user32.dll")] static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
   [DllImport("user32.dll")] static extern int GetClassName(IntPtr h, StringBuilder s, int n);
+  [DllImport("user32.dll", EntryPoint="GetWindowLongPtrW")] static extern IntPtr GetWindowLongPtr(IntPtr h, int i);
+  [DllImport("user32.dll", EntryPoint="SetWindowLongPtrW")] static extern IntPtr SetWindowLongPtr(IntPtr h, int i, IntPtr v);
   [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out RECT r);
   [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint f);
   [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
@@ -38,6 +40,9 @@ public static class FdWin {
   public static void Show(IntPtr h, int cmd) { ShowWindow(h, cmd); }
   // Reveal a hidden window without activating it: SWP_SHOWWINDOW | SWP_NOACTIVATE | SWP_NOZORDER. No ShowWindow, no foreground.
   public static bool ShowNoActivate(IntPtr h, int x, int y, int w, int hh) { return SetWindowPos(h, IntPtr.Zero, x, y, w, hh, 0x0040 | 0x0010 | 0x0004); }
+  // WS_EX_NOACTIVATE on the Canary window only: the system never activates it (no click, SetFocus or SetActiveWindow can raise it
+  // to the foreground). Observed twice that page-side focus work (a pane click, a failed restart) briefly took foreground without it.
+  public static long SetNoActivate(IntPtr h) { long ex = (long)GetWindowLongPtr(h, -20); SetWindowLongPtr(h, -20, (IntPtr)(ex | 0x08000000L)); return (long)GetWindowLongPtr(h, -20); }
   public static string Class(IntPtr h) { var sb = new StringBuilder(256); GetClassName(h, sb, 256); return sb.ToString(); }
   public static bool IsForeground(IntPtr h) { return GetForegroundWindow() == h; }
   public static string Foreground() {
@@ -63,8 +68,9 @@ if ($Mode -eq "show") {
     if ($cand.Count) {
       $h = $cand[0]
       [void][FdWin]::ShowNoActivate($h, $X, $Y, $w, $hh)
+      $ex = [FdWin]::SetNoActivate($h)
       $rect = [FdWin]::Rect($h)
-      @{ hwnd = [int64]$h; class = [FdWin]::Class($h); title = [FdWin]::Title($h); x = $rect[0]; y = $rect[1]; w = $rect[2]; h = $rect[3]; candidates = $cand.Count } | ConvertTo-Json -Compress
+      @{ hwnd = [int64]$h; class = [FdWin]::Class($h); title = [FdWin]::Title($h); x = $rect[0]; y = $rect[1]; w = $rect[2]; h = $rect[3]; candidates = $cand.Count; exStyle = ("0x{0:x}" -f $ex) } | ConvertTo-Json -Compress
       return
     }
     Start-Sleep -Milliseconds 25

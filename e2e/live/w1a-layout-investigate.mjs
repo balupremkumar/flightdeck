@@ -87,7 +87,7 @@ main("layout-investigate", async (r) => {
   step("(b) workspace 1 (pwsh x2) built while the window is big");
   d.setWindow({ width: 2400, height: 1200 });
   await sleep(1500);
-  await jsClick(page.locator(".lp-ic.add").first());
+  await jsClick(page.locator(".lp-add, .lp-ic.add").first());
   await launchWorkspace(page, { vendors: ["pwsh", "pwsh"], stageClaude: false });
   let mids = await waitModels(page, 2);
   const ws1 = mids.filter((m) => m !== mid);
@@ -97,7 +97,7 @@ main("layout-investigate", async (r) => {
   await sleep(3000);
   r.evidence.dprAfterResize = await dprOf(page);
   step("(b) workspace 2 (pwsh x2) built at the final size, never resized");
-  await jsClick(page.locator(".lp-ic.add").first());
+  await jsClick(page.locator(".lp-add, .lp-ic.add").first());
   await launchWorkspace(page, { vendors: ["pwsh", "pwsh"], stageClaude: false });
   mids = await waitModels(page, 5);
   const ws2 = mids.filter((m) => !ws1.includes(m) && m !== mid);

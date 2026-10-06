@@ -87,19 +87,23 @@ main("regress-paneid", async (r) => {
     const a = lines.find((l) => /RVMARK-ALPHA/.test(l.t ?? ""));
     const b = lines.find((l) => /RVMARK-BETA/.test(l.t ?? ""));
     const ok = !!(a && b);
+    const countMarks = async (m) => ((await d.tail(page, m, 16384)).join("\n").match(/RVMARK-(ALPHA|BETA)/g) ?? []).length;
+    const countsBefore = {};
+    for (const m of mids) countsBefore[m] = await countMarks(m);
     if (ok) {
       await page.evaluate(([ai, bi]) => {
         const sa = document.querySelector(`.rv-patch [data-line="${ai}"]`), sb = document.querySelector(`.rv-patch [data-line="${bi}"]`);
         const s = window.getSelection(); s.removeAllRanges();
-        s.setBaseAndExtent(sa.firstChild ?? sa, 0, sb.firstChild ?? sb, (sb.textContent ?? "").length);
+        s.setBaseAndExtent(sa, 0, sb, sb.childNodes.length);
       }, [a.i, b.i]);
       await jsClick(page.locator('button[title^="Select diff lines above"]'));
       await sleep(2500);
     }
     // the prompt carries the diff lines; the unique tokens are RVMARK-ALPHA / RVMARK-BETA, so count which panes show them
     const got = [];
-    for (const m of mids) if ((await hasMark(page, m, "RVMARK-ALPHA")) || (await hasMark(page, m, "RVMARK-BETA"))) got.push(m);
-    rv.push({ targetIndex: target, targetModel: mids[target], selectedOk: ok, linesSeen: lines.length, got });
+    const countsAfter = {};
+    for (const m of mids) { countsAfter[m] = await countMarks(m); if (countsAfter[m] > countsBefore[m]) got.push(m); }
+    rv.push({ targetIndex: target, targetModel: mids[target], selectedOk: ok, linesSeen: lines.length, got, countsBefore, countsAfter });
     r.shot(await d.shotWindow(page, shotPath(`regress-paneid-review-${target + 1}`)));
     // close drawer
     const closeBtn = page.locator('.rv-head button[title^="Close"]').first();

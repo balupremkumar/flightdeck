@@ -5,7 +5,7 @@
 import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { main, boot, d, step, here, OUT, launchWorkspace, waitModels, mapPwsh, write, CR, armReopen, typeInto, jsClick, reloadAndWait, sleep, shotPath, tree, treeBrief, liveModels } from "./w1a-lib.mjs";
+import { main, boot, d, step, here, OUT, launchWorkspace, waitModels, mapPwsh, MAP_DIAG, write, CR, armReopen, typeInto, jsClick, reloadAndWait, sleep, shotPath, tree, treeBrief, liveModels } from "./w1a-lib.mjs";
 
 const N1 = 9, N2 = 3, LINES = 20000;
 
@@ -25,12 +25,15 @@ main("many-panes", async (r) => {
   await launchWorkspace(page, { vendors: Array(N1).fill("pwsh") });
   await waitModels(page, N1);
   step("workspace 2: 3 pwsh");
-  await jsClick(page.locator(".lp-ic.add").first());
+  await jsClick(page.locator(".lp-add, .lp-ic.add").first());
   await launchWorkspace(page, { vendors: Array(N2).fill("pwsh") });
   const mids = await waitModels(page, N1 + N2);
   for (const m of mids) await d.waitForText(page, m, /PS [^\n]*>/, { timeoutMs: 45000 });
-  const map = await mapPwsh(page, mids);
+  let map = await mapPwsh(page, mids);
+  for (let k = 0; k < 4 && Object.keys(map).length < mids.length; k++) { await sleep(3000); map = await mapPwsh(page, mids); }
   r.check(`all ${N1 + N2} panes live and mapped`, mids.length === N1 + N2 && Object.keys(map).length === N1 + N2, { models: mids.length, mapped: Object.keys(map).length });
+  r.evidence.mapDiag = MAP_DIAG[MAP_DIAG.length - 1];
+  r.check("pty<->pane mapping is one-to-one with no cross-talk between pane rings", MAP_DIAG[MAP_DIAG.length - 1].crossTalk.length === 0 && MAP_DIAG[MAP_DIAG.length - 1].sharedPtys.length === 0, MAP_DIAG[MAP_DIAG.length - 1]);
   r.evidence.treeEmpty = treeBrief(tree());
 
   step("arm reopen on every pane (rename + draft char)");
