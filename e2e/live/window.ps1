@@ -5,7 +5,8 @@ param(
   [Parameter(Mandatory)][int]$ProcessId,
   [string]$Mode = "move",
   [int]$X = -20000, [int]$Y = 0, [int]$Width = 0, [int]$Height = 0,
-  [int]$WaitMs = 0
+  [int]$WaitMs = 0,
+  [int64]$Hwnd = 0
 )
 Add-Type @"
 using System; using System.Text; using System.Collections.Generic; using System.Runtime.InteropServices;
@@ -66,6 +67,18 @@ if ($Mode -in @("close","minimise","unminimise")) {
   return
 }
 if ($Mode -eq "foreground") { [FdWin]::Foreground(); return }
+if ($Mode -eq "list") {
+  # Every top-level window of the pid with a title (visible or not), for multi-window and drag checks.
+  $vis = @([FdWin]::ForPid([uint32]$ProcessId, $true) | ForEach-Object { [int64]$_ })
+  ConvertTo-Json -Compress -InputObject @(foreach ($h in [FdWin]::ForPid([uint32]$ProcessId, $false)) { $t = [FdWin]::Title($h); if ($t) { $r = [FdWin]::Rect($h); @{ hwnd = [int64]$h; title = $t; x = $r[0]; y = $r[1]; w = $r[2]; h = $r[3]; iconic = [FdWin]::Iconic($h); visible = $vis -contains [int64]$h } } })
+  return
+}
+if ($Mode -eq "movehwnd") {
+  # One window by HWND, SWP_NOACTIVATE | SWP_NOZORDER (other windows of the pid untouched).
+  $h = [IntPtr]$Hwnd; [void][FdWin]::Move($h, $X, $Y, $Width, $Height); $r = [FdWin]::Rect($h)
+  @{ hwnd = $Hwnd; x = $r[0]; y = $r[1]; w = $r[2]; h = $r[3] } | ConvertTo-Json -Compress
+  return
+}
 if ($Mode -eq "release") {
   foreach ($h in [FdWin]::ForPid([uint32]$ProcessId, $true)) {
     if ([FdWin]::IsForeground($h)) { [FdWin]::Show($h, 6); Start-Sleep -Milliseconds 300; [FdWin]::Show($h, 4) }

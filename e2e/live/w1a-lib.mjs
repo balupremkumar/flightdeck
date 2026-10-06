@@ -200,12 +200,12 @@ export let lastStep = "start";
 export const step = (label) => { lastStep = label; console.log(`[step] ${label}`); };
 /** Run one script body with the foreground guard on, always save the result file and exit. A live watcher aborts the
  *  run (tearing Canary down at once) the first time a Canary window is seen in the foreground. */
-export async function main(name, fn) {
+export async function main(name, fn, { abortOnForeground = true } = {}) {
   const r = result(name);
   fgStart(`${PREFIX}-${name}`);
   let breached = false;
   const live = setInterval(() => {
-    if (breached) return;
+    if (breached || !abortOnForeground) return;
     try {
       const rows = readFileSync(fgFile, "utf8").trimEnd().split(/\r?\n/).slice(-2).map((l) => JSON.parse(l));
       const hit = rows.find((x) => /^Flightdeck Canary/.test(x.title) || (existsSync(path.join(here, ".canary.pid")) && x.pid === d.canaryPid()));
@@ -223,7 +223,7 @@ export async function main(name, fn) {
   try { c = await fn(r); }
   catch (e) { r.check("script completed without exception", false, String(e?.stack ?? e).slice(0, 800)); }
   clearInterval(live);
-  try { const g = await fgStop(); r.evidence.foreground = g; r.check("foreground never held by a Canary process", g.canaryForegroundSamples === 0, { samples: g.samples, distinct: g.distinct }); } catch (e) { r.check("foreground guard readable", false, String(e)); }
+  try { const g = await fgStop(); r.evidence.foreground = g; if (abortOnForeground) r.check("foreground never held by a Canary process", g.canaryForegroundSamples === 0, { samples: g.samples, distinct: g.distinct }); } catch (e) { r.check("foreground guard readable", false, String(e)); }
   r.save();
   console.log(`[${name}] ${r.pass ? "ALL PASS" : "HAS FAILURES"} -> ${path.join(OUT, `${PREFIX}-${name}.json`)}`);
   process.exit(0);
