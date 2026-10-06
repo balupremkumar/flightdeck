@@ -83,6 +83,12 @@ export class MultiWindowBus {
       if (!m || Number(m[1]) > MAX_ORDINAL || ids.length === 0 || plan.some((p) => p.label === w.label)) continue;
       plan.push({ label: w.label, ordinal: Number(m[1]), ids, active: ids.includes(w.activeWorkspaceId) ? w.activeWorkspaceId : null });
     }
+    // persist.rs seed_restored covers main too: a write before main pushes still carries main's saved workspaces.
+    const mainEntry = (this.doc.windows ?? []).find((w) => w.label === "main");
+    if (mainEntry && !this.slices.has("main")) {
+      const mids = (mainEntry.workspaceIds ?? []).filter((id) => known.has(id));
+      this.slices.set("main", { ...this.doc, workspaces: this.doc.workspaces.filter((w) => mids.includes(w.id)), activeWorkspaceId: mainEntry.activeWorkspaceId ?? null, windows: undefined });
+    }
     for (const p of plan) {
       if (!this.windows.has(p.label)) this.windows.set(p.label, { ordinal: p.ordinal, workspaceIds: p.ids, activeWs: p.active, booted: false });
       this.nextOrdinal = Math.max(this.nextOrdinal, p.ordinal + 1);
