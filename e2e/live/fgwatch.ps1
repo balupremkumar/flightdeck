@@ -1,5 +1,5 @@
-# Samples GetForegroundWindow every 250 ms for -Seconds and writes JSONL (t_ms, hwnd, pid, title) to -Out.
-# Read-only: never changes focus. Run it BEFORE launching so the pre-launch foreground is the first row.
+# Samples GetForegroundWindow every 250 ms and APPENDS JSONL rows (t_ms, hwnd, pid, title) to -Out as it goes,
+# until -Seconds elapse or the process is stopped. Read-only: never changes focus.
 param([Parameter(Mandatory)][string]$Out, [int]$Seconds = 15)
 Add-Type @"
 using System; using System.Text; using System.Runtime.InteropServices;
@@ -11,10 +11,12 @@ public static class FgW {
 }
 "@
 $sw = [Diagnostics.Stopwatch]::StartNew()
-$rows = New-Object System.Collections.Generic.List[string]
-while ($sw.Elapsed.TotalSeconds -lt $Seconds) {
-  $f = [FgW]::Sample().Split("`t", 3)
-  $rows.Add((@{ t = [int]$sw.ElapsedMilliseconds; hwnd = [int64]$f[0]; pid = [int]$f[1]; title = $f[2] } | ConvertTo-Json -Compress))
-  Start-Sleep -Milliseconds 250
-}
-Set-Content -Path $Out -Value $rows
+$fs = [IO.StreamWriter]::new($Out, $false, [Text.UTF8Encoding]::new($false))
+$fs.AutoFlush = $true
+try {
+  while ($sw.Elapsed.TotalSeconds -lt $Seconds) {
+    $f = [FgW]::Sample().Split("`t", 3)
+    $fs.WriteLine((@{ t = [int]$sw.ElapsedMilliseconds; hwnd = [int64]$f[0]; pid = [int]$f[1]; title = $f[2] } | ConvertTo-Json -Compress))
+    Start-Sleep -Milliseconds 250
+  }
+} finally { $fs.Dispose() }
