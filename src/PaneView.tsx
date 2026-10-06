@@ -116,6 +116,11 @@ export interface ProcSample { name: string; at: number }
 export const PROC_STABLE_MS = 4000;
 const PROC_WINDOW_MS = 30000;
 
+/** Agent children (including MCP servers) do not identify the pane itself. */
+export function usesProcessTitle(vendor: string): boolean {
+  return vendorMeta(vendor).kind === "shell";
+}
+
 /** Drop samples that have fallen out of the trailing window, keeping (and
  *  clipping) the one that was still current when the window opened so a
  *  long-running root doesn't lose its residency. */
@@ -319,13 +324,14 @@ function PaneViewInner({
   // below is unchanged.
   const lastAutoTitle = useRef<string | undefined>(undefined);
   const procSamples = useRef<ProcSample[]>([]);
+  const processTitleEnabled = usesProcessTitle(pane.vendor);
   useEffect(() => {
-    if (!procName) return;
+    if (!processTitleEnabled || !procName) return;
     const s = procSamples.current;
     if (s[s.length - 1]?.name !== procName) s.push({ name: procName, at: Date.now() });
-  }, [procName]);
+  }, [processTitleEnabled, procName]);
   useEffect(() => {
-    if (!procName) return;
+    if (!processTitleEnabled || !procName) return;
     const apply = () => {
       const now = Date.now();
       procSamples.current = pruneProcSamples(procSamples.current, now);
@@ -338,7 +344,7 @@ function PaneViewInner({
     apply(); // a name that's already been stable for a while shouldn't wait a tick
     const id = setInterval(apply, 1000);
     return () => clearInterval(id);
-  }, [procName, pane.title, pane.id, renamePane]);
+  }, [processTitleEnabled, procName, pane.title, pane.id, renamePane]);
 
   useEffect(() => {
     if (!searchOpen) { setMatchInfo(null); return; }
@@ -981,7 +987,7 @@ function PaneViewInner({
         {/* UX-555 folds this into the pane name itself (auto-title), so the
             chip only needs to appear when the two disagree — a manual
             rename, or the moment before the first auto-title lands. */}
-        {procName && procName !== displayName && <span className="pproc" title="Live process (pane name doesn’t match)">{procName}</span>}
+        {processTitleEnabled && procName && procName !== displayName && <span className="pproc" title="Live process (pane name doesn’t match)">{procName}</span>}
         {/* UI-27: a git problem is worth one quiet word — silence reads as
             "not a repo", which may be wrong. */}
         {!gitStatus && gitError && (
