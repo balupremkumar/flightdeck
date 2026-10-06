@@ -79,6 +79,8 @@ pub(crate) struct Registry {
     next_id: Mutex<u32>,
     // PaneModel id -> live pty (paneout.rs); what pty_attach answers from.
     by_model: Mutex<paneout::ByModel>,
+    // pty id -> session of a pane whose process exited (chatlog::remember_exited).
+    exited: Mutex<HashMap<u32, chatlog::SessionState>>,
     // Bumped on every main-webview load; a reaper pass only acts if it is still
     // the latest load when its grace period ends.
     load_gen: AtomicU64,
@@ -430,6 +432,10 @@ impl ptyexit::PaneIo for LivePane {
         // first so a blocking ClosePseudoConsole never holds the registry lock.
         let reg = self.app.state::<Registry>();
         let pane = reg.panes.lock().unwrap().remove(&self.id);
+        if let Some(p) = &pane {
+            let st = p.session.lock().unwrap().clone();
+            chatlog::remember_exited(&mut reg.exited.lock().unwrap(), self.id, st);
+        }
         drop(pane);
     }
 
@@ -454,7 +460,10 @@ impl ptyexit::PaneIo for LivePane {
                 .get_mut(&self.id)
                 .and_then(|p| p.child.try_wait().ok().flatten())
                 .map(|status| !status.success());
-            panes.remove(&self.id);
+            if let Some(p) = panes.remove(&self.id) {
+                let st = p.session.lock().unwrap().clone();
+                chatlog::remember_exited(&mut reg.exited.lock().unwrap(), self.id, st);
+            }
             code.map(|c| c != 0).or(from_wait).unwrap_or(false)
         };
         paneout::lock_map(&reg.by_model).remove_pty(self.id);
