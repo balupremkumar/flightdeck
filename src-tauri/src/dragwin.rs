@@ -281,6 +281,82 @@ pub fn place_at(cursor: Pt, grab: Pt, work: Rect, scale: f64, logical: (f64, f64
     Rect { x, y, w, h }
 }
 
+/// Ghost window size and cursor offset, logical px (plan section 2).
+pub const GHOST_W: f64 = 240.0;
+pub const GHOST_H: f64 = 56.0;
+pub const GHOST_OFFSET: f64 = 14.0;
+
+/// What a release would do right now, as the ghost's mode line says it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GhostMode {
+    New,
+    Join,
+    Cancel,
+}
+
+impl GhostMode {
+    /// The string `ghost.ts` takes (`window.__ghostMode`).
+    pub fn name(self) -> &'static str {
+        match self {
+            GhostMode::New => "new",
+            GhostMode::Join => "join",
+            GhostMode::Cancel => "cancel",
+        }
+    }
+}
+
+pub fn ghost_mode(pick: &DropPick) -> GhostMode {
+    match pick {
+        DropPick::Cancel => GhostMode::Cancel,
+        DropPick::Join(_) => GhostMode::Join,
+        DropPick::NewAt(_) => GhostMode::New,
+    }
+}
+
+/// The monitor (full rect, scale) containing `p`.
+pub fn monitor_at(monitors: &[(Rect, f64)], p: Pt) -> Option<(Rect, f64)> {
+    monitors.iter().find(|(r, _)| r.contains(p)).copied()
+}
+
+/// Physical top-left of the ghost: `GHOST_OFFSET` right of and below the cursor, so it
+/// never sits under it. Flipped to the other side of the cursor where it would leave
+/// the monitor, then clamped, so it is always fully on the cursor's monitor.
+pub fn ghost_origin(cursor: Pt, scale: f64, monitor: Rect) -> Pt {
+    let w = (GHOST_W * scale).round() as i32;
+    let h = (GHOST_H * scale).round() as i32;
+    let off = (GHOST_OFFSET * scale).round() as i32;
+    let mut x = cursor.x + off;
+    if x + w > monitor.x + monitor.w {
+        x = cursor.x - off - w;
+    }
+    let mut y = cursor.y + off;
+    if y + h > monitor.y + monitor.h {
+        y = cursor.y - off - h;
+    }
+    Pt { x: x.clamp(monitor.x, (monitor.x + monitor.w - w).max(monitor.x)), y: y.clamp(monitor.y, (monitor.y + monitor.h - h).max(monitor.y)) }
+}
+
+/// RFC 3986 percent-encoding of everything but unreserved characters.
+pub fn pct_encode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~') {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+
+/// The ghost page path with its query. The name is cut to 80 chars here as well, so
+/// the URL stays short whatever a workspace is called.
+pub fn ghost_path(name: &str, tint: &str, panes: u32, mode: GhostMode) -> String {
+    let name: String = name.chars().take(80).collect();
+    let tint: String = tint.chars().take(64).collect();
+    format!("ghost.html?name={}&tint={}&panes={}&mode={}", pct_encode(&name), pct_encode(&tint), panes, mode.name())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -593,5 +669,53 @@ mod tests {
     fn default_grab_centres_on_the_title_bar() {
         assert_eq!(default_grab((1200, 800), 1.0), pt(600, 20));
         assert_eq!(default_grab((1800, 1200), 1.5), pt(900, 30));
+    }
+
+    #[test]
+    fn ghost_mode_follows_the_pick() {
+        assert_eq!(ghost_mode(&DropPick::Cancel), GhostMode::Cancel);
+        assert_eq!(ghost_mode(&DropPick::Join("fw-1".into())), GhostMode::Join);
+        assert_eq!(ghost_mode(&DropPick::NewAt(pt(1, 2))), GhostMode::New);
+        assert_eq!(GhostMode::Join.name(), "join");
+    }
+
+    const MON: Rect = Rect { x: 0, y: 0, w: 1920, h: 1080 };
+
+    #[test]
+    fn ghost_sits_offset_from_the_cursor() {
+        assert_eq!(ghost_origin(pt(500, 300), 1.0, MON), pt(514, 314));
+        assert_eq!(ghost_origin(pt(500, 300), 1.5, MON), pt(521, 321));
+    }
+
+    #[test]
+    fn ghost_flips_and_clamps_at_monitor_edges() {
+        // Right edge: flips to the left of the cursor.
+        assert_eq!(ghost_origin(pt(1900, 300), 1.0, MON), pt(1900 - 14 - 240, 314));
+        // Bottom edge: flips above.
+        assert_eq!(ghost_origin(pt(500, 1070), 1.0, MON), pt(514, 1070 - 14 - 56));
+        // Left of a monitor to the left (negative origin): stays on that monitor.
+        let left = Rect::new(-1920, 0, 1920, 1080);
+        assert_eq!(ghost_origin(pt(-5, 10), 1.0, left), pt(-5 - 14 - 240, 24));
+        // Flip would leave the monitor too (tiny monitor): clamped on.
+        let tiny = Rect::new(0, 0, 100, 40);
+        assert_eq!(ghost_origin(pt(50, 20), 1.0, tiny), pt(0, 0));
+    }
+
+    #[test]
+    fn monitor_lookup_is_by_containing_rect() {
+        let ms = [(MON, 1.0), (Rect::new(-2560, 0, 2560, 1440), 1.5)];
+        assert_eq!(monitor_at(&ms, pt(10, 10)), Some((MON, 1.0)));
+        assert_eq!(monitor_at(&ms, pt(-1, 10)).map(|m| m.1), Some(1.5));
+        assert_eq!(monitor_at(&ms, pt(5000, 10)), None);
+    }
+
+    #[test]
+    fn ghost_path_encodes_and_truncates() {
+        assert_eq!(pct_encode("a b&c=d?e\u{e9}"), "a%20b%26c%3Dd%3Fe%C3%A9");
+        let p = ghost_path("api & web", "#4aa3ff", 3, GhostMode::Join);
+        assert_eq!(p, "ghost.html?name=api%20%26%20web&tint=%234aa3ff&panes=3&mode=join");
+        let long = ghost_path(&"x".repeat(500), "", 0, GhostMode::New);
+        assert!(long.len() < 200, "{}", long.len());
+        assert!(!ghost_path("</script>", "", 0, GhostMode::New).contains('<'));
     }
 }

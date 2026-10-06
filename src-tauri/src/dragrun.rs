@@ -27,6 +27,7 @@ use std::time::{Duration, Instant};
 use serde_json::json;
 use tauri::{AppHandle, Emitter, Manager, State};
 
+use crate::dragghost::{self, Ghost};
 use crate::dragwin::{self, Action, CursorSource, DragState, DropPick, Outcome, Pt, Rect, Sample, Topmost, World};
 use crate::windows::{self, WindowState};
 
@@ -57,6 +58,7 @@ struct Session {
     tearable: bool,
     name: String,
     tint: String,
+    panes: u32,
     stop: Arc<AtomicU8>,
 }
 
@@ -67,7 +69,7 @@ fn active<T>(f: impl FnOnce(&mut Option<Session>) -> T) -> T {
     f(&mut ACTIVE.lock().unwrap_or_else(|e| e.into_inner()))
 }
 
-fn is_current(id: u64) -> bool {
+pub(crate) fn is_current(id: u64) -> bool {
     active(|a| a.as_ref().is_some_and(|s| s.id == id))
 }
 
@@ -94,7 +96,9 @@ fn script<T>(f: impl FnOnce(&mut Option<Script>) -> T) -> T {
 type HwndMap = Arc<Mutex<Vec<(String, isize)>>>;
 
 fn refresh_hwnds(app: &AppHandle, map: &HwndMap) {
-    let labels: Vec<String> = app.state::<WindowState>().lock().windows.keys().cloned().collect();
+    let mut labels: Vec<String> = app.state::<WindowState>().lock().windows.keys().cloned().collect();
+    // The ghost is not a registry window, but the hit test must recognise its HWND.
+    labels.push(dragghost::LABEL.to_string());
     let fresh: Vec<(String, isize)> = labels.into_iter().filter_map(|l| os::hwnd_of(app, &l).map(|h| (l, h))).collect();
     *map.lock().unwrap_or_else(|e| e.into_inner()) = fresh;
 }
@@ -205,6 +209,11 @@ fn run(app: AppHandle, s: Session) {
     let mut state = DragState::new(s.tearable);
     let started = Instant::now();
     let mut ticks: u32 = 0;
+    // Prewarmed hidden at arm, shown once torn. A refused (not tearable) drag has none.
+    let mut ghost = Ghost::new(s.id);
+    if s.tearable {
+        dragghost::spawn(&app, s.id, &s.name, &s.tint, s.panes);
+    }
     let outcome = loop {
         if ticks > 0 {
             std::thread::sleep(Duration::from_millis(POLL_MS));
@@ -213,6 +222,7 @@ fn run(app: AppHandle, s: Session) {
         if !is_current(s.id) {
             // Replaced or already ended: end any hint quietly, say nothing to the source.
             apply(&app, &s, dragwin::abort(&state, Outcome::Cancelled), true);
+            dragghost::destroy(&app, s.id);
             return;
         }
         let stop = s.stop.load(Ordering::SeqCst);
@@ -249,6 +259,11 @@ fn run(app: AppHandle, s: Session) {
         if let Some(o) = apply(&app, &s, actions, false) {
             break Some(o);
         }
+        let want = (state.phase == dragwin::Phase::Torn)
+            .then(|| (sample.cursor, dragwin::ghost_mode(&dragwin::pick_drop(sample.cursor, &s.source, &infos, &sample.topmost))));
+        if ghost.update(&app, want) {
+            refresh_hwnds(&app, &hwnds);
+        }
     };
     if let Some(o) = outcome {
         crate::applog::log("info", "drag", &format!("drag of workspace {} from {} ended: {}", s.ws_id, s.source, o.name()));
@@ -263,6 +278,9 @@ fn run(app: AppHandle, s: Session) {
             *x = None;
         }
     });
+    // After the session is cleared: the builder thread checks `is_current` to decide
+    // whether to keep a ghost it finished building late.
+    dragghost::destroy(&app, s.id);
 }
 
 /// Arm a drag for `id`, which `window` must own. One drag at a time: arming again
@@ -281,7 +299,6 @@ pub fn drag_arm(
     tint: String,
     panes: u32,
 ) -> Result<(), String> {
-    let _ = panes;
     if kind != "workspace" {
         return Err(format!("cannot drag a {kind:?}"));
     }
@@ -301,6 +318,7 @@ pub fn drag_arm(
         tearable,
         name,
         tint,
+        panes,
         stop: Arc::new(AtomicU8::new(STOP_NONE)),
     };
     active(|a| match a {
@@ -388,6 +406,8 @@ mod os {
             let root = unsafe { GetAncestor(top, GA_ROOT) };
             let root = if root.is_null() { top } else { root };
             match hwnds.iter().find(|(_, h)| *h == root as isize) {
+                // The drag ghost is invisible to the hit test: let the rects decide.
+                Some((l, _)) if l == dragghost::LABEL => Topmost::Unknown,
                 Some((l, _)) => Topmost::Ours(l.clone()),
                 None => Topmost::Foreign,
             }

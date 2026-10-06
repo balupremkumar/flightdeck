@@ -32,6 +32,11 @@ export default defineConfig(async () => ({
     // means something again.
     chunkSizeWarningLimit: 720,
     rollupOptions: {
+      // The drag ghost is its own tiny page (no React, no store), see src/ghost.ts.
+      input: {
+        main: "index.html",
+        ghost: "ghost.html",
+      },
       output: {
         manualChunks: {
           xterm: [

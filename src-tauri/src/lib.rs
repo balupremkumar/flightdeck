@@ -9,6 +9,7 @@ mod canary;
 mod chatlog;
 mod codexsessions;
 mod doctor;
+mod dragghost;
 mod dragrun;
 mod dragwin;
 mod editor;
@@ -1019,6 +1020,8 @@ pub fn run() {
                         | tauri_plugin_window_state::StateFlags::MAXIMIZED
                         | tauri_plugin_window_state::StateFlags::FULLSCREEN,
                 )
+                // The drag ghost is throwaway: never restore or save its geometry.
+                .with_denylist(&[dragghost::LABEL])
                 .build(),
         )
         .manage(Registry::default())
