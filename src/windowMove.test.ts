@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn(() => Promise.resolve()) }));
+const dragEvents = vi.hoisted(() => ({ handlers: new Map<string, (e: { payload: unknown }) => void>(), remove: vi.fn() }));
+vi.mock("@tauri-apps/api/window", () => ({ getCurrentWindow: () => ({ label: "main", listen: vi.fn(async (name: string, callback: (e: { payload: unknown }) => void) => {
+  dragEvents.handlers.set(name, callback);
+  return dragEvents.remove;
+}) }) }));
 
 // Same node-env DOM stand-ins as paneSessions.test.ts: the registry only touches
 // appendChild / remove / contains / rect.
@@ -27,7 +32,7 @@ const { invoke } = await import("@tauri-apps/api/core");
 const { useApp } = await import("./store");
 const { useUI } = await import("./ui");
 const ps = await import("./paneSessions");
-const { moveWorkspaceToNewWindow, moveWorkspaceToWindow } = await import("./windowMove");
+const { moveWorkspaceToNewWindow, moveWorkspaceToWindow, listenWorkspaceDrag } = await import("./windowMove");
 
 const log: string[] = [];
 let ptyOf: Record<number, number> = {};
@@ -94,6 +99,35 @@ beforeEach(() => {
 afterEach(() => unsub());
 
 describe("moveWorkspaceToNewWindow", () => {
+  it.each([
+    { kind: "new" as const, at: { x: -1200, y: 200, w: 1600, h: 1000 } },
+    { kind: "label" as const, label: "fw-2" },
+  ])("moves a Rust drag drop with its target unchanged: $kind", async (target) => {
+    // Empty workspace isolates event routing and placement from terminal draining.
+    const state = vi.fn();
+    const end = vi.fn();
+    const stop = listenWorkspaceDrag(state, end);
+    await Promise.resolve();
+    dragEvents.handlers.get("drag://state")!({ payload: { phase: "torn" } });
+    expect(state).toHaveBeenCalledWith("torn");
+    dragEvents.handlers.get("drag://drop")!({ payload: { id: 8, target } });
+    await vi.waitFor(() => expect(calls("ws_transfer")).toHaveLength(1));
+    expect((calls("ws_transfer")[0][1] as { target: unknown }).target).toEqual(target);
+    dragEvents.handlers.get("drag://end")!({ payload: { outcome: "moved" } });
+    expect(end).toHaveBeenCalledOnce();
+    stop();
+  });
+
+  it("removes source listeners even when registration resolves after cleanup", async () => {
+    dragEvents.remove.mockClear();
+    const state = vi.fn();
+    const stop = listenWorkspaceDrag(state, vi.fn());
+    stop();
+    await Promise.resolve();
+    expect(dragEvents.remove).toHaveBeenCalledTimes(3);
+    dragEvents.handlers.get("drag://state")!({ payload: { phase: "torn" } });
+    expect(state).not.toHaveBeenCalled();
+  });
   it("pauses, serialises, transfers, then releases and detaches, in that order and without a kill", async () => {
     const r = await moveWorkspaceToNewWindow(7);
     expect(r).toEqual({ ok: true, label: "fw-1" });

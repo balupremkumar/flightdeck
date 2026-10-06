@@ -41,7 +41,7 @@ import { getName } from "@tauri-apps/api/app";
 import { pushMultiwindow } from "./windowBoot";
 import { mergeFirst } from "./windowMerge";
 import "./overlays.css";
-import { TerminalSettings, DEFAULT_TERMINAL_SETTINGS, CONTRAST_RANGE, TERM_LINE_HEIGHT_RANGE, PreviewWidth, ReadingSettings, DEFAULT_READING_SETTINGS, PREVIEW_FONT_RANGE, UI_TEXT_SCALE_RANGE, PREVIEW_LH_RANGE, PREVIEW_WIDTHS, READING_SETTINGS_KEY, getReadingSettings, applyReadingSettings, saveReadingSettings, parseRgb, luminance, adjustForContrast, TERMINAL_FONTS, getTerminalSettings, saveTerminalSettings, FIXED_SHORTCUTS, getShortcuts, saveShortcut, resetShortcuts, formatCombo, AgentSettings, DEFAULT_AGENT_SETTINGS, getAgentSettings, saveAgentSettings, EditorId, EditorSettings, EDITOR_PRESETS, DEFAULT_EDITOR_SETTINGS, getEditorSettings, saveEditorSettings, resolveEditorCommand, StartupBehavior, getStartupBehavior, saveStartupBehavior, getMultiwindow, saveMultiwindow, APP_VERSION, CHANGELOG, MIN_MEMORY_CEILING_MB, MAX_MEMORY_CEILING_MB, getMemoryCeilingMb, setMemoryCeilingMb, setHooksInstalled, HookStatus, hookStatusLine } from "./settingsStore";
+import { TerminalSettings, DEFAULT_TERMINAL_SETTINGS, CONTRAST_RANGE, TERM_LINE_HEIGHT_RANGE, PreviewWidth, ReadingSettings, DEFAULT_READING_SETTINGS, PREVIEW_FONT_RANGE, UI_TEXT_SCALE_RANGE, PREVIEW_LH_RANGE, PREVIEW_WIDTHS, READING_SETTINGS_KEY, getReadingSettings, applyReadingSettings, saveReadingSettings, parseRgb, luminance, adjustForContrast, TERMINAL_FONTS, getTerminalSettings, saveTerminalSettings, FIXED_SHORTCUTS, getShortcuts, saveShortcut, resetShortcuts, formatCombo, AgentSettings, DEFAULT_AGENT_SETTINGS, getAgentSettings, saveAgentSettings, EditorId, EditorSettings, EDITOR_PRESETS, DEFAULT_EDITOR_SETTINGS, getEditorSettings, saveEditorSettings, resolveEditorCommand, StartupBehavior, getStartupBehavior, saveStartupBehavior, getMultiwindow, saveMultiwindow, getWindowDrag, saveWindowDrag, APP_VERSION, CHANGELOG, MIN_MEMORY_CEILING_MB, MAX_MEMORY_CEILING_MB, getMemoryCeilingMb, setMemoryCeilingMb, setHooksInstalled, HookStatus, hookStatusLine } from "./settingsStore";
 export * from "./settingsStore";
 
 // ---------------------------------------------------------------------
@@ -881,6 +881,7 @@ export function Settings() {
     } catch { return null; }
   });
   const [multiwindow, setMultiwindow] = useState(getMultiwindow);
+  const [windowDrag, setWindowDrag] = useState(getWindowDrag);
   // Sound when an agent needs you (the sound itself is played elsewhere).
   const [soundOn, setSoundOn] = useState(() => { try { return localStorage.getItem("flightdeck-sound-needs-you") !== "0"; } catch { return true; } });
   const [soundVol, setSoundVol] = useState(() => {
@@ -2119,6 +2120,11 @@ export function Settings() {
                 }}
               ><span /></button>
             </div>
+            {multiwindow && <div className="set-row">
+              <div className="set-row-t"><span className="set-row-name">Drag workspaces between windows</span><span className="set-row-sub">Drag a workspace past the window edge to move it.</span></div>
+              <button className={"toggle" + (windowDrag ? " on" : "")} role="switch" aria-checked={windowDrag} aria-label="Drag workspaces between windows"
+                onClick={() => { const next = !windowDrag; setWindowDrag(next); saveWindowDrag(next); }}><span /></button>
+            </div>}
           </section>
 
           <DiagnosticsSection />

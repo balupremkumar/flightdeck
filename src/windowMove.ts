@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useApp } from "./store";
 import { useUI } from "./ui";
 import { get as getSession, releaseWorkspace, type TerminalSnapshot } from "./paneSessions";
@@ -39,7 +40,24 @@ async function resumeAll(modelIds: number[]): Promise<void> {
   }
 }
 
-export type MoveTarget = { kind: "new" } | { kind: "label"; label: string };
+export type MoveTarget = { kind: "new"; at?: { x: number; y: number; w: number; h: number } } | { kind: "label"; label: string };
+
+/** Window-scoped source events, with cleanup even if registration finishes late. */
+export function listenWorkspaceDrag(onState: (phase: "armed" | "torn" | "refused") => void, onEnd: () => void): () => void {
+  let disposed = false;
+  const removers: Array<() => void> = [];
+  const keep = (remove: () => void) => { if (disposed) remove(); else removers.push(remove); };
+  const failed = (e: unknown) => logEvent("warn", "windowMove", `Drag listener failed: ${String(e)}`);
+  try {
+    const win = getCurrentWindow();
+    win.listen<{ phase: "armed" | "torn" | "refused" }>("drag://state", ({ payload }) => { if (!disposed) onState(payload.phase); }).then(keep).catch(failed);
+    win.listen("drag://end", () => { if (!disposed) onEnd(); }).then(keep).catch(failed);
+    win.listen<{ id: number; target: MoveTarget }>("drag://drop", ({ payload }) => {
+      if (!disposed) void moveWorkspace(payload.id, payload.target).catch(failed);
+    }).then(keep).catch(failed);
+  } catch { /* browser preview */ }
+  return () => { disposed = true; removers.splice(0).forEach((remove) => remove()); };
+}
 
 export const moveWorkspaceToNewWindow = (wsId: number): Promise<MoveResult> => moveWorkspace(wsId, { kind: "new" });
 
@@ -47,7 +65,7 @@ export const moveWorkspaceToNewWindow = (wsId: number): Promise<MoveResult> => m
  *  takes it over `win://adopt` instead of booting with it. */
 export const moveWorkspaceToWindow = (wsId: number, label: string): Promise<MoveResult> => moveWorkspace(wsId, { kind: "label", label });
 
-async function moveWorkspace(wsId: number, target: MoveTarget): Promise<MoveResult> {
+export async function moveWorkspace(wsId: number, target: MoveTarget): Promise<MoveResult> {
   const ws = useApp.getState().workspaces.find((w) => w.id === wsId);
   if (!ws) return refuse("That workspace is gone.", false);
 

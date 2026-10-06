@@ -333,6 +333,16 @@ export function getMultiwindow(): boolean {
 }
 export function saveMultiwindow(on: boolean) {
   try { localStorage.setItem("flightdeck-multiwindow", on ? "1" : "0"); } catch { /* non-persistent */ }
+  window.dispatchEvent(new Event(WINDOW_DRAG_EVENT));
+}
+
+export const WINDOW_DRAG_EVENT = "flightdeck-window-drag-changed";
+export function getWindowDrag(): boolean {
+  try { return localStorage.getItem("flightdeck-window-drag") !== "0"; } catch { return true; }
+}
+export function saveWindowDrag(on: boolean) {
+  try { localStorage.setItem("flightdeck-window-drag", on ? "1" : "0"); } catch { /* non-persistent */ }
+  window.dispatchEvent(new Event(WINDOW_DRAG_EVENT));
 }
 
 // Shown in About + useful for bug reports. Keep in step with package.json /

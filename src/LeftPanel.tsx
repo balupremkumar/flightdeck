@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { CSSProperties, MouseEvent as ReactMouseEvent, DragEvent as ReactDragEvent, SVGProps } from "react";
+import type { CSSProperties, MouseEvent as ReactMouseEvent, DragEvent as ReactDragEvent, PointerEvent as ReactPointerEvent, SVGProps } from "react";
 import { useApp, type PaneModel, type Workspace } from "./store";
 import { useUI, useOverlayEsc } from "./ui";
 import { defaultCycle, vendorShort } from "./vendors";
@@ -13,6 +13,10 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { revealPath } from "./reveal";
+import { getMultiwindow, getWindowDrag, WINDOW_DRAG_EVENT } from "./settingsStore";
+import { canTearOut, idleRailDrag, pointerDragEnabled, stepRailDrag, type RailDragEvent } from "./railDrag";
+import { listenWorkspaceDrag } from "./windowMove";
+import { get as getSession } from "./paneSessions";
 import "./leftpanel.css";
 
 function initial(name: string): string {
@@ -183,6 +187,94 @@ export function LeftPanel({ expanded }: { expanded: boolean }) {
   };
 
   const tintFor = (w: Workspace) => tints[w.id] ?? autoTint(w.root);
+  const [pointerMode, setPointerMode] = useState(() => pointerDragEnabled(getMultiwindow(), getWindowDrag()));
+  useEffect(() => {
+    const update = () => setPointerMode(pointerDragEnabled(getMultiwindow(), getWindowDrag()));
+    window.addEventListener(WINDOW_DRAG_EVENT, update);
+    window.addEventListener("storage", update);
+    return () => {
+      window.removeEventListener(WINDOW_DRAG_EVENT, update);
+      window.removeEventListener("storage", update);
+    };
+  }, []);
+  const pointerState = useRef(idleRailDrag());
+  const [pointerDragging, setPointerDragging] = useState(false);
+  const [torn, setTorn] = useState(false);
+  const sendPointer = (event: RailDragEvent) => {
+    const result = stepRailDrag(pointerState.current, event);
+    pointerState.current = result.state;
+    setPointerDragging(result.state.dragging);
+    setDragId(result.state.dragging ? result.state.payload?.id ?? null : null);
+    setDragOverId(result.state.over);
+    if (!result.state.payload) setTorn(false);
+    for (const action of result.actions) {
+      if (action.type === "reorder") {
+        const ws = useApp.getState().workspaces;
+        const from = ws.findIndex((w) => w.id === action.id);
+        const to = ws.findIndex((w) => w.id === action.over);
+        if (from >= 0 && to >= 0) reorderWorkspaces(from, to);
+      } else if (action.type === "refused") {
+        pushToast("info", "A pane is still starting. Move the workspace once it is running.");
+      } else {
+        const command = action.type === "arm" ? "drag_arm" : action.type === "disarm" ? "drag_disarm" : "drag_cancel";
+        void invoke(command, action.type === "arm" ? { ...action.payload } : undefined).catch(() => {
+          sendPointer({ type: "end" });
+          pushToast("error", "Could not drag the workspace between windows.");
+        });
+      }
+    }
+  };
+  const sendPointerRef = useRef(sendPointer);
+  sendPointerRef.current = sendPointer;
+  useOverlayEsc(pointerDragging, () => sendPointer({ type: "escape" }), { restoreFocus: false });
+  useEffect(() => {
+    if (!pointerMode) { sendPointerRef.current({ type: "end" }); return; }
+    const stop = listenWorkspaceDrag((phase) => {
+      setTorn(phase === "torn");
+      sendPointerRef.current({ type: "state", phase });
+    }, () => sendPointerRef.current({ type: "end" }));
+    return () => {
+      stop();
+      if (pointerState.current.armed) void invoke("drag_cancel").catch(() => {});
+      pointerState.current = idleRailDrag();
+    };
+  }, [pointerMode]);
+  const insideWindow = (x: number, y: number) => x >= 0 && y >= 0 && x < window.innerWidth && y < window.innerHeight;
+  const pointerProps = (w: Workspace, disabled = false) => ({
+    "data-workspace-id": w.id,
+    onPointerDown: (e: ReactPointerEvent<HTMLElement>) => {
+      if (!pointerMode || disabled || e.button !== 0 || !e.isPrimary ||
+        (e.target as HTMLElement).closest("input, .lp-x")) return;
+      e.currentTarget.setPointerCapture(e.pointerId);
+      sendPointer({ type: "press", x: e.clientX, y: e.clientY, payload: {
+        kind: "workspace", id: w.id, name: w.name, tint: tintFor(w), panes: w.panes.length,
+        tearable: canTearOut(workspaces.length) && w.panes.every((p) => {
+          const s = getSession(p.id);
+          return !!s && !s.disposed && !!s.ptyId;
+        }),
+      } });
+    },
+    onPointerMove: (e: ReactPointerEvent<HTMLElement>) => {
+      if (!pointerMode || pointerState.current.payload?.id !== w.id) return;
+      const hit = document.elementFromPoint(e.clientX, e.clientY)?.closest<HTMLElement>("[data-workspace-id]");
+      const over = hit && panelRef.current?.contains(hit) ? Number(hit.dataset.workspaceId) : null;
+      sendPointer({ type: "move", x: e.clientX, y: e.clientY, inside: insideWindow(e.clientX, e.clientY), over, reorder: !sortByLast });
+      if (pointerState.current.dragging) e.preventDefault();
+    },
+    onPointerUp: (e: ReactPointerEvent<HTMLElement>) => {
+      if (!pointerMode || pointerState.current.payload?.id !== w.id) return;
+      sendPointer({ type: "release", inside: insideWindow(e.clientX, e.clientY) });
+      if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
+    },
+    onPointerCancel: () => { if (pointerMode) sendPointer({ type: "escape" }); },
+    onClick: (e: ReactMouseEvent) => {
+      if (pointerState.current.suppressClick) {
+        e.preventDefault(); e.stopPropagation(); sendPointer({ type: "click" }); return;
+      }
+      openWs(w.id);
+    },
+    style: { "--tint": tintFor(w), touchAction: pointerMode ? "none" : undefined, opacity: torn && dragId === w.id ? 0.45 : undefined } as CSSProperties,
+  });
   const setTint = (id: number, color: string) => {
     setTints((m) => { const next = { ...m, [id]: color }; saveTints(next); return next; });
   };
@@ -477,11 +569,10 @@ export function LeftPanel({ expanded }: { expanded: boolean }) {
             <button
               className={"lp-ic" + (active ? " active" : "") + (status ? ` needy-${status}` : "")}
               key={w.id}
-              onClick={() => openWs(w.id)}
+              {...pointerProps(w)}
               onContextMenu={(e) => openMenu(e, w.id)}
               title={rowTip}
               data-tip={rowTip}
-              style={{ "--tint": tintFor(w) } as CSSProperties}
             >
               {initial(w.name)}
               {/* Two number badges on a 42px tile is noise, not signal — the
@@ -560,12 +651,12 @@ export function LeftPanel({ expanded }: { expanded: boolean }) {
                 (dragOverId === w.id && dragId !== w.id ? " drag-over" : "")
               }
               key={w.id}
-              draggable={!isRenaming && !sortByLast}
+              draggable={!pointerMode && !isRenaming && !sortByLast}
               onDragStart={(e) => onRowDragStart(e, w.id)}
               onDragOver={(e) => onRowDragOver(e, w.id)}
               onDrop={(e) => onRowDrop(e, w.id)}
               onDragEnd={onRowDragEnd}
-              onClick={() => openWs(w.id)}
+              {...pointerProps(w, isRenaming)}
               onContextMenu={(e) => openMenu(e, w.id)}
               /* The meta row is a glance surface and only fits signals that
                  demand action. Worktree count and token spend are worth knowing

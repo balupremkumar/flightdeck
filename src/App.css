@@ -305,3 +305,26 @@ body {
 .topbar, .lpanel, .pane, .phead, .dialog, .set-modal, .explorer, .rv-drawer {
   transition: background-color .15s ease, border-color .15s ease, color .15s ease;
 }
+/* Rust highlights the whole receiving window, including the launcher. */
+.drag-drop-hint {
+  position: fixed;
+  inset: 6px;
+  z-index: 10000;
+  pointer-events: none;
+  border: 2px solid var(--drag-tint, var(--accent));
+  border-radius: 10px;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+}
+.drag-drop-hint-pill {
+  margin-top: 12px;
+  max-width: calc(100% - 32px);
+  overflow-wrap: anywhere;
+  padding: 8px 14px;
+  border: 1px solid var(--drag-tint, var(--accent));
+  border-radius: 999px;
+  background: var(--bg-elevated);
+  color: var(--text);
+  font-size: 13px;
+}
