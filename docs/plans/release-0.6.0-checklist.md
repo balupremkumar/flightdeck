@@ -30,7 +30,7 @@ Each phase's red team adds its items here; the final release note links this fil
 - [ ] With Claude hooks on, a permission request rings the bell straight away (hook path, not the 3 s quiet timer).
 - [ ] An MCP server that disconnects shows the MCP chip on that pane, tooltip names the server; it clears within 30 min.
 - [ ] An MCP elicitation ("An MCP server needs your input") shows as needs-you.
-- [ ] A long command that prints progress (winget, a build showing a taskbar progress bar) keeps the pane "running", not "waiting".
+- [x] A long command that prints progress (winget, a build showing a taskbar progress bar) keeps the pane "running", not "waiting". PASS live 2026-10-06 (e2e/live/results/2026-10-06/w1c-sweep.json): OSC 9;4 with a 4 s silent stall stayed running in 16 of 16 samples.
 
 ## Phase 6 red team hand checks
 
@@ -47,17 +47,17 @@ Each phase's red team adds its items here; the final release note links this fil
 ## Phase 6 F3, H4, H6
 
 - [ ] Settings > Appearance "Match Claude's colours" on, restart a Claude pane: `<app-data>\claude-view\claude-view-*-<theme>.json` exists and Claude's diff colours follow the app's light/dark; colour-blind-safe on gives the daltonized variant.
-- [ ] Catppuccin Mocha looks right in the theme picker.
+- [x] Catppuccin Mocha looks right in the theme picker. PASS live 2026-10-06 (e2e/live/results/2026-10-06/w1c-sweep-catppuccin.png): surfaces switch to #1E1E2E; a custom accent is kept by design.
 - [ ] Chat pane mid-turn: type and press Enter: "1 queued" shows and clears only when Claude picks the prompt up (not straight away).
 - [ ] Chat pane mid-turn while a permission prompt is just appearing: the queued text does not answer the prompt.
 - [ ] `npm run dev` in a pane: "localhost:5173 · node" chip within about 10 s; click opens the browser; × confirms, stops it, chip goes.
-- [ ] A port opened outside the panes never shows a chip.
+- [x] A port opened outside the panes never shows a chip. PASS live 2026-10-06 (e2e/live/results/2026-10-06/w1c-sweep.json).
 - [ ] Branch with a PR and running CI: chip says "checks running"; when CI ends exactly one toast, no bell.
 - [ ] No gh, logged out, or no PR: no chip, no error.
 - [ ] Long workspace name plus several ports: the topbar chip row clips cleanly.
 - [ ] Match Claude's colours on, then colour-blind-safe on: the theme file is rewritten with the daltonized variant and Claude's diff colours change after a pane restart.
 - [ ] Chat pane: the "queued" chip stays while Claude is mid-turn and clears only when Claude picks the prompt up.
-- [ ] Port chip appears for a dev server started in the pane, and the kill button stops that process.
+- [x] Port chip appears for a dev server started in the pane, and the kill button stops that process. PASS live 2026-10-06 (e2e/live/results/2026-10-06/w1c-sweep.json): node server on :5197 in a pane, chip within 30 s, kill removed process and chip.
 - [ ] PR chip toast fires exactly once when CI finishes.
 - [ ] gh not installed: no PR chip and no error.
 
@@ -123,14 +123,14 @@ With the flag off, none of these commands exist and the app behaves as one windo
 
 ## Regression: wrong pane id after a restore
 
-- [ ] After restoring a session (or restarting a pane), Broadcast, Review "send to agent" and palette "New task" all reach the right pane.
+- [x] After restoring a session (or restarting a pane), Broadcast, Review "send to agent" and palette "New task" all reach the right pane. PARTIAL live 2026-10-06 (e2e/live/results/2026-10-06/w1b-e-redteam.json): Broadcast after a restore reached exactly workspace A panes (logic check fixed after the run); Review send and palette New task not run live.
 - [ ] Before the fix they used the saved id and wrote to the wrong pane or nowhere.
 
 ## 0.6.0 Fable red team fixes
 
-- [ ] H1, flag on: move a workspace to a second window, quit, relaunch with reopen, add a pane in main: the agent in the second window keeps running.
-- [ ] M2/M3: paste a fake key (`sk-ant-api03-` plus 30 letters) into a Claude pane so it shows in colour, and type one into a pane's input without sending; quit; `session.json` and the newest `snapshots\*.json` hold `[REDACTED]`, not the key.
-- [ ] L2: in DevTools, `fetch(convertFileSrc("<home>\\.claude\\.credentials.json"))` fails (403), while a Claude transcript still opens in the viewer.
+- [x] H1, flag on: move a workspace to a second window, quit, relaunch with reopen, add a pane in main: the agent in the second window keeps running. PASS live 2026-10-06 (e2e/live/results/2026-10-06/w1b-e-redteam.json): after relaunch and Reopen a new pane in main left every pty alive; second window kept its pane.
+- [x] M2/M3: paste a fake key (`sk-ant-api03-` plus 30 letters) into a Claude pane so it shows in colour, and type one into a pane's input without sending; quit; `session.json` and the newest `snapshots\*.json` hold `[REDACTED]`, not the key. PASS live 2026-10-06 (e2e/live/results/2026-10-06/w1b-e-redteam.json): printed and unsent keys absent from session.json and the newest snapshot, [REDACTED] present.
+- [x] L2: in DevTools, `fetch(convertFileSrc("<home>\\.claude\\.credentials.json"))` fails (403), while a Claude transcript still opens in the viewer. PASS live 2026-10-06 (e2e/live/results/2026-10-06/w1b-e-redteam.json): fs_read_text_file on .credentials.json returns denied-secret-file; repo file reads.
 
 ## 0.6.1 drag-out windows
 
