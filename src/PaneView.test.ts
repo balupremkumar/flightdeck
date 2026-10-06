@@ -8,9 +8,27 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn(), emit: vi.fn() }));
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn(), openPath: vi.fn(), revealItemInDir: vi.fn() }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ save: vi.fn(), open: vi.fn() }));
+vi.mock("./vendors", () => ({
+  vendorMeta: (id: string) => ({ kind: id === "test-shell" ? "shell" : "agent" }),
+}));
 
-const { aheadBehindLabel, aheadBehindTitle, pruneProcSamples, stableProcName, PROC_STABLE_MS } =
+const { aheadBehindLabel, aheadBehindTitle, pruneProcSamples, stableProcName, PROC_STABLE_MS, usesProcessTitle } =
   await import("./PaneView");
+
+describe("vendor process titles", () => {
+  it("suppresses auto-titles and process chips for agent vendors with stable MCP children", () => {
+    const samples = [{ name: "python", at: 0 }];
+    expect(stableProcName(samples, PROC_STABLE_MS + 1000)).toBe("python");
+    expect(usesProcessTitle("test-agent")).toBe(false);
+  });
+
+  it("allows shell auto-titles and process chips after vim becomes stable", () => {
+    const samples = [{ name: "vim", at: 0 }];
+    expect(usesProcessTitle("test-shell")).toBe(true);
+    expect(stableProcName(samples, PROC_STABLE_MS - 1)).toBeNull();
+    expect(stableProcName(samples, PROC_STABLE_MS + 1000)).toBe("vim");
+  });
+});
 
 describe("aheadBehindLabel (QL-740)", () => {
   it("shows both directions compactly", () => {
