@@ -49,6 +49,8 @@ export interface SessionInfo {
   jsonl_path: string | null;
   /** The transcript file was rotated/replaced since the last call: offsets are stale. */
   rotated?: boolean;
+  /** Session id a restart may --resume: the pane's own, never a newest-file guess. Null when none. */
+  resume_id?: string | null;
 }
 
 export const TAIL_MAX_RECORDS = 500;

@@ -232,6 +232,10 @@ pub struct SessionInfo {
     /// True when `jsonl_path` is a newer file than the one first pinned/resolved
     /// (Claude rotates to a fresh JSONL on /clear). The UI must reset its tailer.
     pub rotated: bool,
+    /// The session id a restart may `--resume`: the pane's own pinned id, moved
+    /// forward only along `conversation_reset` records in its own transcripts
+    /// (see `resume_id`). None when the pane has no pinned transcript to resume.
+    pub resume_id: Option<String>,
 }
 
 fn mtime_ms(p: &Path) -> Option<u64> {
@@ -276,7 +280,74 @@ fn info_from(state: &SessionState, root: &Path, exclude: &[String]) -> SessionIn
     let rot = if state.session_id.is_some() && state.spawn_ms > 0 { rotated_jsonl(root, state, exclude) } else { None };
     let rotated = rot.is_some();
     let jsonl_path = rot.or(own).map(|p| p.to_string_lossy().into_owned());
-    SessionInfo { session_id: state.session_id.clone(), pinned: state.pinned, jsonl_path, rotated }
+    SessionInfo { session_id: state.session_id.clone(), pinned: state.pinned, jsonl_path, rotated, resume_id: resume_id(state, root) }
+}
+
+/// First `new_conversation_id` string found anywhere in a parsed record.
+fn find_new_conversation_id(v: &Value) -> Option<String> {
+    match v {
+        Value::Object(m) => m
+            .get("new_conversation_id")
+            .and_then(|x| x.as_str())
+            .map(String::from)
+            .or_else(|| m.values().find_map(find_new_conversation_id)),
+        Value::Array(a) => a.iter().find_map(find_new_conversation_id),
+        _ => None,
+    }
+}
+
+/// The conversation id the LAST `conversation_reset` record in this transcript
+/// names, if any. Only lines carrying the field name are parsed.
+fn reset_target(path: &Path) -> Option<String> {
+    use std::io::BufRead;
+    let f = std::fs::File::open(path).ok()?;
+    let mut last = None;
+    for line in std::io::BufReader::new(f).lines() {
+        let Ok(line) = line else { break };
+        if !line.contains("new_conversation_id") {
+            continue;
+        }
+        if let Some(id) = serde_json::from_str::<Value>(&line).ok().as_ref().and_then(find_new_conversation_id) {
+            last = Some(id);
+        }
+    }
+    last
+}
+
+/// What a restart may resume. Never a newest-file guess: only the pane's own
+/// pinned id, followed through its own `conversation_reset` records (a /clear
+/// rotation) to a transcript that exists. A foreign jsonl in the same cwd slug
+/// is never reached because nothing here lists the directory. An unpinned pane
+/// (fork / fallback, id found by guessing) gets None.
+pub fn resume_id(state: &SessionState, root: &Path) -> Option<String> {
+    if !state.pinned {
+        return None;
+    }
+    let dir = root.join(crate::usage::slugify(&state.cwd));
+    let mut id = state.session_id.clone().filter(|i| is_uuid(i))?;
+    if !dir.join(format!("{id}.jsonl")).is_file() {
+        return None;
+    }
+    for _ in 0..16 {
+        match reset_target(&dir.join(format!("{id}.jsonl"))) {
+            Some(next) if next != id && is_uuid(&next) && dir.join(format!("{next}.jsonl")).is_file() => id = next,
+            _ => break,
+        }
+    }
+    Some(id)
+}
+
+/// Sessions of panes whose process has exited, keyed by pty id, so a restart of
+/// an exited pane (the Quiet terminal switch) can still resume its conversation.
+/// Pty ids are never reused. Bounded: the oldest ids go first.
+pub const EXITED_KEEP: usize = 64;
+
+pub fn remember_exited(map: &mut std::collections::HashMap<u32, SessionState>, pty_id: u32, st: SessionState) {
+    map.insert(pty_id, st);
+    while map.len() > EXITED_KEEP {
+        let Some(oldest) = map.keys().min().copied() else { break };
+        map.remove(&oldest);
+    }
 }
 
 /// Resolve an unknown session (fork / fallback) by polling, bounded.
@@ -303,12 +374,13 @@ fn resolve_blocking(state: &mut SessionState, root: &Path, budget: Duration) {
 pub async fn pane_session_info(app: AppHandle, pty_id: u32) -> Result<SessionInfo, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let reg = app.state::<Registry>();
-        let mut state = {
-            let panes = reg.panes.lock().unwrap();
-            let st = panes.get(&pty_id).ok_or_else(|| "no such pane".to_string())?.session.lock().unwrap().clone();
-            st
-        };
+        let live = reg.panes.lock().unwrap().get(&pty_id).map(|p| p.session.lock().unwrap().clone());
         let root = projects_root().ok_or_else(|| "USERPROFILE not set".to_string())?;
+        let Some(mut state) = live else {
+            // Process exited (ptyexit pruned the pane): answer from the kept session.
+            let st = reg.exited.lock().unwrap().get(&pty_id).cloned().ok_or_else(|| "no such pane".to_string())?;
+            return Ok(info_from(&st, &root, &[]));
+        };
         if state.needs_resolve && state.session_id.is_none() {
             resolve_blocking(&mut state, &root, Duration::from_secs(3));
             if let Some(p) = reg.panes.lock().unwrap().get(&pty_id) {
@@ -1051,5 +1123,57 @@ mod tests {
         std::thread::sleep(Duration::from_millis(30));
         std::fs::write(dir.join(format!("{c}.jsonl")), user("again")).unwrap();
         assert!(info_from(&st, &root, &[]).jsonl_path.unwrap().ends_with(&format!("{c}.jsonl")));
+    }
+    fn reset_line(new_id: &str) -> String {
+        format!("{{\"type\":\"system\",\"subtype\":\"conversation_reset\",\"trigger\":\"clear\",\"new_conversation_id\":\"{new_id}\"}}\n")
+    }
+
+    #[test]
+    fn resume_id_ignores_foreign_newer_jsonl_and_follows_own_reset() {
+        let root = tmp("resume");
+        let cwd = r"C:\work\resume";
+        let dir = root.join(crate::usage::slugify(cwd));
+        std::fs::create_dir_all(&dir).unwrap();
+        let spawn_ms = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64;
+        std::thread::sleep(Duration::from_millis(30));
+        let a = "11111111-1111-4111-8111-111111111111";
+        let foreign = "44444444-4444-4444-8444-444444444444";
+        let b = "22222222-2222-4222-8222-222222222222";
+        let c = "33333333-3333-4333-8333-333333333333";
+        std::fs::write(dir.join(format!("{a}.jsonl")), user("one")).unwrap();
+        let st = SessionState { session_id: Some(a.into()), pinned: true, needs_resolve: false, spawn_ms, cwd: cwd.into() };
+        std::thread::sleep(Duration::from_millis(30));
+        // A hand-run claude in the same folder: newer, born after spawn, never named by our file.
+        std::fs::write(dir.join(format!("{foreign}.jsonl")), user("someone else")).unwrap();
+        assert_eq!(resume_id(&st, &root).as_deref(), Some(a));
+        assert_eq!(info_from(&st, &root, &[]).resume_id.as_deref(), Some(a));
+        // Our own file records a reset naming a transcript that exists: followed.
+        std::fs::write(dir.join(format!("{b}.jsonl")), user("after clear")).unwrap();
+        std::fs::write(dir.join(format!("{a}.jsonl")), format!("{}{}", user("one"), reset_line(b))).unwrap();
+        assert_eq!(resume_id(&st, &root).as_deref(), Some(b));
+        // Chained rotation.
+        std::fs::write(dir.join(format!("{c}.jsonl")), user("again")).unwrap();
+        std::fs::write(dir.join(format!("{b}.jsonl")), format!("{}{}", user("after clear"), reset_line(c))).unwrap();
+        assert_eq!(resume_id(&st, &root).as_deref(), Some(c));
+        // A reset naming a missing file is not followed.
+        std::fs::write(dir.join(format!("{c}.jsonl")), format!("{}{}", user("again"), reset_line("55555555-5555-4555-8555-555555555555"))).unwrap();
+        assert_eq!(resume_id(&st, &root).as_deref(), Some(c));
+        // Unpinned (guessed) panes and panes with no transcript yield nothing.
+        assert_eq!(resume_id(&SessionState { pinned: false, ..st.clone() }, &root), None);
+        assert_eq!(resume_id(&SessionState { session_id: Some(foreign.replace('4', "6")), ..st.clone() }, &root), None);
+    }
+
+    #[test]
+    fn exited_sessions_are_kept_and_bounded() {
+        let mut m = std::collections::HashMap::new();
+        let st = |n: u32| SessionState { session_id: Some(format!("id{n}")), pinned: true, ..Default::default() };
+        remember_exited(&mut m, 7, st(7));
+        assert_eq!(m.get(&7).and_then(|s| s.session_id.clone()).as_deref(), Some("id7"));
+        for n in 100..100 + EXITED_KEEP as u32 + 5 {
+            remember_exited(&mut m, n, st(n));
+        }
+        assert_eq!(m.len(), EXITED_KEEP);
+        assert!(!m.contains_key(&7));
+        assert!(m.contains_key(&(100 + EXITED_KEEP as u32 + 4)));
     }
 }

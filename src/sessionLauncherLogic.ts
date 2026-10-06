@@ -3,6 +3,7 @@
 // overlay itself is a lazy chunk. SessionLauncher.tsx re-exports everything here.
 import { invoke } from "@tauri-apps/api/core";
 import { useApp, type PaneModel } from "./store";
+import { useUI } from "./ui";
 import { bytes } from "./format";
 import { resolveExisting } from "./pathcheck";
 import { paneSessionInfo, type SessionInfo } from "./chatlog";
@@ -293,23 +294,30 @@ export async function launchResume(
 
 /** Stage `--resume <id>` for this pane's NEXT spawn when its Claude session has a
  *  transcript on disk, so a restart reopens the same conversation. The id is the
- *  transcript's file name (it follows a /clear rotation, unlike the pinned id).
- *  Returns false, staging nothing, when there is no live pty, no transcript yet
- *  (a pane with no turn: `--resume` would fail), or the backend refuses; the
- *  caller then restarts plain. */
+ *  backend's `resume_id`: the pane's own pinned session, followed only along the
+ *  conversation-reset records in its own transcripts. Never the newest file in the
+ *  folder, which may belong to another claude process.
+ *  Returns false, staging nothing, when there is no pty, no transcript yet (a pane
+ *  with no turn: `--resume` would fail), or the backend refuses; the caller then
+ *  restarts plain. A toast says so when a conversation existed or the lookup failed. */
 export async function stageResumeOfCurrentSession(
   pane: Pick<PaneModel, "vendor" | "cwd">,
   ptyId: number,
   info: (ptyId: number) => Promise<SessionInfo> = paneSessionInfo
 ): Promise<boolean> {
   if (pane.vendor !== RESUME_VENDOR || ptyId <= 0) return false;
+  const noResume = () => useUI.getState().pushToast("info", "Couldn't resume this pane's conversation, Claude starts fresh.");
   try {
     const si = await info(ptyId);
-    const id = si.jsonl_path?.split(/[\\/]/).pop()?.replace(/\.jsonl$/i, "");
-    if (!id || !/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(id)) return false;
+    const id = si.resume_id;
+    if (!id || !/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(id)) {
+      if (si.jsonl_path) noResume();
+      return false;
+    }
     await invoke("stage_launch_args", { vendor: pane.vendor, cwd: pane.cwd, args: resumeArgs(id, false) });
     return true;
   } catch {
+    noResume();
     return false;
   }
 }
