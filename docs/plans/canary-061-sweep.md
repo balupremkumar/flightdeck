@@ -6,8 +6,9 @@ Checklist under test: [release-0.6.0-checklist.md](release-0.6.0-checklist.md).
 
 ## Decisions
 
-- Claude panes open in the terminal again; "Open Claude panes in" is Terminal / Quiet terminal (Claude focus view) / Chat, default Terminal (done, 3 commits).
-- Balu picks the final default (Terminal or Quiet terminal) from side-by-side screenshots of a real turn.
+- Claude panes open in the terminal again; "Open Claude panes in" is Terminal / Quiet terminal (Claude focus view) / Chat (done, 3 commits).
+- Default is Quiet terminal, chosen by Balu 2026-10-06. Any pane switches from its menu ("Quiet terminal" checkbox) and the restart resumes the same conversation (branch `qol/quiet-default`).
+- Settings > Agents "Extra CLI flags" and "binary path override" are saved but never passed to the agent; fix backlogged (BACKLOG B, K9).
 - Test panes run the cheapest models: Claude Haiku, the cheapest Codex model on the ChatGPT plan.
 - Usage chips (Claude and Codex) pass when close to accurate, not exact.
 - PR/CI chip items are skipped (no throwaway PR approved).
@@ -32,7 +33,7 @@ Checklist under test: [release-0.6.0-checklist.md](release-0.6.0-checklist.md).
 
 ## Waves
 
-1. W0: Terminal vs Quiet terminal screenshots of the same real Haiku turn; Balu picks the default.
+1. W0: decided, Quiet terminal is the default (Balu 2026-10-06); no screenshot comparison needed.
 2. W1, non-intrusive: reload/reattach, restart x20, missing exe, 50 KB paste, TUI memory, TN focus view, Chat, Home, themes and colour files, regression pane id, red team H1/M2/M3/L2, viewers (PDF, images), 10+ WebGL panes, health (fake MCP server for disconnect/elicitation, scripted OSC 9;4), port chip, session search.
 3. W2, Codex: trust prompt in a fresh worktree, usage chip vs `/status`, resume.
 4. W3, intrusive (Balu away): copy/paste, multi-window block, Canary and stable at once (stable agent PIDs before and after).

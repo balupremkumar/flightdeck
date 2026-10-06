@@ -123,6 +123,7 @@ Order is dependency-driven; the vendor adapter is the load-bearing refactor ever
 - ~~K6. Close-workspace has no active-session warning~~ — **FIXED session 4** (ConfirmDialog; session 6 added worktree cleanup to the same flow).
 - **K7. Dark mode lags light mode visually** -> U7.
 - **K8. Icons / the Kanban icon button are too small** -> U4/U6.
+- **K9. Agents settings "Extra CLI flags" and "binary path override" do nothing** — Settings > Agents saves both but they are never passed to the agent (no reader outside Settings.tsx/settingsStore.ts). Wiring them through `pwsh -Command` needs argument quoting so typed flags cannot run commands. Found 2026-10-06 by the live Canary sweep; backlogged by Balu.
 
 ---
 

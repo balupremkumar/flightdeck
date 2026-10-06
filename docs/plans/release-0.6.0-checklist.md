@@ -72,8 +72,9 @@ Each phase's red team adds its items here; the final release note links this fil
 
 ## TN (terminal noise)
 
-- [ ] New Claude pane opens in the terminal by default; with Settings > Agents set to Chat it opens in Chat and the folder trust prompt is reachable via "Switch to Terminal". Quiet terminal opens with focus mode on.
-- [ ] Focus mode pane: permission prompt and an AskUserQuestion dialog are still visible in Claude's focus view.
+- [ ] New Claude pane opens in Quiet terminal (focus mode on) by default; with Settings > Agents set to Terminal it opens in the full terminal, and set to Chat it opens in Chat and the folder trust prompt is reachable via "Switch to Terminal".
+- [ ] Pane menu "Quiet terminal" checkbox switches a pane either way, after a turn has happened the restart reopens the same conversation (history visible, Chat view follows it), and a pane with no turn yet restarts plain.
+- [ ] Quiet terminal pane: permission prompt and an AskUserQuestion dialog are still visible in Claude's focus view.
 - [ ] Never run through pwsh yet (agent sandbox blocked it): a Claude pane launches with `--settings '<app-data>\claude-view\claude-view-focus.json'`; also with the setup wrapper on (double quoting). Quick check from a plain PowerShell window: `pwsh -NoProfile -Command "claude --settings '<that path>' --version"` prints the version.
 - [ ] Focus pane: Ctrl+O shows the full transcript; `/focus off` inside the pane still works.
 - [ ] After `/focus` in one pane, a classic pane still shows full output.
