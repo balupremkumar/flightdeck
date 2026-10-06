@@ -46,8 +46,12 @@ listenForFocusPane();
 listenForScaleChange();
 // Phase 4: settings changed in another window apply here live (storage events).
 armStorageSync();
-void booted.then(() => offerSessionRestore()).then(() => replayPendingAdopts()).then(() => {
-  restoreWindows();
+void booted.then(() => offerSessionRestore()).then(async (restoreSecondaries) => {
+  await replayPendingAdopts();
+  return restoreSecondaries;
+}).then((restoreSecondaries) => {
+  // Declined "Reopen last session?": Rust already dropped the secondaries, nothing to recreate.
+  if (restoreSecondaries) restoreWindows();
   void runWorktreeGc();
   // UX-583: after a bad shutdown, say exactly what came back and whether each
   // worktree survived, rather than a vague "restored" that leaves you guessing.

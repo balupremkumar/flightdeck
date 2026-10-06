@@ -463,6 +463,12 @@ pub(crate) fn seed_restored(doc: &SessionDoc) {
     }
 }
 
+/// Write the held slices now (a command that changed them and cannot wait for the
+/// next push, e.g. a declined launch restore).
+pub(crate) fn write_now(app: &AppHandle) -> Result<(), String> {
+    write_merged(app)
+}
+
 // Merge whatever is held and write it. Runs on a worker or command thread,
 // never the main thread.
 fn write_merged(app: &AppHandle) -> Result<(), String> {

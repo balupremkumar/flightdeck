@@ -67,12 +67,12 @@ const docMoved = {
   ],
 };
 
-async function launch(multiwindow, seed = doc) {
+async function launch(multiwindow, seed = doc, startup = "reopen") {
   const context = await browser.newContext({ viewport: { width: 1600, height: 900 } });
   const bus = new MultiWindowBus(context, URL);
   await bus.install();
   bus.seedDoc(seed);
-  const boot = `localStorage.setItem("flightdeck-startup","reopen");localStorage.setItem("flightdeck-multiwindow","${multiwindow ? 1 : 0}");`;
+  const boot = `localStorage.setItem("flightdeck-startup","${startup}");localStorage.setItem("flightdeck-multiwindow","${multiwindow ? 1 : 0}");`;
   await context.addInitScript(`if (/^https?:/.test(location.protocol)) {\n${boot}\n${mock}\n}`);
   context.on("page", (p) => p.on("pageerror", (e) => pageErrors.push(e.message)));
   const main = await context.newPage();
@@ -149,6 +149,53 @@ const storeState = (page) => page.evaluate(async () => {
   const ids = m.workspaces.flatMap((w) => w.panes);
   check(ids.length === 2 && !ids.includes(MOVED), `main minted a fresh pane id, not fw-1's (${JSON.stringify(ids)})`);
   check(bus.kills.length === 0, `adding a pane in main killed nothing (${JSON.stringify(bus.kills)})`);
+  await context.close();
+}
+
+// ---- D. "Reopen last session?" shown, Cancel: no secondary, no spawn for its workspace ----
+{
+  const { context, bus, main } = await launch(true, doc, "launcher");
+  await until(async () => main.getByRole("alertdialog", { name: "Reopen last session?" }).isVisible(), 10000, "the reopen prompt");
+  await sleep(1500);
+  check(bus.restores.length === 0 && context.pages().length === 1, "prompt open: no secondary is created before the answer");
+  await main.getByRole("button", { name: "Cancel" }).click();
+  await sleep(3000);
+  check(bus.restores.length === 0 && context.pages().length === 1, `Cancel: no secondary page (${context.pages().length} page(s), restores ${bus.restores})`);
+  check(bus.discards.includes("fw-1"), `Cancel: Rust discarded fw-1's pending restore (${bus.discards})`);
+  check(!bus.windows.has("fw-1") && !(bus.doc.windows ?? []).some((w) => w.label === "fw-1"), "Cancel: fw-1 is gone from the registry and the document");
+  check(!bus.spawns.some((s) => s.modelId === FW_PANE), `Cancel: no agent spawned for the secondary's workspace (${JSON.stringify(bus.spawns.map((s) => s.modelId))})`);
+  check((await storeState(main)).workspaces.length === 0, "Cancel: nothing reopened in main");
+  await context.close();
+}
+
+// ---- E. prompt shown, Reopen session: main hydrates, then the secondary is restored ----
+{
+  const { context, bus, main } = await launch(true, doc, "launcher");
+  await until(async () => main.getByRole("alertdialog", { name: "Reopen last session?" }).isVisible(), 10000, "the reopen prompt");
+  await sleep(1500);
+  check(bus.restores.length === 0, "prompt open: still no secondary");
+  await main.getByRole("button", { name: "Reopen session" }).click();
+  await until(async () => bus.restores.includes("fw-1"), 10000, "restore_windows to create fw-1 after Reopen");
+  const m = await storeState(main);
+  check(m.workspaces.length === 1 && m.workspaces[0].id === 1, `Reopen: main hydrated its own workspace (${JSON.stringify(m.workspaces.map((w) => w.id))})`);
+  const fw = bus.pages.get("fw-1");
+  if (fw) await fw.waitForLoadState("networkidle").catch(() => {});
+  check(!!(await until(async () => fw && /TICK-\d+-\d+/.test((await termText(fw, FW_PANE)) ?? ""), 8000, "fw-1 pane output")), "Reopen: fw-1 pane prints output");
+  check(bus.discards.length === 0, "Reopen: nothing discarded");
+  await context.close();
+}
+
+// ---- F. main holds nothing but a secondary does: the prompt still appears, Cancel keeps it closed ----
+{
+  const docSecondaryOnly = { ...doc, windows: [{ label: "main", workspaceIds: [] }, { label: "fw-1", workspaceIds: [FW_WS], activeWorkspaceId: FW_WS }], workspaces: [doc.workspaces[1]], activeWorkspaceId: FW_WS };
+  const { context, bus, main } = await launch(true, docSecondaryOnly, "launcher");
+  await until(async () => main.getByRole("alertdialog", { name: "Reopen last session?" }).isVisible(), 10000, "the reopen prompt with an empty main");
+  await sleep(1500);
+  check(bus.restores.length === 0, "empty main, prompt open: no secondary yet");
+  await main.getByRole("button", { name: "Cancel" }).click();
+  await sleep(3000);
+  check(bus.restores.length === 0 && context.pages().length === 1, "empty main, Cancel: no secondary page");
+  check(!bus.spawns.some((s) => s.modelId === FW_PANE), "empty main, Cancel: no agent spawned for the secondary's workspace");
   await context.close();
 }
 

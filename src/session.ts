@@ -16,7 +16,7 @@ import {
   type SessionDraft, type PersistedWorkspace,
 } from "./persist";
 import { repoToplevel, closeWorkspaceWithCleanup, type WorktreeInfo } from "./worktrees";
-import { getStartupBehavior } from "./settingsStore";
+import { getStartupBehavior, getMultiwindow } from "./settingsStore";
 import { markRestoredPane } from "./ptyAttach";
 import { lastLine } from "./attention";
 import { redactText } from "./transcript";
@@ -535,10 +535,21 @@ export function armCleanExitSentinel() {
   });
 }
 
+/** Secondary windows the saved session had open (flag on only). Main's load
+ *  carries their `windows[]` entries even though it holds none of their workspaces. */
+export function savedSecondaryWindows(doc: { windows?: { label: string; workspaceIds: number[] }[] }, multiwindow: boolean): number {
+  if (!multiwindow) return 0;
+  return (doc.windows ?? []).filter((w) => w.label !== "main" && w.workspaceIds.length > 0).length;
+}
+
 /** Boot entry: offer to reopen the previous session. Mounting a restored pane
- *  respawns its PTY, so "reopen" relaunches the agents in place. */
-export async function offerSessionRestore() {
-  if (!isMainWindow()) return;
+ *  respawns its PTY, so "reopen" relaunches the agents in place.
+ *
+ *  Resolves once the answer is in: true when the secondary windows may be
+ *  recreated (restored, no prompt needed, or nothing to ask), false when the
+ *  user declined, in which case Rust has already discarded them. */
+export async function offerSessionRestore(): Promise<boolean> {
+  if (!isMainWindow()) return true;
   try {
     if (await isSafeMode()) {
       useUI.getState().pushToast("info", "Started in safe mode — previous session not restored.");
@@ -546,10 +557,10 @@ export async function offerSessionRestore() {
       // auto-restore, not awareness).
       if (await hasPreviousSession())
         useUI.getState().pushToast("info", "A previous session exists — restart without safe mode to reopen it.");
-      return;
+      return true;
     }
     const doc = await loadSession();
-    if (!doc) return;
+    if (!doc) return true;
     // UX-554 pane groups restore unconditionally — workspace-independent
     // state, so declining the workspace prompt below shouldn't wipe them.
     // parseUiPrefs is the backward-compat boundary: a doc saved before this
@@ -563,25 +574,41 @@ export async function offerSessionRestore() {
     setRestoredScrollback(prefs.scrollback);
     setRestoredPaneChat(prefs.paneChat);
     setRestoredPaneColor(prefs.paneColor);
-    if (doc.workspaces.length === 0) return;
-    if (useApp.getState().workspaces.length > 0) return; // user already moving
+    // Main may hold no workspace while a secondary window does: still ask.
+    const others = savedSecondaryWindows(doc, getMultiwindow());
+    if (doc.workspaces.length === 0 && others === 0) return true;
+    if (useApp.getState().workspaces.length > 0) return true; // user already moving
     // Settings > Startup (91) — persisted-but-inert until now. "Reopen last
     // session" skips the prompt entirely; "Show launcher" asks first.
     if (getStartupBehavior() === "reopen") {
-      void hydrateFrom(doc.workspaces, doc.activeWorkspaceId);
-      return;
+      if (doc.workspaces.length > 0) await hydrateFrom(doc.workspaces, doc.activeWorkspaceId);
+      return true;
     }
     const nPanes = doc.workspaces.reduce((n, w) => n + w.panes.length, 0);
-    useUI.getState().requestConfirm({
-      title: "Reopen last session?",
-      body: `${doc.workspaces.length} workspace${doc.workspaces.length === 1 ? "" : "s"} with ${nPanes} pane${nPanes === 1 ? "" : "s"} from last time. Reopening relaunches each agent in its directory (isolated panes reattach their worktrees).`,
-      confirmLabel: "Reopen session",
-      onConfirm: () => { void hydrateFrom(doc.workspaces, doc.activeWorkspaceId); },
-      // Declined: last session's agents are still running in Rust and nobody
-      // will claim them. Kill them now rather than leaving them invisible.
-      onCancel: () => { void invoke("pty_reap_unclaimed").catch(() => {}); },
+    const mainPart = doc.workspaces.length === 0 ? "" : `${doc.workspaces.length} workspace${doc.workspaces.length === 1 ? "" : "s"} with ${nPanes} pane${nPanes === 1 ? "" : "s"}`;
+    const otherPart = others === 0 ? "" : `${others} other window${others === 1 ? "" : "s"}`;
+    // The secondaries wait for the answer: they are recreated only after main's
+    // hydrate, and never when the user declines.
+    return await new Promise<boolean>((resolve) => {
+      useUI.getState().requestConfirm({
+        title: "Reopen last session?",
+        body: `${[mainPart, otherPart].filter(Boolean).join(" and ")} from last time. Reopening relaunches each agent in its directory (isolated panes reattach their worktrees).`,
+        confirmLabel: "Reopen session",
+        onConfirm: () => {
+          const hydrated = doc.workspaces.length > 0 ? hydrateFrom(doc.workspaces, doc.activeWorkspaceId) : Promise.resolve();
+          void hydrated.catch(() => {}).then(() => resolve(true));
+        },
+        // Declined: last session's agents are still running in Rust and nobody
+        // will claim them. Kill them now rather than leaving them invisible, and
+        // let Rust forget the secondaries that were waiting to be recreated.
+        onCancel: () => {
+          void invoke("pty_reap_unclaimed").catch(() => {});
+          void invoke("discard_pending_restores").catch(() => {}).then(() => resolve(false));
+        },
+      });
     });
   } catch {
     /* browser preview / corrupt doc — start clean, never block launch */
+    return true;
   }
 }

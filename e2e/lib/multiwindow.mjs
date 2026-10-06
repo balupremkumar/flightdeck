@@ -62,6 +62,7 @@ export class MultiWindowBus {
     this.doc = null; // the session document on "disk" (seedDoc); null = the mock's own boot doc
     this.restored = false; // main planned its launch restore (once per run, like RESTORE_PLANNED)
     this.restores = []; // labels restore_windows created, in order
+    this.discards = []; // labels discard_pending_restores forgot (a declined restore prompt)
     this.ensureMain();
   }
 
@@ -390,6 +391,18 @@ export class MultiWindowBus {
         return this.loadSession(label);
       case "restore_windows":
         return label === "main" ? this.restoreWindows() : [];
+      case "discard_pending_restores": {
+        // windows.rs discard_pending_restores: forget uncreated secondaries, drop their slices and doc entries.
+        if (label !== "main") throw new Error("only main discards restores");
+        const labels = [...this.windows.entries()].filter(([l, r]) => l !== "main" && !r.booted && !r.created && r.workspaceIds.length > 0).map(([l]) => l);
+        for (const l of labels) {
+          this.windows.delete(l);
+          this.slices.delete(l);
+          if (this.doc) this.doc.windows = (this.doc.windows ?? []).filter((w) => w.label !== l);
+        }
+        this.discards.push(...labels);
+        return labels;
+      }
       case "set_multiwindow": {
         const was = this.multiwindow;
         this.multiwindow = !!a.enabled;

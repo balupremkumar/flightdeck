@@ -43,6 +43,9 @@ export interface SessionDoc {
   // Opaque UI-preference blob (theme, ui scale, panel collapsed, ...) — shaped
   // by the caller, round-tripped as-is.
   uiPrefs: unknown;
+  // Which window held which workspaces (Rust `windows[]`). Main's load keeps the
+  // secondaries' entries so boot can tell a session has more than main's slice.
+  windows?: { label: string; workspaceIds: number[]; activeWorkspaceId?: number | null }[];
 }
 
 // What the caller hands to saveSession: everything except the fields the
