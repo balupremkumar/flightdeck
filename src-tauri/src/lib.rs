@@ -1200,6 +1200,11 @@ pub fn run() {
             // window existed, restored its geometry, and stayed
             // IsWindowVisible=false indefinitely).
             RunEvent::Ready => {
+                // The live test harness (e2e/live) shows the window itself with
+                // SWP_NOACTIVATE, so a sweep never takes focus from the user.
+                if std::env::var_os("FLIGHTDECK_HARNESS_NO_SHOW").is_some() {
+                    return;
+                }
                 if let Some(win) = app_handle.get_webview_window("main") {
                     let _ = win.show();
                     let _ = win.set_focus();
