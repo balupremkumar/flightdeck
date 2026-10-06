@@ -2,14 +2,15 @@
 hub_updated: 2026-10-06
 hub_status: active
 hub_lane: products
-hub_last: "Fable red team fixed (H1, M1-M4, L2) and on main; gate tsc 0, vitest 1491, cargo 446, build OK, e2e 21/21."
-hub_next: "After the 0.6.0 cut: commit version bump, tag v0.6.0, push, update PORTFOLIO and LOG; then the Canary checklist."
-hub_you: "Run release.ps1 for 0.6.0 from a plain PowerShell window with Canary closed (boot gate refuses a running Canary)."
+hub_last: "v0.6.0 cut clean, bump committed (6168417), tagged v0.6.0, pushed. Canary 0.6.0 installed, first look clean."
+hub_next: "Triage whatever Balu finds on the Canary hand checklist; then stable 0.6.0."
+hub_you: "Work through docs/plans/release-0.6.0-checklist.md on Canary 0.6.0; report failures; install stable when happy."
 ---
 # STATE — Flightdeck
 
 Vault: [[HOME]] | [[PORTFOLIO|Portfolio]] | [[projects/active/flightdeck/BACKLOG|Backlog]]
 
+UPDATE 2026-10-06 (later): v0.6.0 SHIPPED. release.ps1 passed every gate, stable + Canary installers in releases\, latest.json 0.6.0; bump committed 6168417, tag v0.6.0, main + tag pushed. Balu installed Canary 0.6.0, first look clean. NEXT: hand checklist docs/plans/release-0.6.0-checklist.md on Canary, triage findings, then stable 0.6.0. Open: AdoptQueue ack has no e2e.
 UPDATE 2026-10-06: qol/phase-4 merged to main ff (5d53cdd) and pushed; main had not moved (Codex work still only on codex/h4-integrate). Gate before merge: tsc 0, vitest 1480, cargo 444, build OK, e2e 21/21. Fable red team done (H1, M1-M4, L1-L4; docs/plans/release-0.6.0-redteam.md). Integration branch qol/rel-060 (not pushed): H1 id floor from window_boot, M2/M3 redaction of serialised output + draft/title/lastLine, L2 ~/.claude secret deny; M1 (pane added mid-move) + M4 e2e/CI wiring landed too; all ff'd to main and pushed. Final gate tsc 0, vitest 1491, cargo 446, build OK, e2e 21/21. L1/L3 accepted; open: AdoptQueue ack has no e2e. Checklist gained red team hand checks.
 UPDATE 2026-10-05: qol/phase-4 = Phase 4 S4-S10c + Home + red team fixes 1-6/9/10 + 4 bug/flake fixes + 0.6.0 notes/checklist; lead gate tsc 0, vitest 1480, cargo 444, build OK; full e2e (21) running. Next: merge to main, Fable red team, 0.6.0 Canary. Merge to main blocked pending Balu; resume: docs/plans/RESUME-2026-10-06.md.
 Updated: 2026-09-19 (lag root-caused and fixed on branch flightdeck/pfi232, uncommitted; full roadmap written to BACKLOG.md section N).

@@ -30,3 +30,8 @@ Phase 6 Fable red team: 4 should-fix (dead busy signal, right-click paste could 
 Flakes fixed: Vite watched .claude/ agent worktrees (mid-test reloads); preview-split fixed sleep.
 Rulings: subagents on explicit cheap models; red team Sonnet per phase, one Fable before release; side-chat parked (BACKLOG NH1); report and stop after each phase.
 main af0412d..4d50752 pushed. Gate: tsc 0, vitest 1339, cargo 364, build OK, 13 e2e PASS. Resume: docs/plans/RESUME-2026-10-05.md.
+
+## 2026-10-06: v0.6.0 cut and shipped
+Balu ran release.ps1 for 0.6.0; all gates passed and both installers (stable + Canary) landed in releases\ with latest.json.
+Version bump committed (6168417), tagged v0.6.0, main and tag pushed.
+Balu installed Canary 0.6.0; first look clean. Next: the hand checklist (docs/plans/release-0.6.0-checklist.md), then stable.
