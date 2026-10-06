@@ -73,6 +73,19 @@ describe("session restore (UX-581 draft round-trip / UX-583 restore report)", ()
     expect((doc.uiPrefs as { summary: { lastLine: string }[] }).summary[0].lastLine).toContain("[REDACTED]");
   });
 
+  it("saves a restored pane whose title and draft came back from Rust as null", async () => {
+    mockInvoke.mockResolvedValue(null);
+    await hydrateFrom(
+      [{ id: 1, name: "ws", root: "D:\proj", panes: [
+        { id: 10, vendor: "claude", cwd: "D:\proj", title: null, draft: null } as unknown as { id: number; vendor: string; cwd: string },
+      ] }],
+      1
+    );
+    const doc = toDraft(useApp.getState().workspaces, 1);
+    expect(doc.workspaces[0].panes[0].title).toBeUndefined();
+    expect(doc.workspaces[0].panes[0].draft).toBeUndefined();
+  });
+
   it("reports a plain (non-isolated) pane as status 'plain'", async () => {
     mockInvoke.mockResolvedValue(null);
     await hydrateFrom(

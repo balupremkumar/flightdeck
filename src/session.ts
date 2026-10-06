@@ -48,7 +48,8 @@ export interface PaneSummaryEntry {
 }
 
 // RT-060 M3: free-text pane fields reach disk, so they get the same pass as scrollback.
-const redactOpt = (s: string | undefined) => (s === undefined ? s : redactText(s));
+// Rust writes absent optional fields as null (persist.rs), so a restored pane can carry null here.
+const redactOpt = (s: string | null | undefined) => (s == null ? undefined : redactText(s));
 
 function summarize(workspaces: Workspace[]): PaneSummaryEntry[] {
   return workspaces.flatMap((w) =>
