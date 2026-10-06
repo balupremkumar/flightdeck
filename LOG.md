@@ -61,3 +61,6 @@ Three Codex Sol jobs for the remaining live scripts stopped on the repo's stop-o
 
 ## 2026-10-06 (19:40): v0.6.1 cut
 Balu ran the real-mouse drag checks (all pass, drag ships on); Home Approve limited to agent panes after a live check found Approve on a shell (y/n) prompt. main fast-forwarded to rel-061 (57444f5); release.ps1 -Version 0.6.1 passed every gate including the boot gate. Bump committed, tag v0.6.1 local; push waits for Balu.
+
+## 2026-10-06 (20:00): session closed
+v0.6.1 pushed (cb058df, tag v0.6.1). Balu installs stable 0.6.1 next session. Codex stop-rule investigation moves to a separate project via D:/Dev/ai/handovers/2026-10-06-codex-stop-rule-investigation.md (analytics added).
