@@ -34,7 +34,7 @@ export default defineConfig(async () => ({
     rollupOptions: {
       // The drag ghost is its own tiny page (no React, no store), see src/ghost.ts.
       input: {
-        main: "index.html",
+        index: "index.html",
         ghost: "ghost.html",
       },
       output: {
