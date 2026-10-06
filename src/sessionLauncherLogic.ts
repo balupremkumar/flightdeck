@@ -314,7 +314,7 @@ export async function stageResumeOfCurrentSession(
       if (si.jsonl_path) noResume();
       return false;
     }
-    await invoke("stage_launch_args", { vendor: pane.vendor, cwd: pane.cwd, args: resumeArgs(id, false) });
+    await invoke("stage_launch_args", { vendor: pane.vendor, cwd: pane.cwd, args: [...(si.launch_args ?? []), ...resumeArgs(id, false)] });
     return true;
   } catch {
     noResume();

@@ -51,6 +51,8 @@ export interface SessionInfo {
   rotated?: boolean;
   /** Session id a restart may --resume: the pane's own, never a newest-file guess. Null when none. */
   resume_id?: string | null;
+  /** The pane's launch args minus session flags (e.g. --model), re-staged with the resume. */
+  launch_args?: string[];
 }
 
 export const TAIL_MAX_RECORDS = 500;

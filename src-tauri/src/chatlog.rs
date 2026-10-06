@@ -134,6 +134,9 @@ pub struct SessionState {
     pub needs_resolve: bool,
     pub spawn_ms: u64,
     pub cwd: String,
+    /// The launch args minus anything that selects a session, so a restart of
+    /// this pane (the Quiet terminal switch) keeps e.g. `--model` (see `non_session_args`).
+    pub launch_args: Vec<String>,
 }
 
 /// What `plan_session` decided for one spawn.
@@ -162,14 +165,16 @@ pub fn plan_session(vendor: &str, staged: &[String], new_id: &str) -> SessionPla
         // Fork: the new id is unknown until its JSONL appears.
         (Some(_), true) => SessionPlan { extra_args: staged.to_vec(), session_id: None, pinned: false, needs_resolve: true },
         (Some(id), false) => SessionPlan { extra_args: staged.to_vec(), session_id: Some(id), pinned: true, needs_resolve: false },
-        // Some other staged shape (--continue, bare --resume): do not guess.
-        _ if !staged.is_empty() => SessionPlan { extra_args: staged.to_vec(), session_id: None, pinned: false, needs_resolve: true },
-        _ => SessionPlan {
-            extra_args: vec!["--session-id".into(), new_id.into()],
-            session_id: Some(new_id.into()),
-            pinned: true,
-            needs_resolve: false,
-        },
+        // Some other session-selecting shape (--continue, bare --resume, --session-id): do not guess.
+        _ if staged.iter().any(|a| matches!(a.as_str(), "--resume" | "-r" | "--continue" | "-c" | "--session-id" | "--fork-session")) => {
+            SessionPlan { extra_args: staged.to_vec(), session_id: None, pinned: false, needs_resolve: true }
+        }
+        // No session flag (empty, or only e.g. `--model haiku`): pin a fresh id and keep the staged args.
+        _ => {
+            let mut extra_args = staged.to_vec();
+            extra_args.extend(["--session-id".into(), new_id.into()]);
+            SessionPlan { extra_args, session_id: Some(new_id.into()), pinned: true, needs_resolve: false }
+        }
     }
 }
 
@@ -233,9 +238,10 @@ pub struct SessionInfo {
     /// (Claude rotates to a fresh JSONL on /clear). The UI must reset its tailer.
     pub rotated: bool,
     /// The session id a restart may `--resume`: the pane's own pinned id, moved
-    /// forward only along `conversation_reset` records in its own transcripts
-    /// (see `resume_id`). None when the pane has no pinned transcript to resume.
+    /// only to a transcript stamped with that launch id (see `resume_id`). None when the pane has no pinned transcript to resume.
     pub resume_id: Option<String>,
+    /// Launch args to re-stage with the resume (the pane's non-session args).
+    pub launch_args: Vec<String>,
 }
 
 fn mtime_ms(p: &Path) -> Option<u64> {
@@ -280,61 +286,79 @@ fn info_from(state: &SessionState, root: &Path, exclude: &[String]) -> SessionIn
     let rot = if state.session_id.is_some() && state.spawn_ms > 0 { rotated_jsonl(root, state, exclude) } else { None };
     let rotated = rot.is_some();
     let jsonl_path = rot.or(own).map(|p| p.to_string_lossy().into_owned());
-    SessionInfo { session_id: state.session_id.clone(), pinned: state.pinned, jsonl_path, rotated, resume_id: resume_id(state, root) }
+    SessionInfo { session_id: state.session_id.clone(), pinned: state.pinned, jsonl_path, rotated, resume_id: resume_id(state, root), launch_args: state.launch_args.clone() }
 }
 
-/// First `new_conversation_id` string found anywhere in a parsed record.
-fn find_new_conversation_id(v: &Value) -> Option<String> {
-    match v {
-        Value::Object(m) => m
-            .get("new_conversation_id")
-            .and_then(|x| x.as_str())
-            .map(String::from)
-            .or_else(|| m.values().find_map(find_new_conversation_id)),
-        Value::Array(a) => a.iter().find_map(find_new_conversation_id),
-        _ => None,
+/// `args` without anything that selects a session (`--resume X`, `-r X`,
+/// `--session-id X`, `--continue`, `-c`, `--fork-session`).
+pub fn non_session_args(args: &[String]) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut it = args.iter().peekable();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--resume" | "-r" | "--session-id" => {
+                if it.peek().is_some_and(|v| !v.starts_with('-')) {
+                    it.next();
+                }
+            }
+            "--continue" | "-c" | "--fork-session" => {}
+            _ => out.push(a.clone()),
+        }
     }
+    out
 }
 
-/// The conversation id the LAST `conversation_reset` record in this transcript
-/// names, if any. Only lines carrying the field name are parsed.
-fn reset_target(path: &Path) -> Option<String> {
-    use std::io::BufRead;
-    let f = std::fs::File::open(path).ok()?;
-    let mut last = None;
-    for line in std::io::BufReader::new(f).lines() {
+/// Cap on bytes read per transcript when looking for the lineage field.
+const LINEAGE_SCAN_BYTES: u64 = 512 * 1024;
+
+/// True when a record in the head of `path` carries `"session_id":"<launch_id>"`.
+/// Claude Code stamps every record of a process with the id it was launched
+/// with (snake_case `session_id`), also in the transcripts a /clear rotates to,
+/// where camelCase `sessionId` is the new id. Stops at the first match.
+fn has_launch_id(path: &Path, launch_id: &str) -> bool {
+    use std::io::{BufRead, Read};
+    let Ok(f) = std::fs::File::open(path) else { return false };
+    let needle = format!("\"session_id\":\"{launch_id}\"");
+    for line in std::io::BufReader::new(f.take(LINEAGE_SCAN_BYTES)).lines() {
         let Ok(line) = line else { break };
-        if !line.contains("new_conversation_id") {
+        if !line.contains(&needle) {
             continue;
         }
-        if let Some(id) = serde_json::from_str::<Value>(&line).ok().as_ref().and_then(find_new_conversation_id) {
-            last = Some(id);
+        if serde_json::from_str::<Value>(&line).ok().is_some_and(|v| str_of(&v, "session_id") == Some(launch_id)) {
+            return true;
         }
     }
-    last
+    false
 }
 
-/// What a restart may resume. Never a newest-file guess: only the pane's own
-/// pinned id, followed through its own `conversation_reset` records (a /clear
-/// rotation) to a transcript that exists. A foreign jsonl in the same cwd slug
-/// is never reached because nothing here lists the directory. An unpinned pane
+/// What a restart may resume. Never a newest-file guess: the pane's own pinned
+/// (launch) id, moved to a later transcript only when that transcript's records
+/// carry `session_id == <pinned id>` (the lineage of this process across /clear).
+/// A foreign claude in the same slug stamps its own id and never matches. Only
+/// files modified since this pane spawned are scanned. An unpinned pane
 /// (fork / fallback, id found by guessing) gets None.
 pub fn resume_id(state: &SessionState, root: &Path) -> Option<String> {
     if !state.pinned {
         return None;
     }
     let dir = root.join(crate::usage::slugify(&state.cwd));
-    let mut id = state.session_id.clone().filter(|i| is_uuid(i))?;
-    if !dir.join(format!("{id}.jsonl")).is_file() {
+    let pinned = state.session_id.clone().filter(|i| is_uuid(i))?;
+    let own = dir.join(format!("{pinned}.jsonl"));
+    if !own.is_file() {
         return None;
     }
-    for _ in 0..16 {
-        match reset_target(&dir.join(format!("{id}.jsonl"))) {
-            Some(next) if next != id && is_uuid(&next) && dir.join(format!("{next}.jsonl")).is_file() => id = next,
-            _ => break,
+    let mut best = (mtime_ms(&own).unwrap_or(0), pinned.clone());
+    for p in std::fs::read_dir(&dir).ok()?.filter_map(|e| e.ok()).map(|e| e.path()) {
+        let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+        if p.extension().is_none_or(|x| x != "jsonl") || !is_uuid(stem) || stem == pinned {
+            continue;
+        }
+        let Some(m) = mtime_ms(&p) else { continue };
+        if m >= state.spawn_ms && m > best.0 && has_launch_id(&p, &pinned) {
+            best = (m, stem.to_string());
         }
     }
-    Some(id)
+    Some(best.1)
 }
 
 /// Sessions of panes whose process has exited, keyed by pty id, so a restart of
@@ -849,6 +873,26 @@ mod tests {
     }
 
     #[test]
+    fn staged_non_session_args_are_kept_and_the_session_is_pinned() {
+        let id = "11111111-1111-4111-8111-111111111111";
+        let staged: Vec<String> = ["--model", "haiku", "--permission-mode", "acceptEdits"].map(String::from).to_vec();
+        let p = plan_session("claude", &staged, id);
+        assert_eq!(p.extra_args, [staged.clone(), vec!["--session-id".into(), id.into()]].concat());
+        assert_eq!(p.session_id.as_deref(), Some(id));
+        assert!(p.pinned && !p.needs_resolve);
+        assert_eq!(non_session_args(&p.extra_args), staged);
+        // Session-selecting flags still win and are not guessed at.
+        for flag in ["--continue", "-c", "--session-id"] {
+            let p = plan_session("claude", &[flag.to_string()], id);
+            assert!(!p.pinned && p.needs_resolve, "{flag}");
+        }
+        let r: Vec<String> = ["--model", "haiku", "--resume", "abc"].map(String::from).to_vec();
+        assert_eq!(non_session_args(&r), vec!["--model", "haiku"]);
+        let f: Vec<String> = ["--resume", "abc", "--fork-session", "--model", "x"].map(String::from).to_vec();
+        assert_eq!(non_session_args(&f), vec!["--model", "x"]);
+    }
+
+    #[test]
     fn resume_records_id_and_fork_resolves_later() {
         let resume: Vec<String> = vec!["--resume".into(), "abc".into()];
         let p = plan_session("claude", &resume, "new");
@@ -1105,7 +1149,7 @@ mod tests {
         let b = "22222222-2222-4222-8222-222222222222";
         let c = "33333333-3333-4333-8333-333333333333";
         std::fs::write(dir.join(format!("{a}.jsonl")), user("one")).unwrap();
-        let st = SessionState { session_id: Some(a.into()), pinned: true, needs_resolve: false, spawn_ms, cwd: cwd.into() };
+        let st = SessionState { session_id: Some(a.into()), pinned: true, needs_resolve: false, spawn_ms, cwd: cwd.into(), ..Default::default() };
         let i = info_from(&st, &root, &[]);
         assert!(!i.rotated && i.pinned && i.jsonl_path.unwrap().ends_with(&format!("{a}.jsonl")));
         std::thread::sleep(Duration::from_millis(30));
@@ -1124,12 +1168,15 @@ mod tests {
         std::fs::write(dir.join(format!("{c}.jsonl")), user("again")).unwrap();
         assert!(info_from(&st, &root, &[]).jsonl_path.unwrap().ends_with(&format!("{c}.jsonl")));
     }
-    fn reset_line(new_id: &str) -> String {
-        format!("{{\"type\":\"system\",\"subtype\":\"conversation_reset\",\"trigger\":\"clear\",\"new_conversation_id\":\"{new_id}\"}}\n")
+
+    /// A record as Claude Code 2.1.291 writes it: snake_case `session_id` is the
+    /// id the process was launched with, camelCase `sessionId` the current one.
+    fn stamped(launch_id: &str, current_id: &str) -> String {
+        format!("{{\"type\":\"user\",\"sessionId\":\"{current_id}\",\"session_id\":\"{launch_id}\",\"message\":{{\"role\":\"user\",\"content\":\"hi\"}}}}\n")
     }
 
     #[test]
-    fn resume_id_ignores_foreign_newer_jsonl_and_follows_own_reset() {
+    fn resume_id_follows_own_launch_id_lineage_and_ignores_foreign_jsonl() {
         let root = tmp("resume");
         let cwd = r"C:\work\resume";
         let dir = root.join(crate::usage::slugify(cwd));
@@ -1140,24 +1187,31 @@ mod tests {
         let foreign = "44444444-4444-4444-8444-444444444444";
         let b = "22222222-2222-4222-8222-222222222222";
         let c = "33333333-3333-4333-8333-333333333333";
-        std::fs::write(dir.join(format!("{a}.jsonl")), user("one")).unwrap();
-        let st = SessionState { session_id: Some(a.into()), pinned: true, needs_resolve: false, spawn_ms, cwd: cwd.into() };
+        std::fs::write(dir.join(format!("{a}.jsonl")), stamped(a, a)).unwrap();
+        let st = SessionState { session_id: Some(a.into()), pinned: true, spawn_ms, cwd: cwd.into(), ..Default::default() };
         std::thread::sleep(Duration::from_millis(30));
-        // A hand-run claude in the same folder: newer, born after spawn, never named by our file.
-        std::fs::write(dir.join(format!("{foreign}.jsonl")), user("someone else")).unwrap();
+        // A hand-run claude in the same folder: newer, born after spawn, stamped with its own id.
+        std::fs::write(dir.join(format!("{foreign}.jsonl")), stamped(foreign, foreign)).unwrap();
         assert_eq!(resume_id(&st, &root).as_deref(), Some(a));
         assert_eq!(info_from(&st, &root, &[]).resume_id.as_deref(), Some(a));
-        // Our own file records a reset naming a transcript that exists: followed.
-        std::fs::write(dir.join(format!("{b}.jsonl")), user("after clear")).unwrap();
-        std::fs::write(dir.join(format!("{a}.jsonl")), format!("{}{}", user("one"), reset_line(b))).unwrap();
+        // /clear: the new transcript carries session_id = our launch id (and a new sessionId).
+        std::thread::sleep(Duration::from_millis(30));
+        std::fs::write(dir.join(format!("{b}.jsonl")), format!("{}{}", stamped(a, b), stamped(a, b))).unwrap();
         assert_eq!(resume_id(&st, &root).as_deref(), Some(b));
-        // Chained rotation.
-        std::fs::write(dir.join(format!("{c}.jsonl")), user("again")).unwrap();
-        std::fs::write(dir.join(format!("{b}.jsonl")), format!("{}{}", user("after clear"), reset_line(c))).unwrap();
+        // A second /clear: newest stamped file wins, even with the foreign file in between.
+        std::thread::sleep(Duration::from_millis(30));
+        std::fs::write(dir.join(format!("{c}.jsonl")), stamped(a, c)).unwrap();
+        std::thread::sleep(Duration::from_millis(30));
+        std::fs::write(dir.join(format!("{foreign}.jsonl")), stamped(foreign, foreign)).unwrap();
         assert_eq!(resume_id(&st, &root).as_deref(), Some(c));
-        // A reset naming a missing file is not followed.
-        std::fs::write(dir.join(format!("{c}.jsonl")), format!("{}{}", user("again"), reset_line("55555555-5555-4555-8555-555555555555"))).unwrap();
+        // A transcript that only mentions our id in text (escaped) is not lineage.
+        let sneaky = "77777777-7777-4777-8777-777777777777";
+        std::thread::sleep(Duration::from_millis(30));
+        std::fs::write(dir.join(format!("{sneaky}.jsonl")), format!("{{\"session_id\":\"{sneaky}\",\"text\":\"\\\"session_id\\\":\\\"{a}\\\"\"}}\n")).unwrap();
         assert_eq!(resume_id(&st, &root).as_deref(), Some(c));
+        // Files older than the pane's spawn are not scanned.
+        let late = SessionState { spawn_ms: spawn_ms + 3_600_000, ..st.clone() };
+        assert_eq!(resume_id(&late, &root).as_deref(), Some(a));
         // Unpinned (guessed) panes and panes with no transcript yield nothing.
         assert_eq!(resume_id(&SessionState { pinned: false, ..st.clone() }, &root), None);
         assert_eq!(resume_id(&SessionState { session_id: Some(foreign.replace('4', "6")), ..st.clone() }, &root), None);

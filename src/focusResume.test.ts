@@ -28,6 +28,14 @@ describe("switching Quiet terminal keeps the conversation", () => {
     expect(invoke).toHaveBeenCalledWith("stage_launch_args", { vendor: "claude", cwd: "D:\\here", args: ["--resume", sid] });
   });
 
+  it("keeps the pane's launch args (e.g. --model) ahead of the resume", async () => {
+    vi.mocked(invoke).mockReset();
+    vi.mocked(invoke).mockResolvedValue(undefined);
+    const withArgs = async () => ({ session_id: sid, pinned: true, jsonl_path: `C:\\p\\${sid}.jsonl`, resume_id: sid, launch_args: ["--model", "haiku"] });
+    expect(await stageResumeOfCurrentSession(pane, 7, withArgs)).toBe(true);
+    expect(invoke).toHaveBeenCalledWith("stage_launch_args", { vendor: "claude", cwd: "D:\\here", args: ["--model", "haiku", "--resume", sid] });
+  });
+
   it("restarts plain, silently, when the pane has no transcript yet, no live pty, or is not Claude", async () => {
     vi.mocked(invoke).mockReset();
     useUI.setState({ toasts: [] });
