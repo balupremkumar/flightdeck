@@ -20,7 +20,14 @@ console.log(`launched pid ${pid} (${out.split(/\r?\n/).pop()})`);
 for (let i = 0; i < 90; i++) {
   try {
     const r = await fetch(`http://127.0.0.1:${PORT}/json/version`);
-    if (r.ok) { console.log("cdp up:", (await r.json()).Browser); process.exit(0); }
+    if (r.ok) {
+      console.log("cdp up:", (await r.json()).Browser);
+      // The window-state restore lands after the first show and leaves the window hidden at its saved geometry, so
+      // show it again now that the app is up (idempotent, SWP_NOACTIVATE, off-screen).
+      await new Promise((r2) => setTimeout(r2, 1500));
+      console.log("show:", ps("window.ps1", ["-ProcessId", String(pid), "-Mode", "show", "-X", "-20000", "-Y", "0", "-Width", "1600", "-Height", "1000", "-WaitMs", "5000"]));
+      process.exit(0);
+    }
   } catch { /* not yet */ }
   await new Promise((r) => setTimeout(r, 1000));
 }
