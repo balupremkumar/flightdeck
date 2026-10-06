@@ -54,6 +54,10 @@ export class MultiWindowBus {
     this.nextTransfer = 0;
     this.adoptAckMs = 3000; // ADOPT_ACK_MS
     this.dropAdoptTo = null; // label whose next win://adopt is lost (its listener is not up yet)
+    // windows.rs AdoptQueue (MAIN_ADOPTS, :566-621): folds into main held until main acks `main_adopt_done`.
+    this.mainAdopts = { next: 0, items: [] }; // items: [id, AdoptPayload]
+    this.mainAcks = []; // every main_adopt_done transfer id seen, in order (acks of unknown ids included)
+    this.holdMainAcks = false; // test hook: main_adopt_done arrives but is not applied (main died before the ack landed)
     this.slicePuts = new Map(); // label -> pushes seen (the flush acknowledgement)
     this.doc = null; // the session document on "disk" (seedDoc); null = the mock's own boot doc
     this.restored = false; // main planned its launch restore (once per run, like RESTORE_PLANNED)
@@ -220,7 +224,14 @@ export class MultiWindowBus {
       this.slicePuts.delete(label);
       this.merges.push({ label, why, flushed, workspaceIds: [...rec.workspaceIds] });
       if (rec.workspaceIds.length > 0) {
-        await this.emitTo("main", "win://adopt", { from: label, workspaceIds: rec.workspaceIds, activeWs: rec.activeWs, slice });
+        // windows.rs merge_window :1106-1118: park the payload under a fresh id (the queue keeps it
+        // until main acks), then emit_to main, which is fire and forget (a reloading main loses it).
+        const q = this.mainAdopts;
+        const id = ++q.next;
+        const payload = { from: label, workspaceIds: [...rec.workspaceIds], activeWs: rec.activeWs, slice, transfer: null, transferId: id };
+        q.items.push([id, payload]);
+        if (this.dropAdoptTo === "main") this.dropAdoptTo = null;
+        else await this.emitTo("main", "win://adopt", payload);
       }
     }
     this.pages.delete(label);
@@ -363,6 +374,15 @@ export class MultiWindowBus {
         if (st === "cancelled") this.adopts.delete(a.transferId);
         return false;
       }
+      case "main_adopt_done": {
+        // windows.rs main_adopt_done :1074 / AdoptQueue::ack :594: drop that id; unknown or repeated ids change nothing.
+        this.mainAcks.push(a.transferId);
+        if (!this.holdMainAcks) this.mainAdopts.items = this.mainAdopts.items.filter(([i]) => i !== a.transferId);
+        return null;
+      }
+      case "main_pending_adopts":
+        // windows.rs main_pending_adopts :1081 / AdoptQueue::pending :599: unacked payloads, oldest first.
+        return this.mainAdopts.items.map(([, p]) => JSON.parse(JSON.stringify(p)));
       case "window_heartbeat":
       case "window_focus_next":
         return null;
