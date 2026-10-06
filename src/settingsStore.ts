@@ -234,35 +234,36 @@ export interface AgentSettings {
   binaryPaths: Record<string, string>;
   /** TN: initial detail level of the Chat view's Normal/Verbose toggle. */
   chatDetail: "normal" | "verbose";
-  /** TN1: the view NEW Claude panes open in (saved panes keep their own).
-   *  "quiet" is the terminal with Claude's focus view (a new pane gets focusMode). */
+  /** TN1: the view NEW Claude panes open in (saved panes keep their own); any pane
+   *  can switch from its menu. "quiet" (the default) is the terminal with Claude's
+   *  focus view (a new pane gets focusMode). */
   openClaudeIn: "terminal" | "quiet" | "chat";
 }
-export const DEFAULT_AGENT_SETTINGS: AgentSettings = { defaultVendor: "claude", flags: {}, binaryPaths: {}, chatDetail: "normal", openClaudeIn: "terminal" };
+export const DEFAULT_AGENT_SETTINGS: AgentSettings = { defaultVendor: "claude", flags: {}, binaryPaths: {}, chatDetail: "normal", openClaudeIn: "quiet" };
 export function getAgentSettings(): AgentSettings {
   try {
     const raw = localStorage.getItem("flightdeck-agent-settings");
     if (raw) {
       const p = JSON.parse(raw);
-      const openClaudeIn = p.openClaudeIn === "chat" || p.openClaudeIn === "quiet" ? p.openClaudeIn : "terminal";
+      const openClaudeIn = p.openClaudeIn === "chat" || p.openClaudeIn === "terminal" || p.openClaudeIn === "quiet" ? p.openClaudeIn : DEFAULT_AGENT_SETTINGS.openClaudeIn;
       return { ...DEFAULT_AGENT_SETTINGS, ...p, openClaudeIn, flags: { ...p.flags }, binaryPaths: { ...p.binaryPaths } };
     }
   } catch { /* non-persistent */ }
   return DEFAULT_AGENT_SETTINGS;
 }
 /** 0.6.1, run once at boot: 0.6.0 stored "chat" as the default, never as a choice,
- *  so reset it to "terminal". The flag makes it run exactly once; a deliberate
- *  Chat choice made afterwards is left alone. Returns true when it flipped. */
-export const TERMINAL_DEFAULT_MIGRATION_KEY = "flightdeck-migrated-terminal-default";
-export function migrateTerminalDefault(): boolean {
+ *  so reset it to "quiet" (the default). The flag makes it run exactly once; a
+ *  deliberate Chat choice made afterwards is left alone. Returns true when it flipped. */
+export const QUIET_DEFAULT_MIGRATION_KEY = "flightdeck-migrated-quiet-default";
+export function migrateQuietDefault(): boolean {
   try {
-    if (localStorage.getItem(TERMINAL_DEFAULT_MIGRATION_KEY)) return false;
-    localStorage.setItem(TERMINAL_DEFAULT_MIGRATION_KEY, "1");
+    if (localStorage.getItem(QUIET_DEFAULT_MIGRATION_KEY)) return false;
+    localStorage.setItem(QUIET_DEFAULT_MIGRATION_KEY, "1");
     const raw = localStorage.getItem("flightdeck-agent-settings");
     if (!raw) return false;
     const p = JSON.parse(raw);
     if (p?.openClaudeIn !== "chat") return false;
-    localStorage.setItem("flightdeck-agent-settings", JSON.stringify({ ...p, openClaudeIn: "terminal" }));
+    localStorage.setItem("flightdeck-agent-settings", JSON.stringify({ ...p, openClaudeIn: "quiet" }));
     return true;
   } catch { return false; /* non-persistent */ }
 }

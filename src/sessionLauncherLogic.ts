@@ -5,6 +5,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useApp, type PaneModel } from "./store";
 import { bytes } from "./format";
 import { resolveExisting } from "./pathcheck";
+import { paneSessionInfo, type SessionInfo } from "./chatlog";
 // QL-764 — resume/fork launcher.
 //
 // Claude Code keeps every past session as a transcript under
@@ -288,5 +289,41 @@ export async function launchResume(
       : undefined;
   useApp.getState().addPane(wsId, pane.vendor, cwd, wt);
   return "ok";
+}
+
+/** Stage `--resume <id>` for this pane's NEXT spawn when its Claude session has a
+ *  transcript on disk, so a restart reopens the same conversation. The id is the
+ *  transcript's file name (it follows a /clear rotation, unlike the pinned id).
+ *  Returns false, staging nothing, when there is no live pty, no transcript yet
+ *  (a pane with no turn: `--resume` would fail), or the backend refuses; the
+ *  caller then restarts plain. */
+export async function stageResumeOfCurrentSession(
+  pane: Pick<PaneModel, "vendor" | "cwd">,
+  ptyId: number,
+  info: (ptyId: number) => Promise<SessionInfo> = paneSessionInfo
+): Promise<boolean> {
+  if (pane.vendor !== RESUME_VENDOR || ptyId <= 0) return false;
+  try {
+    const si = await info(ptyId);
+    const id = si.jsonl_path?.split(/[\\/]/).pop()?.replace(/\.jsonl$/i, "");
+    if (!id || !/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(id)) return false;
+    await invoke("stage_launch_args", { vendor: pane.vendor, cwd: pane.cwd, args: resumeArgs(id, false) });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Switch a Claude pane between the quiet and full terminal without losing the
+ *  conversation: stage the resume first, then restart through the store. */
+export async function setFocusModeKeepingSession(
+  paneId: number,
+  on: boolean,
+  ptyId: number,
+  info?: (ptyId: number) => Promise<SessionInfo>
+): Promise<void> {
+  const pane = useApp.getState().workspaces.flatMap((w) => w.panes).find((p) => p.id === paneId);
+  if (pane) await stageResumeOfCurrentSession(pane, ptyId, info);
+  useApp.getState().setPaneFocusMode(paneId, on);
 }
 

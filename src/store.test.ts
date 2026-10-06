@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { getAgentSettings, migrateTerminalDefault } from "./settingsStore";
+import { getAgentSettings, migrateQuietDefault } from "./settingsStore";
 import { paneHasUnsentInput, registerPaneSend, sendToPane, unregisterPaneSend, useApp } from "./store";
 
 // The store is a singleton; reset the observable slice before each test.
@@ -354,10 +354,10 @@ describe("TN1 new Claude panes default view", () => {
 
   const focus = () => useApp.getState().workspaces[0].panes.map((p) => p.focusMode);
 
-  it("opens new Claude panes in the terminal by default", () => {
+  it("opens new Claude panes in Quiet terminal by default, other vendors untouched", () => {
     useApp.getState().createWorkspace("/a", [{ vendor: "claude", cwd: "/a" }, { vendor: "codex", cwd: "/a" }]);
     expect(views()).toEqual([undefined, undefined]);
-    expect(focus()).toEqual([undefined, undefined]);
+    expect(focus()).toEqual([true, undefined]);
   });
 
   it("opens new Claude panes in Chat when chosen, other vendors in the terminal", () => {
@@ -379,26 +379,26 @@ describe("TN1 new Claude panes default view", () => {
     expect(focus()[2]).toBe(true);
   });
 
-  it("coerces an unknown stored openClaudeIn to terminal", () => {
+  it("coerces an unknown stored openClaudeIn to the Quiet terminal default", () => {
     localStorage.setItem("flightdeck-agent-settings", JSON.stringify({ openClaudeIn: "bogus" }));
-    expect(getAgentSettings().openClaudeIn).toBe("terminal");
+    expect(getAgentSettings().openClaudeIn).toBe("quiet");
   });
 
-  it("0.6.1 migration flips a stored Chat default to terminal exactly once", () => {
+  it("0.6.1 migration flips a stored Chat default to quiet exactly once", () => {
     localStorage.setItem("flightdeck-agent-settings", JSON.stringify({ openClaudeIn: "chat", chatDetail: "verbose" }));
-    expect(migrateTerminalDefault()).toBe(true);
-    expect(getAgentSettings().openClaudeIn).toBe("terminal");
+    expect(migrateQuietDefault()).toBe(true);
+    expect(getAgentSettings().openClaudeIn).toBe("quiet");
     expect(getAgentSettings().chatDetail).toBe("verbose");
     // A deliberate Chat choice after the migration survives later boots.
     localStorage.setItem("flightdeck-agent-settings", JSON.stringify({ openClaudeIn: "chat" }));
-    expect(migrateTerminalDefault()).toBe(false);
+    expect(migrateQuietDefault()).toBe(false);
     expect(getAgentSettings().openClaudeIn).toBe("chat");
   });
 
   it("migration on a fresh profile does nothing but still burns the one-off", () => {
-    expect(migrateTerminalDefault()).toBe(false);
+    expect(migrateQuietDefault()).toBe(false);
     localStorage.setItem("flightdeck-agent-settings", JSON.stringify({ openClaudeIn: "chat" }));
-    expect(migrateTerminalDefault()).toBe(false);
+    expect(migrateQuietDefault()).toBe(false);
     expect(getAgentSettings().openClaudeIn).toBe("chat");
   });
 

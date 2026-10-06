@@ -1914,7 +1914,7 @@ export function Settings() {
               </div>
             </div>
             <div className="set-row">
-              <div className="set-row-t"><span className="set-row-name">Open Claude panes in</span><span className="set-row-sub">Quiet terminal is Claude's focus view: your prompt, one line per turn of tool work, and the final reply. Ctrl+O shows everything.</span></div>
+              <div className="set-row-t"><span className="set-row-name">Open Claude panes in</span><span className="set-row-sub">The default for new panes; any pane can switch from its menu. Quiet terminal is Claude's focus view: your prompt, one line per turn of tool work, and the final reply. Ctrl+O shows everything.</span></div>
               <div className="seg" role="group" aria-label="Open Claude panes in">
                 {(["terminal", "quiet", "chat"] as const).map((v) => (
                   <button key={v} className={agents.openClaudeIn === v ? "on" : ""} aria-pressed={agents.openClaudeIn === v} onClick={() => updateAgents({ ...agents, openClaudeIn: v })}>

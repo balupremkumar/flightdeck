@@ -29,7 +29,7 @@ import { closePaneWithCleanup } from "./worktrees";
 import { Transcript } from "./TranscriptView";
 import { extractLastCommand, redactText, scrollbackFilename, toLines } from "./transcript";
 import { SelectionToolbar, GroupsPanel, SessionSnapshots } from "./PaneOps";
-import { openSessionLauncher, modelShort, contextWindowFor, canResume, RESUME_VENDOR } from "./sessionLauncherLogic";
+import { openSessionLauncher, modelShort, contextWindowFor, canResume, RESUME_VENDOR, setFocusModeKeepingSession } from "./sessionLauncherLogic";
 import { SubagentTree, subagentChipLabel, type SubagentCount } from "./SubagentTreeView";
 import { PlanPanel, pendingPlan, planChipTitle, PLAN_APPROVE_KEYS, type PlanEntry } from "./PlanPanelView";
 import { parseWorkspaceDef, serializeWorkspaceExport } from "./snapshots";
@@ -704,7 +704,6 @@ function PaneViewInner({
   // Phase 3 chat view: Claude panes only. The terminal stays mounted (and keeps
   // receiving output) underneath; chat is an overlay inside .pbody.
   const setPaneView = useApp((s) => s.setPaneView);
-  const setPaneFocusMode = useApp((s) => s.setPaneFocusMode);
   const view = isClaude && pane.view === "chat" ? "chat" : "terminal";
   const switchView = (v: "terminal" | "chat") => {
     setPaneView(pane.id, v);
@@ -730,10 +729,10 @@ function PaneViewInner({
     setMenuOpen(false);
     const on = !pane.focusMode;
     requestConfirm({
-      title: on ? "Turn on Focus mode?" : "Turn off Focus mode?",
-      body: "Restarts this Claude pane. The running session ends and Claude relaunches " + (on ? "in its quiet focus view." : "in the classic view."),
+      title: on ? "Switch to Quiet terminal?" : "Switch to the full terminal?",
+      body: "Claude restarts in " + (on ? "Quiet terminal" : "the full terminal") + " and picks up the same conversation.",
       confirmLabel: "Restart pane",
-      onConfirm: () => setPaneFocusMode(pane.id, on),
+      onConfirm: () => { void setFocusModeKeepingSession(pane.id, on, getPaneSession(pane.id)?.ptyId ?? 0); },
     });
   };
   const [subCount, setSubCount] = useState<SubagentCount | null>(null);
@@ -1213,8 +1212,8 @@ Running low — consider /compact in this pane.` : "")
                 <IconRefresh size={13} /> Restart
               </button>
               {isClaude && (
-                <button className="pmenu-item" role="menuitemcheckbox" aria-checked={!!pane.focusMode} onClick={toggleFocusMode} title="Quiet Claude view: just your prompt, a one-line summary of each turn's tool work with edit counts, and Claude's final reply. Ctrl+O shows the full transcript. Scroll with PgUp/PgDn. Restarts the pane.">
-                  {pane.focusMode ? "✓ " : ""}Focus mode (Claude fullscreen)
+                <button className="pmenu-item" role="menuitemcheckbox" aria-checked={!!pane.focusMode} onClick={toggleFocusMode} title="Quiet Claude view: just your prompt, a one-line summary of each turn's tool work with edit counts, and Claude's final reply. Ctrl+O shows the full transcript. Scroll with PgUp/PgDn. Switching restarts Claude and resumes the same conversation.">
+                  {pane.focusMode ? "✓ " : ""}Quiet terminal
                 </button>
               )}
               <button className="pmenu-item" onClick={() => { onToggleMaximize(pane.id); closeMenu(); }}>
