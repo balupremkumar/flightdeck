@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { listenHere } from "./eventScope";
 import { getMultiwindow } from "./settingsStore";
 import { setWindowOrdinal, useApp, type Workspace } from "./store";
 import { useUI } from "./ui";
@@ -133,7 +133,7 @@ export async function handleAdopt(payload: AdoptPayload): Promise<void> {
 }
 
 export function listenForAdopt(): void {
-  void listen<AdoptPayload>("win://adopt", (e) => handleAdopt(e.payload)).catch(() => { /* browser preview */ });
+  void listenHere<AdoptPayload>("win://adopt", (e) => handleAdopt(e.payload)).catch(() => { /* browser preview */ });
 }
 
 /** Main, after its listener is up: take any fold Rust still holds because the live
@@ -150,7 +150,7 @@ export async function replayPendingAdopts(): Promise<void> {
 /** Rust asks this window to select a pane (a palette or Home click in another window,
  *  which `window_focus_pane` has already brought to the front). */
 export function listenForFocusPane(): void {
-  void listen<{ wsId: number; paneId: number }>("app://focus-pane", (e) => {
+  void listenHere<{ wsId: number; paneId: number }>("app://focus-pane", (e) => {
     const { wsId, paneId } = e.payload;
     const st = useApp.getState();
     const ws = st.workspaces.find((w) => w.id === wsId);
