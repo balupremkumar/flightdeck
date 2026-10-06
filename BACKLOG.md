@@ -1373,3 +1373,30 @@ This output is Claude Code's own TUI rendering inside xterm; Flightdeck draws no
 - [ ] NH1 Side-chat button for `/btw` and a task chip that spins out-of-scope work into a new worktree session (roadmap H4 part 2; source research/flightdeck-competitor-qol-2026-10/README.md lines 315, 319). Balu: no use in his workflow today.
 - [ ] NH2 Session-wide operations (snapshots, export/import, restore points) from a secondary window: merge all windows then act in main, instead of the 0.6.0 "switch to main window" refusal (Phase 4+5 red team item 8, docs/plans/phase4-5-redteam.md).
 - [ ] NH3 Multi-window S11 flag on by default after Balu's trial; S12 drag a workspace between windows; pane tear-out (docs/plans/phase4-multiwindow.md S15-S18).
+
+## AG. Antigravity panes: copy, interrupt and lag (raised by Balu 2026-10-06)
+Evidence and file:line refs: docs/plans/antigravity-qol-findings.md.
+Balu's report: in agy panes highlighting and copying is unreliable, Ctrl+C sometimes does not stop the agent, and some projects lag heavily.
+Most of the lag and the delayed Ctrl+C are the 0.5.4 main-thread stalls fixed in 0.5.5 (9dd8272); copy-on-select and right-click paste arrived in 0.6.0. Installing 0.6.1 is the first fix.
+agy (Go, Bubble Tea v2) turns on mouse reporting (1002/1003/1006), so a plain drag goes to agy instead of selecting; Shift+drag is the override and nothing says so.
+agy stops generation on Esc; Ctrl+C twice quits it.
+
+Small, high value:
+- [ ] AG1. Per-vendor interrupt: an Interrupt action and key declared in the vendor adapter (Esc for agy, ^C for Claude and Codex), shown in the pane menu. S.
+- [ ] AG2. Fix the Shift+click collision: PaneView.tsx:890 turns Shift+mousedown into bulk pane select, which breaks xterm's Shift+click extend-selection. Move bulk select to the header or another gesture. S.
+- [ ] AG3. "Hold Shift to select" hint, once per pane, when a drag starts in a pane with mouse tracking on. S.
+- [ ] AG4. Right-click and menu paste through term.paste() so bracketed paste is honoured (multi-line paste into agy can submit early today). S. Partly QL-759.
+- [ ] AG5. "Copied" flash on copy-on-select, and Ctrl+Shift+C always copies. Ctrl+C with a selection needs Balu's ruling (it must stay an interrupt for agents). S.
+
+Medium:
+- [ ] AG6. Mouse-reporting policy per vendor: optional "plain drag selects" for agy by filtering its mouse modes (test wheel scrolling first). M.
+- [ ] AG7. Git poll hardening for big repos: GIT_OPTIONAL_LOCKS=0, a hard timeout, skip `git add -N` when clean, one shared poll per cwd. S to M. With N1.5.
+- [ ] AG8. pane_health async and off the registry mutex that pty_write and pty_resize share. M. With N1.7.
+- [ ] AG9. Self-diagnosing lag: slow-command recorder (any command over 1 s with its cwd) and a per-pane CPU and IO chip, so "agy is the load" is visible. M. N1.6, N1.9.
+- [ ] AG10. Remote session mode: detect RDP, prefer the DOM renderer, longer polls, show the active renderer in Diagnostics (WebGL falls back silently today). M.
+- [ ] AG11. agy launch options (model, new project) through K9 and N3.3; the Settings flag fields still do nothing. M.
+- [ ] AG12. agy usage chip and real state signals instead of the 6 s quiet timer. M. N2.1 family.
+
+Engineering gaps found in the 0.6.1 sweep:
+- [ ] AG13. Lint or test that fails on a bare `listen()` for any event Rust sends with emit_to (the class behind the lost-workspace bug, 138d2e3).
+- [ ] AG14. Main-thread budget gate in CI with a six-pane agy-style output generator (N4.5).
