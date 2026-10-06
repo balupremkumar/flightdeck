@@ -5,6 +5,7 @@ import { IconBell, IconSettings } from "./Icons";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow, ProgressBarStatus, UserAttentionType } from "@tauri-apps/api/window";
+import { listenHere } from "./eventScope";
 import {
   ambientQueue,
   attentionKind,
@@ -640,7 +641,7 @@ export function Notifications() {
   useEffect(() => {
     let stop: (() => void) | undefined;
     let cancelled = false;
-    void listen<SummonPayload>(SUMMON_EVENT, (e) => {
+    void listenHere<SummonPayload>(SUMMON_EVENT, (e) => {
       const target = summonPane(e.payload, useApp.getState().workspaces);
       if (!target) return;
       switchWorkspace(target.wsId);

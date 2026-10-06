@@ -8,7 +8,7 @@
 //     back to the workspace root if the repo itself is gone
 //   - safe-mode banner (--safe-mode / FLIGHTDECK_SAFE_MODE suppresses restore)
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { listenHere } from "./eventScope";
 import { useApp, type PaneModel, type PaneGroup, type Workspace } from "./store";
 import { useUI } from "./ui";
 import {
@@ -357,7 +357,7 @@ export function startAutosave() {
   window.addEventListener("beforeunload", finalSave);
   // Phase 4: Rust asks for a final slice when this window is closing or the app is
   // quitting, and treats the push as the answer. Always push, even if nothing changed.
-  void listen("app://flush", () => {
+  void listenHere("app://flush", () => {
     refreshScrollbackCache();
     const s = useApp.getState();
     const draft = toDraft(s.workspaces, s.activeId);
