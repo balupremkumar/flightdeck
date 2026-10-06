@@ -9,6 +9,7 @@ mod canary;
 mod chatlog;
 mod codexsessions;
 mod doctor;
+mod dragwin;
 mod editor;
 mod ghpr;
 mod gitstatus;
