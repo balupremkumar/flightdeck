@@ -7,7 +7,7 @@ import { applyReadingSettings, migrateQuietDefault } from "./settingsStore";
 import { useUI, applyUiScale } from "./ui";
 import { useVendors, armVendorHotReload, vendorShort } from "./vendors";
 import { runWorktreeGc } from "./worktrees";
-import { startAutosave, offerSessionRestore, crashedLastRun, armCleanExitSentinel, lastRestoreReport } from "./session";
+import { startAutosave, offerSessionRestore, releaseSaveHold, crashedLastRun, armCleanExitSentinel, lastRestoreReport } from "./session";
 import { armGlobalErrorLog } from "./applog";
 import { syncReadRoots } from "./readscope";
 import { bootWindow, adoptBootInfo, listenForAdopt, replayPendingAdopts, listenForFocusPane, listenForScaleChange, closeWhenEmpty, restoreWindows } from "./windowBoot";
@@ -46,6 +46,8 @@ listenForFocusPane();
 listenForScaleChange();
 // Phase 4: settings changed in another window apply here live (storage events).
 armStorageSync();
+// A failed boot never reaches the restore offer: don't leave autosave held for good.
+booted.catch(() => releaseSaveHold());
 void booted.then(() => offerSessionRestore()).then(async (restoreSecondaries) => {
   await replayPendingAdopts();
   return restoreSecondaries;

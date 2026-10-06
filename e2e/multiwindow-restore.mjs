@@ -199,6 +199,42 @@ const storeState = (page) => page.evaluate(async () => {
   await context.close();
 }
 
+// ---- G. data loss: reload / close / quit while the prompt is open must not blank main's saved slice ----
+// Before hydrate main's store is empty; pushing that as main's slice replaced its saved workspaces.
+const mainSlice = (bus) => bus.slices.get("main")?.workspaces?.map((w) => w.id) ?? null;
+const mainKept = (ids, want) => ids === null || ids.includes(want); // no push at all is fine, an empty one is not
+for (const multiwindow of [true, false]) {
+  const tag = multiwindow ? "flag on" : "flag off";
+  {
+    const { context, bus, main } = await launch(multiwindow, doc, "launcher");
+    const prompt = () => main.getByRole("alertdialog", { name: "Reopen last session?" }).isVisible();
+    await until(prompt, 10000, `the reopen prompt (${tag})`);
+    await sleep(500);
+    await main.reload({ waitUntil: "networkidle" });
+    await until(prompt, 10000, `the reopen prompt again after a reload (${tag})`);
+    await sleep(1500);
+    check(mainKept(mainSlice(bus), 1), `${tag}, reload with the prompt open: main's saved workspace survives (main slice ${JSON.stringify(mainSlice(bus))})`);
+    const flushed = await bus.flush("main", 800);
+    check(mainKept(mainSlice(bus), 1), `${tag}, app flush with the prompt open: main's saved workspace survives (main slice ${JSON.stringify(mainSlice(bus))}, flush answered ${flushed})`);
+    await main.getByRole("button", { name: "Reopen session" }).click();
+    await until(async () => (await storeState(main)).workspaces.some((w) => w.id === 1), 8000, `Reopen after the reload hydrates main (${tag})`);
+    if (multiwindow) await until(async () => bus.restores.includes("fw-1"), 10000, "fw-1 restored after the reload and Reopen");
+    await sleep(1200);
+    check((mainSlice(bus) ?? []).includes(1), `${tag}, after Reopen: main's slice holds its workspace (${JSON.stringify(mainSlice(bus))})`);
+    await context.close();
+  }
+  {
+    // Closing the window with the prompt open runs beforeunload.
+    const { context, bus, main } = await launch(multiwindow, doc, "launcher");
+    await until(async () => main.getByRole("alertdialog", { name: "Reopen last session?" }).isVisible(), 10000, `the reopen prompt (${tag}, close)`);
+    await sleep(500);
+    await main.close({ runBeforeUnload: true });
+    await sleep(800);
+    check(mainKept(mainSlice(bus), 1), `${tag}, window closed with the prompt open: main's saved workspace survives (main slice ${JSON.stringify(mainSlice(bus))})`);
+    await context.close();
+  }
+}
+
 check(pageErrors.length === 0, `no page errors${pageErrors.length ? `: ${pageErrors[0]}` : ""}`);
 await browser.close();
 console.log(failures.length ? `\n${failures.length} FAILED` : "\nall passed");

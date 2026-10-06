@@ -321,6 +321,25 @@ export function parseUiPrefs(uiPrefs: unknown): {
 // ---------------------------------------------------------------------------
 
 let lastSavedJson = "";
+
+// Until main has answered the restore prompt (or hydrated without one), its store is
+// empty, and an empty slice pushed to Rust (reload, quit, app://flush) replaces the
+// workspaces main has saved: the next "Reopen" then finds nothing. While held, main
+// pushes the document it loaded instead (an unchanged slice, which still answers
+// Rust's flush request), or nothing if that load hasn't landed yet.
+let saveHold = false;
+let heldSlice: SessionDraft | null = null;
+let resumeSave: () => void = () => {};
+function pushHeld(): Promise<void> {
+  return heldSlice ? putSlice(heldSlice, true) : Promise.resolve();
+}
+/** Main has answered (or never had to): autosave pushes the real store again. */
+export function releaseSaveHold() {
+  if (!saveHold) return;
+  saveHold = false;
+  heldSlice = null;
+  resumeSave();
+}
 /** UI-196: when the session last hit disk, for the Settings readout. Persisting
  *  silently is right, but "is my work actually being saved?" deserves an answer. */
 let lastSavedAt = 0;
@@ -328,7 +347,9 @@ export function lastSessionSaveAt(): number { return lastSavedAt; }
 
 export function startAutosave() {
   const saver = makeDebouncedSave(800);
+  saveHold = isMainWindow();
   const scheduleIfChanged = () => {
+    if (saveHold) return;
     const s = useApp.getState();
     const draft = toDraft(s.workspaces, s.activeId);
     const json = JSON.stringify(draft);
@@ -344,12 +365,14 @@ export function startAutosave() {
   };
   useApp.subscribe(scheduleIfChanged);
   onScrollbackRefreshed = scheduleIfChanged;
+  resumeSave = scheduleIfChanged;
   // Best-effort last write on the way out; the 800ms debounce means almost
   // everything is already on disk, this just narrows the window.
   // QL-762: the exit is the one place serialisation runs synchronously — the
   // scrollback you most want back is the one from the moment you quit, and
   // there is no idle callback left to wait for.
   const finalSave = () => {
+    if (saveHold) { void pushHeld(); return; }
     refreshScrollbackCache();
     scheduleIfChanged();
     saver.flush(true); // pushes the slice to Rust, skipping its debounce
@@ -358,6 +381,7 @@ export function startAutosave() {
   // Phase 4: Rust asks for a final slice when this window is closing or the app is
   // quitting, and treats the push as the answer. Always push, even if nothing changed.
   void listenHere("app://flush", () => {
+    if (saveHold) { void pushHeld(); return; }
     refreshScrollbackCache();
     const s = useApp.getState();
     const draft = toDraft(s.workspaces, s.activeId);
@@ -368,6 +392,7 @@ export function startAutosave() {
   // Phase 4 merge-first: after secondaries fold into main, put the merged slice on disk
   // (and wait for it) before a session-wide operation reads the document.
   registerSliceFlush(async () => {
+    if (saveHold) return pushHeld();
     refreshScrollbackCache();
     const s = useApp.getState();
     const draft = toDraft(s.workspaces, s.activeId);
@@ -549,6 +574,14 @@ export function savedSecondaryWindows(doc: { windows?: { label: string; workspac
  *  recreated (restored, no prompt needed, or nothing to ask), false when the
  *  user declined, in which case Rust has already discarded them. */
 export async function offerSessionRestore(): Promise<boolean> {
+  try {
+    return await offerSessionRestoreInner();
+  } finally {
+    releaseSaveHold();
+  }
+}
+
+async function offerSessionRestoreInner(): Promise<boolean> {
   if (!isMainWindow()) return true;
   try {
     if (await isSafeMode()) {
@@ -561,6 +594,7 @@ export async function offerSessionRestore(): Promise<boolean> {
     }
     const doc = await loadSession();
     if (!doc) return true;
+    heldSlice = { workspaces: doc.workspaces, activeWorkspaceId: doc.activeWorkspaceId, uiPrefs: doc.uiPrefs, windows: doc.windows };
     // UX-554 pane groups restore unconditionally — workspace-independent
     // state, so declining the workspace prompt below shouldn't wipe them.
     // parseUiPrefs is the backward-compat boundary: a doc saved before this
