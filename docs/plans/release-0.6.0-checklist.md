@@ -112,14 +112,14 @@ With the flag off, none of these commands exist and the app behaves as one windo
 
 ## Phase 5 Home
 
-- [ ] Ctrl+Shift+H opens Home, as does the button beside the bell and the palette entry "Open Home".
-- [ ] The Home count matches the bell count.
-- [ ] Cards sit in the right columns (Needs you, Working, Ready to review, Idle, Merged).
-- [ ] Peek (Space on a card) shows the last lines of that pane, including a pane not currently mounted.
+- [x] Ctrl+Shift+H opens Home, as does the button beside the bell and the palette entry "Open Home". PASS live 2026-10-06 (e2e/live/results/2026-10-06/w1b-d-home.json): titlebar button and palette "Open Home" (shortcut covered by e2e/home.mjs).
+- [x] The Home count matches the bell count. PASS live 2026-10-06 (e2e/live/results/2026-10-06/w1b-d-home.json): 2 and 2.
+- [x] Cards sit in the right columns (Needs you, Working, Ready to review, Idle, Merged). PASS live 2026-10-06 (e2e/live/results/2026-10-06/w1b-d-home.json): Claude permission and pwsh y/n in Needs you, idle Claude with a diff in Ready to review.
+- [x] Peek (Space on a card) shows the last lines of that pane, including a pane not currently mounted. PASS live 2026-10-06 (e2e/live/results/2026-10-06/w1b-d-home.json): peek button shows the idle pane tail (Space key covered by e2e/home.mjs).
 - [ ] Reply to a question lands in that pane only, also after restarting the pane.
-- [ ] Approve on a Claude permission prompt answers it; on an unfamiliar prompt only Open is offered.
+- [ ] Approve on a Claude permission prompt answers it; on an unfamiliar prompt only Open is offered. PARTIAL live 2026-10-06 (e2e/live/results/2026-10-06/w1b-d-home.json): Approve answered a real Claude Bash prompt (command ran). OPEN QUESTION: a pwsh Read-Host "(y/n)" card also offers Approve (home.ts:244 approves any y/n line for any vendor); Balu to rule.
 - [ ] Escape closes Home and keeps typed drafts; reopening restores them and focus returns to where it was.
-- [ ] At the 940 px minimum width the columns become stacked sections and nothing is clipped.
+- [x] At the 940 px minimum width the columns become stacked sections and nothing is clipped. PASS live 2026-10-06 (e2e/live/results/2026-10-06/w1b-d-home.json): stacked, 0 cards clipped.
 
 ## Regression: wrong pane id after a restore
 
