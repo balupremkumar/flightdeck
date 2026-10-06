@@ -326,10 +326,11 @@ export function saveStartupBehavior(v: StartupBehavior) {
   try { localStorage.setItem("flightdeck-startup", v); } catch { /* non-persistent */ }
 }
 
-// Phase 4: multiple windows (preview), default off. Main reports it to Rust in
-// window_boot, so a change applies on the next launch.
+// Phase 4: multiple windows. On by default since 0.6.1 (absent key = on, an explicit
+// "0" from Settings = off, the kill switch). Main reports it to Rust in window_boot,
+// so a change applies on the next launch.
 export function getMultiwindow(): boolean {
-  try { return localStorage.getItem("flightdeck-multiwindow") === "1"; } catch { return false; }
+  try { return localStorage.getItem("flightdeck-multiwindow") !== "0"; } catch { return true; }
 }
 export function saveMultiwindow(on: boolean) {
   try { localStorage.setItem("flightdeck-multiwindow", on ? "1" : "0"); } catch { /* non-persistent */ }

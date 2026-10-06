@@ -16,7 +16,12 @@
 
 ## Multiple windows (preview)
 
-- Workspaces can live in their own windows. It is a preview behind a setting: Settings > Windows > "Multiple windows (preview)", off by default, takes effect after a restart.
+- Workspaces can live in their own windows. It is on by default. Settings > Windows > "Multiple windows (preview)" turns it off, and takes effect after a restart.
+- Drag a workspace tile out of the window to open it in a new window where you let go, on any monitor. A small card follows the cursor and says what a release will do. Agents keep running.
+- Drag a tile onto another Flightdeck window (rail, body or title bar) to move it in. The window you drop on lights up. Escape, or letting go over the window you started in, cancels.
+- Dragging the only workspace of a secondary window moves the window instead of making a new one. Dragging the only workspace of the main window leaves the launcher behind.
+- A workspace with a pane that is still starting can be reordered but not torn out.
+- Settings > Windows > "Drag workspaces between windows" switches the drag off and restores the old rail drag.
 - Move a workspace to a new window (Ctrl+Shift+N) or, from the palette, to an existing one. Agents keep running through the move.
 - Ctrl+Shift+O switches to the next window.
 - "Merge all windows" brings everything back to the main window.

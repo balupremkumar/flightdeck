@@ -80,9 +80,9 @@ Each phase's red team adds its items here; the final release note links this fil
 - [ ] After `/focus` in one pane, a classic pane still shows full output.
 - [ ] `<app-data>\claude-view\` holds the two files; nothing under `~/.claude` changed.
 
-## Phase 4 multi-window (flag off by default)
+## Phase 4 multi-window (flag on by default since 0.6.1)
 
-Turn on Settings > Windows > "Multiple windows (preview)" and restart.
+The flag is on unless Settings > Windows > "Multiple windows (preview)" was switched off and the app restarted.
 With the flag off, none of these commands exist and the app behaves as one window.
 
 - [ ] Capability: a `fw-*` window can run panes, read files and use the dialogs (no "not allowed" errors in the console).
@@ -131,3 +131,37 @@ With the flag off, none of these commands exist and the app behaves as one windo
 - [ ] H1, flag on: move a workspace to a second window, quit, relaunch with reopen, add a pane in main: the agent in the second window keeps running.
 - [ ] M2/M3: paste a fake key (`sk-ant-api03-` plus 30 letters) into a Claude pane so it shows in colour, and type one into a pane's input without sending; quit; `session.json` and the newest `snapshots\*.json` hold `[REDACTED]`, not the key.
 - [ ] L2: in DevTools, `fetch(convertFileSrc("<home>\\.claude\\.credentials.json"))` fails (403), while a Claude transcript still opens in the viewer.
+
+## 0.6.1 drag-out windows
+
+Plan: docs/plans/drag-windows-d3.md section 6.
+The scripted checks run on the Canary with `drag_debug_script` and do not touch the mouse; the OS-cursor checks need the real mouse and Balu away from other work (a real press moves the foreground).
+
+Scripted (Canary, live, user mouse untouched):
+
+- [ ] Scripted tear to empty desktop opens a new window at that point with the workspace, agents still running, no restart.
+- [ ] Scripted tear onto a second monitor point on a 150% monitor: window lands on that monitor at the right size, title bar on screen, window-state plugin does not move it.
+- [ ] Scripted drop onto another Flightdeck window moves the workspace in, appended and active, and that window comes forward; output intact.
+- [ ] Scripted release back over the source, and a scripted Escape: nothing moves, ghost gone, no stuck hover outline.
+- [ ] Scripted drag of a secondary's only workspace to a new spot moves that window instead of recreating it; into another window it moves and the empty secondary closes.
+- [ ] Scripted drag of the only workspace of main: main shows the launcher and the whole window is a drop target.
+- [ ] Ghost: appears only after the 8 px tear, follows the point, flips its line between "new window", "move into this window" and "cancel", and is destroyed on drop, cancel, timeout and source close (no `drag-ghost` window left in the process).
+- [ ] Ghost focus: with fgwatch running, Canary never becomes foreground during a scripted drag, except the new or target window the drop opens.
+- [ ] A pane still starting: dragging its workspace out shows one toast, no ghost, nothing moves.
+- [ ] Drag with Settings > Windows > "Drag workspaces between windows" off: the old rail drag runs and no ghost or drag_arm happens.
+
+Real mouse (OS cursor):
+
+- [ ] Press, drag and release across the window edge with the real mouse: new window opens under the cursor.
+- [ ] Ghost is smooth, sits clear of the cursor, never flickers, never takes focus from the window you are in, and clicks fall through it.
+- [ ] Release over a different app that overlaps a Flightdeck window: counts as desktop, a new window opens.
+- [ ] Two monitors at different DPI (100% and 150% or 200%): ghost size, cursor offset and the new window size look right on both; the ghost flips away from the monitor edge.
+- [ ] Escape mid-drag cancels with the real mouse and nothing moves.
+- [ ] Explorer folder dragged onto the rail still creates a workspace.
+- [ ] Plain click on a tile still opens the workspace after the drag change; a short wiggle (under 4 px) is a click, not a drag.
+- [ ] Rail reorder by dragging inside the window works with the real mouse (it may never have worked with the old HTML5 drag, see below).
+- [ ] Multiple windows on by default: a fresh profile (no `flightdeck-multiwindow` key) shows the window commands and drag without visiting Settings; switching it off and restarting returns to one window.
+
+Possibly dead HTML5 drag (D0 finding):
+
+- [ ] Drag a pane header onto another pane or a rail tile with the real mouse and record whether it ever works. wry keeps its own drag-drop handler on Windows (`dragDropEnabled` is on in tauri.conf.json), which blocks HTML5 drag and drop, so pane reorder and pane-to-tile drops may have been dead already. If dead, note it for a follow-up; do not fix in 0.6.1.
