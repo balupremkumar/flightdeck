@@ -5,7 +5,8 @@ import "./w3-prefix.mjs";
 // accept -> main hydrates and the secondary comes back with its workspace. pwsh panes only.
 import { existsSync, readFileSync, renameSync } from "node:fs";
 import path from "node:path";
-import { main, boot, d, step, launchWorkspace, waitModels, sleep, shotPath, teardown, stableSnapshot, jsClick, SCRATCH } from "./w1a-lib.mjs";
+import { execFileSync } from "node:child_process";
+import { main, boot, d, step, here, launchWorkspace, waitModels, sleep, shotPath, teardown, stableSnapshot, jsClick, SCRATCH } from "./w1a-lib.mjs";
 
 const SESSION = path.join(process.env.APPDATA, "ai.flightdeck.canary", "session.json");
 const label = (p) => p.evaluate(() => window.__TAURI_INTERNALS__?.metadata?.currentWindow?.label ?? null);
@@ -15,6 +16,7 @@ async function labels(ctx) {
   return out.sort();
 }
 const savedWindows = () => { try { return JSON.parse(readFileSync(SESSION, "utf8")).windows ?? null; } catch { return null; } };
+const savedWorkspaces = () => { try { return JSON.parse(readFileSync(SESSION, "utf8")).workspaces.map((w) => w.id); } catch { return null; } };
 const shim = (p) => p.evaluate(() => {
   for (const k of ["setPointerCapture", "releasePointerCapture"]) {
     const o = Element.prototype[k]; if (o.__fd) continue;
@@ -51,13 +53,29 @@ async function makeTwoWindowSession(r, tag) {
   await teardown();
   await sleep(1000);
   const w = savedWindows();
-  r.evidence[`${tag}: built`] = { labels: ls, saved: w };
-  return r.check(`${tag}: setup saved a session with main and fw-1 holding a workspace`, ls.includes("fw-1") && !!w?.some((x) => x.label === "fw-1" && x.workspaceIds.length > 0), r.evidence[`${tag}: built`]);
+  r.evidence[`${tag}: built`] = { labels: ls, saved: w, workspaces: savedWorkspaces() };
+  return r.check(`${tag}: setup saved a session with main and fw-1 holding a workspace (both workspaces in the doc)`, ls.includes("fw-1") && !!w?.some((x) => x.label === "fw-1" && x.workspaceIds.length > 0) && savedWorkspaces()?.length === 2, r.evidence[`${tag}: built`]);
 }
 
 /** Relaunch on the saved session and answer the prompt. */
-async function relaunch(r, tag, answer) {
-  const c = await boot({ width: 2000, height: 1000, keepSession: true });
+/** Launch on the saved session WITHOUT the harness settings reload (boot() reloads the page, which would land while the
+ *  prompt is open; that case is its own scenario below). Test settings persist in the Canary profile from earlier runs. */
+async function launchNoReload() {
+  console.log("[launch]", execFileSync("node", [path.join(here, "launch.mjs")], { encoding: "utf8" }).trim().split(/\r?\n/).join(" | "));
+  const c = await d.connect();
+  d.setWindow({ width: 2000, height: 1000 });
+  return c;
+}
+async function relaunch(r, tag, answer, { reloadWhileOpen = false } = {}) {
+  const c = await launchNoReload();
+  if (reloadWhileOpen) {
+    await c.page.getByRole("button", { name: "Reopen session" }).waitFor({ timeout: 30000 });
+    await sleep(3000);
+    r.evidence[`${tag}: doc before reload`] = savedWorkspaces();
+    await c.page.reload({ waitUntil: "load" });
+    await sleep(3000);
+    r.evidence[`${tag}: doc after reload`] = savedWorkspaces();
+  }
   const { ctx, page } = c;
   const reopen = page.getByRole("button", { name: "Reopen session" });
   await reopen.waitFor({ timeout: 30000 });
@@ -71,7 +89,8 @@ async function relaunch(r, tag, answer) {
   else await jsClick(reopen);
   await sleep(6000);
   const after = await labels(ctx);
-  r.evidence[`${tag}: after`] = { labels: after, saved: savedWindows() };
+  r.evidence[`${tag}: after`] = { labels: after, saved: savedWindows(), workspaces: savedWorkspaces(), mainTiles: await page.evaluate(() => [...new Set([...document.querySelectorAll("[data-workspace-id]")].map((e) => Number(e.dataset.workspaceId)))]) };
+  console.log(`[${tag}] after`, JSON.stringify(r.evidence[`${tag}: after`]));
   return { c, after };
 }
 
@@ -104,7 +123,14 @@ main("restore", async (r) => {
     for (const p of ac.c.ctx.pages()) { try { if ((await label(p)) === "fw-1") fwPanes = await p.evaluate(() => document.querySelectorAll(".pane").length); } catch { /* */ } }
     const mainPanes = await ac.c.page.evaluate(() => document.querySelectorAll(".pane").length);
     r.check("accept: main and fw-1 each show their workspace's pane", fwPanes === 1 && mainPanes === 1, { fwPanes, mainPanes, fw: !!fw });
-    return ac.c;
+    await teardown(); await sleep(1000);
+
+    step("reload while the prompt is open, then Reopen");
+    if (!(await makeTwoWindowSession(r, "reload"))) throw new Error("setup failed");
+    const rl = await relaunch(r, "reload", "reopen", { reloadWhileOpen: true });
+    const mainPanes2 = await rl.c.page.evaluate(() => document.querySelectorAll(".pane").length);
+    r.check("reload: a reload while the prompt is open does not erase main's saved workspace", mainPanes2 === 1 && (r.evidence["reload: doc after reload"] ?? []).length === 2, { mainPanes2, before: r.evidence["reload: doc before reload"], afterReload: r.evidence["reload: doc after reload"], after: r.evidence["reload: after"] });
+    return rl.c;
   } finally {
     r.evidence.safetyAfter = stableSnapshot();
     await teardown();
