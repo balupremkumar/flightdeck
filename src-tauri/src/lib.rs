@@ -9,6 +9,7 @@ mod canary;
 mod chatlog;
 mod codexsessions;
 mod doctor;
+mod dragrun;
 mod dragwin;
 mod editor;
 mod ghpr;
@@ -1063,6 +1064,10 @@ pub fn run() {
             windows::set_multiwindow,
             windows::merge_all_windows,
             windows::app_quit,
+            dragrun::drag_arm,
+            dragrun::drag_disarm,
+            dragrun::drag_cancel,
+            dragrun::drag_debug_script,
             chatlog::pane_session_info,
             chatlog::session_tail,
             usage::session_subagents,

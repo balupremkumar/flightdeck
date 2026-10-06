@@ -18,6 +18,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
 
+use crate::dragwin::Rect;
 use crate::persist::{self, PersistedWindow, SessionDoc};
 
 pub const MAIN: &str = "main";
@@ -749,9 +750,60 @@ pub struct WsSnapshot {
 #[derive(Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum TransferTarget {
-    New,
+    /// A new window. `at` (physical outer rect, from a drag drop) places it; absent
+    /// means the default size and position.
+    New {
+        #[serde(default)]
+        at: Option<Rect>,
+    },
     /// An existing, booted window (S9): it receives the workspace over `win://adopt`.
     Label { label: String },
+}
+
+/// A drop rectangle JS or the drag poll sent, if it is sane: positive, not absurdly
+/// large, not absurdly far away. Anything else is ignored (default placement).
+pub fn valid_placement(at: Rect) -> Option<Rect> {
+    let ok = (1..=20_000).contains(&at.w) && (1..=20_000).contains(&at.h) && at.x.abs() <= 100_000 && at.y.abs() <= 100_000;
+    ok.then_some(at)
+}
+
+/// Put `w` at the physical outer rect `at`. Position first, then size, so the DPI
+/// change of the target monitor lands before the resize. `set_size` sets the inner
+/// size, so the frame is measured after the move (it depends on the monitor scale).
+pub fn apply_placement(w: &tauri::WebviewWindow, at: Rect) {
+    use tauri::{PhysicalPosition, PhysicalSize};
+    if w.is_maximized().unwrap_or(false) {
+        let _ = w.unmaximize();
+    }
+    let _ = w.set_position(PhysicalPosition::new(at.x, at.y));
+    let (dw, dh) = match (w.outer_size(), w.inner_size()) {
+        (Ok(o), Ok(i)) => (o.width.saturating_sub(i.width), o.height.saturating_sub(i.height)),
+        _ => (0, 0),
+    };
+    let _ = w.set_size(PhysicalSize::new((at.w as u32).saturating_sub(dw).max(1), (at.h as u32).saturating_sub(dh).max(1)));
+}
+
+/// Is `ws_id` the only workspace of the secondary `label`? Then a drag of it to a new
+/// spot moves the window itself instead of recreating it. Never main.
+pub fn is_sole_workspace(app: &AppHandle, label: &str, ws_id: u32) -> bool {
+    label != MAIN && sole_in_registry(&app.state::<WindowState>().lock(), label, ws_id) && !persist::slice_has_other_workspace(label, ws_id)
+}
+
+fn sole_in_registry(reg: &WindowRegistry, label: &str, ws_id: u32) -> bool {
+    reg.windows.get(label).is_some_and(|r| r.workspace_ids == [ws_id])
+}
+
+/// Registry windows with their geometry, for the drag hit test. `geom` answers
+/// `(visible frame rect, minimised, visible)` for a label, or None when the window
+/// is gone (it is then left out).
+pub fn drag_infos(reg: &WindowRegistry, geom: impl Fn(&str) -> Option<(Rect, bool, bool)>) -> Vec<crate::dragwin::WinInfo> {
+    reg.windows
+        .iter()
+        .filter_map(|(label, r)| {
+            let (rect, minimised, visible) = geom(label)?;
+            Some(crate::dragwin::WinInfo { label: label.clone(), rect, minimised, visible, booted: r.booted, last_focus_ms: r.last_focus_ms })
+        })
+        .collect()
 }
 
 /// Move a workspace to a new window. Rust assigns it to the new label and parks the
@@ -773,7 +825,8 @@ pub async fn ws_transfer(
     validate_label(&source)?;
     let ws_id = ws_snapshot.workspace_id;
     let label = match target {
-        TransferTarget::New => {
+        TransferTarget::New { at } => {
+            let at = at.and_then(valid_placement);
             let label = {
                 let mut reg = state.lock();
                 // The flag lives in JS; this is the second lock on the same door.
@@ -785,7 +838,7 @@ pub async fn ws_transfer(
             };
             persist::seed_slice(&label, ws_snapshot.slice);
             pending_put(&label, ws_snapshot.transfer);
-            if let Err(e) = create_window(&app, &label, true) {
+            if let Err(e) = create_window(&app, &label, true, at) {
                 pending_take(&label);
                 persist::drop_slice(&label);
                 state.lock().rollback_new_window(&label, &source, ws_id);
@@ -862,7 +915,7 @@ pub async fn ws_transfer(
     Ok(label)
 }
 
-fn create_window(app: &AppHandle, label: &str, focus: bool) -> Result<(), String> {
+fn create_window(app: &AppHandle, label: &str, focus: bool, at: Option<Rect>) -> Result<(), String> {
     // Same minimum as tauri.conf.json; created hidden, shown once built.
     let w = WebviewWindowBuilder::new(app, label, WebviewUrl::App("index.html".into()))
         .title("Flightdeck")
@@ -872,6 +925,11 @@ fn create_window(app: &AppHandle, label: &str, focus: bool) -> Result<(), String
         .focused(focus)
         .build()
         .map_err(|e| e.to_string())?;
+    // Placed while hidden, so it never flashes at the default spot. After build, so it
+    // overrides whatever the window-state plugin restored for this label.
+    if let Some(at) = at {
+        apply_placement(&w, at);
+    }
     // `focused(false)` makes tao's first show SW_SHOWNOACTIVATE, so a launch restore
     // never takes focus from whatever the user is in front of.
     w.show().map_err(|e| e.to_string())?;
@@ -900,7 +958,7 @@ pub async fn restore_windows(app: AppHandle, window: tauri::Window, state: State
     let mut created = Vec::new();
     for label in labels {
         state.lock().stamp_created(&label, now_ms());
-        match create_window(&app, &label, false) {
+        match create_window(&app, &label, false, None) {
             Ok(()) => created.push(label),
             Err(e) => {
                 crate::applog::log("error", "window", &format!("restore: could not create {label}: {e}"));
@@ -1387,6 +1445,40 @@ mod tests {
     }
 
     #[test]
+    fn a_drop_rect_must_be_sane_to_be_used() {
+        assert_eq!(valid_placement(Rect::new(-2560, -200, 2400, 1400)), Some(Rect::new(-2560, -200, 2400, 1400)));
+        for bad in [Rect::new(0, 0, 0, 800), Rect::new(0, 0, 1200, -1), Rect::new(0, 0, 30_000, 800), Rect::new(200_000, 0, 1200, 800), Rect::new(0, -200_000, 1200, 800)] {
+            assert_eq!(valid_placement(bad), None, "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn only_a_secondary_holding_just_that_workspace_is_sole() {
+        let r = reg_with_secondary(1, &[7]);
+        assert!(sole_in_registry(&r, "fw-1", 7));
+        assert!(!sole_in_registry(&r, "fw-1", 8), "not its workspace");
+        assert!(!sole_in_registry(&r, "fw-2", 7), "unknown window");
+        let r2 = reg_with_secondary(1, &[7, 9]);
+        assert!(!sole_in_registry(&r2, "fw-1", 7), "two workspaces");
+    }
+
+    #[test]
+    fn drag_infos_lists_the_windows_that_have_geometry() {
+        let mut r = reg_with_secondary(1, &[7]);
+        r.windows.get_mut("main").unwrap().last_focus_ms = 50;
+        r.windows.insert("fw-2".into(), rec(&[8], false, 0));
+        let infos = drag_infos(&r, |l| match l {
+            "main" => Some((Rect::new(0, 0, 1000, 800), false, true)),
+            "fw-1" => Some((Rect::new(1200, 0, 800, 600), true, true)),
+            _ => None,
+        });
+        assert_eq!(infos.len(), 2, "fw-2 has no window");
+        let main = infos.iter().find(|w| w.label == "main").unwrap();
+        assert!(main.booted && main.visible && !main.minimised && main.last_focus_ms == 50);
+        assert!(infos.iter().find(|w| w.label == "fw-1").unwrap().minimised);
+    }
+
+    #[test]
     fn labels_are_validated() {
         assert_eq!(validate_label("main"), Ok(0));
         assert_eq!(validate_label("fw-1"), Ok(1));
@@ -1503,7 +1595,9 @@ mod tests {
     #[test]
     fn transfer_target_parses_both_shapes() {
         let new: TransferTarget = serde_json::from_str(r#"{"kind":"new"}"#).unwrap();
-        assert!(matches!(new, TransferTarget::New));
+        assert!(matches!(new, TransferTarget::New { at: None }));
+        let placed: TransferTarget = serde_json::from_str(r#"{"kind":"new","at":{"x":-5,"y":10,"w":1200,"h":800}}"#).unwrap();
+        assert!(matches!(placed, TransferTarget::New { at: Some(r) } if r == Rect::new(-5, 10, 1200, 800)));
         let to: TransferTarget = serde_json::from_str(r#"{"kind":"label","label":"fw-2"}"#).unwrap();
         assert!(matches!(to, TransferTarget::Label { label } if label == "fw-2"));
     }
