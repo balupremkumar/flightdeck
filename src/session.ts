@@ -179,6 +179,8 @@ export function restoredScrollbackFor(paneId: number): string | undefined {
 // Phase 3: per-pane `view` / `focusMode` ride in uiPrefs (opaque to persist.rs,
 // like scrollback) because PersistedPane would drop unknown fields. Only
 // non-default values are written.
+/** Stamped on every saved doc; parseUiPrefs resets saved Chat views on docs without it (0.6.1 terminal-default migration). */
+export const PANE_VIEW_REV = 1;
 export interface PaneChatPref { view?: "chat"; focusMode?: true }
 function paneChatFor(workspaces: Workspace[]): Record<number, PaneChatPref> {
   const out: Record<number, PaneChatPref> = {};
@@ -242,6 +244,7 @@ export function toDraft(workspaces: Workspace[], activeId: number | null): Sessi
       summary: summarize(workspaces),
       scrollback: scrollbackFor(workspaces), // QL-762
       paneChat: paneChatFor(workspaces), // Phase 3: per-pane view + focus mode
+      paneViewRev: PANE_VIEW_REV,
       paneColor: paneColorFor(workspaces),
     },
   };
@@ -273,8 +276,13 @@ export function parseUiPrefs(uiPrefs: unknown): {
   paneColor: Record<number, string>;
 } {
   const p = (uiPrefs && typeof uiPrefs === "object" ? uiPrefs : {}) as {
-    groups?: unknown; summary?: unknown; scrollback?: unknown; paneChat?: unknown; paneColor?: unknown;
+    groups?: unknown; summary?: unknown; scrollback?: unknown; paneChat?: unknown; paneColor?: unknown; paneViewRev?: unknown;
   };
+  // 0.6.1: a doc without the marker was saved by 0.6.0, where Chat was the
+  // default rather than a choice, so its saved Chat views are reset to terminal
+  // once. Every save from this build stamps the marker, so a deliberate Chat
+  // pane after that survives restarts.
+  const keepChat = p.paneViewRev === PANE_VIEW_REV;
   // QL-762: a doc written by hand, by an older build, or by a version that
   // capped differently is all the same case — take only numeric keys with
   // string values, and re-apply the per-pane cap on the way IN as well as out.
@@ -293,7 +301,7 @@ export function parseUiPrefs(uiPrefs: unknown): {
       if (!Number.isFinite(id) || !value || typeof value !== "object") continue;
       const v = value as { view?: unknown; focusMode?: unknown };
       const pref: PaneChatPref = {};
-      if (v.view === "chat") pref.view = "chat";
+      if (v.view === "chat" && keepChat) pref.view = "chat";
       if (v.focusMode === true) pref.focusMode = true;
       if (pref.view || pref.focusMode) paneChat[id] = pref;
     }

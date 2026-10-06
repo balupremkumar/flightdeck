@@ -3,7 +3,7 @@ import ReactDOM from "react-dom/client";
 import App from "./App";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { bootAppearance } from "./themes";
-import { applyReadingSettings } from "./settingsStore";
+import { applyReadingSettings, migrateTerminalDefault } from "./settingsStore";
 import { useUI, applyUiScale } from "./ui";
 import { useVendors, armVendorHotReload, vendorShort } from "./vendors";
 import { runWorktreeGc } from "./worktrees";
@@ -39,6 +39,7 @@ armCleanExitSentinel();
 // hydrate never runs before the id counters know their partition.
 // A secondary then takes the workspace it was created for (offerSessionRestore is
 // main-only), and main starts listening for workspaces folding back into it.
+migrateTerminalDefault(); // 0.6.1: once, reset 0.6.0's stored Chat default to Terminal
 const booted = bootWindow().then((info) => adoptBootInfo(info)).then(() => closeWhenEmpty());
 listenForAdopt();
 listenForFocusPane();

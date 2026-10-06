@@ -4,7 +4,7 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn(() => Promise.resolve(() => {})) }));
 
 const { invoke } = await import("@tauri-apps/api/core");
-const { hydrateFrom, addRestoredUiPrefs, parseUiPrefs, setRestoredPaneChat, setRestoredPaneColor, setRestoredScrollback, restoredScrollbackFor } = await import("./session");
+const { hydrateFrom, addRestoredUiPrefs, parseUiPrefs, setRestoredPaneChat, setRestoredPaneColor, setRestoredScrollback, restoredScrollbackFor, PANE_VIEW_REV } = await import("./session");
 const { otherWindows } = await import("./windowBoot");
 const { useApp } = await import("./store");
 const mockInvoke = invoke as unknown as ReturnType<typeof vi.fn>;
@@ -27,6 +27,7 @@ describe("Phase 4 close: a closed or crashed window's pane prefs survive the mer
     setRestoredScrollback({ 10: "main-screen" });
     const dead = parseUiPrefs({
       scrollback: { 20: "fw-screen" },
+      paneViewRev: PANE_VIEW_REV,
       paneChat: { 20: { view: "chat", focusMode: true } },
       paneColor: { 20: "blue" },
     });

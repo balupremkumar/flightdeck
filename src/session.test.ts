@@ -4,7 +4,7 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 
 const { invoke } = await import("@tauri-apps/api/core");
 const {
-  hydrateFrom, lastRestoreReport, parseUiPrefs, lastSessionSummary,
+  hydrateFrom, lastRestoreReport, parseUiPrefs, lastSessionSummary, toDraft, PANE_VIEW_REV,
   setRestoredScrollback, restoredScrollbackFor,
   registerScrollbackSource, unregisterScrollbackSource, refreshScrollbackCache, paneScrollbackCache,
 } = await import("./session");
@@ -48,7 +48,7 @@ describe("session restore (UX-581 draft round-trip / UX-583 restore report)", ()
     const [a, b] = useApp.getState().workspaces[0].panes;
     expect(a.titleManual).toBe(true);
     expect(b.titleManual).toBeUndefined();
-    const { toDraft } = await import("./session");
+
     const draft = toDraft(useApp.getState().workspaces, 1);
     expect(draft.workspaces[0].panes.map((p) => p.titleManual)).toEqual([true, undefined]);
   });
@@ -64,7 +64,7 @@ describe("session restore (UX-581 draft round-trip / UX-583 restore report)", ()
     );
     const { lastLine } = await import("./attention");
     lastLine.set(10, `\x1b[32m${key}\x1b[0m`);
-    const { toDraft } = await import("./session");
+
     const doc = toDraft(useApp.getState().workspaces, 1);
     lastLine.delete(10);
     expect(JSON.stringify(doc)).not.toContain("sk-ant-");
@@ -164,8 +164,20 @@ describe("parseUiPrefs backward compatibility (UX-554/561)", () => {
   });
 
   it("parses per-pane chat prefs and drops junk", () => {
-    expect(parseUiPrefs({ paneChat: { 3: { view: "chat", focusMode: true }, 4: { view: "x" }, bad: { view: "chat" }, 5: 7 } }).paneChat)
+    expect(parseUiPrefs({ paneViewRev: PANE_VIEW_REV, paneChat: { 3: { view: "chat", focusMode: true }, 4: { view: "x" }, bad: { view: "chat" }, 5: 7 } }).paneChat)
       .toEqual({ 3: { view: "chat", focusMode: true } });
+  });
+
+  it("0.6.1 migration: a doc without the view marker (saved by 0.6.0) loses its Chat views once, keeps focus mode", () => {
+    const paneChat = { 3: { view: "chat", focusMode: true }, 4: { view: "chat" } };
+    expect(parseUiPrefs({ paneChat }).paneChat).toEqual({ 3: { focusMode: true } });
+  });
+
+  it("a doc saved by this build keeps a deliberate Chat view across restarts", () => {
+    const saved = toDraft([{ id: 1, name: "w", root: "/a", focused: 3, panes: [{ id: 3, vendor: "claude", cwd: "/a", state: "waiting", epoch: 0, view: "chat" }] }], 1);
+    expect(parseUiPrefs(saved.uiPrefs).paneChat).toEqual({ 3: { view: "chat" } });
+    // and a re-save of what was parsed stays chat on the next load
+    expect(parseUiPrefs(JSON.parse(JSON.stringify(saved.uiPrefs))).paneChat).toEqual({ 3: { view: "chat" } });
   });
 
   it("tolerates groups/summary being present but the wrong shape (not an array)", () => {
