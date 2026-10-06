@@ -20,8 +20,9 @@ const lastPaneSoundAt = new Map<number, number>();
 function isEnabled(): boolean {
   try {
     const val = localStorage.getItem(ENABLED_KEY);
-    // Absent or any other value defaults to true; explicitly "false" disables.
-    return val !== "false";
+    // Settings writes "1"/"0"; older builds wrote "true"/"false".
+    // Both off values disable; absent or any other value defaults to true.
+    return val !== "0" && val !== "false";
   } catch {
     return true; // non-persistent, safe default
   }
