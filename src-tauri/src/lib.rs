@@ -327,6 +327,7 @@ async fn pty_spawn(
                 needs_resolve: plan.needs_resolve,
                 spawn_ms,
                 cwd,
+                launch_args: chatlog::non_session_args(&plan.extra_args),
             }),
         },
     );
