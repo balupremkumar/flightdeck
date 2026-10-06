@@ -73,6 +73,11 @@ if ($Mode -eq "list") {
   ConvertTo-Json -Compress -InputObject @(foreach ($h in [FdWin]::ForPid([uint32]$ProcessId, $false)) { $t = [FdWin]::Title($h); if ($t) { $r = [FdWin]::Rect($h); @{ hwnd = [int64]$h; title = $t; x = $r[0]; y = $r[1]; w = $r[2]; h = $r[3]; iconic = [FdWin]::Iconic($h); visible = $vis -contains [int64]$h } } })
   return
 }
+if ($Mode -eq "closehwnd") {
+  # WM_CLOSE to one window by HWND: the title-bar X path (close-requested handlers and quit dialogs run).
+  @{ hwnd = $Hwnd; posted = [FdWin]::Close([IntPtr]$Hwnd) } | ConvertTo-Json -Compress
+  return
+}
 if ($Mode -eq "movehwnd") {
   # One window by HWND, SWP_NOACTIVATE | SWP_NOZORDER (other windows of the pid untouched).
   $h = [IntPtr]$Hwnd; [void][FdWin]::Move($h, $X, $Y, $Width, $Height); $r = [FdWin]::Rect($h)
