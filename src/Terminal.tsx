@@ -24,7 +24,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { terminalThemeFor } from "./terminal-theme";
 import { claudeThemeForSpawn } from "./themes";
 import { getTerminalSettings, terminalReadabilityOptions } from "./settingsStore";
-import { shouldCopyOnSelect } from "./terminalMouse";
+import { quietWheelReports, shouldCopyOnSelect, type WheelAcc } from "./terminalMouse";
 import { isOscBusy, nextOscBusy, type OscBusy } from "./oscBusy";
 import { linkify, resolvePath, isRemotePath, type LinkMatch } from "./linkify";
 import { computeFoldRanges, foldAll, foldsContaining, foldSummary, pruneFolded, toggleFold, type FoldRange } from "./foldmarks";
@@ -1323,6 +1323,25 @@ function createSession(modelId: number, gen: string, spec: SpawnSpec, handlers: 
       jumpMark(e.key === "ArrowDown" ? 1 : -1);
       return false;
     });
+
+    // K11: in a Quiet terminal pane the wheel scrolls Claude's transcript (SGR
+    // wheel reports) instead of xterm's arrow-key fallback, which walked the
+    // prompt history. Only while Claude holds the alternate screen; Ctrl+wheel
+    // stays the app's zoom.
+    if (spec.focusMode) {
+      const wheelAcc: WheelAcc = { px: 0 };
+      term.attachCustomWheelEventHandler((e) => {
+        if (e.ctrlKey || term.buffer.active.type !== "alternate" || !entry.ptyId) return true;
+        const screen = term.element?.querySelector(".xterm-screen")?.getBoundingClientRect();
+        if (!screen || !screen.width || !screen.height) return true;
+        const col = Math.min(term.cols, Math.max(1, Math.floor((e.clientX - screen.left) / (screen.width / term.cols)) + 1));
+        const row = Math.min(term.rows, Math.max(1, Math.floor((e.clientY - screen.top) / (screen.height / term.rows)) + 1));
+        e.preventDefault();
+        const data = quietWheelReports(wheelAcc, e, col, row, term.rows);
+        if (data) void invoke("pty_write", { paneId: entry.ptyId, data });
+        return false;
+      });
+    }
 
     let paneId = 0;
     let unOut: (() => void) | undefined;

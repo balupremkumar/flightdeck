@@ -42,3 +42,28 @@ export function rightClickAction(i: RightClickInput): RightClickAction {
 export function shouldCopyOnSelect(i: { enabled: boolean; userGesture: boolean; changed: boolean; text: string }): boolean {
   return i.enabled && i.userGesture && i.changed && i.text.length > 0;
 }
+
+/** K11: Quiet terminal runs Claude in the alternate screen with its own mouse
+ *  capture off (chatlog.rs claude_env), so xterm has no scrollback and turns
+ *  every wheel notch into an Up/Down arrow, which Claude reads as prompt-box
+ *  history. Claude still parses SGR wheel reports (verified live 2026-10-08,
+ *  one line per report), so the wheel is sent as those instead. Pixel deltas
+ *  accumulate so a trackpad scrolls in proportion; 40 px is one line, three
+ *  lines per 120 px mouse notch, the usual terminal step. */
+export const WHEEL_PX_PER_LINE = 40;
+
+export interface WheelAcc { px: number }
+
+/** The SGR wheel reports for one wheel event, or "" while the accumulated
+ *  delta is under a line. col/row are 1-based cells under the pointer. */
+export function quietWheelReports(acc: WheelAcc, e: { deltaY: number; deltaMode: number }, col: number, row: number, rows: number): string {
+  const px = e.deltaMode === 1 ? e.deltaY * WHEEL_PX_PER_LINE : e.deltaMode === 2 ? e.deltaY * WHEEL_PX_PER_LINE * rows : e.deltaY;
+  // A direction change drops the remainder so reversing responds at once.
+  if (px !== 0 && acc.px !== 0 && Math.sign(px) !== Math.sign(acc.px)) acc.px = 0;
+  acc.px += px;
+  const lines = Math.trunc(acc.px / WHEEL_PX_PER_LINE);
+  if (lines === 0) return "";
+  acc.px -= lines * WHEEL_PX_PER_LINE;
+  const button = lines < 0 ? 64 : 65;
+  return `\x1b[<${button};${col};${row}M`.repeat(Math.min(Math.abs(lines), rows));
+}

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { rightClickAction, shouldConfirmPaste, shouldCopyOnSelect } from "./terminalMouse";
+import { quietWheelReports, rightClickAction, shouldConfirmPaste, shouldCopyOnSelect, type WheelAcc } from "./terminalMouse";
 
 const base = { hasSelection: false, overLink: false, mouseTracking: false, shift: false, setting: "paste" as const };
 
@@ -47,4 +47,39 @@ describe("shouldCopyOnSelect", () => {
   it("not programmatic", () => expect(shouldCopyOnSelect({ ...ok, userGesture: false })).toBe(false));
   it("not unchanged (plain click)", () => expect(shouldCopyOnSelect({ ...ok, changed: false })).toBe(false));
   it("not empty", () => expect(shouldCopyOnSelect({ ...ok, text: "" })).toBe(false));
+});
+
+describe("quietWheelReports (K11)", () => {
+  const UP = "\x1b[<64;5;7M", DOWN = "\x1b[<65;5;7M";
+  const px = (deltaY: number) => ({ deltaY, deltaMode: 0 });
+
+  it("sends three SGR wheel-up reports per 120 px mouse notch, at the pointer cell", () => {
+    const acc: WheelAcc = { px: 0 };
+    expect(quietWheelReports(acc, px(-120), 5, 7, 40)).toBe(UP.repeat(3));
+    expect(quietWheelReports(acc, px(120), 5, 7, 40)).toBe(DOWN.repeat(3));
+  });
+
+  it("never sends arrow keys", () => {
+    expect(quietWheelReports({ px: 0 }, px(-120), 5, 7, 40)).not.toMatch(/\x1b\[A|\x1bOA/);
+  });
+
+  it("accumulates small trackpad deltas until a whole line", () => {
+    const acc: WheelAcc = { px: 0 };
+    expect(quietWheelReports(acc, px(-15), 5, 7, 40)).toBe("");
+    expect(quietWheelReports(acc, px(-15), 5, 7, 40)).toBe("");
+    expect(quietWheelReports(acc, px(-15), 5, 7, 40)).toBe(UP);
+    expect(acc.px).toBe(-5);
+  });
+
+  it("drops the leftover when the direction reverses", () => {
+    const acc: WheelAcc = { px: -30 };
+    expect(quietWheelReports(acc, px(40), 5, 7, 40)).toBe(DOWN);
+    expect(acc.px).toBe(0);
+  });
+
+  it("handles line and page delta modes, capped at one screen", () => {
+    expect(quietWheelReports({ px: 0 }, { deltaY: -2, deltaMode: 1 }, 5, 7, 40)).toBe(UP.repeat(2));
+    expect(quietWheelReports({ px: 0 }, { deltaY: 1, deltaMode: 2 }, 5, 7, 40)).toBe(DOWN.repeat(40));
+    expect(quietWheelReports({ px: 0 }, px(-100000), 5, 7, 40)).toBe(UP.repeat(40));
+  });
 });
