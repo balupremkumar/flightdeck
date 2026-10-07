@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="en-NZ">
+<head>
+<meta charset="utf-8">
+<title>K12 pane header mock</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+/* Tokens copied from src/theme.css (Graphite, dark default) */
+:root{
+  --abyss:#03050A; --bg:#05080E; --surface:#0B0F19; --surface-2:#111827; --elevated:#171F30;
+  --line:rgba(148,184,224,0.19); --line-strong:rgba(148,184,224,0.34);
+  --text:#EAF1F8; --muted:#94A6BC; --faint:#71839A;
+  --ice:#9AE9FF; --accent:#43A6F5; --red:#FF5C6A;
+  --st-running:#52E08A; --st-waiting:#F2B03D; --st-idle:#71839A; --st-error:#FF5C6A;
+  --on-warn:#1a1400;
+  --font-sans:"Schibsted Grotesk","Segoe UI Variable","Segoe UI",system-ui,sans-serif;
+  --font-mono:"JetBrains Mono","Cascadia Code",Consolas,ui-monospace,monospace;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:var(--font-sans);font-size:14px;line-height:1.5;padding:32px 40px 80px}
+h1{font-size:20px;margin:0 0 4px;font-weight:600}
+.lede{color:var(--muted);max-width:78ch;margin:0 0 32px}
+h2{font-size:15px;font-weight:600;margin:40px 0 4px}
+h2 small{color:var(--muted);font-weight:400;font-size:13px;margin-left:8px}
+.cap{color:var(--muted);font-size:13px;margin:0 0 10px}
+.frame{border:1px solid var(--line-strong);border-radius:6px;overflow:hidden;background:var(--abyss);display:block}
+.band{height:3px;background:var(--st-running)}
+.band.wait{background:var(--st-waiting)}
+.body{padding:8px 10px;font:13px/18px var(--font-mono);color:#c9d4e2;background:var(--abyss);height:74px;overflow:hidden;white-space:nowrap}
+.body i{color:var(--faint);font-style:normal}
+svg.i{display:block;flex:none;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+ul.notes{margin:12px 0 0;padding-left:20px;max-width:100ch;font-size:13.5px}
+ul.notes li{margin:3px 0}
+ul.notes b{font-weight:600}
+code{font-family:var(--font-mono);font-size:12.5px;color:var(--ice)}
+
+/* ============ 1. CURRENT, recreated from App.css / panes.css / review.css ============ */
+.cur{display:flex;align-items:center;gap:8px;padding:7px 10px;background:var(--surface-2);border-bottom:1px solid var(--line);font-size:12.5px;height:45px;overflow:hidden}
+.cur .dot{width:8px;height:8px;border-radius:50%;background:var(--st-waiting);flex:none}
+.cur .vg{width:15px;height:15px;border-radius:50%;border:1px solid var(--muted);font:700 6px/13px var(--font-mono);text-align:center;color:var(--muted);flex:none}
+.cur .pname{flex:1 1 auto;min-width:6ch;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cur .spark{display:inline-flex;align-items:flex-end;gap:1px;height:11px;flex:none}
+.cur .spark b{width:2px;background:var(--faint);border-radius:1px;display:block}
+.cur .repo{color:var(--faint);flex:0 1 auto;white-space:nowrap}
+.cur .branch{display:inline-flex;align-items:center;gap:4px;margin-left:6px;padding:1px 8px 1px 6px;border:1px solid var(--line-strong);border-radius:999px;font-size:10.5px;color:var(--muted);flex:none;white-space:nowrap}
+.cur .ptok{font:10px var(--font-mono);color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:1px 7px;flex:none;white-space:nowrap}
+.cur .pdiff{display:inline-flex;align-items:center;gap:5px;font:10px var(--font-mono);padding:2px 8px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--muted);flex:none}
+.cur .pdiff .a{color:var(--st-running)} .cur .pdiff .d{color:var(--red)}
+.cur .tg{display:inline-flex;gap:2px;flex:none}
+.cur .tg span{width:22px;height:22px;border-radius:4px;display:flex;align-items:center;justify-content:center;color:var(--faint)}
+.cur .tg span.on{color:var(--text);background:color-mix(in srgb,var(--accent) 18%,transparent)}
+.cur .x{width:28px;height:28px;display:flex;align-items:center;justify-content:center;color:var(--faint);flex:none}
+.cur .sp{flex:1}
+
+/* ============ PROPOSED ============ */
+.ph{height:44px;display:flex;align-items:center;gap:10px;padding:0 12px;background:var(--surface-2);border-bottom:1px solid var(--line);font-size:13px;color:var(--text);overflow:hidden;white-space:nowrap}
+.ph.attn{background:color-mix(in srgb,var(--st-waiting) 8%,var(--surface-2));border-bottom-color:color-mix(in srgb,var(--st-waiting) 40%,var(--line))}
+.ph .id{display:flex;align-items:center;gap:8px;flex:0 1 auto;min-width:0}
+.glyph{position:relative;width:20px;height:20px;border-radius:50%;border:1.5px solid var(--muted);color:var(--muted);font:700 8px/17px var(--font-mono);text-align:center;flex:none}
+.glyph .badge{position:absolute;right:-5px;bottom:-5px;width:11px;height:11px;border-radius:50%;background:var(--st-running);border:2px solid var(--surface-2)}
+.attn .glyph .badge{background:var(--st-waiting);box-shadow:0 0 6px var(--st-waiting)}
+.c2{display:flex;flex-direction:column;justify-content:center;line-height:16px;min-width:0}
+.c2 .l1{display:flex;align-items:baseline;gap:6px;min-width:0}
+.c2 .l2{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);min-width:0}
+.nm{font-size:14px;font-weight:600;color:var(--text)}
+.model{font-size:12px;color:var(--muted)}
+.state{color:var(--muted)} .state.run{color:var(--st-running)} .state.idle,.state.wait{color:var(--st-waiting)}
+.trace{display:inline-flex;align-items:flex-end;gap:1px;height:12px;flex:none}
+.trace b{display:block;width:3px;background:var(--st-running);opacity:.7;border-radius:1px}
+.item{display:flex;align-items:center;gap:5px;min-width:0;border-radius:4px;padding:0 3px;margin:0 -3px}
+.item:hover{background:color-mix(in srgb,var(--text) 8%,transparent);color:var(--text)}
+.item span.t{overflow:hidden;text-overflow:ellipsis;min-width:0}
+.repo2{flex:1 1 0;min-width:0}
+.repo2 .l1 span.t{color:var(--text)}
+.ab{color:var(--accent);font-variant-numeric:tabular-nums;flex:none}
+.dirty{width:6px;height:6px;border-radius:50%;background:var(--st-waiting);flex:none}
+.ctx{flex:none}
+.ctx .v{display:flex;align-items:center;gap:6px;font:13px/16px var(--font-mono);color:var(--text)}
+.meter{width:36px;height:4px;border-radius:2px;background:color-mix(in srgb,var(--text) 14%,transparent);overflow:hidden;display:block}
+.meter b{display:block;height:100%;background:var(--accent)}
+.ctx.warn .v{color:var(--st-waiting)} .ctx.warn .meter b{background:var(--st-waiting)}
+.chg{flex:none;display:flex;align-items:center;gap:7px;height:36px;padding:0 9px;border:1px solid var(--line-strong);border-radius:6px;background:var(--surface);color:var(--muted)}
+.chg:hover{border-color:var(--accent);color:var(--text)}
+.chg .v{font:13px/16px var(--font-mono)} .chg .a{color:var(--st-running)} .chg .d{color:var(--red)}
+.chg .l2{font-size:12px;color:var(--muted);line-height:16px}
+.seg{flex:none;display:inline-flex;gap:2px;padding:2px;border:1px solid var(--line-strong);border-radius:8px;background:var(--surface)}
+.seg span{display:flex;align-items:center;gap:5px;height:28px;padding:0 9px;border-radius:6px;color:var(--muted);font-size:13px}
+.seg span.on{color:var(--text);font-weight:600;background:color-mix(in srgb,var(--accent) 24%,transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--accent) 55%,transparent)}
+.seg.txt span{padding:0 8px;font-size:12px}
+.acts{flex:none;display:flex;align-items:center;gap:0;margin-left:auto}
+.acts .b{width:28px;height:28px;display:flex;align-items:center;justify-content:center;color:var(--muted);border-radius:6px}
+.acts .b:hover{color:var(--text);background:color-mix(in srgb,var(--text) 9%,transparent)}
+.acts .div{width:1px;height:18px;background:var(--line);margin:0 6px}
+.pill{flex:none;display:flex;align-items:center;height:28px;padding:0 12px;border-radius:999px;background:var(--st-waiting);color:var(--on-warn);font-weight:700;font-size:13px}
+.pill:hover{filter:brightness(1.08)}
+.chgs{flex:none;display:flex;align-items:center;gap:6px;height:28px;padding:0 8px;border:1px solid var(--line-strong);border-radius:6px;background:var(--surface);font:13px var(--font-mono);color:var(--muted)}
+.chgs .a{color:var(--st-running)} .chgs .d{color:var(--red)}
+.w650{width:650px} .w420{width:420px} .w1336{width:1336px}
+.detail{display:flex;gap:28px;align-items:center;margin-top:14px;padding:10px 12px;border:1px dashed var(--line-strong);border-radius:6px;width:max-content;max-width:100%}
+.detail .lab{font-size:12px;color:var(--faint);width:110px;white-space:normal;line-height:16px}
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="folder" viewBox="0 0 16 16"><path d="M1.5 4.5a1 1 0 0 1 1-1h3.2l1.6 1.6h6.2a1 1 0 0 1 1 1v6.4a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1z"/></symbol>
+  <symbol id="branch" viewBox="0 0 16 16"><circle cx="4.5" cy="3.5" r="1.7"/><circle cx="4.5" cy="12.5" r="1.7"/><circle cx="11.5" cy="5.5" r="1.7"/><path d="M4.5 5.2v5.6M11.5 7.2c0 2.6-3 2.6-7 3.6"/></symbol>
+  <symbol id="diff" viewBox="0 0 16 16"><rect x="2" y="2" width="12" height="12" rx="2"/><path d="M5 6.5h6M8 3.8v5.4M5 11.5h6"/></symbol>
+  <symbol id="term" viewBox="0 0 16 16"><rect x="1.5" y="2.5" width="13" height="11" rx="2"/><path d="M4.5 6l2.2 2-2.2 2M8.5 10.5h3"/></symbol>
+  <symbol id="chat" viewBox="0 0 16 16"><path d="M2.5 3.5h11a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H8l-3 2.5v-2.5H2.5a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1z"/></symbol>
+  <symbol id="search" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5L14 14"/></symbol>
+  <symbol id="max" viewBox="0 0 16 16"><path d="M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4"/></symbol>
+  <symbol id="more" viewBox="0 0 16 16"><circle cx="3" cy="8" r=".6"/><circle cx="8" cy="8" r=".6"/><circle cx="13" cy="8" r=".6"/></symbol>
+  <symbol id="close" viewBox="0 0 16 16"><path d="M3.5 3.5l9 9M12.5 3.5l-9 9"/></symbol>
+</svg>
+
+<h1>K12. Pane header, bigger and clearer</h1>
+<p class="lede">Static mock for sign-off. Nothing here is built. Colours and fonts are the real Graphite dark tokens. The terminal font is untouched (chrome about 120 percent, terminal 100 percent, per UC0). The header stays 44 px tall: the 28 px buttons already force that height, so the extra size comes from using the space the small text left empty.</p>
+
+<!-- ======================= 1. CURRENT ======================= -->
+<h2>1. Current header, 1:1<small>from App.css:235-250, panes.css:108-135, review.css:208</small></h2>
+<p class="cap">At the 1336 px pane in the screenshot, then at 650 px, where the existing fold rules hide the sparkline (panes.css:66) so the first unclear item vanishes entirely.</p>
+
+<div class="frame w1336"><div class="band wait"></div>
+<div class="cur">
+  <span class="dot"></span><span class="vg">CL</span>
+  <span class="pname">Claude</span>
+  <span class="spark">
+    <b style="height:8%"></b><b style="height:8%"></b><b style="height:8%"></b><b style="height:8%"></b><b style="height:8%"></b><b style="height:8%"></b><b style="height:8%"></b><b style="height:8%"></b><b style="height:8%"></b><b style="height:8%"></b><b style="height:8%"></b><b style="height:8%"></b><b style="height:40%"></b><b style="height:70%"></b><b style="height:30%"></b><b style="height:8%"></b>
+  </span>
+  <span class="repo">&middot; sweep-repo</span>
+  <span class="branch"><svg class="i" width="11" height="11"><use href="#branch"/></svg>master</span>
+  <span class="ptok">63k ctx</span>
+  <span class="ptok">haiku 5.5</span>
+  <span class="pdiff"><svg class="i" width="11" height="11"><use href="#diff"/></svg><span class="a">+12</span><span class="d">&minus;3</span></span>
+  <span class="tg"><span class="on"><svg class="i" width="14" height="14"><use href="#term"/></svg></span><span><svg class="i" width="14" height="14"><use href="#chat"/></svg></span></span>
+  <span class="sp"></span>
+  <span class="x"><svg class="i" width="17" height="17"><use href="#search"/></svg></span>
+  <span class="x"><svg class="i" width="17" height="17"><use href="#max"/></svg></span>
+  <span class="x"><svg class="i" width="17" height="17"><use href="#more"/></svg></span>
+  <span class="x"><svg class="i" width="17" height="17"><use href="#close"/></svg></span>
+</div>
+<div class="body">&#10095; <i>108</i><br><i>109</i><br><i>110</i></div></div>
+
+<div style="height:16px"></div>
+<div class="frame w650"><div class="band wait"></div>
+<div class="cur">
+  <span class="dot"></span><span class="vg">CL</span>
+  <span class="pname">Claude</span>
+  <span class="repo">&middot; sweep-repo</span>
+  <span class="branch"><svg class="i" width="11" height="11"><use href="#branch"/></svg>master</span>
+  <span class="ptok">63k ctx</span>
+  <span class="ptok">haiku 5.5</span>
+  <span class="pdiff"><svg class="i" width="11" height="11"><use href="#diff"/></svg><span class="a">+12</span><span class="d">&minus;3</span></span>
+  <span class="tg"><span class="on"><svg class="i" width="14" height="14"><use href="#term"/></svg></span><span><svg class="i" width="14" height="14"><use href="#chat"/></svg></span></span>
+  <span class="sp"></span>
+  <span class="x"><svg class="i" width="17" height="17"><use href="#search"/></svg></span>
+  <span class="x"><svg class="i" width="17" height="17"><use href="#max"/></svg></span>
+  <span class="x"><svg class="i" width="17" height="17"><use href="#more"/></svg></span>
+  <span class="x"><svg class="i" width="17" height="17"><use href="#close"/></svg></span>
+</div>
+<div class="body">&#10095; <i>108</i><br><i>109</i><br><i>110</i></div></div>
+
+<ul class="notes">
+  <li><b>What is wrong:</b> ten items at near equal weight, text at 10 to 12.5 px (below the Windows 12 px floor), identical grey for facts and controls, three items with no words (sparkline, &ldquo;ctx&rdquo;, two bare icons).</li>
+  <li>The 22 px view-toggle icons sit inside a 28 px-tall header, so the row is already 44 px tall with 10 px text floating in it.</li>
+</ul>
+
+<!-- ======================= 2. PROPOSED 650 ======================= -->
+<h2>2. Proposed, 650 px<small>3-pane row on a 1920 screen</small></h2>
+<p class="cap">One row, 44 px. Facts that belong together are stacked in two-line cells, so each fact gets a label without costing width.</p>
+
+<div class="frame w650"><div class="band"></div>
+<div class="ph">
+  <div class="id">
+    <span class="glyph">CL<span class="badge"></span></span>
+    <div class="c2"><div class="l1"><span class="nm">Claude</span><span class="model">haiku 5.5</span></div><div class="l2"><span class="state run">Working</span></div></div>
+  </div>
+  <div class="c2 repo2">
+    <div class="l1"><span class="item"><svg class="i" width="14" height="14"><use href="#folder"/></svg><span class="t" style="color:var(--text)">sweep-repo</span></span></div>
+    <div class="l2"><span class="item"><svg class="i" width="13" height="13"><use href="#branch"/></svg><span class="t">master</span><span class="ab">&uarr;2</span><span class="dirty"></span></span></div>
+  </div>
+  <div class="c2 ctx"><div class="l2">Context</div><div class="v">63k<span class="meter"><b style="width:32%"></b></span></div></div>
+  <div class="chg"><svg class="i" width="16" height="16"><use href="#diff"/></svg><div class="c2"><div class="v"><span class="a">+12</span> <span class="d">&minus;3</span></div><div class="l2">2 files</div></div></div>
+  <div class="seg"><span class="on"><svg class="i" width="14" height="14"><use href="#term"/></svg>Terminal</span><span><svg class="i" width="14" height="14"><use href="#chat"/></svg>Chat</span></div>
+  <div class="acts">
+    <span class="b"><svg class="i" width="18" height="18"><use href="#search"/></svg></span>
+    <span class="b"><svg class="i" width="18" height="18"><use href="#more"/></svg></span>
+    <span class="div"></span>
+    <span class="b"><svg class="i" width="18" height="18"><use href="#close"/></svg></span>
+  </div>
+</div>
+<div class="body">&#10095; <i>108</i><br><i>109</i><br><i>110</i></div></div>
+
+<ul class="notes">
+  <li><b>Type floor:</b> name 14/600 (was 12.5), values 13 (was 10 to 10.5), labels 12 muted (was 9.5 to 10). Three sizes only. Header height unchanged at 44.</li>
+  <li><b>Sparkline replaced by a word.</b> The dot becomes a 11 px badge on the vendor glyph, and line two of the identity cell says <code>Working</code> in green, or <code>Idle 4m</code> in amber after 60 s (the existing idle rule). Same signal, in text. The bar trace itself returns at 760 px and wider, next to the word (detail below), so it is no longer a lone unexplained graphic.</li>
+  <li><b>&ldquo;603k ctx&rdquo; becomes a labelled gauge.</b> Label <code>Context</code> (12 px) above the value (13 px mono), with a 36 x 4 px bar. Amber at 70 percent, red at 90 percent (existing thresholds), and the value text also turns colour so colour is never the only cue. Tooltip keeps the full breakdown.</li>
+  <li><b>Two view icons become a labelled segmented control.</b> <code>Terminal | Chat</code>, icon plus 13 px word, 28 px tall buttons in a 32 px track. The active one is filled accent 24 percent with a 1 px accent ring and semibold, so the current view is readable at a glance. This is the one accent-filled element in the row, so it is the row's primary action.</li>
+  <li><b>Diff count gets a word.</b> 36 px tall button, <code>+12 &minus;3</code> in 13 px mono with <code>2 files</code> beneath. Click still opens Review.</li>
+  <li><b>Model chip removed as a chip, kept as text.</b> <code>haiku 5.5</code> sits beside the name at 12 px muted, so a renamed pane still shows what is answering.</li>
+  <li><b>Folder and branch lose their chip borders.</b> Two lines, each with an icon: folder (click opens Explorer), branch (click copies) with <code>&uarr;2</code> for commits ahead and the dirty dot. 13 px and 12 px. Hover shows a soft background so they read as clickable.</li>
+  <li><b>Actions:</b> 28 px buttons, 18 px glyphs (was 17), colour raised from faint to muted. Close is split off by a divider and 12 px of space, away from the frequent buttons. Maximise moves into the more menu at this width (it is already there, and double-clicking the header still does it).</li>
+  <li><b>Spacing:</b> 12 px side padding, 10 px between groups, 4 px between a label and its value. Shrink order when tight: repo cell truncates first (names ellipsise, full text in the tooltip), then the identity cell.</li>
+</ul>
+
+<div class="detail">
+  <div class="lab">Identity cell at 760 px and wider, running</div>
+  <div class="ph" style="background:none;border:0;padding:0;height:36px;width:auto">
+    <div class="id"><span class="glyph">CL<span class="badge"></span></span>
+    <div class="c2"><div class="l1"><span class="nm">Claude</span><span class="model">haiku 5.5</span></div><div class="l2"><span class="state run">Working</span><span class="trace"><b style="height:20%"></b><b style="height:20%"></b><b style="height:20%"></b><b style="height:35%"></b><b style="height:60%"></b><b style="height:90%"></b><b style="height:50%"></b><b style="height:30%"></b><b style="height:70%"></b><b style="height:100%"></b><b style="height:45%"></b><b style="height:25%"></b></span></div></div></div>
+  </div>
+  <div class="lab">Same cell, quiet for over a minute</div>
+  <div class="ph" style="background:none;border:0;padding:0;height:36px;width:auto">
+    <div class="id"><span class="glyph">CL<span class="badge" style="background:var(--st-idle)"></span></span>
+    <div class="c2"><div class="l1"><span class="nm">Claude</span><span class="model">haiku 5.5</span></div><div class="l2"><span class="state idle">Idle 4m</span></div></div></div>
+  </div>
+</div>
+
+<!-- ======================= 3. PROPOSED 420 ======================= -->
+<h2>3. Proposed, 420 px<small>4-pane row, or a narrow window</small></h2>
+<p class="cap">Still one row. Three things fold and none are lost: they move into the more menu and a Details block at the top of it.</p>
+
+<div class="frame w420"><div class="band"></div>
+<div class="ph" style="gap:8px;padding:0 10px">
+  <div class="id">
+    <span class="glyph">CL<span class="badge"></span></span>
+    <div class="c2"><div class="l1"><span class="nm">Claude</span></div><div class="l2"><span class="state run">Working</span><span>&middot; 63k</span></div></div>
+  </div>
+  <div class="chgs"><span class="a">+12</span><span class="d">&minus;3</span></div>
+  <div class="seg txt"><span class="on">Terminal</span><span>Chat</span></div>
+  <div class="acts">
+    <span class="b"><svg class="i" width="18" height="18"><use href="#more"/></svg></span>
+    <span class="b"><svg class="i" width="18" height="18"><use href="#close"/></svg></span>
+  </div>
+</div>
+<div class="body">&#10095; <i>108</i><br><i>109</i><br><i>110</i></div></div>
+
+<ul class="notes">
+  <li><b>Fold order as the pane narrows</b> (replaces the current six container rules): below 760 the bar trace and the Maximise button go (the word stays, Maximise moves to the more menu); below 560 the model name goes; below 520 the repo cell goes; below 460 the Context gauge becomes <code>&middot; 63k</code> on line two of the identity cell, and the diff button and view control drop their icons. Never folds: status, name, diff count, Terminal | Chat, more, close.</li>
+  <li><b>Where the folded items go:</b> the more menu gains a Details block at the top (Folder, Branch with ahead count, Model, Context, Output) as plain 13 px rows, plus Find and Maximise. Nothing is only a tooltip.</li>
+  <li><b>Labels survive:</b> the view control keeps full words (<code>Terminal</code>, <code>Chat</code>) at 12 px, the floor, with 8 px padding. Icons are dropped here, not words.</li>
+  <li><b>Sizes at this width:</b> name 14/600, line two 12, buttons 28 px, side padding 10 px, gaps 8 px. About 20 px of slack on 420.</li>
+</ul>
+
+<!-- ======================= 4. ATTENTION ======================= -->
+<h2>4. Proposed, waiting for you, 650 px</h2>
+<p class="cap">A pane blocked on approval. The pane header needs one thing from the user, so that one thing is the loudest element.</p>
+
+<div class="frame w650"><div class="band wait"></div>
+<div class="ph attn">
+  <div class="id">
+    <span class="glyph">CL<span class="badge"></span></span>
+    <div class="c2"><div class="l1"><span class="nm">Claude</span><span class="model">haiku 5.5</span></div><div class="l2"><span class="state wait">Waiting for approval</span></div></div>
+  </div>
+  <div class="pill">Needs you</div>
+  <div class="c2 repo2">
+    <div class="l1"><span class="item"><svg class="i" width="14" height="14"><use href="#folder"/></svg><span class="t" style="color:var(--text)">sweep-repo</span></span></div>
+    <div class="l2"><span class="item"><svg class="i" width="13" height="13"><use href="#branch"/></svg><span class="t">master</span><span class="ab">&uarr;2</span><span class="dirty"></span></span></div>
+  </div>
+  <div class="chgs"><span class="a">+12</span><span class="d">&minus;3</span></div>
+  <div class="seg txt"><span class="on">Terminal</span><span>Chat</span></div>
+  <div class="acts">
+    <span class="b"><svg class="i" width="18" height="18"><use href="#more"/></svg></span>
+    <span class="div"></span>
+    <span class="b"><svg class="i" width="18" height="18"><use href="#close"/></svg></span>
+  </div>
+</div>
+<div class="body">Allow Claude to run <i>npm test</i>?<br>&#10095; 1. Yes &nbsp; 2. Yes, always &nbsp; 3. No</div></div>
+
+<ul class="notes">
+  <li><b>Primary action: the amber pill.</b> <code>Needs you</code>, 28 px tall, filled <code>--st-waiting</code> with dark ink (<code>--on-warn</code>, above 7:1), 13/700. It is the only filled amber shape on screen, so it wins the contest (Von Restorff). Click opens the attention queue, as the existing &ldquo;needs you&rdquo; chip does. The existing 0.9 s pulse stays, on the badge only, not the pill, so the text can be read.</li>
+  <li><b>Never colour alone:</b> the pill, the sentence <code>Waiting for approval</code> on line two (amber, 12 px) and the badge all say it. Header gets an 8 percent amber wash and a 40 percent amber bottom edge; the 3 px band above stays amber.</li>
+  <li><b>What gives way:</b> in this state at 650 the Context gauge folds into the menu Details block until the prompt is answered, and the diff button drops its icon and file count. The pill outranks both. At 760 and wider nothing folds.</li>
+  <li><b>Error state</b> uses the same shape: red pill <code>Error</code>, plus the existing Restart button taking the pill's slot (28 px, accent outline).</li>
+</ul>
+
+<h2>Open points for Balu</h2>
+<ul class="notes">
+  <li>Maximise leaves the 650 px row for the menu. Say if you would rather keep it and lose the Context label instead.</li>
+  <li>Critique fix for the build: at 650 the folder name truncates to "s...", which tells you nothing. The repo cell gets a 96 px minimum, and the Context gauge drops its word label first to pay for it.</li>
+  <li>Compact versus Comfortable density (research item) is not in this mock. This is Comfortable only.</li>
+</ul>
+
+</body>
+</html>
