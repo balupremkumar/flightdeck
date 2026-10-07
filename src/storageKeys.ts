@@ -115,6 +115,8 @@ export const SESSION_KEYS = [
   // 0.6.1: one-shot flag for the Quiet terminal default migration. Bookkeeping, not a
   // preference: a settings reset must not re-run it and flip a deliberate Chat choice.
   "flightdeck-migrated-quiet-default",
+  // 0.6.2: same for the Terminal default migration (K11).
+  "flightdeck-migrated-terminal-default",
 ] as const;
 
 /**

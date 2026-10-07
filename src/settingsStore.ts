@@ -235,11 +235,11 @@ export interface AgentSettings {
   /** TN: initial detail level of the Chat view's Normal/Verbose toggle. */
   chatDetail: "normal" | "verbose";
   /** TN1: the view NEW Claude panes open in (saved panes keep their own); any pane
-   *  can switch from its menu. "quiet" (the default) is the terminal with Claude's
-   *  focus view (a new pane gets focusMode). */
+   *  can switch from its menu. "terminal" is the default (0.6.2, K11); "quiet" is
+   *  the terminal with Claude's focus view (a new pane gets focusMode). */
   openClaudeIn: "terminal" | "quiet" | "chat";
 }
-export const DEFAULT_AGENT_SETTINGS: AgentSettings = { defaultVendor: "claude", flags: {}, binaryPaths: {}, chatDetail: "normal", openClaudeIn: "quiet" };
+export const DEFAULT_AGENT_SETTINGS: AgentSettings = { defaultVendor: "claude", flags: {}, binaryPaths: {}, chatDetail: "normal", openClaudeIn: "terminal" };
 export function getAgentSettings(): AgentSettings {
   try {
     const raw = localStorage.getItem("flightdeck-agent-settings");
@@ -264,6 +264,23 @@ export function migrateQuietDefault(): boolean {
     const p = JSON.parse(raw);
     if (p?.openClaudeIn !== "chat") return false;
     localStorage.setItem("flightdeck-agent-settings", JSON.stringify({ ...p, openClaudeIn: "quiet" }));
+    return true;
+  } catch { return false; /* non-persistent */ }
+}
+/** 0.6.2, run once at boot after migrateQuietDefault: 0.6.1 made Quiet terminal
+ *  the default and stored it, and Quiet had no wheel scrollback (K11), so a
+ *  stored "quiet" goes back to "terminal". Panes already open keep their view.
+ *  Runs exactly once; choosing Quiet again afterwards sticks. Returns true when it flipped. */
+export const TERMINAL_DEFAULT_MIGRATION_KEY = "flightdeck-migrated-terminal-default";
+export function migrateTerminalDefault(): boolean {
+  try {
+    if (localStorage.getItem(TERMINAL_DEFAULT_MIGRATION_KEY)) return false;
+    localStorage.setItem(TERMINAL_DEFAULT_MIGRATION_KEY, "1");
+    const raw = localStorage.getItem("flightdeck-agent-settings");
+    if (!raw) return false;
+    const p = JSON.parse(raw);
+    if (p?.openClaudeIn !== "quiet") return false;
+    localStorage.setItem("flightdeck-agent-settings", JSON.stringify({ ...p, openClaudeIn: "terminal" }));
     return true;
   } catch { return false; /* non-persistent */ }
 }

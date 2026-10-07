@@ -3,7 +3,7 @@ import ReactDOM from "react-dom/client";
 import App from "./App";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { bootAppearance } from "./themes";
-import { applyReadingSettings, migrateQuietDefault } from "./settingsStore";
+import { applyReadingSettings, migrateQuietDefault, migrateTerminalDefault } from "./settingsStore";
 import { useUI, applyUiScale } from "./ui";
 import { useVendors, armVendorHotReload, vendorShort } from "./vendors";
 import { runWorktreeGc } from "./worktrees";
@@ -40,6 +40,7 @@ armCleanExitSentinel();
 // A secondary then takes the workspace it was created for (offerSessionRestore is
 // main-only), and main starts listening for workspaces folding back into it.
 migrateQuietDefault(); // 0.6.1: once, reset 0.6.0's stored Chat default to Quiet terminal
+migrateTerminalDefault(); // 0.6.2: once, a stored Quiet terminal default goes back to Terminal (K11)
 const booted = bootWindow().then((info) => adoptBootInfo(info)).then(() => closeWhenEmpty());
 listenForAdopt();
 listenForFocusPane();

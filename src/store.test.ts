@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { getAgentSettings, migrateQuietDefault } from "./settingsStore";
+import { getAgentSettings, migrateQuietDefault, migrateTerminalDefault } from "./settingsStore";
 import { paneHasUnsentInput, registerPaneSend, sendToPane, unregisterPaneSend, useApp } from "./store";
 
 // The store is a singleton; reset the observable slice before each test.
@@ -354,10 +354,10 @@ describe("TN1 new Claude panes default view", () => {
 
   const focus = () => useApp.getState().workspaces[0].panes.map((p) => p.focusMode);
 
-  it("opens new Claude panes in Quiet terminal by default, other vendors untouched", () => {
+  it("opens new Claude panes in the full Terminal by default (0.6.2, K11), other vendors untouched", () => {
     useApp.getState().createWorkspace("/a", [{ vendor: "claude", cwd: "/a" }, { vendor: "codex", cwd: "/a" }]);
     expect(views()).toEqual([undefined, undefined]);
-    expect(focus()).toEqual([true, undefined]);
+    expect(focus()).toEqual([undefined, undefined]);
   });
 
   it("opens new Claude panes in Chat when chosen, other vendors in the terminal", () => {
@@ -379,9 +379,33 @@ describe("TN1 new Claude panes default view", () => {
     expect(focus()[2]).toBe(true);
   });
 
-  it("coerces an unknown stored openClaudeIn to the Quiet terminal default", () => {
+  it("coerces an unknown stored openClaudeIn to the Terminal default", () => {
     localStorage.setItem("flightdeck-agent-settings", JSON.stringify({ openClaudeIn: "bogus" }));
+    expect(getAgentSettings().openClaudeIn).toBe("terminal");
+  });
+
+  it("0.6.2 migration flips a stored Quiet default to Terminal exactly once", () => {
+    localStorage.setItem("flightdeck-agent-settings", JSON.stringify({ openClaudeIn: "quiet", chatDetail: "verbose" }));
+    expect(migrateTerminalDefault()).toBe(true);
+    expect(getAgentSettings().openClaudeIn).toBe("terminal");
+    expect(getAgentSettings().chatDetail).toBe("verbose");
+    // Choosing Quiet again after the migration survives later boots.
+    localStorage.setItem("flightdeck-agent-settings", JSON.stringify({ openClaudeIn: "quiet" }));
+    expect(migrateTerminalDefault()).toBe(false);
     expect(getAgentSettings().openClaudeIn).toBe("quiet");
+  });
+
+  it("0.6.2 migration leaves a stored Chat choice alone", () => {
+    localStorage.setItem("flightdeck-agent-settings", JSON.stringify({ openClaudeIn: "chat" }));
+    expect(migrateTerminalDefault()).toBe(false);
+    expect(getAgentSettings().openClaudeIn).toBe("chat");
+  });
+
+  it("0.6.0 profile: both migrations in boot order land on Terminal", () => {
+    localStorage.setItem("flightdeck-agent-settings", JSON.stringify({ openClaudeIn: "chat" }));
+    migrateQuietDefault();
+    migrateTerminalDefault();
+    expect(getAgentSettings().openClaudeIn).toBe("terminal");
   });
 
   it("0.6.1 migration flips a stored Chat default to quiet exactly once", () => {
