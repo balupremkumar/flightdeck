@@ -199,6 +199,11 @@ fn build_command(
     cmd.env("FORCE_COLOR", "3");
     cmd.env("CLICOLOR_FORCE", "1");
     if vendor == "claude" {
+        // The app can inherit one view's vars (e.g. launched from inside a Quiet
+        // pane, whose children carry NO_FLICKER); clear both sets before setting one.
+        for k in ["CLAUDE_CODE_NO_FLICKER", "CLAUDE_CODE_DISABLE_MOUSE", "CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN"] {
+            cmd.env_remove(k);
+        }
         for (k, v) in chatlog::claude_env(focus_mode) {
             cmd.env(k, v);
         }
