@@ -13,7 +13,7 @@ import {
 } from "./Icons";
 import { cachedInvoke, usePoll, useVisible, usePaneMemory } from "./poll";
 import { compact, num, duration, bytes, tailEllipsis } from "./format";
-import { clearMcpNotices, noteMcpLine } from "./mcphealth";
+import { clearMcpNotices, mcpChip, noteMcpLine } from "./mcphealth";
 import { paneStateWord } from "./paneHeader";
 import { stateSince, lastLine, isOpenQuestion, attentionKind, STATE_LABEL as STATE_TITLE } from "./attention";
 import "./panes.css";
@@ -967,6 +967,10 @@ function PaneViewInner({
             {pane.state === "permission" ? "Needs you" : openQuestion ? "Has a question" : "Error"}
           </span>
         )}
+        {(() => {
+          const chip = mcpChip(pane.id);
+          return chip ? <span className="pattn mcp" title={chip.title}>{chip.label}</span> : null;
+        })()}
         {/* QL-770: a plan is waiting to be read. Waiting tone, no bell, no
             queue entry (notification ruling) — it's a "when you look" signal. */}
         {isClaude && waitingPlan && (
@@ -982,6 +986,19 @@ function PaneViewInner({
           </span>
         )}
         <span className="sp" />
+        {dead && (
+          <button
+            className="prestart"
+            onClick={() => restartPane(pane.id)}
+            title={
+              pane.state === "error"
+                ? `${displayName} exited unexpectedly${lastExit ? ` (${lastExit})` : ""}. Restart it in the same folder.`
+                : "Restart this pane in the same folder"
+            }
+          >
+            <IconRefresh size={14} /> Restart
+          </button>
+        )}
         <button
           className={"pfindbtn" + (searchOpen ? " active" : "")}
           onClick={() => (searchOpen ? closeSearch() : setSearchOpen(true))}
@@ -1006,7 +1023,7 @@ function PaneViewInner({
                 {isClaude && subCount && subCount.total > 0 && <button className="pmenu-item" onClick={openSubagents}>Subagents...</button>}
               </div>
               <div className="pmenu-sep" />
-              {isClaude && <button className="pmenu-item" role="menuitemcheckbox" aria-checked={view === "chat"} onClick={() => { switchView(view === "chat" ? "terminal" : "chat"); closeMenu(); }} title="Chat view (Ctrl+Shift+M)">Chat view</button>}
+              {isClaude && <button className="pmenu-item" role="menuitemcheckbox" aria-checked={view === "chat"} onClick={() => { switchView(view === "chat" ? "terminal" : "chat"); closeMenu(); }} title="Chat view (Ctrl+Shift+M)">{view === "chat" ? "✓ " : ""}Chat view</button>}
               <div className="pmenu-path" title="This pane’s working directory">
                 {pane.cwd}
                 {/* UI-230: an isolated pane's worktree is a real disk cost —
