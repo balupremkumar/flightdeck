@@ -64,3 +64,14 @@ Balu ran the real-mouse drag checks (all pass, drag ships on); Home Approve limi
 
 ## 2026-10-06 (20:00): session closed
 v0.6.1 pushed (cb058df, tag v0.6.1). Balu installs stable 0.6.1 next session. Codex stop-rule investigation moves to a separate project via D:/Dev/ai/handovers/2026-10-06-codex-stop-rule-investigation.md (analytics added).
+
+## 2026-10-07: 0.6.1 bug reports, sweep, UI clarity research (paused)
+Balu on stable 0.6.1 reported the Quiet terminal wheel bug (K11) and a too-small pane header (K12); asked for chrome at ~120% with terminals at 100% (UC0) and a ~50-item UI simplification list.
+K11 root-caused from code (alt screen + CLAUDE_CODE_DISABLE_MOUSE, xterm turns wheel into arrow keys) then live-confirmed on a --no-bundle 0.6.1 Canary build (installed Canary was still 0.5.4); PageUp/Ctrl+Home scroll Claude's transcript, so wheel-to-PageUp is the likely fix.
+Sweep found K13-K16 (rename dblclick maximises, pane menu clips, Review omits untracked, one ~1 s focus grab). Research dossier research/flightdeck-ui-clarity-2026-10. UI audit agent told to wrap up at pause. No code changed.
+
+## 2026-10-08: v0.6.2 (K11)
+- Live probe on the 0.6.1 Canary: Claude in Quiet view parses SGR (and X10) wheel reports even with DISABLE_MOUSE, one line per report; PageUp scrolls about half a screen.
+- d1a414a: Quiet panes send SGR wheel reports (3 lines per 120 px notch). f96c0a3: Terminal default again, one-off migration of a stored Quiet default. Verified live (e2e/live/k11-verify.mjs): 150 to 122 on wheel-up, draft intact, no History picker, migration and new-pane default PASS.
+- Release run 1 failed at cargo test: the gate ran inside a Quiet pane and inherited CLAUDE_CODE_NO_FLICKER. Real bug (Terminal panes of a Flightdeck launched from a Quiet pane ran in alt screen); fixed 4417d7e. Run 2 passed every gate; v0.6.2 cut, 672cae6, tag local, not pushed.
+- K12 header mock: docs/plans/k12-header-mock.html (design agent, critiqued). Ruling appended to brain/rulings.md (Terminal default again).
