@@ -1,4 +1,4 @@
-﻿/* LeftPanel + CommandPalette additions.
+/* LeftPanel + CommandPalette additions.
    Base .lpanel/.lp-* chrome lives in App.css (owned elsewhere) — this file only
    adds the new workspace-panel affordances (search, rename, context menu, drag
    reorder, folder-drop) and the command palette, all on Deep Cove tokens from
