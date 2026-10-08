@@ -483,6 +483,8 @@ export interface HookStatus {
   settingsInstalled: boolean;
   settingsError: string | null;
   lastEventAgeMs: number | null;
+  /** QRP6: hooks arrive from the per-launch settings file even without a global install. */
+  active?: boolean;
 }
 
 /** The one status sentence the row shows. Deliberately says what is true right
@@ -493,8 +495,8 @@ export function hookStatusLine(s: HookStatus | null, now: number = Date.now()): 
   if (!s) return "Checking…";
   if (s.settingsError) return s.settingsError;
   if (!s.relayInstalled) return "Flightdeck's relay script is missing — restart Flightdeck, then install.";
-  if (!s.settingsInstalled) return "Not installed — Flightdeck is guessing pane state from terminal output.";
-  if (s.lastEventAgeMs == null) return "Installed — waiting for the first hook to fire.";
-  return `Installed — last hook ${relTime(now - s.lastEventAgeMs, now)}.`;
+  const where = s.settingsInstalled ? "Installed in ~/.claude" : "On for every Claude pane Flightdeck starts";
+  if (s.lastEventAgeMs == null) return `${where} — waiting for the first hook to fire.`;
+  return `${where} — last hook ${relTime(now - s.lastEventAgeMs, now)}.`;
 }
 

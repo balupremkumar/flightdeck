@@ -170,10 +170,11 @@ describe("Claude Code hooks row (QL-720)", () => {
 
   it("says what is actually true, not what should be", () => {
     expect(hookStatusLine(null)).toBe("Checking…");
-    expect(hookStatusLine(base)).toContain("Not installed");
+    // QRP6: with the relay present every Flightdeck-launched Claude pane reports, global install or not.
+    expect(hookStatusLine(base)).toContain("On for every Claude pane Flightdeck starts");
     expect(hookStatusLine({ ...base, settingsInstalled: true })).toContain("waiting for the first hook");
     expect(hookStatusLine({ ...base, settingsInstalled: true, lastEventAgeMs: 120_000 }, 1_000_000)).toBe(
-      "Installed — last hook 2m ago."
+      "Installed in ~/.claude — last hook 2m ago."
     );
   });
 
