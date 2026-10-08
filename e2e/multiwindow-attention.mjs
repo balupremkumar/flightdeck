@@ -60,9 +60,9 @@ const hasPty = (page, ids) => page.evaluate(async (ids) => {
 }, ids);
 
 // Both seeded workspaces live: ws 1 (acme-api, panes 1-4) and ws 2 (acme-web, panes 5-6).
-await page1.getByText("acme-api", { exact: true }).first().click();
+await page1.locator('text="acme-api" >> visible=true').first().click();
 await until(() => hasPty(page1, [1, 2, 3, 4]), 15000, "acme-api panes to start");
-await page1.getByText("acme-web", { exact: true }).first().click();
+await page1.locator('text="acme-web" >> visible=true').first().click();
 await until(() => hasPty(page1, [5, 6]), 15000, "acme-web panes to start");
 await page1.waitForTimeout(1500);
 

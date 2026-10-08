@@ -38,7 +38,7 @@ page.on("pageerror", (e) => pageErrors.push(e.message));
 await page.addInitScript(boot + "\n" + mock + "\n" + wrap);
 await page.goto(URL, { waitUntil: "networkidle" });
 await page.waitForTimeout(2500);
-await page.getByText("acme-web", { exact: true }).first().click();
+await page.locator('text="acme-web" >> visible=true').first().click();
 await page.waitForTimeout(2000);
 
 const first = await page.evaluate(() => window.__spawns.slice());

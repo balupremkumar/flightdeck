@@ -59,7 +59,7 @@ await page.evaluate(async () => {
 const paneId = await page.evaluate(() => window.__app.getState().workspaces[0].panes[0].id);
 await page.addStyleTag({ content: ".pane { width: 600px !important; flex: none !important; }" });
 await page.locator(".pane").first().locator(".pmenubtn").click();
-await page.getByRole("menuitemcheckbox", { name: "Chat view", exact: true }).click();
+await page.getByRole("menuitemcheckbox", { name: /^(✓ )?Chat view$/ }).click();
 await page.evaluate((id) => window.__app.getState().setPaneState(id, "permission"), paneId);
 check(await page.locator(".phead .pattn").first().waitFor({ state: "visible", timeout: 15000 }).then(() => true, () => false), "NEEDS YOU pill shows");
 await page.waitForSelector(".phead .branch-name", { timeout: 15000 });

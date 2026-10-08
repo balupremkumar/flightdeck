@@ -48,7 +48,7 @@ const page1 = await context.newPage();
 bus.register("main", page1);
 await page1.goto(URL, { waitUntil: "networkidle" });
 await page1.waitForTimeout(2500);
-await page1.getByText("acme-web", { exact: true }).first().click();
+await page1.locator('text="acme-web" >> visible=true').first().click();
 await page1.waitForTimeout(2500);
 
 const termText = (page, id) => page.evaluate(async (id) => {

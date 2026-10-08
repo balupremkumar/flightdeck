@@ -105,7 +105,7 @@ const pane = page.locator(".pane").first();
 // Wait for the pty to exist before toggling (the chat tails by pty id).
 check(await cond((id) => window.__calls.some((x) => x.c === "pty_spawn"), paneId), "pane PTY spawned");
 await pane.locator(".pmenubtn").click();
-check(await page.getByRole("menuitemcheckbox", { name: "Chat view", exact: true }).count() === 1, "Claude pane menu offers Chat view");
+check(await page.getByRole("menuitemcheckbox", { name: /^(✓ )?Chat view$/ }).count() === 1, "Claude pane menu offers Chat view");
 await page.keyboard.press("Escape");
 
 // Tag the terminal's DOM node so we can prove it survives the round trip.
@@ -114,7 +114,7 @@ await page.evaluate(() => { window.__calls.length = 0; });
 
 // Toggle via the pane menu.
 await pane.locator(".pmenubtn").click();
-await page.getByRole("menuitemcheckbox", { name: "Chat view", exact: true }).click();
+await page.getByRole("menuitemcheckbox", { name: /^(✓ )?Chat view$/ }).click();
 check(await has(".chat"), "Chat view menu item switches the pane to chat");
 check(await has(".chat-chip"), "session records render as chips");
 // TN2: Normal folds tool runs into activity lines (more in chat-density.mjs); the rest of this suite asserts today's chips, i.e. Verbose.
@@ -192,7 +192,7 @@ await page.evaluate((id) => window.__app.getState().setPaneState(id, "waiting"),
 
 // Back to Terminal: same xterm node, no pty_kill.
 await pane.locator(".pmenubtn").click();
-await page.getByRole("menuitemcheckbox", { name: "Chat view", exact: true }).click();
+await page.getByRole("menuitemcheckbox", { name: /^(✓ )?Chat view$/ }).click();
 check(await gone(".chat"), "Chat view menu item returns to the terminal");
 check(await page.evaluate(() => document.querySelector(".pane .xterm")?.__fdTag === "alive"), "the same xterm DOM node is still mounted");
 check((await page.evaluate(() => window.__calls.filter((x) => x.c === "pty_kill").length)) === 0, "zero pty_kill across the Terminal/Chat round trip");
@@ -209,7 +209,7 @@ check((await page.evaluate(() => window.__calls.filter((x) => x.c === "pty_kill"
 
 // Exited pane: the prompt box refuses and offers Restart.
 await pane.locator(".pmenubtn").click();
-await page.getByRole("menuitemcheckbox", { name: "Chat view", exact: true }).click();
+await page.getByRole("menuitemcheckbox", { name: /^(✓ )?Chat view$/ }).click();
 await has(".chat");
 const exitedPty = await page.evaluate(async () => (await import("/src/paneSessions.ts")).get(window.__app.getState().workspaces[0].panes[0].id)?.ptyId);
 await page.evaluate((p) => window.__mockEmit("pty://exit", { pane_id: p, crashed: false }), exitedPty);

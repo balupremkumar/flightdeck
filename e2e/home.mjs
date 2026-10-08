@@ -58,7 +58,7 @@ const overrides = `(()=>{
 await page.addInitScript(boot + "\n" + mock + "\n" + wrap + "\n" + overrides);
 await page.goto(URL, { waitUntil: "networkidle" });
 await page.waitForTimeout(2500);
-await page.getByText("acme-web", { exact: true }).first().click();
+await page.locator('text="acme-web" >> visible=true').first().click();
 await page.waitForTimeout(2500);
 
 // A genuine question on pane 3 (codex, acme-api); pane 6 (codex, acme-web) stays quiet so a merged PR can land it in Merged.
@@ -185,7 +185,7 @@ check(termFocused, "focus landed in the opened pane's terminal");
 // Self-close: an outside change of workspace closes Home, no jump path edits.
 await page.keyboard.press("Control+Shift+H");
 await page.waitForSelector(".hm-panel");
-await page.getByText("acme-web", { exact: true }).first().evaluate((el) => el.click());
+await page.locator('text="acme-web" >> visible=true').first().evaluate((el) => el.click());
 await page.waitForTimeout(400);
 check(!(await homeOpen()), "an external workspace switch closes Home");
 
@@ -253,7 +253,7 @@ check((await callsFor("git_diff_summary", "billing")) === closedBefore, "no Home
 // --- Steps 6 and 7: peek, reply, Approve -------------------------------------
 // Restart pane 3 first, so its pty id is no longer the one it spawned with: a
 // reply that went to the model id (or the old pty) would land on the wrong pane.
-await page.getByText("acme-api", { exact: true }).first().click();
+await page.locator('text="acme-api" >> visible=true').first().click();
 await page.waitForTimeout(1500);
 await page.locator(".pane:visible").nth(2).locator("button.pmenubtn").click();
 await page.locator(".pmenu-item", { hasText: "Restart" }).first().click();
@@ -330,7 +330,7 @@ await page.keyboard.press("Escape");
 await page.waitForTimeout(300);
 
 // Approve: a `1. Yes` menu on pane 5 (claude, acme-web) sends Enter to that pty only.
-await page.getByText("acme-web", { exact: true }).first().click();
+await page.locator('text="acme-web" >> visible=true').first().click();
 await page.waitForTimeout(1000);
 const pty5 = await page.evaluate(() => window.__model2pty[5]);
 await page.evaluate((id) => window.__mockPrint(id, "Bash command\n  rm -rf build\nDo you want to proceed?\n❯ 1. Yes\n  2. Yes, and don't ask again\n  3. No, tell Claude what to do differently"), pty5);

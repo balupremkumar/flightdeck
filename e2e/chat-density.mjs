@@ -123,7 +123,7 @@ const pane = page.locator(".pane").first();
 check(await cond(() => window.__calls.some((x) => x.c === "pty_spawn")), "pane PTY spawned");
 // Terminal is the default since 0.6.1 (and the mock restores its panes), so switch to Chat explicitly.
 await pane.locator(".pmenubtn").click();
-await page.getByRole("menuitemcheckbox", { name: "Chat view", exact: true }).click();
+await page.getByRole("menuitemcheckbox", { name: /^(✓ )?Chat view$/ }).click();
 check(await has(".chat-activity"), "Chat opens with the turn folded into an activity line");
 
 // --- Normal -----------------------------------------------------------------
@@ -217,7 +217,7 @@ await shot("verbose");
   await p2.evaluate(async () => { window.__app = (await import("/src/store.ts")).useApp; });
   const id2 = await p2.evaluate(() => window.__app.getState().workspaces[0].panes[0].id);
   await p2.locator('.pane').first().locator(".pmenubtn").click();
-  await p2.getByRole("menuitemcheckbox", { name: "Chat view", exact: true }).click();
+  await p2.getByRole("menuitemcheckbox", { name: /^(✓ )?Chat view$/ }).click();
   await p2.evaluate((id) => window.__app.getState().setPaneState(id, "permission"), id2);
   const msg = await p2.waitForSelector(".chat-empty", { timeout: 15000, state: "visible" }).then(() => true, () => false);
   check(msg && /Claude is asking something in the terminal/.test((await p2.locator(".chat-empty").textContent()) ?? ""), "no session + permission state: Chat says Claude is asking something in the terminal");
