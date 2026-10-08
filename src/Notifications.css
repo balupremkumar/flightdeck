@@ -14,9 +14,9 @@
 .ntf-bell.on { color: var(--st-waiting); }
 .ntf-bell.dnd { color: var(--faint); opacity: .6; }
 .ntf-badge {
-  position: absolute; top: -1px; right: -1px; min-width: 15px; height: 15px; border-radius: 999px;
-  background: var(--st-waiting); color: var(--on-warn); font-size: 9px; font-weight: 800;
-  display: grid; place-items: center; padding: 0 3px;
+  position: absolute; top: -1px; right: -1px; min-width: 20px; height: 20px; border-radius: 999px;
+  background: var(--st-waiting); color: var(--on-warn); font-size: 12px; font-weight: 800;
+  display: grid; place-items: center; padding: 0 3px; box-sizing: border-box;
 }
 
 .ntf-menu {
@@ -194,7 +194,7 @@
 /* UI-142: split bell badges — errors (red) and approvals (gold) counted apart */
 .ntf-badge.err { background: var(--st-error); color: var(--on-accent); }
 .ntf-badge.warn { background: var(--st-waiting); color: var(--on-warn); }
-.ntf-badge.second { transform: translate(-14px, 0); }
+.ntf-badge.second { right: calc(100% + 2px); }
 
 /* UI-143: snooze affordance on a queue row */
 .aq-snooze {

@@ -13,7 +13,18 @@ import {
   recordOutput,
   mostRecentOutputPane,
 } from "./attention";
-import type { PaneState, Workspace } from "./store";
+import type { PaneModel, PaneState, Workspace } from "./store";
+
+describe("shell attention gate", () => {
+  it.each(["permission", "waiting", "error"] as PaneState[])("excludes pwsh in %s while retaining Claude attention", (state) => {
+    const pane: PaneModel = { id: 901, vendor: "pwsh", cwd: "/w", state, epoch: 0 };
+    lastLine.set(pane.id, "Proceed (y/n)?");
+    expect(attentionKind(pane)).toBeNull();
+    lastLine.set(pane.id, "Which environment should we use?");
+    expect(attentionKind({ ...pane, vendor: "claude" })).toBe(state === "waiting" ? "question" : state);
+    lastLine.delete(pane.id);
+  });
+});
 
 function ws(id: number, panes: { id: number; state: PaneState }[]): Workspace {
   return {

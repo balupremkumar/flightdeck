@@ -184,3 +184,10 @@ export function getStoredVolume(): number {
 export function getEnabledState(): boolean {
   return isEnabled();
 }
+
+/** Use the same values and key as Settings. */
+export function setEnabledState(on: boolean): void {
+  try {
+    localStorage.setItem(ENABLED_KEY, on ? "1" : "0");
+  } catch { /* storage unavailable */ }
+}
