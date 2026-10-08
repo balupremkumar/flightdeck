@@ -29,6 +29,21 @@ await page.keyboard.press("Control+,");
 await modal.waitFor();
 check(await modal.isVisible(), "Settings opens with Ctrl+,");
 
+// Panel and section list: src/Settings.tsx (.set-content, .set-nav, .set-section).
+const panel = await modal.boundingBox();
+check(Math.abs(panel.width - 920) <= 2 && Math.abs(panel.height - 828) <= 2, "Settings uses the larger panel dimensions");
+const nav = page.getByRole("navigation", { name: "Settings sections" });
+const sectionLabels = await modal.locator(".set-section .set-label").allTextContents();
+check(await nav.getByRole("button").count() === sectionLabels.length, "one navigation button per section");
+await nav.getByRole("button", { name: "Terminal", exact: true }).click();
+await page.waitForTimeout(600);
+check(await nav.getByRole("button", { name: "Terminal", exact: true }).getAttribute("aria-current") === "location", "section navigation scrolls and highlights Terminal");
+await modal.locator(".set-body").evaluate((el) => { el.scrollTop = el.scrollHeight; });
+await page.waitForTimeout(200);
+check(await nav.getByRole("button", { name: "About", exact: true }).getAttribute("aria-current") === "location", "manual scrolling updates the current section");
+check(await modal.locator("details.set-advanced[open]").count() === 0, "Advanced disclosures start collapsed");
+check(await modal.locator('input[placeholder="extra CLI flags"], input[placeholder="binary path override"]').count() === 0, "unwired agent inputs are hidden");
+
 // Every rendered row name is reachable: the index is read from the render.
 const rowNames = await page.locator(".set-modal .set-row-name").allInnerTexts();
 check(rowNames.length > 20, `rendered ${rowNames.length} named settings`);
@@ -90,6 +105,19 @@ await box.fill("reduced motion");
 await hits.first().click();
 await page.waitForTimeout(200);
 check(/Reduced motion/.test(await page.locator(".set-flash").innerText()), "click jumps to the row");
+
+// Collapsed rows remain indexed and their disclosure opens before the jump.
+// src/Settings.tsx: .set-advanced, Preview text size, pendingJump effect.
+await page.waitForTimeout(1800);
+await box.fill("preview text size");
+check(!(await nav.isVisible()), "section list hides while searching");
+await page.keyboard.press("Enter");
+await page.waitForTimeout(200);
+const advancedRow = modal.locator(".set-flash");
+check(/Preview text size/.test(await advancedRow.innerText()), "search jumps to the Advanced row");
+check(await advancedRow.evaluate((el) => el.closest("details.set-advanced")?.open === true), "search opens the containing Advanced disclosure");
+check(await advancedRow.isVisible(), "Advanced search target is visible");
+check(await nav.getByRole("button", { name: "Appearance", exact: true }).getAttribute("aria-current") === "location", "Advanced search jump updates section navigation");
 
 check(pageErrors.length === 0, "no page errors" + (pageErrors.length ? ": " + pageErrors.join(" | ") : ""));
 await browser.close();
