@@ -261,12 +261,17 @@ export type HookKind = "permission" | "idle" | "stop";
  *    permission → `permission`, the one kind allowed to ring;
  *    idle       → `waiting`, i.e. ambient unless its last line reads as a
  *                 genuine question — exactly how a quiet pane is treated today;
- *    stop       → `idle`, which attentionKind() scores as null: nothing needs
- *                 you, which is precisely what "Claude finished" means. */
+ *    stop       → `waiting`, the quiet state (see the QRP6 note below): Claude
+ *                 finished, so nothing needs you unless it ended on a question. */
 export const HOOK_PANE_STATE: Record<HookKind, PaneState> = {
   permission: "permission",
   idle: "waiting",
-  stop: "idle",
+  // QRP6: "waiting", not "idle". Across the app "idle" means the process
+  // EXITED (PaneView `dead`, Broadcast, the palette and worktree close all
+  // read it that way), and with hooks on for every Claude pane a finished
+  // turn must not look like a dead pane. Waiting is the heuristic's own quiet
+  // state: ambient unless the last line asks something, and silent here.
+  stop: "waiting",
 };
 
 /** Claude Code sends two shapes of Notification: "Claude needs your permission
@@ -345,7 +350,7 @@ export const HOOK_STALE_GRACE_MS = 1000;
  *  permission happens once, when the hook arrives, and is never re-asserted. */
 export function hookOverrideState(state: PaneState, rec: HookRecord | undefined): PaneState | null {
   if (!rec) return null;
-  if (rec.kind === "stop" && (state === "permission" || state === "waiting")) return "idle";
+  if (rec.kind === "stop" && state === "permission") return "waiting";
   if (rec.kind === "idle" && state === "permission") return "waiting";
   return null;
 }

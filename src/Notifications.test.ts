@@ -281,7 +281,7 @@ describe("classifyHookEvent (QL-720)", () => {
   it("lands each kind on an EXISTING pane state, so it flows through attentionKind", () => {
     // permission rings, waiting is ambient-unless-a-question, idle is "nothing
     // needs you" — no new state was invented for hooks.
-    expect(HOOK_PANE_STATE).toEqual({ permission: "permission", idle: "waiting", stop: "idle" });
+    expect(HOOK_PANE_STATE).toEqual({ permission: "permission", idle: "waiting", stop: "waiting" });
   });
 });
 
@@ -334,8 +334,9 @@ describe("hookOverrideState (QL-720)", () => {
   it("silences a terminal guess that Claude has already finished with", () => {
     // The whole point: the tail said "Do you want to..." (a code block, say)
     // while Claude has actually stopped.
-    expect(hookOverrideState("permission", rec("stop"))).toBe("idle");
-    expect(hookOverrideState("waiting", rec("stop"))).toBe("idle");
+    expect(hookOverrideState("permission", rec("stop"))).toBe("waiting");
+    // QRP6: never "idle" (that reads as an exited pane); quiet stays quiet.
+    expect(hookOverrideState("waiting", rec("stop"))).toBeNull();
   });
 
   it("downgrades a false approval to merely idle when the hook says so", () => {
