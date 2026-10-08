@@ -104,15 +104,18 @@ const pane = page.locator(".pane").first();
 
 // Wait for the pty to exist before toggling (the chat tails by pty id).
 check(await cond((id) => window.__calls.some((x) => x.c === "pty_spawn"), paneId), "pane PTY spawned");
-check(await has(".pane .pview-toggle"), "Claude pane shows the Terminal/Chat toggle");
+await pane.locator(".pmenubtn").click();
+check(await page.getByRole("menuitemcheckbox", { name: "Chat view", exact: true }).count() === 1, "Claude pane menu offers Chat view");
+await page.keyboard.press("Escape");
 
 // Tag the terminal's DOM node so we can prove it survives the round trip.
 await page.evaluate(() => { document.querySelector(".pane .xterm").__fdTag = "alive"; });
 await page.evaluate(() => { window.__calls.length = 0; });
 
-// Toggle via the button.
-await pane.locator('.pview-toggle button[aria-label^="Chat"]').click();
-check(await has(".chat"), "Chat button switches the pane to chat");
+// Toggle via the pane menu.
+await pane.locator(".pmenubtn").click();
+await page.getByRole("menuitemcheckbox", { name: "Chat view", exact: true }).click();
+check(await has(".chat"), "Chat view menu item switches the pane to chat");
 check(await has(".chat-chip"), "session records render as chips");
 // TN2: Normal folds tool runs into activity lines (more in chat-density.mjs); the rest of this suite asserts today's chips, i.e. Verbose.
 check(!(await chipTexts()).some((t) => /npm test|fix-only/.test(t)), "Normal keeps the folded commands out of sight until the activity line is opened");
@@ -188,8 +191,9 @@ await shot("permission-gate");
 await page.evaluate((id) => window.__app.getState().setPaneState(id, "waiting"), paneId);
 
 // Back to Terminal: same xterm node, no pty_kill.
-await pane.locator('.pview-toggle button[aria-label="Terminal"]').click();
-check(await gone(".chat"), "Terminal button returns to the terminal");
+await pane.locator(".pmenubtn").click();
+await page.getByRole("menuitemcheckbox", { name: "Chat view", exact: true }).click();
+check(await gone(".chat"), "Chat view menu item returns to the terminal");
 check(await page.evaluate(() => document.querySelector(".pane .xterm")?.__fdTag === "alive"), "the same xterm DOM node is still mounted");
 check((await page.evaluate(() => window.__calls.filter((x) => x.c === "pty_kill").length)) === 0, "zero pty_kill across the Terminal/Chat round trip");
 
@@ -204,7 +208,8 @@ check(await page.evaluate(() => document.querySelector(".pane .xterm")?.__fdTag 
 check((await page.evaluate(() => window.__calls.filter((x) => x.c === "pty_kill").length)) === 0, "still zero pty_kill after the shortcut round trip");
 
 // Exited pane: the prompt box refuses and offers Restart.
-await pane.locator('.pview-toggle button[aria-label^="Chat"]').click();
+await pane.locator(".pmenubtn").click();
+await page.getByRole("menuitemcheckbox", { name: "Chat view", exact: true }).click();
 await has(".chat");
 const exitedPty = await page.evaluate(async () => (await import("/src/paneSessions.ts")).get(window.__app.getState().workspaces[0].panes[0].id)?.ptyId);
 await page.evaluate((p) => window.__mockEmit("pty://exit", { pane_id: p, crashed: false }), exitedPty);

@@ -5,47 +5,7 @@
    per-pane font zoom. Tokens only from theme.css.
    ============================================================ */
 
-/* ============================================================
-   UI-audit 2.1 — pane header space allocation.
-   A busy header (branch pill + dirty dot + proc chip + token chip + diff
-   badge + attention chip) used to push Restart/Find/Maximise/menu/Close
-   out of view with zero cue, because `.pane` clips overflow and every chip
-   was `flex:none` (full content width, never shrinks). Action buttons stay
-   flex:none (see App.css / panes.css button rules) — they are never in the
-   list below. Instead: `.phead` is a container-query context, and as it
-   narrows, chips fold away in priority order (lowest first), well before
-   the buttons would ever run out of room. This is a space fix only — every
-   chip looks exactly as before until its threshold is crossed.
-   Priority order, lowest first: live process name (transient) -> token
-   count (informational) -> folder name (redundant with the branch pill) ->
-   diff badge (duplicated as "Review changes" in the overflow menu) ->
-   branch pill (state dot + vendor glyph still show the pane's identity).
-
-   UI-605 addendum — three more candidates landed (sparkline+idle UX-556/557,
-   board-card link UX-573) on top of an already-crowded row. Rather than
-   just appending three more permanent chips, the density calls made here:
-     - The process chip (`.pproc`) is mostly RETIRED, not added to: UX-555
-       now writes the live process name straight into the pane's own name
-       once nothing else has claimed it, so the common case shows it for
-       free with zero extra header real estate. `.pproc` only reappears when
-       the name and the live process actually disagree (a manual rename, or
-       the instant before the first auto-title lands) — rare, so it keeps
-       its existing low fold priority rather than earning a higher one.
-     - The sparkline+idle widget (`.pspark`) is the LOWEST priority of all:
-       it's ambient ("is this pane quiet") rather than a fact you look
-       something up by, and the idle text inside it only renders once idle
-       actually exceeds a minute — a busy pane costs the row nothing but a
-       thin strip of bars. It folds before everything else.
-     - The board-card pill (`.pcard`) is conditional (most panes have no
-       card) and, when present, is a navigation shortcut rather than status
-       — ranked with the folder name: useful, but not identity-critical the
-       way the branch pill is.
-   Priority order, lowest first (unchanged items keep their old thresholds):
-   sparkline+idle (ambient) -> live process name (transient, now rare) ->
-   token count (informational) -> folder name (redundant with the branch
-   pill) -> board-card link (navigation, conditional) -> diff badge
-   (duplicated in the overflow menu) -> branch pill (state dot + vendor
-   glyph still show the pane's identity even with everything else folded). */
+/* Fold the folder before the branch; action buttons remain visible. */
 .phead { container-type: inline-size; container-name: phead; }
 .phead .prepo {
   flex: 0 1 auto; min-width: 0; max-width: 160px;
@@ -53,21 +13,7 @@
 }
 .phead .branch { flex: 0 1 auto; min-width: 0; max-width: 180px; }
 .phead .branch-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 5ch; }
-/* `.pane .phead X` (not just `.phead X`) deliberately: `.prepo` also carries
-   `.prepo-click` and `.branch` has its own unconditional `display: inline-flex`
-   elsewhere, both equal-specificity two-class selectors — without the extra
-   `.pane` ancestor these hides could lose the cascade tiebreak to whichever
-   rule happens to come later in the built stylesheet.
-   Owner feedback item 2: the action buttons (find/restart/maximise/menu/
-   close) grew from 22px to 28px each — roughly +30-40px of fixed-width
-   chrome across the row before any chip gets a share of the space. Every
-   fold threshold below is bumped by the same margin so chips still fold at
-   the same effective "room for the buttons" point as before, not sooner. */
-@container phead (max-width: 660px) { .pane .phead .pspark { display: none; } }
-@container phead (max-width: 600px) { .pane .phead .pproc { display: none; } }
-@container phead (max-width: 520px) { .pane .phead .ptok { display: none; } }
 @container phead (max-width: 460px) { .pane .phead .prepo { display: none; } }
-@container phead (max-width: 380px) { .pane .phead .pdiff { display: none; } }
 @container phead (max-width: 320px) { .pane .phead .branch { display: none; } }
 
 /* Drag-to-reorder grip — lives at the start of .phead, drag source only. */
@@ -86,53 +32,6 @@
 .phead:hover .pgrip { opacity: 1; }
 .pgrip:hover { color: var(--text); }
 .pgrip:active { cursor: grabbing; }
-
-/* Live foreground process name (pty://proc) — quiet mono chip, VS Code style. */
-.phead .pproc {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  color: var(--faint);
-  background: color-mix(in srgb, var(--text) 5%, transparent);
-  border-radius: 5px;
-  padding: 1px 6px;
-  flex: none;
-  white-space: nowrap;
-  max-width: 90px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* UX-556/557: activity sparkline + idle readout. Small and quiet by design —
-   this is ambient status, not a fact to look up (see the UI-605 addendum
-   above the fold order for the density reasoning). */
-.phead .pspark {
-  display: inline-flex; align-items: center; gap: 4px; flex: none;
-}
-.pspark-bars { display: inline-flex; align-items: flex-end; gap: 1px; height: 11px; }
-.pspark-bar {
-  width: 2px; min-height: 1px; border-radius: 1px;
-  background: var(--faint); transition: height .3s ease;
-}
-.pspark-idle {
-  font-family: var(--font-mono); font-size: 9.5px; color: var(--st-waiting);
-  white-space: nowrap;
-}
-
-/* UI-3: live token chip (from the agent's own session transcript) */
-.phead .ptok {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  color: var(--muted);
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  padding: 1px 7px;
-  flex: none;
-  white-space: nowrap;
-  cursor: default;
-  max-width: 100px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
 
 /* UX-553: shift+click multi-select — a distinct treatment from `.focused`
    (accent ring) so "this pane is where my cursor goes" and "this pane is
@@ -369,17 +268,15 @@
 }
 .phead .branch-copy:hover, .phead .prepo-click:hover { color: var(--text); }
 .phead .prepo-click:focus-visible, .phead .branch-copy:focus-visible { outline: 2px solid var(--ice); outline-offset: 2px; border-radius: var(--r-sm); }
-/* UI-129: attention chip — the pane says it needs you, not just the bell. */
+/* Actionable attention remains visible and readable. */
 .phead .pattn {
-  flex: none; cursor: pointer;
-  font-size: 9.5px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase;
-  padding: 2px 7px; border-radius: var(--r-pill); border: 1px solid currentColor;
-  animation: pattn-pulse var(--t-pulse) ease-in-out infinite;
+  display: inline-flex; align-items: center; flex: none; cursor: pointer;
+  min-height: 28px; box-sizing: border-box; white-space: nowrap;
+  font-size: 13px; font-weight: 700; text-transform: none;
+  padding: 3px 10px; border-radius: var(--r-pill); border: 0;
+  background: var(--st-waiting); color: #171717;
 }
-.phead .pattn.permission { color: var(--st-waiting); }
-.phead .pattn.error { color: var(--st-error); animation: none; }
-.phead .pattn.mcp { color: var(--muted); animation: none; cursor: help; }
-@keyframes pattn-pulse { 0%,100% { opacity: 1; } 50% { opacity: .55; } }
+.phead .pattn:focus-visible { outline: 2px solid var(--ice); outline-offset: 2px; }
 /* UI-127: setup command shown inline in the launching overlay. */
 .plaunching code {
   font-family: var(--font-mono); font-size: 11px;
@@ -399,16 +296,6 @@
   100% { box-shadow: inset 0 0 0 0 transparent; }
 }
 
-/* UI-231: token chip warns as the context window fills */
-.phead .ptok.warn { color: var(--st-waiting); border-color: color-mix(in srgb, var(--st-waiting) 50%, transparent); }
-.phead .ptok.crit { color: var(--st-error); border-color: color-mix(in srgb, var(--st-error) 55%, transparent); }
-
-/* UI-118: diff badge pulses when the agent changes something */
-.pdiff.pulsing { animation: pdiff-pulse var(--t-slow) ease-out 2; }
-@keyframes pdiff-pulse {
-  0%, 100% { border-color: var(--line); }
-  40% { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 22%, transparent); }
-}
 /* UI-242: when one pane is maximised, quiet the others' chrome */
 .pg-maximized .pane:not(.pmax) .phead { opacity: .55; }
 
@@ -748,26 +635,6 @@
 /* Shortcut hint on a pane-menu row (QL-754). */
 .pmenu-key { margin-left: auto; font-size: 10.5px; color: var(--faint); white-space: nowrap; }
 
-/* Pane header Terminal | Chat toggle — compact icon buttons */
-.pview-toggle { display: inline-flex; gap: 2px; flex: none; }
-.pview-toggle-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  flex: none;
-  border: 0;
-  background: transparent;
-  color: var(--faint);
-  cursor: pointer;
-  border-radius: 4px;
-  transition: color .14s ease, background-color .14s ease;
-}
-.pview-toggle-btn:hover { color: var(--text); background: color-mix(in srgb, var(--text) 8%, transparent); }
-.pview-toggle-btn.on { color: var(--text); background: color-mix(in srgb, var(--accent) 18%, transparent); }
-.pview-toggle-btn:focus-visible { outline: 2px solid var(--ice); outline-offset: -1px; }
-
 /* QL-763: fold control for a finished command's output. The chevron is a
    decoration at the prompt row's right edge: faint while the pointer is
    anywhere in the pane, full on the control itself. */
@@ -847,3 +714,19 @@
   border-radius: 6px; padding: 3px 12px;
 }
 .pstyle-save:hover { background: color-mix(in srgb, var(--accent) 24%, transparent); }
+
+/* Owner-facing pane header sizes override the shared chip defaults. */
+.phead .pname, .phead .prename { font-size: 14px; font-weight: 600; }
+.phead .pstate { font-size: 12.5px; white-space: nowrap; flex: none; }
+.phead .prepo, .phead .branch, .phead .pgit-err { font-size: 12px; }
+.phead .pplan {
+  font-size: 12px; color: var(--st-waiting); border: 1px solid var(--st-waiting);
+  border-radius: var(--r-pill); padding: 2px 7px; flex: none;
+  white-space: nowrap; cursor: pointer;
+}
+.phead .pclose-divider { width: 1px; height: 20px; background: var(--line-strong); flex: none; margin: 0 2px; }
+.pmenu-details { padding: 7px 8px; }
+.pmenu-details-title { font-size: 12px; font-weight: 600; color: var(--muted); margin-bottom: 6px; }
+.pmenu-detail { display: flex; justify-content: space-between; gap: 8px; padding: 4px 0; font-size: 12px; }
+.pmenu-detail > span:last-child { text-align: right; overflow-wrap: anywhere; }
+.pmenu-details .pmenu-item { padding-left: 0; }
