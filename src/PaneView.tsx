@@ -971,8 +971,8 @@ function PaneViewInner({
           <span
             className={"pattn " + (openQuestion ? "permission" : pane.state)}
             title={openQuestion
-              ? `Open Home (Ctrl+Shift+H): Asking a question: "${tailEllipsis(lastLine.get(pane.id) ?? "", 80)}"`
-              : "Open Home (Ctrl+Shift+H)"}
+              ? `Open Home · Ctrl+Shift+H. Asking a question: "${tailEllipsis(lastLine.get(pane.id) ?? "", 80)}"`
+              : "Open Home · Ctrl+Shift+H"}
             role="button"
             tabIndex={0}
             onClick={() => useUI.getState().setHomeOpen(true)}

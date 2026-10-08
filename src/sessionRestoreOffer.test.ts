@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 
 const { invoke } = await import("@tauri-apps/api/core");
-const { offerSessionRestore, savedSecondaryWindows } = await import("./session");
+const { offerSessionRestore, savedSecondaryWindows, crashedLastRun } = await import("./session");
 const { useApp } = await import("./store");
 const { useUI } = await import("./ui");
 const mockInvoke = invoke as unknown as ReturnType<typeof vi.fn>;
@@ -93,5 +93,21 @@ describe("offerSessionRestore decides whether secondary windows may be recreated
     expect(await offerSessionRestore()).toBe(true);
     expect(useUI.getState().confirm).toBeNull();
     expect(useApp.getState().workspaces.map((w) => w.id)).toEqual([1]);
+  });
+
+  it("Fable M4: after a crash, reopen still asks so a bad restore can be declined", async () => {
+    store["flightdeck-startup"] = "reopen";
+    store["flightdeck-clean-exit"] = "0";
+    expect(crashedLastRun()).toBe(true);
+    serve(withSecondary([ws]));
+    let done: boolean | null = null;
+    void offerSessionRestore().then((v) => { done = v; });
+    await settle();
+    expect(useUI.getState().confirm?.title).toBe("Reopen last session?");
+    useUI.getState().confirm!.onCancel!();
+    await settle();
+    expect(done).toBe(false);
+    store["flightdeck-clean-exit"] = "1";
+    crashedLastRun();
   });
 });

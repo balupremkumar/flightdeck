@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  useUI, ZOOM_STEPS, nextZoomStep, DEFAULT_UI_ZOOM, loadUiZoom, migrateChromeScale,
+  useUI, ZOOM_STEPS, nextZoomStep, DEFAULT_UI_ZOOM, loadUiZoom, migrateChromeScale, getTerminalScale,
   navPush, navStep,
   pushOverlay, popOverlay, closeTopOverlay, overlayStackDepth, isTopOverlay, __resetOverlayStackForTests,
 } from "./ui";
@@ -89,7 +89,9 @@ describe("chrome zoom default and migration", () => {
     expect(useUI.getState().uiZoom).toBe(DEFAULT_UI_ZOOM);
     expect(useUI.getState().zoomHud?.value).toBe(DEFAULT_UI_ZOOM);
     expect(storage.get("flightdeck-uiscale")).toBe("1.2");
-    expect(style.zoom).toBe("1.2");
+    // Fable H1: no CSS-zoom fallback outside Tauri; the app renders at 100% there.
+    expect(style.zoom).toBe("");
+    expect(useUI.getState().zoomApplied).toBe(1);
     expect(dispatchEvent).toHaveBeenCalledOnce();
   });
 
@@ -108,6 +110,21 @@ describe("chrome zoom default and migration", () => {
     migrateChromeScale();
     expect(storage.get("flightdeck-uiscale")).toBe(raw);
     expect(storage.get("flightdeck-migrated-chrome-scale")).toBe("1");
+  });
+
+  it("Fable H2: a pre-0.6.3 zoom above 100% carries over as the terminal scale, once", () => {
+    storage.set("flightdeck-uiscale", "1.35");
+    migrateChromeScale();
+    expect(getTerminalScale()).toBe(1.35);
+    storage.set("flightdeck-uiscale", "1.5");
+    migrateChromeScale();
+    expect(getTerminalScale()).toBe(1.35);
+  });
+
+  it("terminal scale is 1 without a carried-over zoom", () => {
+    storage.set("flightdeck-uiscale", "1");
+    migrateChromeScale();
+    expect(getTerminalScale()).toBe(1);
   });
 
   it("marks a fresh install without storing a preference", () => {

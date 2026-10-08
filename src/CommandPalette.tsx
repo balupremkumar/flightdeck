@@ -6,6 +6,7 @@ import { closePaneGuarded, spawnPane } from "./worktrees";
 import { agentVendors, vendorShort } from "./vendors";
 import { openSessionLauncher } from "./sessionLauncherLogic";
 import { checkForUpdate } from "./updater";
+import { toggleThemeMode } from "./themes";
 import {
   multiwindowEnabled, moveActiveWorkspaceToNewWindow, moveActiveWorkspaceToWindow, mergeAllWindowsCommand,
   focusRemoteWorkspace, focusNextWindow,
@@ -369,6 +370,8 @@ export function CommandPalette() {
         });
       },
     });
+    // Fable L2: the light/dark flip left the top bar; this is its quick path.
+    list.push({ id: "act:theme-toggle", section: "Actions", label: "Toggle light / dark", keywords: "theme mode light dark", run: () => toggleThemeMode() });
     list.push({ id: "act:theme-dark", section: "Actions", label: "Switch to dark theme", run: () => setTheme("dark") });
     list.push({ id: "act:theme-light", section: "Actions", label: "Switch to light theme", run: () => setTheme("light") });
     list.push({ id: "act:toggle-panel", section: "Actions", label: "Toggle side panel", run: toggleSidePanel });

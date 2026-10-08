@@ -30,7 +30,7 @@ import { linkify, resolvePath, isRemotePath, type LinkMatch } from "./linkify";
 import { computeFoldRanges, foldAll, foldsContaining, foldSummary, pruneFolded, toggleFold, type FoldRange } from "./foldmarks";
 import { invalidatePathCache } from "./pathcheck";
 import { openInEditor } from "./editor";
-import { useUI } from "./ui";
+import { useUI, getTerminalScale } from "./ui";
 import { terminalFontPx } from "./terminalScale";
 import { resolveCandidates } from "./termlinkResolve";
 import {
@@ -709,7 +709,7 @@ function createSession(modelId: number, gen: string, spec: SpawnSpec, handlers: 
       // ErrorBoundary takes down the whole cockpit (the 0.5.3 boot loop).
       allowProposedApi: true,
       fontFamily: `'${ts.fontFamily}','JetBrains Mono','Cascadia Code',Consolas,monospace`,
-      fontSize: terminalFontPx(spec.fontSize, useUI.getState().uiZoom),
+      fontSize: terminalFontPx(spec.fontSize * getTerminalScale(), useUI.getState().zoomApplied),
       cursorBlink: true,
       cursorStyle: ts.cursorStyle,
       scrollback: ts.scrollback,
@@ -1865,7 +1865,7 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
   ref
 ) {
   const elRef = useRef<HTMLDivElement>(null);
-  const uiZoom = useUI((s) => s.uiZoom);
+  const zoomApplied = useUI((s) => s.zoomApplied);
   const sess = () => getSession(modelId);
 
   // QL-763: the search addon selects the match it lands on; if that row sits
@@ -1961,10 +1961,10 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
     const s = getSession(modelId);
     if (!s) return;
     s.live.fontSize.current = fontSize;
-    s.term.options.fontSize = terminalFontPx(fontSize, uiZoom);
+    s.term.options.fontSize = terminalFontPx(fontSize * getTerminalScale(), zoomApplied);
     fitIfSane(s.fit);
     s.api.remeasure(); // QL-754/755: cell size just moved
-  }, [fontSize, uiZoom, modelId, vendor, cwd, epoch]);
+  }, [fontSize, zoomApplied, modelId, vendor, cwd, epoch]);
 
   // Ligatures toggle: load/dispose the addon in place.
   useEffect(() => {

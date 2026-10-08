@@ -469,7 +469,7 @@ export function Cockpit() {
         >
           <IconBroadcast size={20} /><span className="tb-lbl">Broadcast</span>
         </button>
-        {/* QRP3: the light/dark flip moved to Settings > Appearance and the palette. */}
+        {/* QRP3: the light/dark flip moved to Settings > Appearance and the palette ("Toggle light / dark"). */}
         <button className="tb-ic tb-labelled" title={updateAvailable ? `Settings (Ctrl+,) — Flightdeck ${updateAvailable.version} available` : "Settings (Ctrl+,)"} onClick={() => setSettingsOpen(true)}>
           <IconSettings size={20} /><span className="tb-lbl">Settings</span>
           {updateAvailable && <span className="tb-update-dot" />}

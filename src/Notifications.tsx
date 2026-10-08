@@ -508,8 +508,10 @@ export function Notifications() {
       hookState.set(target.p.id, { kind, at: Date.now() });
       // Rule 3: idle/Stop update the state silently; a permission hook is
       // allowed to ring, so it must NOT be marked silent.
-      if (kind === "permission") hookSilent.delete(target.p.id);
-      else hookSilent.set(target.p.id, next);
+      // Fable H3: only the "idle" Notification is a silent fact. A Stop lands on
+      // waiting, and a turn that ends on a question must still chime and toast.
+      if (kind === "idle") hookSilent.set(target.p.id, next);
+      else hookSilent.delete(target.p.id);
       if (target.p.state !== next) setPaneState(target.p.id, next);
     })
       .then((un) => { if (cancelled) un(); else stop = un; })
@@ -797,7 +799,7 @@ export function Notifications() {
                 {needsAttention.length > 0 && (
                   <button
                     className="ntf-clear"
-                    title="Open Home (Ctrl+Shift+H)"
+                    title="Open Home · Ctrl+Shift+H"
                     onClick={() => { setPanel("none"); useUI.getState().setHomeOpen(true); }}
                   >
                     Open Home

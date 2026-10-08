@@ -4,7 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { save, open as openDialog } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { revealPath } from "./reveal";
-import { useUI, useOverlayEsc, ZOOM_STEPS } from "./ui";
+import { useUI, useOverlayEsc, ZOOM_STEPS, DEFAULT_UI_ZOOM } from "./ui";
 import { useApp } from "./store";
 import { bytes, relTime, absTime } from "./format";
 import { useFocusTrap } from "./useFocusTrap";
@@ -841,7 +841,7 @@ export function Settings() {
   const [claudeMatch, setClaudeMatch] = useState(isClaudeThemeMatch());
   const [reducedMotion, setReducedMotionOn] = useState(isReducedMotion());
   const uiZoom = useUI((s) => s.uiZoom);
-  const setUiZoom = useUI((s) => s.setUiZoom);
+  const resetUiZoom = useUI((s) => s.resetUiZoom);
   const stepUiZoom = useUI((s) => s.stepUiZoom);
   const [term, setTerm] = useState(getTerminalSettings());
   const [reading, setReading] = useState(getReadingSettings());
@@ -1689,8 +1689,8 @@ export function Settings() {
                 >
                   +
                 </button>
-                {uiZoom !== 1 && (
-                  <button className="zoom-step-reset" onClick={() => setUiZoom(1)} title="Reset to 100% (Ctrl+0)">Reset</button>
+                {uiZoom !== DEFAULT_UI_ZOOM && (
+                  <button className="zoom-step-reset" onClick={() => resetUiZoom()} title={`Reset to ${Math.round(DEFAULT_UI_ZOOM * 100)}% (Ctrl+0)`}>Reset</button>
                 )}
               </div>
             </div>

@@ -543,9 +543,14 @@ export function crashedLastRun(): boolean {
   try {
     // Absent = first run ever, which is not a crash.
     const v = localStorage.getItem(CLEAN_EXIT_KEY);
-    return v === "0";
+    lastRunCrashed = v === "0";
+    return lastRunCrashed;
   } catch { return false; }
 }
+/** QRP9 + Fable M4: read at boot before the sentinel is re-armed. A crashed
+ *  last run always gets the "Reopen last session?" prompt, so a restore that
+ *  brings the app down can be declined instead of relaunching every start. */
+let lastRunCrashed = false;
 
 /** Call once at boot, AFTER reading crashedLastRun(). */
 export function armCleanExitSentinel() {
@@ -614,7 +619,7 @@ async function offerSessionRestoreInner(): Promise<boolean> {
     if (useApp.getState().workspaces.length > 0) return true; // user already moving
     // Settings > Startup (91) — persisted-but-inert until now. "Reopen last
     // session" skips the prompt entirely; "Show launcher" asks first.
-    if (getStartupBehavior() === "reopen") {
+    if (getStartupBehavior() === "reopen" && !lastRunCrashed) {
       if (doc.workspaces.length > 0) await hydrateFrom(doc.workspaces, doc.activeWorkspaceId);
       return true;
     }

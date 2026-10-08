@@ -119,6 +119,8 @@ export const SESSION_KEYS = [
   "flightdeck-migrated-terminal-default",
   // One-shot chrome default migration; settings resets must not repeat it.
   "flightdeck-migrated-chrome-scale",
+  // Fable H2: terminal font scale carried over from a pre-0.6.3 whole-app zoom.
+  "flightdeck-terminal-scale",
 ] as const;
 
 /**

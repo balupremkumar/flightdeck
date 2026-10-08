@@ -220,6 +220,10 @@ interface UIState {
   // applied at boot (main.tsx), driven by both Settings > UI size and the
   // Ctrl+=/-/0 shortcut so the two can never disagree.
   uiZoom: number;
+  /** The zoom the webview really runs at: uiZoom under native zoom, 1 where
+   *  native zoom is unavailable (browser rigs, the web demo). Terminals compensate
+   *  by this, never by uiZoom. */
+  zoomApplied: number;
   setUiZoom: (z: number) => void;
   stepUiZoom: (dir: 1 | -1) => void;
   resetUiZoom: () => void;
@@ -478,6 +482,7 @@ export const useUI = create<UIState>((set, get) => ({
       return { uiZoom: DEFAULT_UI_ZOOM, zoomHud: { value: DEFAULT_UI_ZOOM, id: ++zseq } };
     }),
   zoomHud: null,
+  zoomApplied: 1,
 }));
 
 // ---------------------------------------------------------------------
@@ -500,12 +505,25 @@ export function loadUiZoom(): number {
 }
 
 /** Move the old default once; subsequent deliberate 100% choices survive. */
+export const TERMINAL_SCALE_KEY = "flightdeck-terminal-scale";
+/** Extra terminal font scale carried over from a pre-0.6.3 zoom (1 when none). */
+export function getTerminalScale(): number {
+  try {
+    const n = Number(localStorage.getItem(TERMINAL_SCALE_KEY) ?? "1");
+    return Number.isFinite(n) && n > 0 ? n : 1;
+  } catch { return 1; }
+}
+
 export function migrateChromeScale(): void {
   try {
     if (localStorage.getItem("flightdeck-migrated-chrome-scale")) return;
     const raw = localStorage.getItem("flightdeck-uiscale");
     if (raw !== null && Number(raw) === 1) {
       localStorage.setItem("flightdeck-uiscale", String(DEFAULT_UI_ZOOM));
+    } else if (raw !== null && Number.isFinite(Number(raw)) && Number(raw) > 0) {
+      // Fable H2: before 0.6.3 this zoom also enlarged the terminals. Keep their
+      // on-screen size by carrying it over as the terminal scale.
+      localStorage.setItem(TERMINAL_SCALE_KEY, String(Number(raw)));
     }
     localStorage.setItem("flightdeck-migrated-chrome-scale", "1");
   } catch { /* non-persistent */ }
@@ -542,15 +560,18 @@ export function nextZoomStep(current: number, dir: 1 | -1): number {
 // LeftPanel/NewWorkspace trap), and setZoom rejects if the capability is
 // missing — both fall back to CSS zoom so the browser rigs still scale.
 export function applyUiScale(scale: number) {
-  const cssFallback = () => { document.documentElement.style.zoom = scale === 1 ? "" : String(scale); };
+  // Fable H1: no CSS-zoom fallback any more. CSS zoom is exactly what broke
+  // xterm's click hit-testing (2026-08-02); where native zoom is unavailable
+  // (browser rigs, the web demo) the app simply renders at 100%.
+  const noNative = () => { document.documentElement.style.zoom = ""; useUI.setState({ zoomApplied: 1 }); };
   try {
     getCurrentWebview().setZoom(scale)
       // An older run's fallback (or a pre-fix build) may have left CSS zoom
-      // behind; clear it or the two would multiply.
-      .then(() => { document.documentElement.style.zoom = ""; })
-      .catch(cssFallback);
+      // behind; clear it.
+      .then(() => { document.documentElement.style.zoom = ""; useUI.setState({ zoomApplied: scale }); })
+      .catch(noNative);
   } catch {
-    cssFallback();
+    noNative();
   }
   try { localStorage.setItem("flightdeck-uiscale", String(scale)); } catch { /* non-persistent */ }
   // Nudge xterm's fit addon (ResizeObserver) so terminals re-measure at the new scale.

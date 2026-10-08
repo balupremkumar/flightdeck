@@ -580,7 +580,9 @@ impl VendorAdapter for Claude {
     fn install(&self) -> (&'static str, &'static str) {
         // K10: the npm package removed itself mid-update when a running pane held
         // claude.exe; the native installer stages versions and survives that.
-        ("irm https://claude.ai/install.ps1 | iex   (PowerShell, outside Flightdeck)", "https://claude.com/claude-code")
+        // Fable M3: the bare command, so Copy gives something PowerShell can run;
+        // "run it outside Flightdeck" lives in the UI copy (pane banner, RELEASING).
+        ("irm https://claude.ai/install.ps1 | iex", "https://claude.com/claude-code")
     }
     fn command(&self, cwd: &str) -> CommandBuilder {
         // Launch via pwsh so the npm shim resolves; inherits the login +
