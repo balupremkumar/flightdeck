@@ -274,8 +274,11 @@
   min-height: 28px; box-sizing: border-box; white-space: nowrap;
   font-size: 13px; font-weight: 700; text-transform: none;
   padding: 3px 10px; border-radius: var(--r-pill); border: 0;
-  background: var(--st-waiting); color: #171717;
+  background: var(--st-waiting); color: var(--on-warn);
 }
+/* An error is red, not amber; an MCP note is a quiet outline, not a fill. */
+.phead .pattn.error { background: var(--st-error); color: var(--on-accent); }
+.phead .pattn.mcp { background: transparent; color: var(--st-waiting); box-shadow: inset 0 0 0 1px var(--st-waiting); font-weight: 600; }
 .phead .pattn:focus-visible { outline: 2px solid var(--ice); outline-offset: 2px; }
 /* UI-127: setup command shown inline in the launching overlay. */
 .plaunching code {
@@ -724,7 +727,7 @@
   border-radius: var(--r-pill); padding: 2px 7px; flex: none;
   white-space: nowrap; cursor: pointer;
 }
-.phead .pclose-divider { width: 1px; height: 20px; background: var(--line-strong); flex: none; margin: 0 2px; }
+.phead .pclose-divider { width: 1px; height: 20px; background: var(--line-strong); flex: none; margin: 0 6px; }
 .pmenu-details { padding: 7px 8px; }
 .pmenu-details-title { font-size: 12px; font-weight: 600; color: var(--muted); margin-bottom: 6px; }
 .pmenu-detail { display: flex; justify-content: space-between; gap: 8px; padding: 4px 0; font-size: 12px; }
