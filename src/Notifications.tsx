@@ -30,15 +30,44 @@ import {
   HOOKS_CHANGED_EVENT,
   hooksInstalled,
 } from "./settingsStore";
-import { playNeedsYouChime } from "./needsYouSound";
+import { playNeedsYouChime, getEnabledState, setEnabledState } from "./needsYouSound";
+import { permissionPrompt } from "./home";
+import { fetchTail } from "./homeTail";
 import { buildAttentionReport, reportKey, sendAttentionReport, summonPane, type SummonPayload } from "./attentionReport";
 import { useWindowSummaries, windowFooterRows } from "./windowSummary";
 import { focusRemoteWorkspace } from "./windowActions";
 import "./Notifications.css";
 
-// All configurable states, approval/waiting/error first since those are the
-// ones most likely to be toggled on.
-const CONFIGURABLE_STATES: PaneState[] = ["permission", "waiting", "error", "idle", "running", "starting"];
+/** Question and first request line, or the terminal fallback for other prompts. */
+export function permissionAlertText(lines: string[], fallback?: string): string | undefined {
+  const { question, request } = permissionPrompt(lines);
+  return question ? [question, request[0]].filter(Boolean).join("\n") : fallback;
+}
+
+type PermissionTail = { lines: string[]; pending?: Promise<string | null | undefined> };
+const permissionTails = new Map<number, PermissionTail>();
+
+export function clearPermissionTail(paneId: number): void {
+  permissionTails.delete(paneId);
+}
+
+/** Cache once per permission transition; an old response cannot refill a cleared entry. */
+export function loadPermissionAlert(paneId: number, fallback?: string): Promise<string | null | undefined> {
+  const cached = permissionTails.get(paneId);
+  if (cached) return cached.pending ?? Promise.resolve(permissionAlertText(cached.lines, fallback));
+  const entry: PermissionTail = { lines: [] };
+  permissionTails.set(paneId, entry);
+  entry.pending = (async () => {
+    try {
+      const tail = await fetchTail(paneId);
+      if (permissionTails.get(paneId) !== entry) return null;
+      entry.lines = tail.lines;
+    } catch { /* browser preview or failed fetch: use the last output line */ }
+    if (permissionTails.get(paneId) !== entry) return null;
+    return permissionAlertText(entry.lines, fallback);
+  })();
+  return entry.pending;
+}
 
 // UX-601: the per-state alert settings predate the needs-you/ambient split, so
 // each attention KIND borrows the closest existing key. "waiting" can now only
@@ -344,7 +373,9 @@ type Panel = "none" | "feed" | "settings";
  *  there" rather than a guessed keystroke written into a live terminal. */
 function NeedsYouRow({ item, onJump, onSnooze }: { item: AttentionItem; onJump: () => void; onSnooze: () => void }) {
   const { w, p, since, kind } = item;
-  const ask = lastLine.get(p.id);
+  const ask = p.state === "permission"
+    ? permissionAlertText(permissionTails.get(p.id)?.lines ?? [], lastLine.get(p.id))
+    : lastLine.get(p.id);
   const where = `${w.name} › ${p.title || vendorShort(p.vendor)}`;
   return (
     <div className={"nq-row " + (kind ?? "")}>
@@ -377,8 +408,6 @@ export function Notifications() {
   const setPaneState = useApp((s) => s.setPaneState);
 
   const notify = useUI((s) => s.notify);
-  const setNotifyOn = useUI((s) => s.setNotifyOn);
-  const setNotifySound = useUI((s) => s.setNotifySound);
   const setNotifyOsToast = useUI((s) => s.setNotifyOsToast);
   const setOsToastOn = useUI((s) => s.setOsToastOn);
   const setNotifyDnd = useUI((s) => s.setNotifyDnd);
@@ -392,6 +421,17 @@ export function Notifications() {
   const clearFeed = useUI((s) => s.clearFeed);
 
   const [panel, setPanel] = useState<Panel>("none");
+  const [soundEnabled, setSoundEnabled] = useState(getEnabledState);
+  useEffect(() => {
+    const refresh = () => setSoundEnabled(getEnabledState());
+    refresh();
+    window.addEventListener("storage", refresh);
+    window.addEventListener("focus", refresh);
+    return () => {
+      window.removeEventListener("storage", refresh);
+      window.removeEventListener("focus", refresh);
+    };
+  }, [panel]);
   const prevStates = useRef(new Map<number, PaneState>());
   const [, setTick] = useState(0);
   // Owner feedback: calm the bell — no persistent pulsing. `pulse` goes true
@@ -476,6 +516,7 @@ export function Notifications() {
   useEffect(() => {
     for (const w of workspaces) {
       for (const p of w.panes) {
+        if (p.state !== "permission") clearPermissionTail(p.id);
         const prev = prevStates.current.get(p.id);
         if (prev === p.state) continue;
         prevStates.current.set(p.id, p.state);
@@ -504,16 +545,15 @@ export function Notifications() {
           }
         }
 
-        if (!notify.notifyOn[p.state]) continue;
-
-        pushNotifyEvent({ wsId: w.id, wsName: w.name, paneId: p.id, vendor: p.vendor, title: p.title, state: p.state });
-
-        // UX-601: the feed above is HISTORY and still records a pane going
-        // quiet. Alerts are not history. Everything below this line — pulse,
-        // chime, OS toast, taskbar flash — fires only when a human is actually
-        // needed, so a pane that merely stopped printing stays silent.
         const kind = attentionKind(p);
         if (!kind) continue;
+        pushNotifyEvent({ wsId: w.id, wsName: w.name, paneId: p.id, vendor: p.vendor, title: p.title, state: p.state });
+        const askText = p.state === "permission"
+          ? loadPermissionAlert(p.id, lastLine.get(p.id))
+          : Promise.resolve(lastLine.get(p.id));
+        if (p.state === "permission") void askText.then((ask) => {
+          if (ask !== null) setTick((t) => t + 1);
+        });
         // QL-720 rule 3: this state came from an idle/Stop hook, which by the
         // notification ruling is a fact rather than an alert. It has already
         // been recorded in the feed above and it still ranks in the queue; it
@@ -529,14 +569,14 @@ export function Notifications() {
         if (muted) continue;
         playNeedsYouChime(p.id, activeId, workspaces);
         if (notify.osToast && notify.osToastOn[KIND_SETTING_KEY[kind]] && !document.hasFocus()) {
-          // The toast carries WHAT is being asked, not just that something is:
-          // the pane's last output line, same text the bell dropdown shows.
-          const ask = lastLine.get(p.id);
-          void osToast(
+          void askText.then((ask) => {
+            if (ask === null) return;
+            return osToast(
             `${w.name} — ${p.title || vendorShort(p.vendor)}`,
             ask ? `${KIND_LABEL[kind]}: ${ask}` : KIND_LABEL[kind],
             { wsId: w.id, paneId: p.id }
-          );
+            );
+          });
           void flashTaskbar();
         }
       }
@@ -545,6 +585,7 @@ export function Notifications() {
     const live = new Set(workspaces.flatMap((w) => w.panes.map((p) => p.id)));
     for (const id of prevStates.current.keys()) if (!live.has(id)) prevStates.current.delete(id);
     for (const id of stateSince.keys()) if (!live.has(id)) stateSince.delete(id);
+    for (const id of permissionTails.keys()) if (!live.has(id)) clearPermissionTail(id);
     // QL-720: pane ids are never reused, but a closed pane's hook record would
     // otherwise sit in memory for the rest of the session.
     for (const id of hookState.keys()) if (!live.has(id)) hookState.delete(id);
@@ -875,19 +916,7 @@ export function Notifications() {
           </div>
 
           <div className="ntf-section">
-            <div className="ntf-label">Record in the feed</div>
-            {/* UX-601: these gates control the Recent feed (history). The bell
-                itself is not configurable by state any more — by ruling it
-                lights only for approvals, errors, and questions. Saying so
-                here stops the checkboxes reading as a broken promise. */}
-            <div className="ntf-note">The bell only lights for approvals, errors and questions.</div>
-            {CONFIGURABLE_STATES.map((st) => (
-              <label className="ntf-check" key={st}>
-                <input type="checkbox" checked={!!notify.notifyOn[st]} onChange={(e) => setNotifyOn(st, e.target.checked)} />
-                <span className={"ntf-dot " + st} />
-                {STATE_LABEL[st]}
-              </label>
-            ))}
+            <div className="ntf-note">The bell and the feed show approvals, questions and errors.</div>
           </div>
 
           <div className="ntf-section">
@@ -902,7 +931,7 @@ export function Notifications() {
                 it would be a lie. */}
             {notify.osToast && (
               <div className="ntf-subgroup">
-                {KIND_ORDER.filter((k) => notify.notifyOn[KIND_SETTING_KEY[k]]).map((k) => (
+                {KIND_ORDER.map((k) => (
                   <label className="ntf-check ntf-check-sub" key={k}>
                     <input
                       type="checkbox"
@@ -916,7 +945,10 @@ export function Notifications() {
               </div>
             )}
             <label className="ntf-check">
-              <input type="checkbox" checked={notify.sound} onChange={(e) => setNotifySound(e.target.checked)} />
+              <input type="checkbox" checked={soundEnabled} onChange={(e) => {
+                setEnabledState(e.target.checked);
+                setSoundEnabled(getEnabledState());
+              }} />
               Sound cue
             </label>
             <label className="ntf-check">

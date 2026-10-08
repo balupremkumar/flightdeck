@@ -25,6 +25,7 @@ vi.stubGlobal("localStorage", {
 });
 
 const {
+  permissionAlertText, loadPermissionAlert, clearPermissionTail,
   setAttentionOverlay, SUMMON_EVENT, heavyPaneItems, aggregateProgress, setTaskbarProgress,
   // QL-720
   HOOK_EVENT, HOOK_PANE_STATE, HOOK_STALE_GRACE_MS, classifyHookEvent, hookOverrideState, hookTargetPane, normaliseCwd,
@@ -37,6 +38,54 @@ import type { PaneState, Workspace } from "./store";
 beforeEach(() => {
   invoke.mockReset();
   invoke.mockResolvedValue(undefined);
+});
+
+describe("permission alert text and transition cache", () => {
+  const tail = ["npm.cmd run build", "Do you want to proceed?", "1. Yes", "2. Yes, always", "3. No, tell Claude what to do differently"];
+
+  it("shows the question and first request line instead of a menu option", () => {
+    expect(permissionAlertText(tail, tail[4])).toBe("Do you want to proceed?\nnpm.cmd run build");
+    expect(permissionAlertText(["Do you want to proceed?", "1. Yes", "2. No"], "fallback")).toBe("Do you want to proceed?");
+  });
+
+  it("falls back when the tail cannot be parsed, including absent output", () => {
+    expect(permissionAlertText(["Working..."], "last output")).toBe("last output");
+    expect(permissionAlertText([], undefined)).toBeUndefined();
+  });
+
+  it("fetches once, shares the result, and fetches anew after leaving permission", async () => {
+    clearPermissionTail(901);
+    invoke.mockResolvedValue({ lines: tail, seq: 1 });
+    const first = loadPermissionAlert(901, "fallback");
+    const second = loadPermissionAlert(901, "fallback");
+    expect(await first).toBe("Do you want to proceed?\nnpm.cmd run build");
+    expect(await second).toBe(await first);
+    expect(invoke).toHaveBeenCalledTimes(1);
+    expect(invoke).toHaveBeenCalledWith("pane_tail", { modelId: 901, maxBytes: 16384 });
+    clearPermissionTail(901);
+    await loadPermissionAlert(901, "fallback");
+    expect(invoke).toHaveBeenCalledTimes(2);
+    clearPermissionTail(901);
+  });
+
+  it("uses fallback on fetch failure without retrying the same transition", async () => {
+    clearPermissionTail(902);
+    invoke.mockRejectedValue(new Error("no Tauri"));
+    expect(await loadPermissionAlert(902, "last output")).toBe("last output");
+    expect(await loadPermissionAlert(902, "last output")).toBe("last output");
+    expect(invoke).toHaveBeenCalledTimes(1);
+    clearPermissionTail(902);
+  });
+
+  it("discards a late result after the pane leaves permission", async () => {
+    clearPermissionTail(903);
+    let resolve!: (value: { lines: string[]; seq: number }) => void;
+    invoke.mockReturnValue(new Promise((done) => { resolve = done; }));
+    const pending = loadPermissionAlert(903, "fallback");
+    clearPermissionTail(903);
+    resolve({ lines: tail, seq: 1 });
+    expect(await pending).toBeNull();
+  });
 });
 
 describe("setAttentionOverlay (QL-778)", () => {

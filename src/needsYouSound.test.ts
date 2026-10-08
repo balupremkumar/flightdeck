@@ -9,6 +9,7 @@ import {
   shouldSuppressSoundForTest,
   getStoredVolume,
   getEnabledState,
+  setEnabledState,
 } from "./needsYouSound";
 import type { Workspace } from "./store";
 
@@ -61,6 +62,19 @@ describe("needsYouSound", () => {
   });
 
   describe("toggle and volume parsing", () => {
+    it("writes Settings-compatible values and changes the chime gate", () => {
+      setEnabledState(false);
+      expect(localStorage.getItem("flightdeck-sound-needs-you")).toBe("0");
+      expect(getEnabledState()).toBe(false);
+      playNeedsYouChime(1, null, []);
+      expect(_getLastGlobalSoundAtForTest()).toBe(-Infinity);
+      setEnabledState(true);
+      expect(localStorage.getItem("flightdeck-sound-needs-you")).toBe("1");
+      expect(getEnabledState()).toBe(true);
+      playNeedsYouChime(1, null, []);
+      expect(_getLastGlobalSoundAtForTest()).toBeGreaterThanOrEqual(0);
+    });
+
     it("defaults to enabled when no setting is stored", () => {
       expect(getEnabledState()).toBe(true);
     });
