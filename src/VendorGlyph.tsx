@@ -34,10 +34,10 @@ export function VendorGlyph({ id, size = 16, title }: { id: string; size?: numbe
         height: size,
         color: colour,
         borderColor: colour,
-        fontSize: Math.max(7, Math.round(size * 0.44)),
+        fontSize: Math.max(9, Math.round(size * 0.44)),
       }}
     >
-      {vendorInitials(id)}
+      {size >= 20 ? vendorInitials(id) : null}
     </span>
   );
 }

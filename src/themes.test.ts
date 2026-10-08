@@ -206,7 +206,7 @@ describe("preset themes", () => {
 const KNOWN_FAILS: Record<string, string[]> = {};
 
 describe("WCAG AA contrast (4.5:1 on --bg) for every theme", () => {
-  const pairs = ["--text", "--muted", "--accent"];
+  const pairs = ["--text", "--muted", "--faint", "--accent"];
   for (const { id } of THEMES) {
     for (const fg of pairs) {
       const tk = themeTokens(id);

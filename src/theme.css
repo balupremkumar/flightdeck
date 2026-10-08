@@ -70,22 +70,20 @@
   --glow:0 0 0 1px rgba(67,166,245,0.20), 0 8px 40px rgba(67,166,245,0.22);
   --shadow-lg:0 30px 70px -20px rgba(0,0,0,0.75);
 
-  /* Type scale (UI-601) — one ratio (1.125, "major second": tight enough for
-     a dense information UI, still a clean step) instead of the ~30 hand-
-     picked px values (9px..22px) scattered across the CSS files. This
-     PUBLISHES the scale only — nothing below has been repointed at it, so
-     treat these as the target grid for new/touched rules, not a live
-     restyle. Intended mapping (from the audit of what's on screen today):
-       --fs-xs   9.5px  chip-mono, mini badges, dense meta      (was 9-9.5px)
-       --fs-sm   10.5px chips, timestamps, secondary meta        (was 10-11px)
+  /* Type scale (UI-601), with 11px minimum and 12px secondary text floors,
+     instead of the ~30 hand-picked px values scattered across the CSS. This
+     Shared chips below consume the scale; new and touched rules should
+     use these tokens too. Intended mapping:
+       --fs-xs   11px   chip-mono, mini badges, dense meta
+       --fs-sm   12px   chips, timestamps, secondary meta
        --fs-base 12px   default row/body text — the dominant cluster (was 11.5-12.5px)
        --fs-md   13.5px sub-headers, panel titles                (was 13-14px)
        --fs-lg   15px   section headers                          (was 14.5-16px)
        --fs-xl   17px   modal/dialog titles                      (was 17-19px)
      Line-heights are named by role, not tied 1:1 to a size — pick the one
      that matches how the text is used. */
-  --fs-xs:calc(9.5px * var(--ui-fs-scale, 1));
-  --fs-sm:calc(10.5px * var(--ui-fs-scale, 1));
+  --fs-xs:calc(11px * var(--ui-fs-scale, 1));
+  --fs-sm:calc(12px * var(--ui-fs-scale, 1));
   --fs-base:calc(12px * var(--ui-fs-scale, 1));
   --fs-md:calc(13.5px * var(--ui-fs-scale, 1));
   --fs-lg:calc(15px * var(--ui-fs-scale, 1));
@@ -224,7 +222,7 @@
 
   --text:#0B1320;
   --muted:#47586C;
-  --faint:#5F7085;
+  --faint:#5E6F84;
 
   /* pale accents flip to ink-safe values (ice/aqua vanish on white) */
   --ice:#1C72D0;
@@ -280,7 +278,7 @@
 :root[data-theme="dracula"] {
   --abyss:#191A21; --bg:#282A36; --bg-2:#21222C; --surface:#343746; --surface-2:#3A3D4D; --elevated:#44475A;
   --line:rgba(189,147,249,0.14); --line-strong:rgba(189,147,249,0.28);
-  --text:#F8F8F2; --muted:#B6B8C9; --faint:#7B87B0;
+  --text:#F8F8F2; --muted:#B6B8C9; --faint:#8792B7;
   --ice:#8BE9FD; --azure:#62D6F5; --aqua:#69FFC4; --deepblue:#6272A4; --red:#FF5555; --accent:#BD93F9;
   --st-starting:#8BE9FD; --st-running:#50FA7B; --st-waiting:#F1FA8C; --st-idle:#6272A4; --st-error:#FF5555; --st-exited:#69FFC4;
   --agent-claude:#BD93F9;
@@ -298,7 +296,7 @@
 :root[data-theme="gruvbox"] {
   --abyss:#1D2021; --bg:#282828; --bg-2:#242424; --surface:#3C3836; --surface-2:#463F3B; --elevated:#504945;
   --line:rgba(235,219,178,0.12); --line-strong:rgba(235,219,178,0.24);
-  --text:#EBDBB2; --muted:#BDAE93; --faint:#928374;
+  --text:#EBDBB2; --muted:#BDAE93; --faint:#9C8E81;
   --ice:#83A598; --azure:#458588; --aqua:#8EC07C; --deepblue:#458588; --red:#FB4934; --accent:#FE8019;
   --st-starting:#83A598; --st-running:#B8BB26; --st-waiting:#FABD2F; --st-idle:#928374; --st-error:#FB4934; --st-exited:#8EC07C;
   --agent-claude:#D3869B;
@@ -352,7 +350,7 @@
    - Tokyo Night (night): enkia/tokyo-night-vscode-theme.
    Muted/faint inks are lifted off the upstream comment greys where those
    fail WCAG AA on the main background (themes.test.ts enforces 4.5:1 for
-   text/muted/accent on --bg). Terminal palettes live in terminal-theme.ts.
+   text/muted/faint/accent on --bg). Terminal palettes live in terminal-theme.ts.
    ------------------------------------------------------------------ */
 
 :root[data-theme="github-dark"] {
@@ -372,7 +370,7 @@
 :root[data-theme="github-light"] {
   --abyss:#EAEEF2; --bg:#FFFFFF; --bg-2:#FAFBFC; --surface:#F6F8FA; --surface-2:#EAEEF2; --elevated:#FFFFFF;
   --line:rgba(31,35,40,0.15); --line-strong:rgba(31,35,40,0.30);
-  --text:#1F2328; --muted:#59636E; --faint:#6E7781;
+  --text:#1F2328; --muted:#59636E; --faint:#6D7680;
   --ice:#0969DA; --azure:#0969DA; --aqua:#1B7C83; --deepblue:#0550AE; --red:#CF222E; --accent:#0969DA;
   --st-starting:#0969DA; --st-running:#1A7F37; --st-waiting:#9A6700; --st-idle:#6E7781; --st-error:#CF222E; --st-exited:#1B7C83;
   --agent-claude:#8250DF;
@@ -400,7 +398,7 @@
 :root[data-theme="one-dark-pro"] {
   --abyss:#1B1F27; --bg:#282C34; --bg-2:#21252B; --surface:#2C313A; --surface-2:#323842; --elevated:#3A404C;
   --line:rgba(171,178,191,0.14); --line-strong:rgba(171,178,191,0.28);
-  --text:#ABB2BF; --muted:#9DA5B4; --faint:#7F848E;
+  --text:#ABB2BF; --muted:#9DA5B4; --faint:#90949D;
   --ice:#7EC0F5; --azure:#61AFEF; --aqua:#56B6C2; --deepblue:#4D78CC; --red:#E06C75; --accent:#61AFEF;
   --st-starting:#61AFEF; --st-running:#98C379; --st-waiting:#E5C07B; --st-idle:#7F848E; --st-error:#E06C75; --st-exited:#56B6C2;
   --agent-claude:#C678DD;
@@ -414,7 +412,7 @@
 :root[data-theme="tokyo-night"] {
   --abyss:#13141C; --bg:#1A1B26; --bg-2:#16161E; --surface:#1F2335; --surface-2:#24283B; --elevated:#292E42;
   --line:rgba(169,177,214,0.14); --line-strong:rgba(169,177,214,0.28);
-  --text:#C0CAF5; --muted:#A9B1D6; --faint:#737AA2;
+  --text:#C0CAF5; --muted:#A9B1D6; --faint:#7D83A9;
   --ice:#7DCFFF; --azure:#7AA2F7; --aqua:#73DACA; --deepblue:#3D59A1; --red:#F7768E; --accent:#7AA2F7;
   --st-starting:#7DCFFF; --st-running:#9ECE6A; --st-waiting:#E0AF68; --st-idle:#737AA2; --st-error:#F7768E; --st-exited:#73DACA;
   --agent-claude:#BB9AF7;
@@ -585,12 +583,12 @@
    were five hand-rolled variants of one idea; new chips extend this. */
 .chip {
   display: inline-flex; align-items: center; gap: 5px; flex: none;
-  font-size: 10.5px; font-weight: 600; white-space: nowrap;
+  font-size: var(--fs-sm); font-weight: 600; white-space: nowrap;
   padding: 2px 8px; border-radius: var(--r-pill);
   border: 1px solid var(--line); background: var(--surface); color: var(--muted);
   transition: border-color var(--t-fast) ease, color var(--t-fast) ease;
 }
-.chip-mono { font-family: var(--font-mono); font-weight: 500; font-size: 10px; }
+.chip-mono { font-family: var(--font-mono); font-weight: 500; font-size: var(--fs-xs); }
 .chip-warn { color: var(--st-waiting); border-color: color-mix(in srgb, var(--st-waiting) 45%, transparent); background: color-mix(in srgb, var(--st-waiting) 12%, transparent); }
 .chip-ok { color: var(--st-running); border-color: color-mix(in srgb, var(--st-running) 40%, transparent); }
 .chip-err { color: var(--st-error); border-color: color-mix(in srgb, var(--st-error) 45%, transparent); }
