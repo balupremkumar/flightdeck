@@ -1,12 +1,22 @@
-.quota-gauge { display: inline-flex; flex-direction: column; justify-content: center; gap: 2px; margin-right: 6px; font-size: 10.5px; line-height: 1; color: var(--tmuted); cursor: default; font-variant-numeric: tabular-nums; position: relative; }
-.quota-gauge .qg-row { display: flex; align-items: center; gap: 5px; }
-.quota-gauge .qg-label { width: 16px; }
-.quota-gauge .qg-track { width: 54px; height: 4px; border-radius: 2px; background: color-mix(in srgb, var(--text) 10%, transparent); overflow: hidden; }
+﻿.quota-gauge { position: relative; flex-shrink: 0; margin-right: 6px; color: var(--tmuted); font-variant-numeric: tabular-nums; }
+.quota-gauge .qg-pill { display: inline-flex; align-items: center; gap: 14px; min-height: 36px; padding: 6px 10px; border: 1px solid color-mix(in srgb, var(--text) 18%, transparent); border-radius: 18px; background: color-mix(in srgb, var(--text) 5%, transparent); color: inherit; font-family: inherit; font-size: 15px; line-height: 1.2; cursor: pointer; }
+.quota-gauge .qg-pill:hover, .quota-gauge .qg-pill[aria-expanded="true"] { background: color-mix(in srgb, var(--text) 10%, transparent); }
+.quota-gauge .qg-pill:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.quota-gauge .qg-row { display: flex; align-items: center; gap: 7px; white-space: nowrap; }
+.quota-gauge .qg-track { display: inline-block; flex-shrink: 0; width: 72px; height: 6px; border-radius: 3px; background: color-mix(in srgb, var(--text) 10%, transparent); overflow: hidden; }
 .quota-gauge .qg-fill { display: block; height: 100%; background: var(--accent); }
 .quota-gauge .qg-row.warn .qg-fill { background: var(--st-waiting); }
 .quota-gauge .qg-row.crit .qg-fill { background: var(--st-error); }
 .quota-gauge .qg-row.warn .qg-val { color: var(--st-waiting); }
 .quota-gauge .qg-row.crit .qg-val { color: var(--st-error); }
-.quota-gauge .qg-val { min-width: 28px; text-align: right; }
-.quota-gauge .qg-reset { opacity: .8; }
-@media (max-width: 900px) { .quota-gauge .qg-reset { display: none; } }
+.quota-gauge .qg-val { font-size: 15px; font-weight: 600; color: var(--text); }
+.quota-gauge .qg-reset { font-size: 14px; }
+.quota-gauge .qg-week { font-size: 14px; padding-left: 12px; border-left: 1px solid color-mix(in srgb, var(--text) 18%, transparent); }
+.quota-gauge .qg-week .qg-val { font-size: 14px; }
+.quota-gauge .qg-week .qg-track, .quota-gauge .qg-week .qg-reset { display: none; }
+.quota-gauge .qg-popover { position: absolute; top: calc(100% + 8px); right: 0; z-index: 100; width: min(420px, calc(100vw - 24px)); box-sizing: border-box; padding: 16px; border: 1px solid color-mix(in srgb, var(--text) 20%, transparent); border-radius: 10px; background: var(--bg); color: var(--text); box-shadow: 0 8px 28px #0005; font-size: 14px; line-height: 1.5; }
+.quota-gauge .qg-popover .qg-row { margin-top: 12px; flex-wrap: wrap; }
+.quota-gauge .qg-popover .qg-label { min-width: 50px; }
+.quota-gauge .qg-popover .qg-reset { white-space: normal; }
+.quota-gauge .qg-source { margin: 14px 0 0; color: var(--tmuted); }
+@media (max-width: 1099px) { .quota-gauge .qg-week { display: none; } }
