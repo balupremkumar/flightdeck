@@ -41,6 +41,9 @@ use serde::Serialize;
 use serde_json::{json, Map, Value};
 use tauri::{AppHandle, Emitter, Manager};
 
+/// QRP6: env var set on every Claude pane's process (lib.rs pty_spawn) holding
+/// the pane's model id; the relay copies it into each event line as `pane`.
+pub const PANE_ENV: &str = "FLIGHTDECK_PANE_MODEL";
 /// The relay script Claude Code invokes, written into our hooks folder.
 const RELAY_SCRIPT: &str = "hook-relay.ps1";
 /// The append-only log the relay writes and the watcher tails.
@@ -57,7 +60,7 @@ const HOOK_EVENTS: [&str; 3] = ["Notification", "PermissionRequest", "Stop"];
 /// The relay. Appends one compact JSON line per hook fire.
 ///
 /// Contract with the watcher: exactly one line per event, UTF-8, no BOM,
-/// `{ "event": <name>, "ts": <epoch ms>, "payload": <hook stdin JSON> }`.
+/// `{ "event": <name>, "ts": <epoch ms>, "pane": <FLIGHTDECK_PANE_MODEL or null>, "payload": <hook stdin JSON> }`.
 /// Everything is wrapped so the script can only ever exit 0 — Claude Code waits
 /// on its hooks, so a throwing relay would stall the very pane it reports on.
 /// A cross-process mutex serialises concurrent fires (several panes can hit a
@@ -82,6 +85,7 @@ try {
   $rec = [ordered]@{
     event   = $EventName
     ts      = [long]([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())
+    pane    = $env:FLIGHTDECK_PANE_MODEL
     payload = $payload
   }
   $line = ConvertTo-Json $rec -Depth 12 -Compress
@@ -217,6 +221,9 @@ pub struct HookStatus {
     pub settings_path: String,
     /// Our entries are present in `~/.claude/settings.json`.
     pub settings_installed: bool,
+    /// QRP6: hook events will arrive, either from the per-launch settings file
+    /// (relay present) or from a global install.
+    pub active: bool,
     /// Why the settings file couldn't be inspected (BOM, bad JSON). `None` when
     /// it parsed cleanly or simply doesn't exist yet.
     pub settings_error: Option<String>,
@@ -256,6 +263,7 @@ pub fn hook_events_status() -> HookStatus {
         settings_installed,
         settings_error,
         last_event_age_ms,
+        active: relay_installed || settings_installed,
     }
 }
 
@@ -416,6 +424,38 @@ pub(crate) fn merge_hooks(root: &mut Value, hooks_dir: &Path, exe: &str) -> Resu
         added += 1;
     }
     Ok(added)
+}
+
+/// QRP6: the same three relay hooks as a `hooks` object for the per-launch
+/// `--settings` file (chatlog::view_settings_file), so every Claude pane reports
+/// its state without Flightdeck writing to `~/.claude/settings.json`. `None`
+/// when the relay is missing, or when the user already installed our hooks
+/// globally (both would fire and every event would arrive twice).
+pub fn launch_hooks_value() -> Option<Value> {
+    let dir = hooks_dir()?;
+    let script = dir.join(RELAY_SCRIPT);
+    if !script.exists() {
+        return None;
+    }
+    if let Some(p) = claude_settings_path() {
+        if let Ok(Some(v)) = read_settings(&p) {
+            if count_our_hooks(&v, &dir) > 0 {
+                return None;
+            }
+        }
+    }
+    Some(launch_hooks_for(&script, powershell_exe()))
+}
+
+pub(crate) fn launch_hooks_for(script: &Path, exe: &str) -> Value {
+    let mut hooks = Map::new();
+    for event in HOOK_EVENTS {
+        hooks.insert(
+            event.to_string(),
+            json!([{ "hooks": [{ "type": "command", "command": relay_command(exe, script, event), "timeout": 5 }] }]),
+        );
+    }
+    Value::Object(hooks)
 }
 
 /// Remove exactly our entries and nothing else. Returns how many went.

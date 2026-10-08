@@ -249,7 +249,14 @@ async fn pty_spawn(
 
     let adapter = vendors::find(&vendor);
     let spawn_ms = now_ms();
-    let (cmd, plan) = build_command(&vendor, &cwd, setup.as_deref(), focus_mode.unwrap_or(false), claude_theme.as_deref());
+    let (mut cmd, plan) = build_command(&vendor, &cwd, setup.as_deref(), focus_mode.unwrap_or(false), claude_theme.as_deref());
+    // QRP6: Claude's state hooks inherit this, so the relay can name the pane a
+    // hook fired in even when several Claude panes share one folder.
+    if vendor == "claude" {
+        cmd.env(hooks::PANE_ENV, model_id.to_string());
+    } else {
+        cmd.env_remove(hooks::PANE_ENV);
+    }
     let child = pair
         .slave
         .spawn_command(cmd)

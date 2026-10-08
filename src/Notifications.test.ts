@@ -260,6 +260,16 @@ describe("hookTargetPane (QL-720)", () => {
     expect(hookTargetPane(spaces, String.raw`C:\repo`)).toBeNull();
   });
 
+  it("QRP6: the relay's pane id picks the exact pane, even on a shared folder", () => {
+    const spaces = [w(1, [p(10, "claude", String.raw`C:\repo`), p(11, "claude", String.raw`C:\repo`)])];
+    expect(hookTargetPane(spaces, String.raw`C:\repo`, "11")?.p.id).toBe(11);
+    expect(hookTargetPane(spaces, String.raw`C:\repo`, 10)?.p.id).toBe(10);
+    // A stale or foreign id falls back to the cwd rule (still ambiguous here).
+    expect(hookTargetPane(spaces, String.raw`C:\repo`, "99")).toBeNull();
+    // Never a non-Claude pane, even by id.
+    expect(hookTargetPane([w(1, [p(12, "pwsh", String.raw`C:\x`)])], String.raw`C:\x`, 12)).toBeNull();
+  });
+
   it("finds the pane across workspaces, and nothing for an unknown or empty cwd", () => {
     const spaces = [w(1, [p(10, "claude", String.raw`C:\a`)]), w(2, [p(20, "claude", String.raw`C:\b`)])];
     expect(hookTargetPane(spaces, String.raw`C:\b`)?.w.id).toBe(2);

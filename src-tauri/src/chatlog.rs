@@ -97,11 +97,27 @@ pub const CLAUDE_THEMES: [&str; 6] = ["dark", "light", "dark-daltonized", "light
 /// exists in `dir` and return its path. One file per combination, so panes
 /// with different choices never rewrite each other's file.
 pub fn view_settings_file(dir: &std::path::Path, focus: bool, theme: Option<&str>) -> std::io::Result<std::path::PathBuf> {
+    // QRP6: the state hooks ride in the same per-launch file (never ~/.claude).
+    view_settings_file_with(dir, focus, theme, crate::hooks::launch_hooks_value().as_ref())
+}
+
+pub fn view_settings_file_with(dir: &std::path::Path, focus: bool, theme: Option<&str>, hooks: Option<&Value>) -> std::io::Result<std::path::PathBuf> {
     let theme = theme.filter(|t| CLAUDE_THEMES.contains(t));
     let view = if focus { "focus" } else { "default" };
-    let (name, body) = match theme {
-        Some(t) => (format!("claude-view-{view}-{t}.json"), format!("{{\"viewMode\":\"{view}\",\"theme\":\"{t}\"}}")),
-        None => (format!("claude-view-{view}.json"), format!("{{\"viewMode\":\"{view}\"}}")),
+    let (name, mut body) = match theme {
+        Some(t) => (format!("claude-view-{view}-{t}"), format!("{{\"viewMode\":\"{view}\",\"theme\":\"{t}\"}}")),
+        None => (format!("claude-view-{view}"), format!("{{\"viewMode\":\"{view}\"}}")),
+    };
+    let name = match hooks {
+        Some(h) => {
+            // A separate file name, so a pane launched before the relay existed
+            // and one launched after never rewrite each other's file.
+            let mut v: Value = serde_json::from_str(&body).expect("built above");
+            v["hooks"] = h.clone();
+            body = v.to_string();
+            format!("{name}-hooks.json")
+        }
+        None => format!("{name}.json"),
     };
     let path = dir.join(name);
     write_if_changed(&path, &body)?;
@@ -827,6 +843,25 @@ mod tests {
         write_view_settings(&dir);
         assert_eq!(std::fs::read_to_string(dir.join("claude-view-focus.json")).unwrap(), "{\"viewMode\":\"focus\"}");
         assert_eq!(std::fs::read_to_string(dir.join("claude-view-default.json")).unwrap(), "{\"viewMode\":\"default\"}");
+    }
+
+    #[test]
+    fn view_settings_carry_the_state_hooks_in_their_own_file() {
+        let dir = tmp("view-hooks");
+        let script = dir.join("hook-relay.ps1");
+        let hooks = crate::hooks::launch_hooks_for(&script, "pwsh");
+        let p = view_settings_file_with(&dir, true, Some("dark"), Some(&hooks)).unwrap();
+        assert!(p.ends_with("claude-view-focus-dark-hooks.json"), "{p:?}");
+        let v: Value = serde_json::from_str(&std::fs::read_to_string(&p).unwrap()).unwrap();
+        assert_eq!(v["viewMode"], "focus");
+        assert_eq!(v["theme"], "dark");
+        for ev in ["Notification", "PermissionRequest", "Stop"] {
+            let cmd = v["hooks"][ev][0]["hooks"][0]["command"].as_str().unwrap();
+            assert!(cmd.starts_with("pwsh -NoProfile") && cmd.ends_with(&format!(" {ev}")) && cmd.contains("hook-relay.ps1"), "{cmd}");
+        }
+        // Without hooks the plain file is untouched by the hooks variant.
+        let plain = view_settings_file_with(&dir, true, Some("dark"), None).unwrap();
+        assert_eq!(std::fs::read_to_string(plain).unwrap(), "{\"viewMode\":\"focus\",\"theme\":\"dark\"}");
     }
 
     #[test]

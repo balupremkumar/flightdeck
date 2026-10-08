@@ -214,6 +214,8 @@ export const HOOK_EVENT = "hook://event";
 export interface HookEventPayload {
   event?: string;
   ts?: number;
+  /** QRP6: the pane's model id, from FLIGHTDECK_PANE_MODEL (null on a global install). */
+  pane?: string | number | null;
   payload?: {
     cwd?: string;
     session_id?: string;
@@ -274,8 +276,18 @@ function isClaudePane(p: PaneModel): boolean {
  *  than falling back to the terminal heuristic for both. */
 export function hookTargetPane(
   workspaces: Workspace[],
-  cwd: string | undefined | null
+  cwd: string | undefined | null,
+  paneId?: string | number | null
 ): { w: Workspace; p: PaneModel } | null {
+  // QRP6: the relay names the pane when Flightdeck launched it; exact, so two
+  // Claude panes on one folder are no longer ambiguous.
+  const id = paneId === null || paneId === undefined || paneId === "" ? NaN : Number(paneId);
+  if (Number.isFinite(id)) {
+    for (const w of workspaces) {
+      const p = w.panes.find((x) => x.id === id && isClaudePane(x));
+      if (p) return { w, p };
+    }
+  }
   const want = normaliseCwd(cwd);
   if (!want) return null;
   const hits: { w: Workspace; p: PaneModel }[] = [];
@@ -425,8 +437,8 @@ export function Notifications() {
   // the user edited by hand outside Flightdeck). Settings broadcasts on change.
   const [hooksOn, setHooksOn] = useState(hooksInstalled);
   useEffect(() => {
-    invoke<{ settingsInstalled: boolean }>("hook_events_status")
-      .then((s) => setHooksOn(!!s.settingsInstalled))
+    invoke<{ settingsInstalled: boolean; active?: boolean }>("hook_events_status")
+      .then((s) => setHooksOn(!!(s.active ?? s.settingsInstalled)))
       .catch(() => { /* no Tauri backend (browser preview) — keep the cache */ });
     const onChange = (e: Event) => setHooksOn(!!(e as CustomEvent<boolean>).detail);
     window.addEventListener(HOOKS_CHANGED_EVENT, onChange);
@@ -445,7 +457,7 @@ export function Notifications() {
     void listen<HookEventPayload>(HOOK_EVENT, (ev) => {
       const kind = classifyHookEvent(ev.payload);
       if (!kind) return;
-      const target = hookTargetPane(hookWsRef.current, ev.payload?.payload?.cwd);
+      const target = hookTargetPane(hookWsRef.current, ev.payload?.payload?.cwd, ev.payload?.pane);
       if (!target) return; // unknown or ambiguous folder — heuristic keeps the pane
       const next = HOOK_PANE_STATE[kind];
       hookState.set(target.p.id, { kind, at: Date.now() });
