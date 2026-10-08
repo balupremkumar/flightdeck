@@ -31,7 +31,8 @@ describe("main does not overwrite its saved workspaces before the restore answer
     for (const k of Object.keys(listeners)) delete listeners[k];
     vi.stubGlobal("window", fakeTarget());
     vi.stubGlobal("document", { ...fakeTarget(), visibilityState: "visible" });
-    vi.stubGlobal("localStorage", { getItem: () => null, setItem: () => {} });
+    // The prompt path is under test: Settings > Startup "ask" (QRP9 made reopen the default).
+    vi.stubGlobal("localStorage", { getItem: (k: string) => (k === "flightdeck-startup" ? "launcher" : null), setItem: () => {} });
     session = await import("./session");
     ({ useApp } = await import("./store"));
     ({ useUI } = await import("./ui"));

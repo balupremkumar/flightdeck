@@ -64,6 +64,8 @@ export async function applyTestSettings(page, { flags = {}, openClaudeIn = "term
     localStorage.setItem("flightdeck-agent-settings", JSON.stringify({
       ...agents, defaultVendor: "claude", openClaudeIn, flags: { ...(agents.flags ?? {}), ...flags },
     }));
+    // The harness drives the "Reopen last session?" prompt; 0.6.3 made silent reopen the default.
+    localStorage.setItem("flightdeck-startup", "launcher");
     // The "quiet" default is chosen per pane here, so make sure the one-shot 0.6.1 migration cannot interfere.
     if (mute) {
       const n = j("flightdeck-notify-settings", {});

@@ -29,7 +29,8 @@ describe("offerSessionRestore decides whether secondary windows may be recreated
   beforeEach(() => {
     useApp.setState({ workspaces: [], activeId: null, creating: false });
     useUI.setState({ confirm: null });
-    store = {};
+    // These cases are about the prompt, so pin Settings > Startup to "ask" (QRP9 made reopen the default).
+    store = { "flightdeck-startup": "launcher" };
     vi.stubGlobal("localStorage", { getItem: (k: string) => store[k] ?? null, setItem: (k: string, v: string) => { store[k] = v; } });
     mockInvoke.mockReset();
   });

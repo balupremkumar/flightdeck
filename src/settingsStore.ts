@@ -338,7 +338,9 @@ export function resolveEditorCommand(template: string, file: string, line?: numb
 // ---------------------------------------------------------------------
 export type StartupBehavior = "reopen" | "launcher";
 export function getStartupBehavior(): StartupBehavior {
-  try { return (localStorage.getItem("flightdeck-startup") as StartupBehavior) || "launcher"; } catch { return "launcher"; }
+  // QRP9: reopening the last session is the default (the owner runs the same
+  // fleet daily and the "Reopen?" dialog was a click every morning).
+  try { return (localStorage.getItem("flightdeck-startup") as StartupBehavior) || "reopen"; } catch { return "reopen"; }
 }
 export function saveStartupBehavior(v: StartupBehavior) {
   try { localStorage.setItem("flightdeck-startup", v); } catch { /* non-persistent */ }
