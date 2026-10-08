@@ -98,6 +98,25 @@ fn which(exe: &str) -> Option<String> {
     }
 }
 
+/// K10: the native Claude installer's folder (`~/.local/bin`), when it holds
+/// `claude.exe`. Used so a pane still finds Claude when Flightdeck's own PATH
+/// predates the install (an app started before the installer updated the user
+/// PATH), and so the probe does not report a working install as missing.
+pub fn claude_native_dir() -> Option<std::path::PathBuf> {
+    let dir = home_dir()?.join(".local").join("bin");
+    dir.join("claude.exe").is_file().then_some(dir)
+}
+
+/// `dir` prepended to `path` unless it is already one of its entries.
+pub fn path_with_front(dir: &std::path::Path, path: Option<&std::ffi::OsStr>) -> std::ffi::OsString {
+    let mut parts: Vec<std::path::PathBuf> = path.map(|p| std::env::split_paths(p).collect()).unwrap_or_default();
+    let norm = |p: &std::path::Path| p.to_string_lossy().trim_end_matches(['\\', '/']).to_lowercase();
+    if !parts.iter().any(|p| norm(p) == norm(dir)) {
+        parts.insert(0, dir.to_path_buf());
+    }
+    std::env::join_paths(parts).unwrap_or_default()
+}
+
 pub fn agy_path() -> String {
     format!(
         "{}\\agy\\bin\\agy.exe",
@@ -552,11 +571,16 @@ impl VendorAdapter for Claude {
     fn probe(&self) -> (bool, String) {
         match which("claude") {
             Some(p) => (true, p),
-            None => (false, "`claude` not on PATH".into()),
+            None => match claude_native_dir() {
+                Some(d) => (true, d.join("claude.exe").to_string_lossy().into_owned()),
+                None => (false, "`claude` not on PATH".into()),
+            },
         }
     }
     fn install(&self) -> (&'static str, &'static str) {
-        ("npm install -g @anthropic-ai/claude-code", "https://claude.com/claude-code")
+        // K10: the npm package removed itself mid-update when a running pane held
+        // claude.exe; the native installer stages versions and survives that.
+        ("irm https://claude.ai/install.ps1 | iex   (PowerShell, outside Flightdeck)", "https://claude.com/claude-code")
     }
     fn command(&self, cwd: &str) -> CommandBuilder {
         // Launch via pwsh so the npm shim resolves; inherits the login +
@@ -564,6 +588,10 @@ impl VendorAdapter for Claude {
         let mut c = CommandBuilder::new("pwsh.exe");
         c.args(["-NoLogo", "-NoProfile", "-Command", "claude"]);
         c.cwd(cwd);
+        // K10: make sure the native install's folder is on this pane's PATH.
+        if let Some(dir) = claude_native_dir() {
+            c.env("PATH", path_with_front(&dir, std::env::var_os("PATH").as_deref()));
+        }
         c
     }
     fn root_exe(&self) -> &str { "pwsh.exe" }
@@ -1167,6 +1195,20 @@ pub fn detect() -> Vec<VendorInfo> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn k10_native_dir_goes_to_the_front_of_path_once() {
+        let dir = std::path::Path::new(r"C:\Users\u\.local\bin");
+        let before = std::ffi::OsString::from(r"C:\Windows;C:\Tools");
+        let after = path_with_front(dir, Some(&before));
+        let parts: Vec<_> = std::env::split_paths(&after).collect();
+        assert_eq!(parts[0], dir);
+        assert_eq!(parts.len(), 3);
+        // Already present (any case, trailing slash): left exactly as it was.
+        let has = std::ffi::OsString::from(r"C:\Windows;c:\users\u\.local\bin\");
+        assert_eq!(path_with_front(dir, Some(&has)), has);
+        assert_eq!(std::env::split_paths(&path_with_front(dir, None)).next().unwrap(), dir);
+    }
 
     #[test]
     fn ids_are_unique_and_nonempty() {
