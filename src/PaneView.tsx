@@ -1,4 +1,4 @@
-import { lazy, memo, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, memo, Suspense, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { revealPath } from "./reveal";
 import { useApp, registerPaneSend, unregisterPaneSend, type PaneModel, type PaneState } from "./store";
@@ -10,12 +10,11 @@ import { rightClickAction, shouldConfirmPaste } from "./terminalMouse";
 import {
   IconBranch, IconClose, IconRefresh, IconDrag, IconOverflow,
   IconMaximizePane, IconMinimize, IconFolder, IconChevron, IconDiff, IconFile,
-  IconTerminal, IconChat,
 } from "./Icons";
-import type { DiffSummary } from "./worktrees";
 import { cachedInvoke, usePoll, useVisible, usePaneMemory } from "./poll";
-import { compact, num, duration, bytes, relTime, tailEllipsis } from "./format";
-import { clearMcpNotices, mcpChip, noteMcpLine } from "./mcphealth";
+import { compact, num, duration, bytes, tailEllipsis } from "./format";
+import { clearMcpNotices, noteMcpLine } from "./mcphealth";
+import { paneStateWord } from "./paneHeader";
 import { stateSince, lastLine, isOpenQuestion, attentionKind, STATE_LABEL as STATE_TITLE } from "./attention";
 import "./panes.css";
 
@@ -30,7 +29,7 @@ import { Transcript } from "./TranscriptView";
 import { extractLastCommand, redactText, scrollbackFilename, toLines } from "./transcript";
 import { SelectionToolbar, GroupsPanel, SessionSnapshots } from "./PaneOps";
 import { openSessionLauncher, modelShort, contextWindowFor, canResume, RESUME_VENDOR, setFocusModeKeepingSession } from "./sessionLauncherLogic";
-import { SubagentTree, subagentChipLabel, type SubagentCount } from "./SubagentTreeView";
+import { SubagentTree, type SubagentCount } from "./SubagentTreeView";
 import { PlanPanel, pendingPlan, planChipTitle, PLAN_APPROVE_KEYS, type PlanEntry } from "./PlanPanelView";
 import { parseWorkspaceDef, serializeWorkspaceExport } from "./snapshots";
 import { registerScrollbackSource, unregisterScrollbackSource, restoredScrollbackFor } from "./session";
@@ -296,10 +295,6 @@ function PaneViewInner({
   const [matchInfo, setMatchInfo] = useState<{ index: number; count: number } | null>(null);
   const [gitStatus, setGitStatus] = useState<GitStatus | null>(null);
   const [gitError, setGitError] = useState<string | null>(null);
-  // Diff-stat badge for isolated panes: "what did this agent change" at a
-  // glance, polled on the same cadence as the branch pill. Click → review drawer.
-  const [diffStat, setDiffStat] = useState<{ files: number; added: number; deleted: number } | null>(null);
-  const [diffPulse, setDiffPulse] = useState(false);
   const setReviewPane = useUI((s) => s.setReviewPane);
   // Live foreground process name (backend pty://proc via Terminal's onProc).
   const [procName, setProcName] = useState("");
@@ -546,33 +541,6 @@ function PaneViewInner({
     }
   }, GIT_POLL_MS, [pane.cwd, pane.epoch], paneVisible);
 
-  // Diff-stat badge (UI-23): isolated panes diff against their recorded base
-  // branch; plain repo panes diff against HEAD (uncommitted changes) — either
-  // way, a glanceable "what's changed here" that opens the review drawer.
-  const inRepo = !!pane.worktreePath || !!gitStatus?.isRepo;
-  usePoll(async () => {
-    if (!inRepo) { setDiffStat(null); return; }
-    try {
-      const s = await cachedInvoke<DiffSummary>(
-        "git_diff_summary",
-        { cwd: pane.cwd, base: pane.baseBranch ?? null },
-        GIT_POLL_MS / 2
-      );
-      const next = { files: s.files.length, added: s.totalAdded, deleted: s.totalDeleted };
-      // UI-118: the badge is easy to miss on a busy grid — pulse it when the
-      // agent actually changes something.
-      setDiffStat((prev) => {
-        if (prev && (prev.added !== next.added || prev.deleted !== next.deleted || prev.files !== next.files)) {
-          setDiffPulse(true);
-          window.setTimeout(() => setDiffPulse(false), 1200);
-        }
-        return next;
-      });
-    } catch {
-      setDiffStat(null);
-    }
-  }, GIT_POLL_MS, [pane.cwd, pane.epoch, pane.baseBranch, inRepo], paneVisible);
-
   // Token chip (UI-3): real numbers from the agent's own session transcript
   // (Claude Code writes ~/.claude/projects/<cwd>/*.jsonl). Agents without a
   // transcript return null and get no chip — never an estimate.
@@ -744,11 +712,10 @@ function PaneViewInner({
   const [subCount, setSubCount] = useState<SubagentCount | null>(null);
   const [subagentsOpen, setSubagentsOpen] = useState(false);
   const [subagentPos, setSubagentPos] = useState<{ top: number; left: number } | null>(null);
-  const subChipRef = useRef<HTMLSpanElement>(null);
   const [plans, setPlans] = useState<PlanEntry[]>([]);
   const [planOpen, setPlanOpen] = useState(false);
 
-  // Both ride the ctx chip's cadence. pane_subagent_count is directory
+  // Both ride the session usage poll cadence. pane_subagent_count is directory
   // metadata only (no transcript is opened) and pane_plans reads incrementally,
   // so this adds no measurable cost per pane — the popover's own faster poll
   // (SubagentTreeView) runs only while it's open.
@@ -767,8 +734,9 @@ function PaneViewInner({
   }, 15000, [pane.cwd, pane.epoch, isClaude], paneVisible);
 
   const openSubagents = () => {
-    const r = subChipRef.current?.getBoundingClientRect();
+    const r = menuBtnRef.current?.getBoundingClientRect();
     if (r) setSubagentPos({ top: r.bottom + 6, left: Math.max(8, Math.min(r.left, window.innerWidth - 372)) });
+    closeMenu();
     setSubagentsOpen(true);
   };
 
@@ -793,44 +761,15 @@ function PaneViewInner({
     paneRef.current?.querySelector<HTMLElement>("textarea.xterm-helper-textarea")?.focus();
   };
 
-  // UX-556/557: activity sparkline + idle-time, kept cheap on purpose. Output
-  // arrives far more often than the header should re-render, so a ref-backed
-  // ring buffer counts lines per bucket on the hot path (onLine below) and a
-  // slow, visibility-gated tick is the ONLY thing that triggers a redraw —
-  // never a per-line state write. Off-screen panes (paneVisible false) don't
-  // even run that tick, matching every other poll in this file.
-  const ACTIVITY_BUCKETS = 16;
-  const BUCKET_MS = 3000;
-  const activityRef = useRef<number[]>(new Array(ACTIVITY_BUCKETS).fill(0));
-  const bucketStart = useRef(Date.now());
+  // Keep the idle age current only while this pane is visible.
   const lastOutputRef = useRef(Date.now());
-  const [activityTick, setActivityTick] = useState(0);
-  const recordActivity = () => {
-    const now = Date.now();
-    lastOutputRef.current = now;
-    const shift = Math.floor((now - bucketStart.current) / BUCKET_MS);
-    if (shift > 0) {
-      const arr = activityRef.current;
-      for (let i = 0; i < Math.min(shift, arr.length); i++) { arr.shift(); arr.push(0); }
-      bucketStart.current += shift * BUCKET_MS;
-    }
-    activityRef.current[activityRef.current.length - 1]++;
-  };
+  const [, setIdleTick] = useState(0);
+  const recordActivity = () => { lastOutputRef.current = Date.now(); };
   useEffect(() => {
     if (!paneVisible) return;
-    const id = setInterval(() => setActivityTick((t) => t + 1), 4000);
+    const id = setInterval(() => setIdleTick((t) => t + 1), 4000);
     return () => clearInterval(id);
   }, [paneVisible]);
-  const activityBars = useMemo(() => {
-    const counts = activityRef.current;
-    const max = Math.max(1, ...counts);
-    return counts.map((c) => Math.round((c / max) * 100));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activityTick]);
-  const IDLE_SHOW_MS = 60_000;
-  // Re-read on every render; the 4s tick above is what makes this move.
-  const idleLabel = paneVisible && Date.now() - lastOutputRef.current > IDLE_SHOW_MS ? relTime(lastOutputRef.current) : null;
-
 
   // UX-553/554: register this pane's send function so bulk broadcast (from
   // ANY pane's selection toolbar/group action) can reach it — see PaneOps.tsx
@@ -868,6 +807,8 @@ function PaneViewInner({
   // generic "waiting" label undersells it (it's not idle, it's asking you
   // something specific). See attention.ts's isOpenQuestion + attentionQueue.
   const openQuestion = pane.state === "waiting" && isOpenQuestion(lastLine.get(pane.id));
+
+  const stateWord = paneStateWord(pane.state, openQuestion, Date.now() - lastOutputRef.current);
 
   return (
     <div
@@ -912,7 +853,7 @@ function PaneViewInner({
         onDoubleClick={(e) => {
           // UI-116: double-click empty header space toggles maximise (ignore
           // clicks that land on a control or the rename field).
-          if ((e.target as HTMLElement).closest("button, input, .pdiff, .ptok, .branch")) return;
+          if ((e.target as HTMLElement).closest("button, input, .pname, .prename, .pplan, .branch")) return;
           onToggleMaximize(pane.id);
         }}
         onAuxClick={(e) => {
@@ -964,16 +905,7 @@ function PaneViewInner({
             {displayName}
           </span>
         )}
-        {/* UX-556/557: activity sparkline + idle readout. The bars stay quiet
-            and small on purpose (glance-only, no numbers) — the idle label
-            only appears once there's actually something to say (>60s since
-            output), so a busy pane shows nothing extra at all. */}
-        <span className="pspark" title={`Activity · last output ${relTime(lastOutputRef.current)}`}>
-          <span className="pspark-bars">
-            {activityBars.map((h, i) => <span key={i} className="pspark-bar" style={{ height: `${Math.max(8, h)}%` }} />)}
-          </span>
-          {idleLabel && <span className="pspark-idle">idle {idleLabel}</span>}
-        </span>
+        <span className="pstate" style={{ color: `var(--st-${stateWord.tone})` }}>{stateWord.text}</span>
         <span
           className="prepo prepo-click"
           role="button"
@@ -984,10 +916,6 @@ function PaneViewInner({
         >
           &middot; {baseName(pane.cwd)}
         </span>
-        {/* UX-555 folds this into the pane name itself (auto-title), so the
-            chip only needs to appear when the two disagree — a manual
-            rename, or the moment before the first auto-title lands. */}
-        {processTitleEnabled && procName && procName !== displayName && <span className="pproc" title="Live process (pane name doesn’t match)">{procName}</span>}
         {/* UI-27: a git problem is worth one quiet word — silence reads as
             "not a repo", which may be wrong. */}
         {!gitStatus && gitError && (
@@ -1036,90 +964,14 @@ function PaneViewInner({
             onClick={() => useUI.getState().setAttentionOpen(true)}
             onKeyDown={(e) => { if (e.key === "Enter") useUI.getState().setAttentionOpen(true); }}
           >
-            {pane.state === "permission" ? "needs you" : openQuestion ? "has a question" : "error"}
-          </span>
-        )}
-        {(() => {
-          const chip = mcpChip(pane.id);
-          return chip ? <span className="pattn mcp" title={chip.title}>{chip.label}</span> : null;
-        })()}
-        {usage && (() => {
-          // UI-231: a raw token count doesn't tell you when you're in trouble.
-          // Colour it against the model's context window so "compact soon" is
-          // visible before the agent starts dropping context.
-          // QL-765: the window is the ONE inferred number here (see
-          // contextWindowFor's comment) — everything else in the tooltip is the
-          // latest turn's own usage block, read straight off the transcript.
-          const CONTEXT_WINDOW = contextWindowFor(usage.model, usage.contextWindow);
-          const pct = usage.contextTokens / CONTEXT_WINDOW;
-          const level = pct >= 0.9 ? "crit" : pct >= 0.7 ? "warn" : "";
-          const cached = usage.lastCacheReadTokens + usage.lastCacheCreationTokens;
-          return (
-            <span
-              className={"ptok " + level}
-              title={
-                `Session tokens (from the agent’s own transcript)
-` +
-                `context now: ${num(usage.contextTokens)} (${Math.round(pct * 100)}% of a ${compact(CONTEXT_WINDOW)} window)
-` +
-                `last turn: ${num(usage.lastInputTokens)} in / ${num(usage.lastOutputTokens)} out
-` +
-                `  of which cached: ${num(usage.lastCacheReadTokens)} read, ${num(usage.lastCacheCreationTokens)} written` +
-                (usage.contextTokens > 0 ? ` (${Math.round((cached / usage.contextTokens) * 100)}% of the prompt)` : "") + `
-` +
-                `output so far: ${num(usage.outputTokens)} across ${num(usage.turns)} turns` +
-                (usage.planUsedPercent5h != null ? `
-5h plan limit: ${Math.round(usage.planUsedPercent5h)}% used` : "") +
-                (usage.planUsedPercentWeek != null ? `
-weekly plan limit: ${Math.round(usage.planUsedPercentWeek)}% used` : "") +
-                (usage.apiEquivUsd ? `
-API-equivalent cost: $${usage.apiEquivUsd.toFixed(2)} (what these tokens would cost on the API; not billed on a subscription)` : "") +
-                (level ? `
-
-Running low — consider /compact in this pane.` : "")
-              }
-            >
-              {compact(usage.contextTokens)} ctx
-            </span>
-          );
-        })()}
-        {/* QL-766: which model is actually answering in this pane. Same chip
-            geometry as the ctx chip it sits beside, short form only — the full
-            id (dated snapshot and all) is in the tooltip. Updates on the same
-            15s transcript poll, so a mid-session /model switch shows up. */}
-        {usage?.model && (
-          <span className="ptok pmodel" title={`Model in this session: ${usage.model}`}>
-            {modelShort(usage.model)}
-          </span>
-        )}
-        {/* QL-769: this session has subagents. Same chip geometry as its
-            neighbours; the count is the cheap probe's (agents written to in
-            the last couple of minutes, else the session's total). Click opens
-            the tree — nothing here pulses or rings. */}
-        {isClaude && subCount && subCount.total > 0 && (
-          <span
-            ref={subChipRef}
-            className={"ptok psub" + (subagentsOpen ? " open" : "")}
-            role="button"
-            tabIndex={0}
-            title={
-              `${subagentChipLabel(subCount)} in this session` +
-              (subCount.recent > 0
-                ? ` — ${subCount.recent} active in the last 2 minutes`
-                : ` — none active recently`) +
-              `\n${subCount.total} subagent transcript${subCount.total === 1 ? "" : "s"} in total. Click for the tree.`
-            }
-            onClick={openSubagents}
-            onKeyDown={(e) => { if (e.key === "Enter") openSubagents(); }}
-          >
-            {subagentChipLabel(subCount)}
+            {pane.state === "permission" ? "Needs you" : openQuestion ? "Has a question" : "Error"}
           </span>
         )}
         {/* QL-770: a plan is waiting to be read. Waiting tone, no bell, no
             queue entry (notification ruling) — it's a "when you look" signal. */}
         {isClaude && waitingPlan && (
           <span
-            className="ptok pplan warn"
+            className="pplan"
             role="button"
             tabIndex={0}
             title={planChipTitle(waitingPlan)}
@@ -1129,59 +981,7 @@ Running low — consider /compact in this pane.` : "")
             Plan ready
           </span>
         )}
-        {/* QL-742: over the memory ceiling. Same chip geometry and amber tone
-            as the token chip's warn level — this is a resource reading worth a
-            look, not an alert, so it stays out of the .pattn (pulsing,
-            needs-you) grammar and never rings the bell. */}
-        {memWarn && (
-          <span
-            className="ptok pmem warn"
-            title={
-              `Memory: ${bytes(memWarn.memoryMb * 1024 * 1024)}
-` +
-              `over the ${num(Math.round(memWarn.memoryWarnMb))} MB ceiling (Settings › Diagnostics)
-` +
-              `Checked every 30s. Restarting this pane clears it.`
-            }
-          >
-            {bytes(memWarn.memoryMb * 1024 * 1024)} mem
-          </span>
-        )}
-        {diffStat && diffStat.files > 0 && (
-          <button
-            className={"pdiff" + (diffPulse ? " pulsing" : "")}
-            onClick={() => setReviewPane(pane.id)}
-            title={`${diffStat.files} file${diffStat.files === 1 ? "" : "s"} changed · review & merge`}
-          >
-            <IconDiff size={11} />
-            <em className="add">+{diffStat.added}</em>
-            <em className="del">−{diffStat.deleted}</em>
-          </button>
-        )}
-        {isClaude && (
-          <div className="pview-toggle" role="group" aria-label="Pane view">
-            <button className={"pview-toggle-btn" + (view === "terminal" ? " on" : "")} aria-pressed={view === "terminal"} aria-label="Terminal" onClick={() => switchView("terminal")} title="Terminal">
-              <IconTerminal size={14} />
-            </button>
-            <button className={"pview-toggle-btn" + (view === "chat" ? " on" : "")} aria-pressed={view === "chat"} aria-label="Chat (Ctrl+Shift+M)" onClick={() => switchView("chat")} title="Chat (Ctrl+Shift+M)">
-              <IconChat size={14} />
-            </button>
-          </div>
-        )}
         <span className="sp" />
-        {dead && (
-          <button
-            className="prestart"
-            onClick={() => restartPane(pane.id)}
-            title={
-              pane.state === "error"
-                ? `${displayName} exited unexpectedly${lastExit ? ` (${lastExit})` : ""}. Restart it in the same folder.`
-                : "Restart this pane in the same folder"
-            }
-          >
-            <IconRefresh size={14} /> Restart
-          </button>
-        )}
         <button
           className={"pfindbtn" + (searchOpen ? " active" : "")}
           onClick={() => (searchOpen ? closeSearch() : setSearchOpen(true))}
@@ -1198,6 +998,15 @@ Running low — consider /compact in this pane.` : "")
           </button>
           {menuOpen && menuPos && createPortal(
             <div className="pmenu" style={{ top: menuPos.top, left: menuPos.left }} onMouseLeave={closeMenu}>
+              <div className="pmenu-details" aria-label="Details">
+                <div className="pmenu-details-title">Details</div>
+                <div className="pmenu-detail"><span>Model</span><span>{usage?.model ? modelShort(usage.model) : "Unavailable"}</span></div>
+                <div className="pmenu-detail"><span>Context</span><span>{usage ? `${compact(usage.contextTokens)} (${Math.round(usage.contextTokens / contextWindowFor(usage.model, usage.contextWindow) * 100)}%)` : "Unavailable"}</span></div>
+                {memWarn && <div className="pmenu-detail"><span>Memory</span><span>{bytes(memWarn.memoryMb * 1024 * 1024)} (over {num(Math.round(memWarn.memoryWarnMb))} MB)</span></div>}
+                {isClaude && subCount && subCount.total > 0 && <button className="pmenu-item" onClick={openSubagents}>Subagents...</button>}
+              </div>
+              <div className="pmenu-sep" />
+              {isClaude && <button className="pmenu-item" role="menuitemcheckbox" aria-checked={view === "chat"} onClick={() => { switchView(view === "chat" ? "terminal" : "chat"); closeMenu(); }} title="Chat view (Ctrl+Shift+M)">Chat view</button>}
               <div className="pmenu-path" title="This pane’s working directory">
                 {pane.cwd}
                 {/* UI-230: an isolated pane's worktree is a real disk cost —
@@ -1214,11 +1023,11 @@ Running low — consider /compact in this pane.` : "")
                   <button className="pmenu-item" onClick={() => { terminalRef.current?.foldAllCommands(false); closeMenu(); }}>Unfold all commands</button>
                 </>
               )}
-              <button className="pmenu-item" onClick={() => { restartPane(pane.id); closeMenu(); }}>
+              <button className="pmenu-item" title={lastExit ?? "Restart this pane in the same folder"} onClick={() => { restartPane(pane.id); closeMenu(); }}>
                 <IconRefresh size={13} /> Restart
               </button>
               {isClaude && (
-                <button className="pmenu-item" role="menuitemcheckbox" aria-checked={!!pane.focusMode} onClick={toggleFocusMode} title="Quiet Claude view: just your prompt, a one-line summary of each turn's tool work with edit counts, and Claude's final reply. Ctrl+O shows the full transcript. Scroll with PgUp/PgDn. Switching restarts Claude and resumes the same conversation.">
+                <button className="pmenu-item" role="menuitemcheckbox" aria-checked={!!pane.focusMode} onClick={toggleFocusMode} title="Quiet Claude view: just your prompt, a one-line summary of each turn's tool work with edit counts, and Claude's final reply. Ctrl+O shows the full transcript. The mouse wheel scrolls the conversation. Switching restarts Claude and resumes the same conversation.">
                   {pane.focusMode ? "✓ " : ""}Quiet terminal
                 </button>
               )}
@@ -1226,12 +1035,7 @@ Running low — consider /compact in this pane.` : "")
                 {maximized ? <IconMinimize size={13} /> : <IconMaximizePane size={13} />}
                 {maximized ? "Restore" : "Maximise"}
               </button>
-              {/* UI-27: a git problem is worth one quiet word — silence reads as
-            "not a repo", which may be wrong. */}
-        {!gitStatus && gitError && (
-          <span className="pgit-err" title={gitError}>git?</span>
-        )}
-        {gitStatus?.isRepo && (
+              {gitStatus?.isRepo && (
                 <button className="pmenu-item" onClick={() => { setReviewPane(pane.id); closeMenu(); }}>
                   <IconDiff size={13} /> Review changes
                 </button>
@@ -1407,6 +1211,7 @@ Running low — consider /compact in this pane.` : "")
             document.body
           )}
         </div>
+        <span className="pclose-divider" aria-hidden="true" />
         <button className="x" onClick={tryClosePane} title="Close pane"><IconClose size={16} /></button>
       </div>
       <div
