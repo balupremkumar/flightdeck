@@ -1,4 +1,4 @@
-﻿import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { usePoll } from "./poll";
 import { compact } from "./format";
