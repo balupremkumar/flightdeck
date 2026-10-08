@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef } from "react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { logEvent } from "./applog";
 import type { PaneState } from "./store";
+export const DEFAULT_UI_ZOOM = 1.2;
 import {
   loadMode, loadSplitSize, clampSplitSize, PREVIEW_MODE_KEY, PREVIEW_SPLIT_SIZE_KEY,
   type PreviewMode,
@@ -473,8 +474,8 @@ export const useUI = create<UIState>((set, get) => ({
     }),
   resetUiZoom: () =>
     set(() => {
-      applyUiScale(1);
-      return { uiZoom: 1, zoomHud: { value: 1, id: ++zseq } };
+      applyUiScale(DEFAULT_UI_ZOOM);
+      return { uiZoom: DEFAULT_UI_ZOOM, zoomHud: { value: DEFAULT_UI_ZOOM, id: ++zseq } };
     }),
   zoomHud: null,
 }));
@@ -488,14 +489,26 @@ export const useUI = create<UIState>((set, get) => ({
 export const ZOOM_STEPS = [0.85, 0.95, 1, 1.1, 1.2, 1.35, 1.5];
 let zseq = 0;
 
-function loadUiZoom(): number {
+export function loadUiZoom(): number {
   try {
     const raw = localStorage.getItem("flightdeck-uiscale");
-    const n = raw ? parseFloat(raw) : 1;
-    return Number.isFinite(n) && n > 0 ? n : 1;
+    const n = raw ? parseFloat(raw) : DEFAULT_UI_ZOOM;
+    return Number.isFinite(n) && n > 0 ? n : DEFAULT_UI_ZOOM;
   } catch {
-    return 1;
+    return DEFAULT_UI_ZOOM;
   }
+}
+
+/** Move the old default once; subsequent deliberate 100% choices survive. */
+export function migrateChromeScale(): void {
+  try {
+    if (localStorage.getItem("flightdeck-migrated-chrome-scale")) return;
+    const raw = localStorage.getItem("flightdeck-uiscale");
+    if (raw !== null && Number(raw) === 1) {
+      localStorage.setItem("flightdeck-uiscale", String(DEFAULT_UI_ZOOM));
+    }
+    localStorage.setItem("flightdeck-migrated-chrome-scale", "1");
+  } catch { /* non-persistent */ }
 }
 
 /** Steps from `current` to the next/previous entry in ZOOM_STEPS. If `current`

@@ -31,6 +31,7 @@ import { computeFoldRanges, foldAll, foldsContaining, foldSummary, pruneFolded, 
 import { invalidatePathCache } from "./pathcheck";
 import { openInEditor } from "./editor";
 import { useUI } from "./ui";
+import { terminalFontPx } from "./terminalScale";
 import { resolveCandidates } from "./termlinkResolve";
 import {
   VAULT_ROOT, candidateBases, stitchLogical, matchRange, rangesOverlap, rangeTouchesRow, hardWrapLink, parseFileUri,
@@ -708,7 +709,7 @@ function createSession(modelId: number, gen: string, spec: SpawnSpec, handlers: 
       // ErrorBoundary takes down the whole cockpit (the 0.5.3 boot loop).
       allowProposedApi: true,
       fontFamily: `'${ts.fontFamily}','JetBrains Mono','Cascadia Code',Consolas,monospace`,
-      fontSize: spec.fontSize,
+      fontSize: terminalFontPx(spec.fontSize, useUI.getState().uiZoom),
       cursorBlink: true,
       cursorStyle: ts.cursorStyle,
       scrollback: ts.scrollback,
@@ -1864,6 +1865,7 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
   ref
 ) {
   const elRef = useRef<HTMLDivElement>(null);
+  const uiZoom = useUI((s) => s.uiZoom);
   const sess = () => getSession(modelId);
 
   // QL-763: the search addon selects the match it lands on; if that row sits
@@ -1954,15 +1956,15 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
     if (s) s.handlers = handlers;
   });
 
-  // Live font-size zoom: mutate the existing terminal in place, no remount.
+  // Keep the pane's on-screen font size constant as native chrome zoom changes.
   useEffect(() => {
     const s = getSession(modelId);
     if (!s) return;
     s.live.fontSize.current = fontSize;
-    s.term.options.fontSize = fontSize;
+    s.term.options.fontSize = terminalFontPx(fontSize, uiZoom);
     fitIfSane(s.fit);
     s.api.remeasure(); // QL-754/755: cell size just moved
-  }, [fontSize, modelId, vendor, cwd, epoch]);
+  }, [fontSize, uiZoom, modelId, vendor, cwd, epoch]);
 
   // Ligatures toggle: load/dispose the addon in place.
   useEffect(() => {
