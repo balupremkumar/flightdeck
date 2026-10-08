@@ -1,4 +1,4 @@
-/* LeftPanel + CommandPalette additions.
+﻿/* LeftPanel + CommandPalette additions.
    Base .lpanel/.lp-* chrome lives in App.css (owned elsewhere) — this file only
    adds the new workspace-panel affordances (search, rename, context menu, drag
    reorder, folder-drop) and the command palette, all on Deep Cove tokens from
@@ -56,6 +56,18 @@
 
 /* ---------- last-active meta ---------- */
 .lp-stat.lp-last { color: var(--faint); font-variant-numeric: tabular-nums; }
+
+/* Leave room for the sentence alongside the pane grid at a readable size. */
+.lpanel.exp { width: 360px; }
+.lp-name { font-size: 14px; }
+.lp-summary {
+  min-width: 0; font-size: 12.5px; color: var(--text-secondary);
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+}
+.lp-summary-needs { color: var(--st-waiting); }
+.lp-summary-needs.error { color: var(--st-error); }
+.lp-badge { min-width: 18px; height: 18px; font-size: 11px; }
 
 /* UI-155: sort-by-last-active toggle, next to the count in the header */
 .lp-sort {
@@ -182,7 +194,7 @@
 /* UI-149: mini pane-layout preview on each workspace tile */
 /* Sized down hard after seeing it rendered: at 18px with 8px cells this read as
    a SECOND avatar competing with the workspace monogram beside it, rather than
-   as quiet metadata. It's a glyph, not a chart — the dot-counts next to it carry
+   as quiet metadata. It's a glyph, not a chart, the sentence next to it carries
    the precise numbers. Idle cells are dimmed so only active panes draw the eye. */
 .lp-mini {
   display: grid; gap: 1px; flex: none;
@@ -262,8 +274,8 @@
    Two layers, shared by the collapsed rail (.lp-ic) and the expanded row
    (.lp-ws): a severity ring/wash on the tile itself (readable without
    hovering) plus a compact count badge on the avatar corner (readable
-   without opening the bell). Severity: error > approval > waiting — see
-   tileState() in LeftPanel.tsx, which never returns more than one.
+   without opening the bell). Severity: error > approval > question, from
+   railSummary(). Quiet panes never badge the tile.
    ============================================================ */
 
 /* Count badge — an avatar status badge, not a row element (bottom-right is
@@ -272,14 +284,14 @@
    from the identity tint wash underneath. */
 .lp-needy-badge {
   position: absolute; right: -3px; bottom: -3px;
-  min-width: 15px; height: 15px; border-radius: 999px;
+  min-width: 18px; height: 18px; border-radius: 999px;
   display: grid; place-items: center; padding: 0 3px;
-  font-size: 9px; font-weight: 800; line-height: 1;
+  font-size: 11px; font-weight: 800; line-height: 1;
   box-shadow: 0 0 0 2px var(--bg-surface);
 }
 .lp-needy-badge.error { background: var(--st-error); color: var(--on-accent); }
 .lp-needy-badge.permission { background: var(--st-waiting); color: var(--on-warn); box-shadow: 0 0 0 2px var(--bg-surface), 0 0 5px color-mix(in srgb, var(--st-waiting) 70%, transparent); }
-.lp-needy-badge.waiting { background: var(--st-waiting); color: var(--on-warn); opacity: .82; }
+.lp-needy-badge.question { background: var(--st-waiting); color: var(--on-warn); }
 
 /* Ring/wash on the whole tile — the "which workspace" signal at a glance,
    without hovering for the tooltip or opening the bell. Kept soft (thin ring,
@@ -289,10 +301,10 @@
    without either signal getting lost. */
 .lp-ws.needy-error { box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--st-error) 55%, transparent); background: color-mix(in srgb, var(--st-error) 6%, transparent); }
 .lp-ws.needy-permission { box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--st-waiting) 60%, transparent); background: color-mix(in srgb, var(--st-waiting) 7%, transparent); }
-.lp-ws.needy-waiting { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--st-waiting) 32%, transparent); background: color-mix(in srgb, var(--st-waiting) 3%, transparent); }
+.lp-ws.needy-question { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--st-waiting) 32%, transparent); background: color-mix(in srgb, var(--st-waiting) 3%, transparent); }
 .lp-ws.active.needy-error { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 38%, transparent), inset 0 0 0 3px color-mix(in srgb, var(--st-error) 55%, transparent); }
 .lp-ws.active.needy-permission { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 38%, transparent), inset 0 0 0 3px color-mix(in srgb, var(--st-waiting) 55%, transparent); }
-.lp-ws.active.needy-waiting { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 38%, transparent), inset 0 0 0 2px color-mix(in srgb, var(--st-waiting) 32%, transparent); }
+.lp-ws.active.needy-question { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 38%, transparent), inset 0 0 0 2px color-mix(in srgb, var(--st-waiting) 32%, transparent); }
 
 /* Collapsed rail: same severity language, but it must outrank the identity
    tint ring entirely (a wrong-but-pretty colour is worse than a plain one
@@ -306,10 +318,10 @@
   background: color-mix(in srgb, var(--st-waiting) 32%, var(--bg-elevated));
   box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--st-waiting) 72%, transparent);
 }
-.lp-ic:not(.add):not(.active).needy-waiting {
+.lp-ic:not(.add):not(.active).needy-question {
   background: color-mix(in srgb, var(--st-waiting) 16%, var(--bg-elevated));
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--st-waiting) 40%, transparent);
 }
 .lp-ic.active.needy-error { box-shadow: inset 0 0 0 3px color-mix(in srgb, var(--st-error) 60%, transparent); }
 .lp-ic.active.needy-permission { box-shadow: inset 0 0 0 3px color-mix(in srgb, var(--st-waiting) 60%, transparent); }
-.lp-ic.active.needy-waiting { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--st-waiting) 35%, transparent); }
+.lp-ic.active.needy-question { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--st-waiting) 35%, transparent); }

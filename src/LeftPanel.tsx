@@ -3,7 +3,8 @@ import type { CSSProperties, MouseEvent as ReactMouseEvent, DragEvent as ReactDr
 import { useApp, type PaneModel, type Workspace } from "./store";
 import { useUI, useOverlayEsc } from "./ui";
 import { defaultCycle, vendorShort } from "./vendors";
-import { attentionQueue, STATE_LABEL } from "./attention";
+import { attentionKind, attentionQueue, KIND_LABEL } from "./attention";
+import { railSentence, railSummary } from "./railSummary";
 import { closeWorkspaceWithCleanup, preparePanes, isolationPref, rememberedOrSuggestedSetup } from "./worktrees";
 import { IconPlus, IconClose, IconDrag } from "./Icons";
 import { relTime as fmtRel, timeTitle, num } from "./format";
@@ -29,46 +30,15 @@ function initial(name: string): string {
   return mono.toUpperCase();
 }
 
-// UI-22: "starting" counts separately — a workspace reading "3 running" when
-// all three are still launching is a lie the roll-up used to tell.
-function rollup(panes: PaneModel[]) {
-  return {
-    total: panes.length,
-    starting: panes.filter((p) => p.state === "starting").length,
-    running: panes.filter((p) => p.state === "running").length,
-    // Combined for the existing "wait" meta chip (unchanged). `permission` is
-    // also broken out separately below for the tile's severity treatment.
-    waiting: panes.filter((p) => p.state === "waiting" || p.state === "permission").length,
-    permission: panes.filter((p) => p.state === "permission").length,
-    error: panes.filter((p) => p.state === "error").length,
-  };
-}
-
-// Owner feedback item 1: a tile shows at most one severity, ranked
-// error > approval > plain waiting — a workspace with an errored pane is
-// never merely "waiting", and a blocked-on-approval pane is worse than one
-// just idling. Shared by the rail and the expanded tile so the two never
-// disagree.
-function tileState(r: ReturnType<typeof rollup>): "error" | "permission" | "waiting" | null {
-  if (r.error > 0) return "error";
-  if (r.permission > 0) return "permission";
-  if (r.waiting > r.permission) return "waiting"; // plain-waiting only; r.waiting already includes permission
-  return null;
-}
-
-/** How many panes this tile's badge counts — every pane currently in a
- *  needs-you state (error, approval or plain waiting). */
-function needyCount(r: ReturnType<typeof rollup>): number {
-  return r.error + r.waiting;
-}
-
-/** The needy panes themselves, for the tooltip — named individually so a
- *  workspace with several agents says WHICH ones need you, not just how many. */
-function needyPanes(w: Workspace): PaneModel[] {
-  return w.panes.filter((p) => p.state === "error" || p.state === "permission" || p.state === "waiting");
-}
 function paneLabel(p: PaneModel): string {
   return p.title || vendorShort(p.vendor);
+}
+
+function needyLabels(w: Workspace): string[] {
+  return w.panes.flatMap((p) => {
+    const kind = attentionKind(p);
+    return kind ? [`${paneLabel(p)} (${KIND_LABEL[kind]})`] : [];
+  });
 }
 
 type MenuState = { wsId: number; x: number; y: number } | null;
@@ -554,17 +524,11 @@ export function LeftPanel({ expanded }: { expanded: boolean }) {
       <div className={"lpanel" + (folderOver ? " lp-drop-over" : "")} ref={panelRef}>
         <button className="lp-ic add" onClick={startCreate} title="New workspace" data-tip="New workspace"><IconPlus size={20} /></button>
         {workspaces.map((w) => {
-          const r = rollup(w.panes);
+          const r = railSummary(w.panes);
           const active = w.id === activeId;
-          const status = tileState(r);
-          const needy = status ? needyPanes(w) : [];
-          // Rail tooltip is one line (CSS-driven, see data-tip in leftpanel.css)
-          // — name the neediest pane and, if there's more than one, say so.
-          const rowTip = needy.length === 0
-            ? w.name
-            : needy.length === 1
-              ? `${paneLabel(needy[0])} — ${STATE_LABEL[needy[0].state]}`
-              : `${needyCount(r)} panes need you: ${needy.map((p) => `${paneLabel(p)} (${STATE_LABEL[p.state]})`).join(", ")}`;
+          const status = r.worst;
+          const needy = needyLabels(w);
+          const rowTip = [w.name, railSentence(r), ...needy].join(" \u00b7 ");
           return (
             <button
               className={"lp-ic" + (active ? " active" : "") + (status ? ` needy-${status}` : "")}
@@ -581,7 +545,7 @@ export function LeftPanel({ expanded }: { expanded: boolean }) {
                   keeps the total count; a needy one shows only what matters. */}
               {!status && <span className="lp-badge sm">{r.total}</span>}
               {status && (
-                <span className={"lp-needy-badge " + status} aria-hidden>{needyCount(r)}</span>
+                <span className={"lp-needy-badge " + status} aria-hidden>{r.needs}</span>
               )}
             </button>
           );
@@ -622,12 +586,13 @@ export function LeftPanel({ expanded }: { expanded: boolean }) {
       <div className={"lp-list" + (sortByLast ? " sorted" : "")}>
         {filtered.length === 0 && search.trim() && <div className="lp-empty">No workspaces match “{search.trim()}”</div>}
         {ordered.map((w) => {
-          const r = rollup(w.panes);
+          const r = railSummary(w.panes);
           const active = w.id === activeId;
           const isRenaming = renameId === w.id;
           const last = relTime(lastActive[w.id], now);
-          const status = tileState(r);
-          const needy = status ? needyPanes(w) : [];
+          const status = r.worst;
+          const sentence = railSentence(r);
+          const needy = needyLabels(w);
           // Owner feedback item 1: the tile's tooltip leads with WHICH panes
           // need you and in what state, ahead of the existing root/worktree/
           // token line — a glance answers "what" before "where".
@@ -638,9 +603,7 @@ export function LeftPanel({ expanded }: { expanded: boolean }) {
               : null,
             tokens[w.id] > 0 ? `${num(tokens[w.id])} tokens of context across its agents` : null,
           ].filter(Boolean).join(" · ");
-          const rowTip = needy.length
-            ? [`Needs you:`, ...needy.map((p) => `  ${paneLabel(p)} — ${STATE_LABEL[p.state]}`), "", metaLine].join("\n")
-            : metaLine;
+          const rowTip = [w.name, sentence, ...needy, "", metaLine].join("\n");
           return (
             <div
               className={
@@ -681,7 +644,7 @@ export function LeftPanel({ expanded }: { expanded: boolean }) {
               <span className="lp-i" style={{ "--tint": tintFor(w) } as CSSProperties}>
                 {initial(w.name)}
                 {status && (
-                  <span className={"lp-needy-badge " + status} aria-hidden>{needyCount(r)}</span>
+                  <span className={"lp-needy-badge " + status} aria-hidden>{r.needs}</span>
                 )}
               </span>
               <span className="lp-body">
@@ -714,11 +677,12 @@ export function LeftPanel({ expanded }: { expanded: boolean }) {
                       {w.panes.slice(0, 9).map((p) => (<i key={p.id} className={"lp-mini-c " + p.state} />))}
                     </span>
                   )}
-                  {r.starting > 0 && <span className="lp-stat start" title="Still launching"><i />{r.starting}</span>}
-                  {r.running > 0 && <span className="lp-stat run"><i />{r.running}</span>}
-                  {r.waiting > 0 && <span className="lp-stat wait"><i />{r.waiting}</span>}
-                  {r.error > 0 && <span className="lp-stat err"><i />{r.error}</span>}
-                  {r.total === 0 && <span className="lp-stat empty">empty</span>}
+                  <span className="lp-summary" title={sentence}>
+                    {r.needs > 0 ? <>
+                      <span className={"lp-summary-needs " + status}>{`${r.needs} needs you`}</span>
+                      {sentence.slice(`${r.needs} needs you`.length)}
+                    </> : sentence}
+                  </span>
                   {last && (
                     <span className="lp-stat lp-last" title={lastActive[w.id] ? timeTitle(lastActive[w.id]) : undefined}>
                       {last}
