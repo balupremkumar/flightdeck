@@ -73,10 +73,11 @@ export interface SessionLauncherOptions {
   search?: boolean;
 }
 
-/** Prefer the focused resumable pane, otherwise the first in this workspace. */
+/** Prefer the focused pane that can content-search (Claude transcripts), otherwise
+ *  the first such pane in this workspace, so a hit resumes in a matching agent. */
 export function chooseSearchPane<T extends Pick<PaneModel, "id" | "vendor">>(panes: readonly T[], focused?: number | null): T | undefined {
-  return panes.find((p) => p.id === focused && canResume(p.vendor))
-    ?? panes.find((p) => canResume(p.vendor));
+  return panes.find((p) => p.id === focused && supportsDeepSearch(p.vendor))
+    ?? panes.find((p) => supportsDeepSearch(p.vendor));
 }
 
 export function openSessionLauncher(paneId?: number, opts?: SessionLauncherOptions) {

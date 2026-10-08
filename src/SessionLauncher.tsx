@@ -54,7 +54,7 @@ export function SessionLauncher() {
         const p = ws && chooseSearchPane(ws.panes, paneId ?? ws.focused);
         if (ws && p) found = { wsId: ws.id, pane: p };
         if (!found) {
-          useUI.getState().pushToast("info", "Search past sessions needs a Claude or Codex pane in the active workspace.");
+          useUI.getState().pushToast("info", "Search past sessions needs a Claude pane in the active workspace.");
           return;
         }
       } else if (paneId != null) {
@@ -157,7 +157,7 @@ export function SessionLauncher() {
   }, [open, pane?.cwd, deep, trimmed, allProjects, useRegex, reloadTick]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const forkable = !!pane && supportsFork(pane.vendor);
-  const deepOk = !!pane && (supportsDeepSearch(pane.vendor) || !!target?.search);
+  const deepOk = !!pane && supportsDeepSearch(pane.vendor);
   const hits = deep ? search?.hits ?? [] : [];
   const groups = useMemo(() => groupHits(hits), [hits]);
   /** Flat row index of each group's first hit — keyboard nav runs over the flat

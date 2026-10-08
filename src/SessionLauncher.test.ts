@@ -30,12 +30,11 @@ const session = (over: Partial<ClaudeSession> = {}): ClaudeSession => ({
 
 describe("search launcher entry", () => {
   const panes = [{ id: 1, vendor: "pwsh" }, { id: 2, vendor: "codex" }, { id: 3, vendor: "claude" }];
-  it("keeps either supported focused vendor", () => {
-    expect(chooseSearchPane(panes, 2)).toBe(panes[1]);
+  it("keeps a focused Claude pane (content search reads Claude transcripts)", () => {
     expect(chooseSearchPane(panes, 3)).toBe(panes[2]);
   });
-  it("falls back in workspace order for unsupported, missing or absent focus", () => {
-    for (const focused of [1, 99, undefined]) expect(chooseSearchPane(panes, focused)).toBe(panes[1]);
+  it("falls back to the first Claude pane for a shell, a Codex pane, or no focus", () => {
+    for (const focused of [1, 2, 99, undefined]) expect(chooseSearchPane(panes, focused)).toBe(panes[2]);
   });
   it("has no target when the workspace is empty or has no resumable pane", () => {
     expect(chooseSearchPane([], 1)).toBeUndefined();
