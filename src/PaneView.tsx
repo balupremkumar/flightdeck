@@ -836,7 +836,7 @@ function PaneViewInner({
       onDrop={(e) => { if (canReorder) { e.preventDefault(); onDropHere(index); } }}
     >
       {isLeadSelected && <SelectionToolbar />}
-      <div className={"pband " + pane.state}>
+      <div className={"pband " + pane.state + (openQuestion ? " question" : "")}>
         {/* UI-136: the status band already means "what is this pane doing" —
             a real progress figure belongs there, not in a separate widget. */}
         {progress != null && (

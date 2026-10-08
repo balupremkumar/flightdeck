@@ -226,7 +226,10 @@ body {
 .pband { height: 3px; width: 100%; flex: none; background: var(--st-idle); }
 .pband.running { background: var(--st-running); }
 .pband.error { background: var(--st-error); }
-.pband.waiting { background: var(--st-waiting); animation: band-breathe 2.2s ease-in-out infinite; }
+/* QRP5: a pane that merely went quiet is ambient (UX-601), so its band is calm;
+   only a quiet pane that is asking a question breathes amber. */
+.pband.waiting { background: var(--st-idle); }
+.pband.waiting.question { background: var(--st-waiting); animation: band-breathe 2.2s ease-in-out infinite; }
 .pband.starting { background: var(--st-starting); animation: band-breathe 1.8s ease-in-out infinite; }
 /* UI-2: blocked on an approval prompt — same amber family as waiting but a
    faster, harder pulse; this pane is the one to deal with first. */

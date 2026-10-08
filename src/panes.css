@@ -71,7 +71,7 @@
   max-width: 200px;
   outline: none;
 }
-.pname { flex: 1 1 auto; min-width: 6ch; max-width: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: text; }
+.pname { flex: 0 1 auto; min-width: 6ch; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: text; }
 
 /* Maximise / focus mode toggle */
 .pmaxbtn {

@@ -20,7 +20,8 @@ describe("paneStateWord", () => {
       [240_000, "Idle 4m"], [3_599_999, "Idle 59m"],
       [3_600_000, "Idle 1h"], [7_200_000, "Idle 2h"],
     ] as const) {
-      expect(paneStateWord(state, false, ms)).toEqual({ text, tone: state });
+      // A quiet pane is ambient: muted (idle tone) whether its state is idle or waiting.
+      expect(paneStateWord(state, false, ms)).toEqual({ text, tone: "idle" });
     }
   });
   it("ignores a question flag for idle panes", () => {
