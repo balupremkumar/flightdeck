@@ -126,7 +126,10 @@
   border-radius: 10px;
   box-shadow: 0 20px 50px -16px rgba(0, 0, 0, .7);
   z-index: var(--z-menu);
-  overflow: hidden;
+  max-height: calc(100vh - 16px);
+  overflow-x: hidden;
+  overflow-y: auto;
+  box-sizing: border-box;
   padding: 4px;
   display: flex;
   flex-direction: column;
@@ -733,3 +736,19 @@
 .pmenu-detail { display: flex; justify-content: space-between; gap: 8px; padding: 4px 0; font-size: 12px; }
 .pmenu-detail > span:last-child { text-align: right; overflow-wrap: anywhere; }
 .pmenu-details .pmenu-item { padding-left: 0; }
+
+/* Keep menu rows at their natural height inside the scrollable viewport. */
+.pmenu > * { flex-shrink: 0; }
+.pmenu-heading { padding: 7px 8px 4px; font-size: 11px; font-weight: 600; color: var(--muted); }
+.pmenu-more > summary { cursor: pointer; border-radius: 6px; }
+.pmenu-more > summary:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.pmenu-more > summary:focus-visible { outline: 2px solid var(--ice); outline-offset: -2px; }
+.pmissing-cli {
+  position: absolute; top: 8px; left: 8px; right: 8px; z-index: 5;
+  display: flex; flex-direction: column; gap: 8px; padding: 12px;
+  border: 1px solid var(--st-error); border-radius: 8px;
+  background: var(--elevated); color: var(--text); font-size: 12px;
+}
+.pmissing-cli-command { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.pmissing-cli code { overflow-wrap: anywhere; }
+.pmissing-cli button { font: inherit; color: var(--text); background: var(--surface-2); border: 1px solid var(--line-strong); border-radius: 4px; padding: 4px 8px; cursor: pointer; }
