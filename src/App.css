@@ -86,16 +86,22 @@ body {
 /* Owner feedback item 2 (sizing pass): topbar/rail icon buttons grown from
    17px glyphs in a 26-30px box to 18-19px glyphs in a 30-32px box, so the
    whole bar reads clearly instead of "barely visible". Height grows to fit. */
-.topbar { height: 44px; flex: none; display: flex; align-items: center; gap: 10px; padding: 0 10px; border-bottom: 1px solid var(--border); background: var(--bg-app); }
-.topbar .tb-toggle { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 30px; border: 0; background: transparent; color: var(--tmuted); border-radius: 7px; cursor: pointer; transition: color .14s ease, background-color .14s ease; }
+.topbar { height: 48px; flex: none; display: flex; align-items: center; gap: 8px; padding: 0 12px; border-bottom: 1px solid var(--border); background: var(--bg-app); }
+.topbar .tb-toggle { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; border: 0; background: transparent; color: var(--tmuted); border-radius: 7px; cursor: pointer; transition: color .14s ease, background-color .14s ease; }
 .topbar .tb-toggle:hover { color: var(--text-primary); background: color-mix(in srgb, var(--text) 6%, transparent); }
 .topbar .tb-toggle:focus-visible, .topbar .tb-ic:focus-visible, .ntf-bell:focus-visible { outline: var(--focus-ring-width) solid var(--focus-ring); outline-offset: 1px; }
 .topbar .brand-mark { display: inline-flex; color: var(--accent); margin-left: 2px; }
-.topbar .brand { font-weight: 700; font-size: 14.5px; letter-spacing: -0.01em; }
+.topbar .brand { font-weight: 700; font-size: 16px; letter-spacing: -0.01em; }
 /* UI-audit 2.5: a long workspace name must never crowd the icon row. */
-.topbar .ws { color: var(--text-secondary); font-size: 13.5px; min-width: 0; max-width: 260px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.topbar .ws { color: var(--text-secondary); font-size: 15px; min-width: 0; max-width: 260px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .topbar .sp { flex: 1; }
-.topbar .tb-ic { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 30px; border: 0; background: transparent; color: var(--tmuted); border-radius: 7px; cursor: pointer; transition: color .14s ease, background-color .14s ease; }
+/* QRP3: the workspace name duplicates the highlighted rail row while the rail is open. */
+.topbar .ws.ws-dup { display: none; }
+/* QRP3: words beside the glyphs on wide windows (recognition over recall);
+   below 1500 px only "Pane" keeps its word, the rest fall back to the tooltip. */
+.topbar .tb-lbl { white-space: nowrap; }
+@media (max-width: 1499px) { .topbar .tb-lbl:not(.tb-lbl-keep) { display: none; } .topbar .tb-labelled:has(.tb-lbl:not(.tb-lbl-keep)) { padding: 0; width: 36px; } }
+.topbar .tb-ic { position: relative; display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-width: 36px; height: 36px; padding: 0 8px; border: 0; background: transparent; color: var(--tmuted); border-radius: 8px; font: inherit; font-size: 14px; font-weight: 500; cursor: pointer; transition: color .14s ease, background-color .14s ease; }
 
 /* UI-629: spacing rhythm by function, not one flat gap. The alerts group
    (bell) and the destination action (Settings — opens a whole other

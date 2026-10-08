@@ -3,7 +3,7 @@ import { lazyOverlay } from "./LazyOverlay";
 import { useApp } from "./store";
 import { LeftPanel } from "./LeftPanel";
 import { PaneGrid } from "./PaneGrid";
-import { IconBrand, IconPanel, IconSettings, IconTheme, IconFile, IconBroadcast, IconTerminalPlus, IconHome } from "./Icons";
+import { IconBrand, IconPanel, IconSettings, IconFile, IconBroadcast, IconTerminalPlus, IconHome } from "./Icons";
 import { useVendors, accentCss, vendorShort } from "./vendors";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { ToastHost } from "./ToastHost";
@@ -12,16 +12,12 @@ import { CommandPalette } from "./CommandPalette";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { isSplitActive, GRID_MIN_PCT, PREVIEW_MIN_PCT, PREVIEW_MAX_PCT } from "./previewSplit";
 import { ZoomHud } from "./ZoomHud";
-import { useUI, closeTopOverlay } from "./ui";
-// Quick light/dark flip lives in the themes registry (toggleThemeMode): it
-// remembers the last theme used in each mode and carries the accent + CVD
-// palette across, so it stays in step with the picker in Settings.
-import { toggleThemeMode } from "./themes";
+import { useUI, useOverlayEsc, closeTopOverlay } from "./ui";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getName } from "@tauri-apps/api/app";
 import { spawnPane, closePaneGuarded, closeWorkspaceGuarded } from "./worktrees";
 import { isTypingTarget } from "./isTypingTarget";
-import { attentionQueue, mostRecentOutputPane } from "./attention";
+import { attentionQueue, mostRecentOutputPane, needsHumanQueue } from "./attention";
 import { homeKeyAllowed } from "./home";
 import { isMainWindow } from "./persist";
 import { otherWindows, quitApp } from "./windowBoot";
@@ -54,6 +50,16 @@ export function Cockpit() {
   const active = workspaces.find((w) => w.id === activeId) ?? null;
   const vendors = useVendors((s) => s.vendors);
   const [addOpen, setAddOpen] = useState(false);
+  // QR6: the add-pane menu is an overlay like any other: Escape (shared stack)
+  // and a click outside close it, not only the mouse leaving it.
+  const addRef = useRef<HTMLDivElement>(null);
+  useOverlayEsc(addOpen, () => setAddOpen(false), { restoreFocus: false });
+  useEffect(() => {
+    if (!addOpen) return;
+    const away = (e: MouseEvent) => { if (!addRef.current?.contains(e.target as Node)) setAddOpen(false); };
+    window.addEventListener("mousedown", away);
+    return () => window.removeEventListener("mousedown", away);
+  }, [addOpen]);
   const splitActive = useUI((s) => isSplitActive(s.previewMode, s.previewTabs.length));
   // Read non-reactively: only the panel's initial size, so dragging (which
   // writes the store) must not re-render the cockpit on every pixel.
@@ -205,6 +211,17 @@ export function Cockpit() {
       if (e.ctrlKey && e.shiftKey && !e.altKey && (e.key === "h" || e.key === "H")) {
         e.preventDefault();
         useUI.getState().setHomeOpen(!useUI.getState().homeOpen);
+        return;
+      }
+      // QRP11: jump to the agent that needs you most (approvals first, then the
+      // longest blocked). Global like Ctrl+Shift+A; no agent TUI binds it.
+      if (e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey && (e.key === "j" || e.key === "J")) {
+        e.preventDefault();
+        const top = needsHumanQueue(useApp.getState().workspaces, useUI.getState().snoozed)[0];
+        if (!top) { useUI.getState().pushToast("info", "Nothing needs you right now."); return; }
+        useUI.getState().setHomeOpen(false);
+        useApp.getState().switchWorkspace(top.w.id);
+        useApp.getState().focusPane(top.w.id, top.p.id);
         return;
       }
       // UI-156: Ctrl+Tab cycles workspaces most-recently-used first, like a
@@ -382,22 +399,26 @@ export function Cockpit() {
     <div className="cockpit-root">
       <div className="topbar">
         <button className="tb-toggle" onClick={() => setExpanded((e) => !e)} title="Toggle side panel (Ctrl+B)">
-          <IconPanel size={17} />
+          <IconPanel size={20} />
         </button>
-        <IconBrand size={18} className="brand-mark" />
+        <IconBrand size={20} className="brand-mark" />
         <span className="brand">Flightdeck</span>
-        <span className="ws" title={active?.name}>{active?.name}</span>
+        {/* QRP3: the rail already shows the active workspace; the name here only
+            earns its space when the rail is collapsed. Kept in the DOM (e2e reads it). */}
+        <span className={"ws" + (expanded ? " ws-dup" : "")} title={active?.name}>{active?.name}</span>
         {active && (
-          <div className="addpane-wrap">
+          <div className="addpane-wrap" ref={addRef}>
             <button
-              className={"tb-ic" + (addOpen ? " on" : "")}
+              className={"tb-ic tb-labelled" + (addOpen ? " on" : "")}
               title="Add a pane to this workspace"
+              aria-haspopup="menu"
+              aria-expanded={addOpen}
               onClick={() => setAddOpen((o) => !o)}
             >
-              <IconTerminalPlus size={17} />
+              <IconTerminalPlus size={20} /><span className="tb-lbl tb-lbl-keep">Pane</span>
             </button>
             {addOpen && (
-              <div className="addpane-menu" onMouseLeave={() => setAddOpen(false)}>
+              <div className="addpane-menu" role="menu">
                 <div className="apm-h">New pane in {active.name}</div>
                 {vendors.map((v) => (
                   <button
@@ -418,17 +439,17 @@ export function Cockpit() {
         <span className="sp" />
         <Suspense fallback={null}><QuotaGauge /></Suspense>
         <button
-          className={"tb-ic" + (homeOpen ? " on" : "")}
+          className={"tb-ic tb-labelled" + (homeOpen ? " on" : "")}
           title="Home (Ctrl+Shift+H)"
           aria-label="Home"
           aria-pressed={homeOpen}
           onClick={() => useUI.getState().setHomeOpen(!homeOpen)}
         >
-          <IconHome size={17} />
+          <IconHome size={20} /><span className="tb-lbl">Home</span>
         </button>
         <Notifications />
         <button
-          className={"tb-ic" + (showExplorer ? " on" : "")}
+          className={"tb-ic tb-labelled" + (showExplorer ? " on" : "")}
           title={
             !active
               ? "File explorer opens in the terminal view of a workspace"
@@ -437,20 +458,18 @@ export function Cockpit() {
           disabled={!active}
           onClick={() => setShowExplorer(!showExplorer)}
         >
-          <IconFile size={17} />
+          <IconFile size={20} /><span className="tb-lbl">Files</span>
         </button>
         <button
-          className={"tb-ic" + (broadcastOpen ? " on" : "")}
+          className={"tb-ic tb-labelled" + (broadcastOpen ? " on" : "")}
           title="Broadcast to panes"
           onClick={() => setBroadcastOpen(!broadcastOpen)}
         >
-          <IconBroadcast size={17} />
+          <IconBroadcast size={20} /><span className="tb-lbl">Broadcast</span>
         </button>
-        <button className="tb-ic" title="Toggle light / dark" onClick={() => toggleThemeMode()}>
-          <IconTheme size={17} />
-        </button>
-        <button className="tb-ic" title={updateAvailable ? `Settings (Ctrl+,) — Flightdeck ${updateAvailable.version} available` : "Settings (Ctrl+,)"} onClick={() => setSettingsOpen(true)}>
-          <IconSettings size={17} />
+        {/* QRP3: the light/dark flip moved to Settings > Appearance and the palette. */}
+        <button className="tb-ic tb-labelled" title={updateAvailable ? `Settings (Ctrl+,) — Flightdeck ${updateAvailable.version} available` : "Settings (Ctrl+,)"} onClick={() => setSettingsOpen(true)}>
+          <IconSettings size={20} /><span className="tb-lbl">Settings</span>
           {updateAvailable && <span className="tb-update-dot" />}
         </button>
       </div>
