@@ -1,10 +1,10 @@
-import { lazy, memo, Suspense, useEffect, useRef, useState } from "react";
+import { lazy, memo, Suspense, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { revealPath } from "./reveal";
 import { useApp, registerPaneSend, unregisterPaneSend, type PaneModel, type PaneState } from "./store";
 import { useUI, useOverlayEsc } from "./ui";
 import { Terminal, type TerminalHandle } from "./Terminal";
-import { get as getPaneSession } from "./paneSessions";
+import { get as getPaneSession, writeToPane } from "./paneSessions";
 import { getTerminalSettings } from "./settingsStore";
 import { rightClickAction, shouldConfirmPaste } from "./terminalMouse";
 import {
@@ -16,6 +16,7 @@ import { compact, num, duration, bytes, tailEllipsis } from "./format";
 import { clearMcpNotices, mcpChip, noteMcpLine } from "./mcphealth";
 import { paneStateWord } from "./paneHeader";
 import { stateSince, lastLine, isOpenQuestion, attentionKind, STATE_LABEL as STATE_TITLE } from "./attention";
+import { missingCliHint } from "./paneMenu";
 import "./panes.css";
 
 // Phase 3: the chat view is its own chunk, fetched the first time a pane opens it.
@@ -300,6 +301,7 @@ function PaneViewInner({
   const [procName, setProcName] = useState("");
   const nameRef = useRef<HTMLInputElement>(null);
   const menuBtnRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   const findRef = useRef<HTMLInputElement>(null);
   const terminalRef = useRef<TerminalHandle>(null);
 
@@ -388,6 +390,20 @@ function PaneViewInner({
   // Esc closes the overflow menu (UI-30) — was mouse-leave only. UX-542/543:
   // shared overlay stack (ui.ts).
   useOverlayEsc(menuOpen, closeMenu);
+
+  // Measure the rendered menu, including More, before paint and on resize.
+  useLayoutEffect(() => {
+    const menu = menuRef.current;
+    if (!menuOpen || !menuPos || !menu) return;
+    const clamp = () => {
+      menu.style.top = Math.max(8, Math.min(menuPos.top, window.innerHeight - 8 - menu.getBoundingClientRect().height)) + "px";
+    };
+    clamp();
+    const observer = new ResizeObserver(clamp);
+    observer.observe(menu);
+    window.addEventListener("resize", clamp);
+    return () => { observer.disconnect(); window.removeEventListener("resize", clamp); };
+  }, [menuOpen, menuPos]);
 
   useEffect(() => {
     if (!editing) return;
@@ -808,6 +824,8 @@ function PaneViewInner({
   // something specific). See attention.ts's isOpenQuestion + attentionQueue.
   const openQuestion = pane.state === "waiting" && isOpenQuestion(lastLine.get(pane.id));
 
+  const cliHint = dead ? missingCliHint(pane.vendor, lastLine.get(pane.id)) : null;
+
   const stateWord = paneStateWord(pane.state, openQuestion, Date.now() - lastOutputRef.current);
 
   return (
@@ -952,17 +970,13 @@ function PaneViewInner({
         {(pane.state === "permission" || pane.state === "error" || openQuestion) && (
           <span
             className={"pattn " + (openQuestion ? "permission" : pane.state)}
-            title={
-              pane.state === "permission"
-                ? "Blocked on your approval · open the attention queue (Ctrl+Shift+A)"
-                : openQuestion
-                  ? `Asking a question: "${tailEllipsis(lastLine.get(pane.id) ?? "", 80)}" · open the attention queue (Ctrl+Shift+A)`
-                  : "Errored · open the attention queue (Ctrl+Shift+A)"
-            }
+            title={openQuestion
+              ? `Open Home (Ctrl+Shift+H): Asking a question: "${tailEllipsis(lastLine.get(pane.id) ?? "", 80)}"`
+              : "Open Home (Ctrl+Shift+H)"}
             role="button"
             tabIndex={0}
-            onClick={() => useUI.getState().setAttentionOpen(true)}
-            onKeyDown={(e) => { if (e.key === "Enter") useUI.getState().setAttentionOpen(true); }}
+            onClick={() => useUI.getState().setHomeOpen(true)}
+            onKeyDown={(e) => { if (e.key === "Enter") useUI.getState().setHomeOpen(true); }}
           >
             {pane.state === "permission" ? "Needs you" : openQuestion ? "Has a question" : "Error"}
           </span>
@@ -1014,7 +1028,7 @@ function PaneViewInner({
             <IconOverflow size={17} />
           </button>
           {menuOpen && menuPos && createPortal(
-            <div className="pmenu" style={{ top: menuPos.top, left: menuPos.left }} onMouseLeave={closeMenu}>
+            <div ref={menuRef} className="pmenu" style={{ top: menuPos.top, left: menuPos.left }} onMouseLeave={closeMenu}>
               <div className="pmenu-details" aria-label="Details">
                 <div className="pmenu-details-title">Details</div>
                 <div className="pmenu-detail"><span>Model</span><span>{usage?.model ? modelShort(usage.model) : "Unavailable"}</span></div>
@@ -1022,27 +1036,8 @@ function PaneViewInner({
                 {memWarn && <div className="pmenu-detail"><span>Memory</span><span>{bytes(memWarn.memoryMb * 1024 * 1024)} (over {num(Math.round(memWarn.memoryWarnMb))} MB)</span></div>}
                 {isClaude && subCount && subCount.total > 0 && <button className="pmenu-item" onClick={openSubagents}>Subagents...</button>}
               </div>
-              <div className="pmenu-sep" />
+              <div className="pmenu-heading">View</div>
               {isClaude && <button className="pmenu-item" role="menuitemcheckbox" aria-checked={view === "chat"} onClick={() => { switchView(view === "chat" ? "terminal" : "chat"); closeMenu(); }} title="Chat view (Ctrl+Shift+M)">{view === "chat" ? "✓ " : ""}Chat view</button>}
-              <div className="pmenu-path" title="This pane’s working directory">
-                {pane.cwd}
-                {/* UI-230: an isolated pane's worktree is a real disk cost —
-                    say how much, where the pane itself is described. */}
-                {pane.worktreePath && wtSize != null && (
-                  <span className="pmenu-path-size">isolated worktree · {bytes(wtSize)}</span>
-                )}
-              </div>
-              <button className="pmenu-item" onClick={openStyle}>Colour and name…</button>
-              <button className="pmenu-item" onClick={clearScrollback}>Clear scrollback</button>
-              {vendorMeta(pane.vendor).kind === "shell" && (
-                <>
-                  <button className="pmenu-item" onClick={() => { terminalRef.current?.foldAllCommands(true); closeMenu(); }}>Fold all commands</button>
-                  <button className="pmenu-item" onClick={() => { terminalRef.current?.foldAllCommands(false); closeMenu(); }}>Unfold all commands</button>
-                </>
-              )}
-              <button className="pmenu-item" title={lastExit ?? "Restart this pane in the same folder"} onClick={() => { restartPane(pane.id); closeMenu(); }}>
-                <IconRefresh size={13} /> Restart
-              </button>
               {isClaude && (
                 <button className="pmenu-item" role="menuitemcheckbox" aria-checked={!!pane.focusMode} onClick={toggleFocusMode} title="Quiet Claude view: just your prompt, a one-line summary of each turn's tool work with edit counts, and Claude's final reply. Ctrl+O shows the full transcript. The mouse wheel scrolls the conversation. Switching restarts Claude and resumes the same conversation.">
                   {pane.focusMode ? "✓ " : ""}Quiet terminal
@@ -1052,6 +1047,40 @@ function PaneViewInner({
                 {maximized ? <IconMinimize size={13} /> : <IconMaximizePane size={13} />}
                 {maximized ? "Restore" : "Maximise"}
               </button>
+              <button className="pmenu-item" onClick={openStyle}>Colour and name…</button>
+              <button className="pmenu-item" onClick={clearScrollback}>Clear scrollback</button>
+              {vendorMeta(pane.vendor).kind === "shell" && (
+                <>
+                  <button className="pmenu-item" onClick={() => { terminalRef.current?.foldAllCommands(true); closeMenu(); }}>Fold all commands</button>
+                  <button className="pmenu-item" onClick={() => { terminalRef.current?.foldAllCommands(false); closeMenu(); }}>Unfold all commands</button>
+                </>
+              )}
+              <div className="pmenu-heading">Session</div>
+              <button className="pmenu-item" title={lastExit ?? "Restart this pane in the same folder"} onClick={() => { restartPane(pane.id); closeMenu(); }}>
+                <IconRefresh size={13} /> Restart
+              </button>
+              {/* QL-764: reopen one of this folder's past sessions in a new
+                  pane (--resume, or --fork-session from the launcher). Claude
+                  Code only — nothing else writes the transcripts it reads. */}
+              {canResume(pane.vendor) && (
+                <button className="pmenu-item" onClick={() => { setMenuOpen(false); openSessionLauncher(pane.id); }}>
+                  <IconRefresh size={13} /> Resume a past session…
+                </button>
+              )}
+              {/* UX-564: same cwd + vendor, a fresh process. */}
+              <button className="pmenu-item" onClick={doDuplicate}>Duplicate pane</button>
+              <button className="pmenu-item" onClick={() => { setMenuOpen(false); setTranscriptOpen(true); }}>
+                <IconFile size={13} /> View transcript…
+              </button>
+              <div className="pmenu-heading">Folder</div>
+              <div className="pmenu-path" title="This pane’s working directory">
+                {pane.cwd}
+                {/* UI-230: an isolated pane's worktree is a real disk cost —
+                    say how much, where the pane itself is described. */}
+                {pane.worktreePath && wtSize != null && (
+                  <span className="pmenu-path-size">isolated worktree · {bytes(wtSize)}</span>
+                )}
+              </div>
               {gitStatus?.isRepo && (
                 <button className="pmenu-item" onClick={() => { setReviewPane(pane.id); closeMenu(); }}>
                   <IconDiff size={13} /> Review changes
@@ -1074,32 +1103,17 @@ function PaneViewInner({
               >
                 <IconFolder size={13} /> Worktree inventory
               </button>
-              <div className="pmenu-sep" />
+              <details className="pmenu-more">
+                <summary className="pmenu-heading">More</summary>
               {/* QL-754: the hint mode is invisible until you know the key —
                   name it here so it's discoverable from where people already
                   look for pane actions. */}
               <button className="pmenu-item" onClick={showQuickHints}>
                 Pick a path or link…<span className="pmenu-key">Ctrl+Shift+Space</span>
               </button>
-              <div className="pmenu-sep" />
-              {/* UX-546/547/549: transcript browser + scrollback export + last-command copy. */}
-              <button className="pmenu-item" onClick={() => { setMenuOpen(false); setTranscriptOpen(true); }}>
-                <IconFile size={13} /> View transcript…
-              </button>
               <button className="pmenu-item" onClick={() => saveScrollback(false)}>Save scrollback to file</button>
               <button className="pmenu-item" onClick={() => saveScrollback(true)}>Save scrollback (redacted)</button>
               <button className="pmenu-item" onClick={copyLastCommand}>Copy last command</button>
-              <div className="pmenu-sep" />
-              {/* UX-564: same cwd + vendor, a fresh process. */}
-              <button className="pmenu-item" onClick={doDuplicate}>Duplicate pane</button>
-              {/* QL-764: reopen one of this folder's past sessions in a new
-                  pane (--resume, or --fork-session from the launcher). Claude
-                  Code only — nothing else writes the transcripts it reads. */}
-              {canResume(pane.vendor) && (
-                <button className="pmenu-item" onClick={() => { setMenuOpen(false); openSessionLauncher(pane.id); }}>
-                  <IconRefresh size={13} /> Resume a past session…
-                </button>
-              )}
               {/* UX-553/554: multi-select is shift+click on any pane; groups are managed here. */}
               <button className="pmenu-item" onClick={() => { setMenuOpen(false); setGroupsOpen(true); }}>
                 Pane groups…
@@ -1168,6 +1182,7 @@ function PaneViewInner({
                   Save as {vendorShort(pane.vendor)} default
                 </button>
               </div>
+              </details>
               <div className="pmenu-sep" />
               <button className="pmenu-item pmenu-danger" onClick={tryClosePane}>
                 <IconClose size={13} /> Close pane
@@ -1256,6 +1271,16 @@ function PaneViewInner({
           setCtxMenu({ x: e.clientX, y: e.clientY, hasSel: !!sel });
         }}
       >
+        {cliHint && (
+          <div className="pmissing-cli" role="status">
+            <strong>Claude Code isn't installed or isn't on PATH.</strong>
+            <div className="pmissing-cli-command">
+              <code>{cliHint}</code>
+              <button onClick={() => void copyText(cliHint, "Copied install command.")}>Copy</button>
+            </div>
+            <span>Run it in PowerShell outside Flightdeck, then press Restart.</span>
+          </div>
+        )}
         {pane.state === "starting" && (
           <div className="plaunching" aria-live="polite">
             {/* UI-127: a setup phase is a different wait from a slow agent — say which. */}
@@ -1357,6 +1382,12 @@ function PaneViewInner({
           onMouseDown={(e) => e.stopPropagation()}
           role="menu"
         >
+          {vendorMeta(pane.vendor).kind === "agent" && (
+            <button className="pmenu-item" onClick={() => {
+              void writeToPane(pane.id, "\x1b").catch(() => pushToast("error", "Couldn't interrupt agent."));
+              setCtxMenu(null);
+            }}>Interrupt agent</button>
+          )}
           <button className="pmenu-item" disabled={!ctxMenu.hasSel} onClick={() => { void terminalRef.current?.copySelection(); setCtxMenu(null); }}>
             Copy
           </button>
