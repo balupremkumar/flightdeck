@@ -41,6 +41,7 @@ Placeholder, to be written once the checklist is agreed.
 2. Run `releases\Flightdeck_0.5.5_x64-setup.exe`.
 3. It replaces the old version in place (same app, same folder), and keeps your data.
 4. Just before it copies anything, the installer saves a backup of your data (see below).
+5. K10: after the install, open a new Claude pane. If it says Claude Code isn't installed or isn't on PATH, run `irm https://claude.ai/install.ps1 | iex` in a plain PowerShell window outside Flightdeck, then press Restart in the pane. Never reinstall Claude with npm (its self-update deleted the CLI on 2026-10-06 while panes held claude.exe).
 
 Settings > About has a "Check for updates" button.
 It reads `latest.json` in your releases folder and tells you if a newer version exists.

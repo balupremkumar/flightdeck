@@ -1416,21 +1416,22 @@ Balu on stable 0.6.1: the app works well but is not the easiest to use; the chro
 ## QR. QoL phase (review 2026-10-08, awaiting Balu's go)
 Source: docs/plans/qol-review-2026-10-08.md (Fable app audit, QR1-QR60, screenshots in the folder beside it, not committed) and research/flightdeck-agentic-delta-2026-10-08. Filtered for how Balu works: fully agentic, no manual diff review, many Claude panes, bigger targets, less chrome. Builder per item: Codex Sol (low or medium) builds, Claude briefs and validates; no Astra.
 Ranked by value for effort:
-- [ ] QRP1. Strip the pane header (QR8-QR14, fixes QR9 chip overlap): drop ctx, model, sparkline, last output, diff count, Terminal/Chat icons; keep state word + name, folder/branch, a big Needs-you pill, Find/More/Close. M, Sol medium.
-- [ ] QRP2. Size floor (QR13, QR24-QR26): 28 px targets, 18 px icons, 12 px minimum text, readable vendor glyph, faint text to 4.5:1. M, Sol medium.
-- [ ] QRP3. Top bar (QR1-QR3, QR5, QR7): 48 px, bigger text and icons, labels on the right cluster, gear for Settings, theme toggle to Settings, no duplicate workspace name, quota as one pill with a popover. M, Sol medium.
-- [ ] QRP4. Chrome 120%, terminal 100% (UC0, QR37); live click-offset check (2026-08-02 bug class). M, Sol medium + Claude live check.
-- [ ] QRP5. Notifications only for real needs (QR19, QR29-QR32): shells never "waiting", Recent feed off by default, rows show the actual question, one sound setting, bigger bell badge. M, Sol medium.
-- [ ] QRP6. Truthful Claude state from hooks (QR52 revised): put the Notification/PermissionRequest/Stop hooks in the per-launch --settings file Flightdeck already writes, so nothing touches ~/.claude (brain risk 28). M, Sol medium + Claude live check.
-- [ ] QRP7. Rail roll-up in words per workspace, "1 needs you · 3 working" (QR18, QR20, QR21). M, Sol medium.
-- [ ] QRP8. Settings as a panel with a section list; rarely used rows under Advanced; hide unwired CLI flag rows; fix squashed Agents labels (QR35, QR36, QR38-QR40). M, Sol medium.
-- [ ] QRP9. Reopen the last session silently with an undo toast (QR41). S, Sol low.
-- [ ] QRP10. Pane menu grouped, scrolls instead of clipping, rare items to the palette (QR17, K14). S, Sol low.
-- [ ] QRP11. Bell click and Ctrl+Shift+J jump to the agent waiting longest; Home is the one "who needs me" surface, attention overlay retired (QR33, QR44, QR59). M, Sol medium.
-- [ ] QRP12. Home for agentic use: "Ready to review" becomes "Done", board capped and centred at 2560 (QR43, QR45). S, Sol low.
-- [ ] QRP13. Finished-run summary in the toast and on the Home card (QR55), after QRP6. M, Sol medium.
-- [ ] QRP14. Bugs: add-pane menu ignores Escape (QR6, K17), double-click rename maximises (K13). S, Sol low.
-- [ ] QRP15. "Interrupt agent" in the right-click menu (QR50, AG1). S, Sol low.
-- [ ] QRP16. Search all past sessions from the palette, Ctrl+Shift+F (QR57). S, Sol low.
-- [ ] QRP17. Isolate the ~1 s focus grab (K16, fullscreen game risk). M, Claude (live only).
+- [x] QRP1. Strip the pane header (QR8-QR14, fixes QR9 chip overlap): drop ctx, model, sparkline, last output, diff count, Terminal/Chat icons; keep state word + name, folder/branch, a big Needs-you pill, Find/More/Close. M, Sol medium.
+- [x] QRP2. Size floor (QR13, QR24-QR26): 28 px targets, 18 px icons, 12 px minimum text, readable vendor glyph, faint text to 4.5:1. M, Sol medium.
+- [x] QRP3. Top bar (QR1-QR3, QR5, QR7): 48 px, bigger text and icons, labels on the right cluster, gear for Settings, theme toggle to Settings, no duplicate workspace name, quota as one pill with a popover. M, Sol medium.
+- [x] QRP4. Chrome 120%, terminal 100% (UC0, QR37); live click-offset check (2026-08-02 bug class). M, Sol medium + Claude live check.
+- [x] QRP5. Notifications only for real needs (QR19, QR29-QR32): shells never "waiting", Recent feed off by default, rows show the actual question, one sound setting, bigger bell badge. M, Sol medium.
+- [x] QRP6. Truthful Claude state from hooks (QR52 revised): put the Notification/PermissionRequest/Stop hooks in the per-launch --settings file Flightdeck already writes, so nothing touches ~/.claude (brain risk 28). M, Sol medium + Claude live check.
+- [x] QRP7. Rail roll-up in words per workspace, "1 needs you · 3 working" (QR18, QR20, QR21). M, Sol medium.
+- [x] QRP8. Settings as a panel with a section list; rarely used rows under Advanced; hide unwired CLI flag rows; fix squashed Agents labels (QR35, QR36, QR38-QR40). M, Sol medium.
+- [x] QRP9. Reopen the last session silently with an undo toast (QR41). S, Sol low.
+- [x] QRP10. Pane menu grouped, scrolls instead of clipping, rare items to the palette (QR17, K14). S, Sol low.
+- [x] QRP11. Bell click and Ctrl+Shift+J jump to the agent waiting longest; Home is the one "who needs me" surface, attention overlay retired (QR33, QR44, QR59). M, Sol medium.
+- [x] QRP12. Home for agentic use: "Ready to review" becomes "Done", board capped and centred at 2560 (QR43, QR45). S, Sol low.
+- [ ] QRP13 (deferred 2026-10-08: noise risk and M effort; revisit after living with exact hook state). Finished-run summary in the toast and on the Home card (QR55), after QRP6. M, Sol medium.
+- [x] QRP14. Bugs: add-pane menu ignores Escape (QR6, K17), double-click rename maximises (K13). S, Sol low.
+- [x] QRP15. "Interrupt agent" in the right-click menu (QR50, AG1). S, Sol low.
+- [x] QRP16. Search all past sessions from the palette, Ctrl+Shift+F (QR57). S, Sol low.
+- [ ] QRP17 (deferred 2026-10-08: not reproduced in any 2026-10-08 live run, foreground guard clean). Isolate the ~1 s focus grab (K16, fullscreen game risk). M, Claude (live only).
+Built 2026-10-08 on qol/qrp (docs/plans/qrp-phase.md), plus K10 (native claude path, install hint, missing-CLI banner) and QRP6's Stop-to-waiting fix.
 Cut or later, with the reason: QR53 queued follow-ups (Claude Code already queues what you type while it works); QR54 auto-approve file writes (Claude's own "don't ask again" writes that file; permission-mode default waits for K9); QR60 chaining (large, speculative); QR58 automatic worktree deletion (deletes work unasked); QR56 phone push (type /remote-control today; push later if wanted); QR28 density switch (QRP2 + QRP4 cover it); review drawer extras and K15 (no manual review); QR4, QR22, QR23, QR42, QR46, QR47, QR49, QR51 (low value for this owner).
