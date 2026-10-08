@@ -71,7 +71,7 @@
   --shadow-lg:0 30px 70px -20px rgba(0,0,0,0.75);
 
   /* Type scale (UI-601), with 11px minimum and 12px secondary text floors,
-     instead of the ~30 hand-picked px values scattered across the CSS. This
+     instead of the ~30 hand-picked px values scattered across the CSS.
      Shared chips below consume the scale; new and touched rules should
      use these tokens too. Intended mapping:
        --fs-xs   11px   chip-mono, mini badges, dense meta
