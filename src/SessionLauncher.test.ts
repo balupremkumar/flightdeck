@@ -8,7 +8,7 @@ vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn(), openPath: vi.fn(
 
 import type { ClaudeSession, SessionSearchHit } from "./SessionLauncher";
 
-const { launchResume } = await import("./sessionLauncherLogic");
+const { launchResume, chooseSearchPane, openSessionLauncher, OPEN_EVENT } = await import("./sessionLauncherLogic");
 const { invoke } = await import("@tauri-apps/api/core");
 
 const {
@@ -26,6 +26,42 @@ const session = (over: Partial<ClaudeSession> = {}): ClaudeSession => ({
   turns: 12,
   sizeBytes: 180_000,
   ...over,
+});
+
+describe("search launcher entry", () => {
+  const panes = [{ id: 1, vendor: "pwsh" }, { id: 2, vendor: "codex" }, { id: 3, vendor: "claude" }];
+  it("keeps either supported focused vendor", () => {
+    expect(chooseSearchPane(panes, 2)).toBe(panes[1]);
+    expect(chooseSearchPane(panes, 3)).toBe(panes[2]);
+  });
+  it("falls back in workspace order for unsupported, missing or absent focus", () => {
+    for (const focused of [1, 99, undefined]) expect(chooseSearchPane(panes, focused)).toBe(panes[1]);
+  });
+  it("has no target when the workspace is empty or has no resumable pane", () => {
+    expect(chooseSearchPane([], 1)).toBeUndefined();
+    expect(chooseSearchPane([panes[0]], 1)).toBeUndefined();
+  });
+  it("dispatches search options while preserving existing callers", () => {
+    vi.stubGlobal("window", new EventTarget());
+    vi.stubGlobal("CustomEvent", class extends Event {
+      detail: unknown;
+      constructor(type: string, init: CustomEventInit) {
+        super(type);
+        this.detail = init.detail;
+      }
+    });
+    const listener = vi.fn();
+    window.addEventListener(OPEN_EVENT, listener);
+    try {
+      openSessionLauncher(2);
+      expect((listener.mock.calls[0][0] as CustomEvent).detail).toEqual({ paneId: 2 });
+      openSessionLauncher(undefined, { search: true });
+      expect((listener.mock.calls[1][0] as CustomEvent).detail).toEqual({ paneId: undefined, search: true });
+    } finally {
+      window.removeEventListener(OPEN_EVENT, listener);
+      vi.unstubAllGlobals();
+    }
+  });
 });
 
 describe("resumeArgs (QL-764)", () => {

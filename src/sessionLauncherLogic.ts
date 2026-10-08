@@ -69,8 +69,18 @@ export function sessionWeight(s: Pick<ClaudeSession, "turns" | "sizeBytes">): st
  *  Exported so the pane menu and the command palette can reach it without a
  *  store field — same re-dispatch pattern the palette already uses for the
  *  side panel and cheat sheet. */
-export function openSessionLauncher(paneId?: number) {
-  window.dispatchEvent(new CustomEvent(OPEN_EVENT, { detail: { paneId } }));
+export interface SessionLauncherOptions {
+  search?: boolean;
+}
+
+/** Prefer the focused resumable pane, otherwise the first in this workspace. */
+export function chooseSearchPane<T extends Pick<PaneModel, "id" | "vendor">>(panes: readonly T[], focused?: number | null): T | undefined {
+  return panes.find((p) => p.id === focused && canResume(p.vendor))
+    ?? panes.find((p) => canResume(p.vendor));
+}
+
+export function openSessionLauncher(paneId?: number, opts?: SessionLauncherOptions) {
+  window.dispatchEvent(new CustomEvent(OPEN_EVENT, { detail: { paneId, ...opts } }));
 }
 
 /** The argv Claude Code needs to reopen `sessionId`. Fork leaves the original
