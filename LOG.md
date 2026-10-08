@@ -75,3 +75,10 @@ Sweep found K13-K16 (rename dblclick maximises, pane menu clips, Review omits un
 - d1a414a: Quiet panes send SGR wheel reports (3 lines per 120 px notch). f96c0a3: Terminal default again, one-off migration of a stored Quiet default. Verified live (e2e/live/k11-verify.mjs): 150 to 122 on wheel-up, draft intact, no History picker, migration and new-pane default PASS.
 - Release run 1 failed at cargo test: the gate ran inside a Quiet pane and inherited CLAUDE_CODE_NO_FLICKER. Real bug (Terminal panes of a Flightdeck launched from a Quiet pane ran in alt screen); fixed 4417d7e. Run 2 passed every gate; v0.6.2 cut, 672cae6, tag local, not pushed.
 - K12 header mock: docs/plans/k12-header-mock.html (design agent, critiqued). Ruling appended to brain/rulings.md (Terminal default again).
+
+## 2026-10-08 (evening): v0.6.3, QoL phase
+- Fable QoL review (docs/plans/qol-review-2026-10-08.md) plus delta research, filtered with Balu into BACKLOG section QR (QRP1-QRP17).
+- Built on qol/qrp with Codex Sol doing the TypeScript jobs (header, settings, notifications, quota, rail, uiscale, panemenu, search, sizefloor; one resume on the header for dropping Restart and the MCP pill) and Claude doing Rust, Claude-owned files, reviews, merges and live checks.
+- Claude caught and fixed: Stop hook mapped to "idle" (reads as an exited pane), BOMs from Codex, search targeting Codex panes, quiet panes breathing amber.
+- Fable final gate: SHIP AFTER FIXES (H1 CSS-zoom fallback, H2 terminal shrink for stored zoom > 1, H3 end-of-turn questions silenced, M1-M4, L2); all fixed in 51366d7, e2e selectors in 45c6a44.
+- v0.6.3 cut: every gate passed; tag local, not pushed. QRP13 (run summary) and QRP17 (focus grab) deferred.
