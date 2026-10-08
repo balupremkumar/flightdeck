@@ -117,11 +117,11 @@ describe("buildHome", () => {
     expect(h.needsCount).toBe(1);
   });
 
-  it("shell pane in error is counted in needs (matches the bell) but a calm shell is nowhere", () => {
+  it("QRP5: a shell pane never needs you, not even in error (matches the bell); calm shells are nowhere", () => {
     const w = ws(1, [pane(1, "error", { vendor: "pwsh" }), pane(2, "idle", { vendor: "pwsh" }), pane(3, "running", { vendor: "pwsh" })]);
     const h = buildHome([w], ctxOf());
-    expect(h.needsCount).toBe(1);
-    expect(h.columns.needs[0].paneId).toBe(1);
+    expect(h.needsCount).toBe(0);
+    expect(h.columns.needs).toHaveLength(0);
     expect(h.needsCount).toBe(needsHumanQueue([w], {}).length);
     expect(h.columns.idle).toHaveLength(0);
     expect(h.columns.working).toHaveLength(0);
