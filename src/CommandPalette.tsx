@@ -392,6 +392,14 @@ export function CommandPalette() {
       keywords: "resume fork session transcript claude continue",
       run: () => openSessionLauncher(),
     });
+    list.push({
+      id: "act:search-all-sessions",
+      section: "Actions",
+      label: "Search all past sessions",
+      keywords: "search history transcript sessions",
+      shortcut: "Ctrl+Shift+F",
+      run: () => openSessionLauncher(undefined, { search: true }),
+    });
     // Owner feedback item 3: whole-app zoom, same store actions the
     // Ctrl+=/-/0 shortcut and Settings > UI size use.
     list.push({ id: "act:zoom-in", section: "Actions", label: "Zoom in", run: () => useUI.getState().stepUiZoom(1) });

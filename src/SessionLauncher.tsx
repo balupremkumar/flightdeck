@@ -7,13 +7,13 @@ import { relTime, timeTitle, tailEllipsis } from "./format";
 import { vendorShort } from "./vendors";
 import "./leftpanel.css";
 import "./overlays.css";
-import { hitCwd, canResume, supportsFork, listCommandFor, supportsDeepSearch, OPEN_EVENT, ClaudeSession, sessionWeight, modelShort, filterSessions, SessionSearchResults, MIN_SEARCH_CHARS, SEARCH_DEBOUNCE_MS, groupHits, highlightParts, launchResume } from "./sessionLauncherLogic";
+import { chooseSearchPane, type SessionLauncherOptions, hitCwd, canResume, supportsFork, listCommandFor, supportsDeepSearch, OPEN_EVENT, ClaudeSession, sessionWeight, modelShort, filterSessions, SessionSearchResults, MIN_SEARCH_CHARS, SEARCH_DEBOUNCE_MS, groupHits, highlightParts, launchResume } from "./sessionLauncherLogic";
 export * from "./sessionLauncherLogic";
 
 export function SessionLauncher() {
   const workspaces = useApp((s) => s.workspaces);
   const pushToast = useUI((s) => s.pushToast);
-  const [target, setTarget] = useState<{ wsId: number; paneId: number } | null>(null);
+  const [target, setTarget] = useState<{ wsId: number; paneId: number; search?: boolean } | null>(null);
   const [sessions, setSessions] = useState<ClaudeSession[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
@@ -46,11 +46,18 @@ export function SessionLauncher() {
   // this, and a shortcut that dies whenever a terminal has focus is useless —
   // a terminal having focus is the normal state of this app.
   useEffect(() => {
-    const openFor = (paneId?: number) => {
+    const openFor = (paneId?: number, opts?: SessionLauncherOptions) => {
       const st = useApp.getState();
       const ws = st.workspaces.find((w) => w.id === st.activeId);
       let found: { wsId: number; pane: PaneModel } | null = null;
-      if (paneId != null) {
+      if (opts?.search) {
+        const p = ws && chooseSearchPane(ws.panes, paneId ?? ws.focused);
+        if (ws && p) found = { wsId: ws.id, pane: p };
+        if (!found) {
+          useUI.getState().pushToast("info", "Search past sessions needs a Claude or Codex pane in the active workspace.");
+          return;
+        }
+      } else if (paneId != null) {
         for (const w of st.workspaces) {
           const p = w.panes.find((x) => x.id === paneId);
           if (p) { found = { wsId: w.id, pane: p }; break; }
@@ -70,15 +77,19 @@ export function SessionLauncher() {
         );
         return;
       }
-      setTarget({ wsId: found.wsId, paneId: found.pane.id });
+      setTarget({ wsId: found.wsId, paneId: found.pane.id, search: opts?.search });
     };
     const onKey = (e: KeyboardEvent) => {
-      if (!(e.ctrlKey && e.shiftKey && !e.altKey && (e.key === "r" || e.key === "R"))) return;
+      const key = e.key.toLowerCase();
+      if (!(e.ctrlKey && e.shiftKey && !e.altKey && (key === "r" || key === "f"))) return;
       e.preventDefault();
       if (open) { close(); return; }
-      openFor();
+      openFor(undefined, { search: key === "f" });
     };
-    const onOpen = (e: Event) => openFor((e as CustomEvent<{ paneId?: number }>).detail?.paneId);
+    const onOpen = (e: Event) => {
+      const detail = (e as CustomEvent<SessionLauncherOptions & { paneId?: number }>).detail;
+      openFor(detail?.paneId, detail);
+    };
     window.addEventListener("keydown", onKey, true);
     window.addEventListener(OPEN_EVENT, onOpen);
     return () => {
@@ -98,7 +109,8 @@ export function SessionLauncher() {
     setError(null);
     setQuery("");
     setIndex(0);
-    setDeep(false);
+    setDeep(!!target?.search);
+    if (target?.search) setAllProjects(true);
     setSearch(null);
     setSearchError(null);
     invoke<ClaudeSession[]>(listCommandFor(pane.vendor), { cwd: pane.cwd })
@@ -106,7 +118,7 @@ export function SessionLauncher() {
       .catch((e) => { if (!cancelled) { setSessions([]); setError(String(e)); } });
     const id = requestAnimationFrame(() => inputRef.current?.focus());
     return () => { cancelled = true; cancelAnimationFrame(id); };
-  }, [open, pane?.cwd, reloadTick]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [open, target, pane?.cwd, reloadTick]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const results = useMemo(() => filterSessions(sessions ?? [], query), [sessions, query]);
   useEffect(() => { setIndex(0); }, [query, deep]);
@@ -145,7 +157,7 @@ export function SessionLauncher() {
   }, [open, pane?.cwd, deep, trimmed, allProjects, useRegex, reloadTick]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const forkable = !!pane && supportsFork(pane.vendor);
-  const deepOk = !!pane && supportsDeepSearch(pane.vendor);
+  const deepOk = !!pane && (supportsDeepSearch(pane.vendor) || !!target?.search);
   const hits = deep ? search?.hits ?? [] : [];
   const groups = useMemo(() => groupHits(hits), [hits]);
   /** Flat row index of each group's first hit — keyboard nav runs over the flat
