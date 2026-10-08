@@ -368,47 +368,51 @@ function UpdatesBlock() {
           </div>
         </div>
       )}
-      <div className="set-row">
-        <div className="set-row-t">
-          <span className="set-row-name">Revert to an earlier version</span>
-          <span className="set-row-sub">
-            Every installer is kept in the releases archive, and your data is backed up before each install.
-            Close Flightdeck, then run this in PowerShell 7 from the Flightdeck repo folder:
-          </span>
-          <code className="set-releases-dir">{REVERT_COMMAND}</code>
+
+      <details className="set-advanced">
+        <summary>Advanced</summary>
+        <div className="set-row">
+          <div className="set-row-t">
+            <span className="set-row-name">Revert to an earlier version</span>
+            <span className="set-row-sub">
+              Every installer is kept in the releases archive, and your data is backed up before each install.
+              Close Flightdeck, then run this in PowerShell 7 from the Flightdeck repo folder:
+            </span>
+            <code className="set-releases-dir">{REVERT_COMMAND}</code>
+          </div>
+          <button className="set-btn" onClick={() => copyText(REVERT_COMMAND, "Revert command copied.")}>Copy command</button>
+          <button
+            className="set-btn"
+            disabled={!effectiveDir}
+            title={effectiveDir ? undefined : "Set a releases folder first"}
+            onClick={() => { if (effectiveDir) void revealPath(`${effectiveDir}\\archive`); }}
+          >
+            Open releases archive
+          </button>
         </div>
-        <button className="set-btn" onClick={() => copyText(REVERT_COMMAND, "Revert command copied.")}>Copy command</button>
-        <button
-          className="set-btn"
-          disabled={!effectiveDir}
-          title={effectiveDir ? undefined : "Set a releases folder first"}
-          onClick={() => { if (effectiveDir) void revealPath(`${effectiveDir}\\archive`); }}
-        >
-          Open releases archive
-        </button>
-      </div>
-      <div className="set-row">
-        <div className="set-row-t">
-          <span className="set-row-name">Releases folder</span>
-          <span className="set-row-sub">Where latest.json and the installers live</span>
+        <div className="set-row">
+          <div className="set-row-t">
+            <span className="set-row-name">Releases folder</span>
+            <span className="set-row-sub">Where latest.json and the installers live</span>
+          </div>
+          <input
+            className="set-search set-releases-dir"
+            value={releasesDir}
+            placeholder={suggestedDir || "Pick the folder that contains latest.json"}
+            onChange={(e) => commitReleasesDir(e.target.value)}
+          />
+          <button
+            className="set-btn"
+            onClick={() => {
+              void openDialog({ directory: true, defaultPath: effectiveDir || undefined })
+                .then((d) => { if (typeof d === "string") commitReleasesDir(d); })
+                .catch(() => { /* dialog unavailable */ });
+            }}
+          >
+            Browse…
+          </button>
         </div>
-        <input
-          className="set-search set-releases-dir"
-          value={releasesDir}
-          placeholder={suggestedDir || "Pick the folder that contains latest.json"}
-          onChange={(e) => commitReleasesDir(e.target.value)}
-        />
-        <button
-          className="set-btn"
-          onClick={() => {
-            void openDialog({ directory: true, defaultPath: effectiveDir || undefined })
-              .then((d) => { if (typeof d === "string") commitReleasesDir(d); })
-              .catch(() => { /* dialog unavailable */ });
-          }}
-        >
-          Browse…
-        </button>
-      </div>
+      </details>
     </>
   );
 }
@@ -529,7 +533,7 @@ function DiagnosticsSection() {
   const installHooks = () => {
     if (!hookStatus) return;
     useUI.getState().requestConfirm({
-      title: "Let Claude Code tell Flightdeck when it needs you?",
+      title: "Also install Flightdeck hooks in ~/.claude?",
       // Says exactly what is edited, what is added, and where the backup goes.
       // No summary-of-a-summary: this is someone's hand-edited config.
       body:
@@ -562,11 +566,11 @@ function DiagnosticsSection() {
   const uninstallHooks = () => {
     if (!hookStatus) return;
     useUI.getState().requestConfirm({
-      title: "Remove Flightdeck's Claude Code hooks?",
+      title: "Remove Flightdeck hooks from ~/.claude?",
       body:
         `Only the two entries pointing at ${hookStatus.hooksDir} are removed from ${hookStatus.settingsPath}; ` +
         `everything else in the file stays, and a .bak copy is written first. ` +
-        `Pane state goes back to being guessed from terminal output.`,
+        `Flightdeck-launched Claude panes keep reporting their state through per-launch hooks.`,
       confirmLabel: "Remove",
       onConfirm: async () => {
         setHookBusy(true);
@@ -610,77 +614,6 @@ function DiagnosticsSection() {
   return (
     <section className="set-section">
       <div className="set-label">Diagnostics</div>
-
-      <div className="set-row">
-        <div className="set-row-t">
-          <span className="set-row-name">Pane health</span>
-          <span className="set-row-sub">
-            CPU is % of one core since the last sample
-            {/* UI-186: Flightdeck's own total only — there's no backend command
-                for total system RAM, so no percentage-of-system is claimed. */}
-            {health && health.length > 0 && ` · ${bytes(health.reduce((n, h) => n + h.memoryMb, 0) * 1024 * 1024)} total across ${health.length} pane${health.length === 1 ? "" : "s"}`}
-          </span>
-        </div>
-      </div>
-      {health && health.length > 0 ? (
-        <div className="diag-table" role="table" aria-label="Per-pane process health">
-          <div className="diag-tr diag-tr-health diag-th" role="row">
-            <span>Pane</span><span>Process</span><span>PID</span><span>CPU</span><span>Trend</span><span>Memory</span>
-          </div>
-          {health.map((h) => (
-            <div className="diag-tr diag-tr-health" role="row" key={h.paneId}>
-              <span>#{h.paneId}</span>
-              <span className="diag-proc">{h.procName || "—"}</span>
-              <span>{h.pid}</span>
-              {/* UI-633: only a reading that needs a look is coloured; a normal
-                  pane stays flat so the table doesn't read as an alarm. */}
-              <span
-                className={cpuLevelClass(h.cpuPercent)}
-                title={h.cpuPercent >= CPU_WARN_PERCENT ? `Over ${CPU_WARN_PERCENT}% of one core` : undefined}
-              >
-                {h.cpuPercent.toFixed(1)}%
-              </span>
-              {/* UI-185: ~60s CPU trend — cpuHistory accumulates alongside health. */}
-              <Sparkline data={cpuHistory[h.paneId] ?? []} />
-              <span
-                className={memoryLevelClass(h)}
-                title={h.memoryWarnMb ? `Memory ceiling: ${h.memoryWarnMb.toFixed(0)} MB` : undefined}
-              >
-                {h.memoryMb.toFixed(0)} MB
-              </span>
-            </div>
-          ))}
-        </div>
-      ) : (
-        <div className="diag-empty">{health === null ? "Health data unavailable in this environment." : "No live panes to sample."}</div>
-      )}
-
-      {/* UX-596/QL-742: the one memory threshold in the app. It colours the
-          table above, and the cockpit flags any pane over it in the pane
-          header without Settings being open. */}
-      <div className="set-row">
-        <div className="set-row-t">
-          <span className="set-row-name">Memory ceiling</span>
-          <span className="set-row-sub">
-            Flag a pane using more than this many MB. Checked every 30s in the background; the pane header shows a chip.
-          </span>
-        </div>
-        <input
-          className="set-input set-input-num" type="number"
-          min={MIN_MEMORY_CEILING_MB} max={MAX_MEMORY_CEILING_MB} step={64}
-          aria-label={`Memory ceiling in MB (${MIN_MEMORY_CEILING_MB}–${MAX_MEMORY_CEILING_MB})`}
-          value={ceilingDraft}
-          onChange={(e) => {
-            setCeilingDraft(e.target.value);
-            const mb = Number(e.target.value);
-            if (Number.isFinite(mb) && mb >= MIN_MEMORY_CEILING_MB && mb <= MAX_MEMORY_CEILING_MB) {
-              setCeiling(setMemoryCeilingMb(mb));
-            }
-          }}
-          onBlur={() => commitCeiling(Number(ceilingDraft))}
-          onKeyDown={(e) => { if (e.key === "Enter") commitCeiling(Number(ceilingDraft)); }}
-        />
-      </div>
 
       <div className="set-row">
         <div className="set-row-t">
@@ -735,19 +668,19 @@ function DiagnosticsSection() {
         </div>
       )}
 
-      {/* QL-720: opt-in, reversible, and off until pressed. */}
+      {/* Global installation is optional; Flightdeck panes already report their state. */}
       <div className="set-row">
         <div className="set-row-t">
-          <span className="set-row-name">Claude Code hooks</span>
+          <span className="set-row-name">Pane state from Claude</span>
           <span className="set-row-sub" title={hookStatus?.settingsPath || undefined}>
             {hookStatusLine(hookStatus)}
           </span>
         </div>
         {hookStatus?.settingsInstalled ? (
-          <button className="set-btn" onClick={uninstallHooks} disabled={hookBusy}>Remove</button>
+          <button className="set-btn" onClick={uninstallHooks} disabled={hookBusy}>Remove from ~/.claude</button>
         ) : (
           <button className="set-btn" onClick={installHooks} disabled={hookBusy || !hookStatus?.relayInstalled}>
-            Install…
+            Also install in ~/.claude…
           </button>
         )}
       </div>
@@ -760,21 +693,94 @@ function DiagnosticsSection() {
         <button className="set-btn" onClick={() => void exportBundle()}>Export…</button>
       </div>
 
-      {/* Flight recorder (post-0.5.3): panics, render crashes and unhandled
-          rejections all land in one on-disk log. This reveals it. */}
-      <div className="set-row">
-        <div className="set-row-t">
-          <span className="set-row-name">Error log</span>
-          <span className="set-row-sub">Crashes and errors from this and previous runs, secrets redacted</span>
-        </div>
-        <button className="set-btn" onClick={() => void openErrorLog()}>Open…</button>
-      </div>
-
       {/* QL-774 + QL-773: read-only doctor for the Claude settings files behind
           the focused pane, plus the hooks they declare. Lives here because it
           answers the same class of question as the rest of Diagnostics — "why
           is it behaving like that?" — and reuses these tables. */}
       <ConfigDoctorView />
+      <details className="set-advanced">
+        <summary>Advanced</summary>
+        <div className="set-row">
+          <div className="set-row-t">
+            <span className="set-row-name">Pane health</span>
+            <span className="set-row-sub">
+              CPU is % of one core since the last sample
+              {/* UI-186: Flightdeck's own total only — there's no backend command
+                  for total system RAM, so no percentage-of-system is claimed. */}
+              {health && health.length > 0 && ` · ${bytes(health.reduce((n, h) => n + h.memoryMb, 0) * 1024 * 1024)} total across ${health.length} pane${health.length === 1 ? "" : "s"}`}
+            </span>
+          </div>
+        </div>
+        {health && health.length > 0 ? (
+          <div className="diag-table" role="table" aria-label="Per-pane process health">
+            <div className="diag-tr diag-tr-health diag-th" role="row">
+              <span>Pane</span><span>Process</span><span>PID</span><span>CPU</span><span>Trend</span><span>Memory</span>
+            </div>
+            {health.map((h) => (
+              <div className="diag-tr diag-tr-health" role="row" key={h.paneId}>
+                <span>#{h.paneId}</span>
+                <span className="diag-proc">{h.procName || "—"}</span>
+                <span>{h.pid}</span>
+                {/* UI-633: only a reading that needs a look is coloured; a normal
+                    pane stays flat so the table doesn't read as an alarm. */}
+                <span
+                  className={cpuLevelClass(h.cpuPercent)}
+                  title={h.cpuPercent >= CPU_WARN_PERCENT ? `Over ${CPU_WARN_PERCENT}% of one core` : undefined}
+                >
+                  {h.cpuPercent.toFixed(1)}%
+                </span>
+                {/* UI-185: ~60s CPU trend — cpuHistory accumulates alongside health. */}
+                <Sparkline data={cpuHistory[h.paneId] ?? []} />
+                <span
+                  className={memoryLevelClass(h)}
+                  title={h.memoryWarnMb ? `Memory ceiling: ${h.memoryWarnMb.toFixed(0)} MB` : undefined}
+                >
+                  {h.memoryMb.toFixed(0)} MB
+                </span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="diag-empty">{health === null ? "Health data unavailable in this environment." : "No live panes to sample."}</div>
+        )}
+
+        {/* UX-596/QL-742: the one memory threshold in the app. It colours the
+            table above, and the cockpit flags any pane over it in the pane
+            header without Settings being open. */}
+        <div className="set-row">
+          <div className="set-row-t">
+            <span className="set-row-name">Memory ceiling</span>
+            <span className="set-row-sub">
+              Flag a pane using more than this many MB. Checked every 30s in the background; the pane header shows a chip.
+            </span>
+          </div>
+          <input
+            className="set-input set-input-num" type="number"
+            min={MIN_MEMORY_CEILING_MB} max={MAX_MEMORY_CEILING_MB} step={64}
+            aria-label={`Memory ceiling in MB (${MIN_MEMORY_CEILING_MB}–${MAX_MEMORY_CEILING_MB})`}
+            value={ceilingDraft}
+            onChange={(e) => {
+              setCeilingDraft(e.target.value);
+              const mb = Number(e.target.value);
+              if (Number.isFinite(mb) && mb >= MIN_MEMORY_CEILING_MB && mb <= MAX_MEMORY_CEILING_MB) {
+                setCeiling(setMemoryCeilingMb(mb));
+              }
+            }}
+            onBlur={() => commitCeiling(Number(ceilingDraft))}
+            onKeyDown={(e) => { if (e.key === "Enter") commitCeiling(Number(ceilingDraft)); }}
+          />
+        </div>
+
+        {/* Flight recorder (post-0.5.3): panics, render crashes and unhandled
+            rejections all land in one on-disk log. This reveals it. */}
+        <div className="set-row">
+          <div className="set-row-t">
+            <span className="set-row-name">Error log</span>
+            <span className="set-row-sub">Crashes and errors from this and previous runs, secrets redacted</span>
+          </div>
+          <button className="set-btn" onClick={() => void openErrorLog()}>Open…</button>
+        </div>
+      </details>
     </section>
   );
 }
@@ -925,7 +931,11 @@ export function Settings() {
     const target = Array.from(root.querySelectorAll<HTMLElement>(".set-section")).find((sec) =>
       sec.querySelector(".set-label")?.textContent?.trim().toLowerCase() === jumpTo.toLowerCase()
     );
-    target?.scrollIntoView({ block: "start", behavior: "smooth" });
+    runSearch("");
+    window.requestAnimationFrame(() => {
+      target?.scrollIntoView({ block: "start", behavior: "smooth" });
+      updateCurrentSection();
+    });
     useUI.getState().clearSettingsJump();
   }, [open, jumpTo]);
 
@@ -941,6 +951,36 @@ export function Settings() {
   const pendingJump = useRef<SettingEntry | null>(null);
   const searching = q.trim() !== "";
   const bodyRef = useRef<HTMLDivElement>(null);
+  const [sections, setSections] = useState<string[]>([]);
+  const [currentSection, setCurrentSection] = useState("");
+  function updateCurrentSection() {
+    const root = bodyRef.current;
+    if (!root || searching) return;
+    const top = root.getBoundingClientRect().top + 24;
+    const rendered = Array.from(root.querySelectorAll<HTMLElement>(".set-section"));
+    let current = rendered[0];
+    for (const section of rendered) {
+      if (section.getBoundingClientRect().top <= top) current = section;
+      else break;
+    }
+    // The final section may be too short to reach the top of the viewport.
+    if (root.scrollTop > 0 && root.scrollTop + root.clientHeight >= root.scrollHeight - 2) {
+      current = rendered[rendered.length - 1];
+    }
+    setCurrentSection(current?.querySelector(".set-label")?.textContent?.trim() ?? "");
+  }
+  function jumpToSection(label: string) {
+    const target = Array.from(bodyRef.current?.querySelectorAll<HTMLElement>(".set-section") ?? []).find(
+      (section) => section.querySelector(".set-label")?.textContent?.trim() === label
+    );
+    target?.scrollIntoView({ block: "start", behavior: "smooth" });
+  }
+  useEffect(() => {
+    if (!open || !bodyRef.current) return;
+    setSections(Array.from(bodyRef.current.querySelectorAll(".set-section .set-label"))
+      .map((label) => label.textContent?.trim() ?? "").filter(Boolean));
+    updateCurrentSection();
+  }, [open, searching]);
   function runSearch(next: string) {
     setQ(next);
     setActive(0);
@@ -967,12 +1007,18 @@ export function Settings() {
       pendingJump.current = null;
       const el = h.el;
       if (el?.isConnected) {
+        let advanced = el.closest<HTMLDetailsElement>("details.set-advanced");
+        while (advanced) {
+          advanced.open = true;
+          advanced = advanced.parentElement?.closest<HTMLDetailsElement>("details.set-advanced") ?? null;
+        }
         el.scrollIntoView({ block: "center" });
         el.querySelector<HTMLElement>("button, input, select, textarea")?.focus({ preventScroll: true });
         el.classList.add("set-flash");
         window.setTimeout(() => el.classList.remove("set-flash"), 1600);
       }
     }
+    updateCurrentSection();
   });
   // Ctrl+F while Settings is open goes to the search box rather than the
   // webview's find (or a pane's) behind the scrim.
@@ -1334,10 +1380,11 @@ export function Settings() {
   function resetAgentsSection() {
     resetSection(
       "Reset agent settings?",
-      "Default vendor, chat view and detail, extra flags, binary path overrides and per-agent colours go back to defaults.",
+      "Default vendor, chat view and detail, sound and per-agent colours go back to defaults.",
       () => {
-        saveAgentSettings(DEFAULT_AGENT_SETTINGS);
-        setAgents(DEFAULT_AGENT_SETTINGS);
+        const defaults = { ...DEFAULT_AGENT_SETTINGS, flags: agents.flags, binaryPaths: agents.binaryPaths };
+        saveAgentSettings(defaults);
+        setAgents(defaults);
         try { localStorage.removeItem("flightdeck-vendor-accents"); } catch { /* non-persistent */ }
         try { localStorage.removeItem("flightdeck-sound-needs-you"); localStorage.removeItem("flightdeck-sound-volume"); } catch { /* non-persistent */ }
         setSoundOn(true);
@@ -1420,7 +1467,14 @@ export function Settings() {
           />
           <button className="ov-x" onClick={() => setOpen(false)} title="Close"><IconClose size={16} /></button>
         </div>
-        <div className="set-body" ref={bodyRef}>
+        <div className="set-content">
+          {!searching && <nav className="set-nav" aria-label="Settings sections">
+            {sections.map((label) => (
+              <button key={label} type="button" aria-current={currentSection === label ? "location" : undefined}
+                onClick={() => jumpToSection(label)}>{label}</button>
+            ))}
+          </nav>}
+        <div className="set-body" ref={bodyRef} onScroll={updateCurrentSection} onToggle={updateCurrentSection}>
           {searching && hits.length > 0 && (
             <div className="set-results" id="set-results" role="listbox" aria-label="Matching settings">
               {hits.map((h, i) => (
@@ -1613,21 +1667,6 @@ export function Settings() {
             </div>
 
             <div className="set-row">
-              <div className="set-row-t"><span className="set-row-name">Theme file</span><span className="set-row-sub">Export the active theme, or import one</span></div>
-              <div className="seg">
-                <button onClick={handleExport}>Export</button>
-                <button onClick={() => fileRef.current?.click()}>Import</button>
-              </div>
-              <input ref={fileRef} type="file" accept="application/json" style={{ display: "none" }} onChange={handleImportFile} />
-            </div>
-            <div className="set-row">
-              <div className="set-row-t"><span className="set-row-name">VS Code theme</span><span className="set-row-sub">Import a VS Code colour theme (.json, comments allowed). It is saved to the theme list above.</span></div>
-              <button className="set-btn" onClick={() => vscFileRef.current?.click()}>Import VS Code theme…</button>
-              <input ref={vscFileRef} type="file" accept=".json,.jsonc,application/json" style={{ display: "none" }} onChange={handleImportVsCodeFile} />
-            </div>
-            {importError && <div className="set-error">{importError}</div>}
-
-            <div className="set-row">
               <div className="set-row-t">
                 <span className="set-row-name">UI size</span>
                 <span className="set-row-sub">Scale the whole interface — same as <kbd>Ctrl</kbd>+<kbd>=</kbd>/<kbd>-</kbd>/<kbd>0</kbd></span>
@@ -1655,18 +1694,7 @@ export function Settings() {
                 )}
               </div>
             </div>
-            <div className="set-row">
-              <div className="set-row-t">
-                <span className="set-row-name">Preview text size</span>
-                <span className="set-row-sub">Pixels, for the Preview panel only. Terminal size is set under Terminal.</span>
-              </div>
-              <input
-                className="set-input set-input-num" type="number" aria-label="Preview text size in pixels"
-                min={PREVIEW_FONT_RANGE.min} max={PREVIEW_FONT_RANGE.max} step={PREVIEW_FONT_RANGE.step}
-                value={reading.previewFontSize}
-                onChange={(e) => updateReading({ previewFontSize: Number(e.target.value) || DEFAULT_READING_SETTINGS.previewFontSize })}
-              />
-            </div>
+
             <div className="set-row">
               <div className="set-row-t">
                 <span className="set-row-name">Interface text size</span>
@@ -1680,26 +1708,56 @@ export function Settings() {
               />
               <span className="set-range-val">{Math.round(reading.uiTextScale * 100)}%</span>
             </div>
-            <div className="set-row">
-              <div className="set-row-t"><span className="set-row-name">Preview line height</span></div>
-              <input
-                className="set-range" type="range" aria-label="Preview line height"
-                min={PREVIEW_LH_RANGE.min} max={PREVIEW_LH_RANGE.max} step={PREVIEW_LH_RANGE.step}
-                value={reading.previewLineHeight}
-                onChange={(e) => updateReading({ previewLineHeight: Number(e.target.value) })}
-              />
-              <span className="set-range-val">{reading.previewLineHeight.toFixed(2)}</span>
-            </div>
-            <div className="set-row">
-              <div className="set-row-t"><span className="set-row-name">Preview reading width</span></div>
-              <div className="seg" role="group" aria-label="Preview reading width">
-                {(Object.keys(PREVIEW_WIDTHS) as PreviewWidth[]).map((w) => (
-                  <button key={w} className={reading.previewWidth === w ? "on" : ""} aria-pressed={reading.previewWidth === w} onClick={() => updateReading({ previewWidth: w })}>
-                    {PREVIEW_WIDTHS[w].label}
-                  </button>
-                ))}
+
+            <details className="set-advanced">
+              <summary>Advanced</summary>
+              <div className="set-row">
+                <div className="set-row-t"><span className="set-row-name">Theme file</span><span className="set-row-sub">Export the active theme, or import one</span></div>
+                <div className="seg">
+                  <button onClick={handleExport}>Export</button>
+                  <button onClick={() => fileRef.current?.click()}>Import</button>
+                </div>
+                <input ref={fileRef} type="file" accept="application/json" style={{ display: "none" }} onChange={handleImportFile} />
               </div>
-            </div>
+              <div className="set-row">
+                <div className="set-row-t"><span className="set-row-name">VS Code theme</span><span className="set-row-sub">Import a VS Code colour theme (.json, comments allowed). It is saved to the theme list above.</span></div>
+                <button className="set-btn" onClick={() => vscFileRef.current?.click()}>Import VS Code theme…</button>
+                <input ref={vscFileRef} type="file" accept=".json,.jsonc,application/json" style={{ display: "none" }} onChange={handleImportVsCodeFile} />
+              </div>
+              {importError && <div className="set-error">{importError}</div>}
+              <div className="set-row">
+                <div className="set-row-t">
+                  <span className="set-row-name">Preview text size</span>
+                  <span className="set-row-sub">Pixels, for the Preview panel only. Terminal size is set under Terminal.</span>
+                </div>
+                <input
+                  className="set-input set-input-num" type="number" aria-label="Preview text size in pixels"
+                  min={PREVIEW_FONT_RANGE.min} max={PREVIEW_FONT_RANGE.max} step={PREVIEW_FONT_RANGE.step}
+                  value={reading.previewFontSize}
+                  onChange={(e) => updateReading({ previewFontSize: Number(e.target.value) || DEFAULT_READING_SETTINGS.previewFontSize })}
+                />
+              </div>
+              <div className="set-row">
+                <div className="set-row-t"><span className="set-row-name">Preview line height</span></div>
+                <input
+                  className="set-range" type="range" aria-label="Preview line height"
+                  min={PREVIEW_LH_RANGE.min} max={PREVIEW_LH_RANGE.max} step={PREVIEW_LH_RANGE.step}
+                  value={reading.previewLineHeight}
+                  onChange={(e) => updateReading({ previewLineHeight: Number(e.target.value) })}
+                />
+                <span className="set-range-val">{reading.previewLineHeight.toFixed(2)}</span>
+              </div>
+              <div className="set-row">
+                <div className="set-row-t"><span className="set-row-name">Preview reading width</span></div>
+                <div className="seg" role="group" aria-label="Preview reading width">
+                  {(Object.keys(PREVIEW_WIDTHS) as PreviewWidth[]).map((w) => (
+                    <button key={w} className={reading.previewWidth === w ? "on" : ""} aria-pressed={reading.previewWidth === w} onClick={() => updateReading({ previewWidth: w })}>
+                      {PREVIEW_WIDTHS[w].label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </details>
           </section>
 
           <section className="set-section">
@@ -1904,7 +1962,7 @@ export function Settings() {
 
           <section className="set-section">
             <SectionHead label="Agents" onReset={resetAgentsSection} />
-            <div className="set-row">
+            <div className="set-row set-row-stacked">
               <div className="set-row-t"><span className="set-row-name">Default vendor</span><span className="set-row-sub">Pre-selected for new panes</span></div>
               <div className="seg">
                 {vendors.map((v) => (
@@ -1924,16 +1982,7 @@ export function Settings() {
                 ))}
               </div>
             </div>
-            <div className="set-row">
-              <div className="set-row-t"><span className="set-row-name">Chat detail</span><span className="set-row-sub">Normal folds each run of tool steps into one line; Verbose shows every step</span></div>
-              <div className="seg" role="group" aria-label="Chat detail">
-                {(["normal", "verbose"] as const).map((v) => (
-                  <button key={v} className={agents.chatDetail === v ? "on" : ""} aria-pressed={agents.chatDetail === v} onClick={() => updateAgents({ ...agents, chatDetail: v })}>
-                    {v === "normal" ? "Normal" : "Verbose"}
-                  </button>
-                ))}
-              </div>
-            </div>
+
             <div className="set-row">
               <div className="set-row-t"><span className="set-row-name">Sound when an agent needs you</span><span className="set-row-sub">A chime only when an agent is blocked on you, not for routine state changes</span></div>
               <button
@@ -2015,16 +2064,6 @@ export function Settings() {
                       <span className="agent-chip warn" title="The last test pane didn’t reach a running state">✗ didn’t start</span>
                     )}
                   </span>
-                  <input
-                    className="set-input" placeholder="extra CLI flags"
-                    value={agents.flags[v.id] ?? ""}
-                    onChange={(e) => updateAgents({ ...agents, flags: { ...agents.flags, [v.id]: e.target.value } })}
-                  />
-                  <input
-                    className="set-input" placeholder="binary path override"
-                    value={agents.binaryPaths[v.id] ?? ""}
-                    onChange={(e) => updateAgents({ ...agents, binaryPaths: { ...agents.binaryPaths, [v.id]: e.target.value } })}
-                  />
                   {/* UI-51: per-agent colour — chips/dots/cards follow. */}
                   <label className="agent-color" title={`Colour for ${v.label} — chips and status dots follow`}>
                     <span className="agent-color-dot" style={{ background: vendorColor(v.id) }} />
@@ -2093,6 +2132,19 @@ export function Settings() {
                 Open vendors folder
               </button>
             </div>
+            <details className="set-advanced">
+              <summary>Advanced</summary>
+              <div className="set-row">
+                <div className="set-row-t"><span className="set-row-name">Chat detail</span><span className="set-row-sub">Normal folds each run of tool steps into one line; Verbose shows every step</span></div>
+                <div className="seg" role="group" aria-label="Chat detail">
+                  {(["normal", "verbose"] as const).map((v) => (
+                    <button key={v} className={agents.chatDetail === v ? "on" : ""} aria-pressed={agents.chatDetail === v} onClick={() => updateAgents({ ...agents, chatDetail: v })}>
+                      {v === "normal" ? "Normal" : "Verbose"}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </details>
           </section>
 
           <section className="set-section">
@@ -2191,6 +2243,7 @@ export function Settings() {
               </ul>
             </details>
           </section>
+        </div>
         </div>
       </div>
       {/* UI-111: install/sign-in popover, portalled so the modal's own

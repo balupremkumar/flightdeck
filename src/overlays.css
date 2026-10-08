@@ -54,7 +54,7 @@
 
 /* ---------- Settings modal ---------- */
 .set-modal {
-  width: 560px; max-width: calc(100% - 32px); height: min(640px, 86vh); max-height: 86vh;
+  width: min(920px, calc(100% - 48px)); height: min(860px, 92vh);
   display: flex; flex-direction: column;
   background: var(--elevated); border: 1px solid var(--line-strong); border-radius: 16px;
   box-shadow: var(--shadow-lg); overflow: hidden;
@@ -63,16 +63,28 @@
 @keyframes ov-pop { from { opacity: 0; transform: translateY(8px) scale(.98); } to { opacity: 1; transform: none; } }
 .set-head { display: flex; align-items: center; gap: 12px; padding: 18px 20px 14px; border-bottom: 1px solid var(--line); }
 .set-head h2 { margin: 0; font-size: 19px; font-weight: 700; letter-spacing: -0.02em; }
-.set-body { padding: 8px 20px 20px; display: flex; flex-direction: column; gap: 22px; overflow-y: auto; }
+.set-content { display: flex; flex: 1; min-height: 0; }
+.set-nav { width: 160px; flex: none; padding: 16px 10px; overflow-y: auto; border-right: 1px solid var(--line); }
+.set-nav button { display: block; width: 100%; min-height: 34px; padding: 7px 10px; text-align: left; font: inherit; font-size: 14px; color: var(--muted); background: transparent; border: 0; border-radius: 6px; cursor: pointer; }
+.set-nav button:hover, .set-nav button[aria-current] { color: var(--text); background: var(--surface); }
+.set-nav button[aria-current] { font-weight: 600; color: var(--azure); }
+.set-body { flex: 1; min-width: 0; padding: 8px 20px 20px; display: flex; flex-direction: column; gap: 22px; overflow-y: auto; }
+.set-body > .set-section { flex-shrink: 0; }
+.set-advanced { border-top: 1px solid var(--line); padding-top: 10px; }
+.set-advanced > summary { min-height: 32px; font-size: 13px; font-weight: 600; color: var(--muted); cursor: pointer; }
+.set-advanced[open] > :not(summary) { margin-top: 12px; }
+.set-row-stacked { flex-direction: column; align-items: stretch; gap: 8px; }
+.set-row-stacked > .seg { margin-left: 0; align-self: flex-start; flex-wrap: wrap; }
+@media (max-width: 640px) { .set-nav { width: 124px; padding: 12px 6px; } .set-body { padding-inline: 12px; } }
 .set-section { display: flex; flex-direction: column; gap: 12px; padding-top: 14px; }
-.set-label { font-family: var(--font-mono); font-size: 11px; font-weight: 500; letter-spacing: .18em; text-transform: uppercase; color: var(--azure); }
+.set-label { font-family: inherit; font-size: 13px; font-weight: 600; letter-spacing: 0; text-transform: none; color: var(--azure); }
 /* ---------- Section header row (UI-632 / UX-599) ----------
    Every section that holds real preference state gets the same label + reset
    shape, so "reset just this section" reads as one consistent affordance
    instead of a bespoke button placed differently per section. */
 .set-section-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .set-section-reset {
-  font: inherit; font-size: 10.5px; font-weight: 600; letter-spacing: .02em; color: var(--faint);
+  font: inherit; font-size: 12px; font-weight: 600; letter-spacing: 0; color: var(--faint); min-height: 28px;
   background: transparent; border: 1px solid var(--line-strong); border-radius: 6px;
   padding: 3px 9px; cursor: pointer; transition: color .14s ease, border-color .14s ease;
 }
