@@ -4,7 +4,7 @@ import App from "./App";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { bootAppearance } from "./themes";
 import { applyReadingSettings, migrateQuietDefault, migrateTerminalDefault } from "./settingsStore";
-import { useUI, applyUiScale } from "./ui";
+import { useUI, applyUiScale, loadUiZoom, migrateChromeScale } from "./ui";
 import { useVendors, armVendorHotReload, vendorShort } from "./vendors";
 import { runWorktreeGc } from "./worktrees";
 import { startAutosave, offerSessionRestore, releaseSaveHold, crashedLastRun, armCleanExitSentinel, lastRestoreReport } from "./session";
@@ -88,10 +88,10 @@ applyReadingSettings(); // 1.5b/c: preview + interface text vars before first pa
 // Apply saved UI scale (whole-app zoom) before first paint. Must go through
 // applyUiScale (native webview zoom) — setting CSS zoom here would break
 // xterm's mouse hit-testing; see the comment on applyUiScale.
-try {
-  const s = parseFloat(localStorage.getItem("flightdeck-uiscale") ?? "1");
-  if (Number.isFinite(s) && s > 0 && s !== 1) applyUiScale(s);
-} catch { /* non-persistent */ }
+migrateChromeScale();
+const uiZoom = loadUiZoom();
+useUI.setState({ uiZoom });
+applyUiScale(uiZoom);
 
 const mount = () => ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>

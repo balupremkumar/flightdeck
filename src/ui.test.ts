@@ -1,6 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  useUI, ZOOM_STEPS, nextZoomStep,
+  useUI, ZOOM_STEPS, nextZoomStep, DEFAULT_UI_ZOOM, loadUiZoom, migrateChromeScale,
   navPush, navStep,
   pushOverlay, popOverlay, closeTopOverlay, overlayStackDepth, isTopOverlay, __resetOverlayStackForTests,
 } from "./ui";
@@ -46,16 +46,81 @@ describe("notification feed (ui.ts)", () => {
   });
 });
 
-// stepUiZoom/setUiZoom/resetUiZoom all call applyUiScale, which touches
-// `document`/`window` — this project's vitest runs in plain Node (no jsdom),
-// so those actions can't be exercised directly in this file. nextZoomStep is
-// exported specifically so the stepping ALGORITHM (the load-bearing logic
-// both Settings > UI size and the Ctrl+=/-/0 shortcut share) is still under
-// test; see Cockpit.tsx/Settings.tsx for the thin DOM-touching call sites.
-describe("whole-app zoom stepping (ui.ts)", () => {
-  it("ZOOM_STEPS is ascending and includes 1 (100%, the reset target)", () => {
+describe("chrome zoom default and migration", () => {
+  let storage: Map<string, string>;
+  const originalZoom = useUI.getState().uiZoom;
+
+  beforeEach(() => {
+    storage = new Map();
+    vi.stubGlobal("localStorage", {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => storage.set(key, value),
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    useUI.setState({ uiZoom: originalZoom, zoomHud: null });
+  });
+
+  it("defaults to 120% without a stored preference", () => {
+    expect(DEFAULT_UI_ZOOM).toBe(1.2);
+    expect(loadUiZoom()).toBe(DEFAULT_UI_ZOOM);
+  });
+
+  it.each(["invalid", "0", "-1", "Infinity"])("defaults for invalid stored size %s", (raw) => {
+    storage.set("flightdeck-uiscale", raw);
+    expect(loadUiZoom()).toBe(DEFAULT_UI_ZOOM);
+  });
+
+  it("defaults when storage is unavailable", () => {
+    vi.stubGlobal("localStorage", { getItem: () => { throw new Error("unavailable"); } });
+    expect(loadUiZoom()).toBe(DEFAULT_UI_ZOOM);
+    expect(() => migrateChromeScale()).not.toThrow();
+  });
+
+  it("reset applies and persists 120% and reports it in the HUD", () => {
+    const style = { zoom: "" };
+    const dispatchEvent = vi.fn();
+    vi.stubGlobal("document", { documentElement: { style } });
+    vi.stubGlobal("window", { dispatchEvent });
+    useUI.setState({ uiZoom: 1.5 });
+    useUI.getState().resetUiZoom();
+    expect(useUI.getState().uiZoom).toBe(DEFAULT_UI_ZOOM);
+    expect(useUI.getState().zoomHud?.value).toBe(DEFAULT_UI_ZOOM);
+    expect(storage.get("flightdeck-uiscale")).toBe("1.2");
+    expect(style.zoom).toBe("1.2");
+    expect(dispatchEvent).toHaveBeenCalledOnce();
+  });
+
+  it("migrates the old stored default once and retains a later 100% choice", () => {
+    storage.set("flightdeck-uiscale", "1");
+    migrateChromeScale();
+    expect(loadUiZoom()).toBe(1.2);
+    expect(storage.get("flightdeck-migrated-chrome-scale")).toBe("1");
+    storage.set("flightdeck-uiscale", "1");
+    migrateChromeScale();
+    expect(loadUiZoom()).toBe(1);
+  });
+
+  it.each(["0.85", "1.1", "1.2", "1.35", "1.5", "invalid"])("leaves stored %s alone", (raw) => {
+    storage.set("flightdeck-uiscale", raw);
+    migrateChromeScale();
+    expect(storage.get("flightdeck-uiscale")).toBe(raw);
+    expect(storage.get("flightdeck-migrated-chrome-scale")).toBe("1");
+  });
+
+  it("marks a fresh install without storing a preference", () => {
+    migrateChromeScale();
+    expect(storage.has("flightdeck-uiscale")).toBe(false);
+    expect(storage.get("flightdeck-migrated-chrome-scale")).toBe("1");
+  });
+});
+
+describe("chrome zoom stepping (ui.ts)", () => {
+  it("ZOOM_STEPS is ascending and includes the reset target", () => {
     expect(ZOOM_STEPS).toEqual([...ZOOM_STEPS].sort((a, b) => a - b));
-    expect(ZOOM_STEPS).toContain(1);
+    expect(ZOOM_STEPS).toContain(DEFAULT_UI_ZOOM);
   });
 
   it("steps up/down through exact values", () => {

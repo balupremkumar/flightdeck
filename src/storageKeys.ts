@@ -117,6 +117,8 @@ export const SESSION_KEYS = [
   "flightdeck-migrated-quiet-default",
   // 0.6.2: same for the Terminal default migration (K11).
   "flightdeck-migrated-terminal-default",
+  // One-shot chrome default migration; settings resets must not repeat it.
+  "flightdeck-migrated-chrome-scale",
 ] as const;
 
 /**
