@@ -203,7 +203,9 @@ export function Cockpit() {
       // a real cost, opening an overlay isn't.
       if (e.ctrlKey && e.shiftKey && (e.key === "a" || e.key === "A")) {
         e.preventDefault();
-        useUI.getState().setAttentionOpen(!useUI.getState().attentionOpen);
+        // QRP11: Home is the one "who needs me" surface (peek, reply, Approve),
+        // so the old attention-queue shortcut opens it.
+        useUI.getState().setHomeOpen(!useUI.getState().homeOpen);
         return;
       }
       // Phase 5 Home: global like Ctrl+Shift+A above (no agent TUI binds the

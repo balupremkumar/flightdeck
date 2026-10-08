@@ -233,7 +233,7 @@ await page.waitForTimeout(1800);
 check((await page.locator(".hm-skel").count()) === 0, "no skeleton left once the polls land");
 
 const review = page.locator('.hm-col.review [data-pane-id="2"]');
-check((await review.count()) === 1, "pane 2 (diff on its cwd) is in Ready to review");
+check((await review.count()) === 1, "pane 2 (diff on its cwd) is in Done");
 const reviewText = (await review.innerText()).replace(/\s+/g, " ");
 check(/\+84 -12 2 files/.test(reviewText), `diff row reads +84 -12 2 files (${reviewText})`);
 check(/PR #12 · checks running/.test(reviewText), "PR chip uses prLabel");

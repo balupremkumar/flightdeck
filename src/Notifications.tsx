@@ -792,10 +792,10 @@ export function Notifications() {
                 {needsAttention.length > 0 && (
                   <button
                     className="ntf-clear"
-                    title="Open the full attention queue (Ctrl+Shift+A)"
-                    onClick={() => { setPanel("none"); useUI.getState().setAttentionOpen(true); }}
+                    title="Open Home (Ctrl+Shift+H)"
+                    onClick={() => { setPanel("none"); useUI.getState().setHomeOpen(true); }}
                   >
-                    See all
+                    Open Home
                   </button>
                 )}
                 <button

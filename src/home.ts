@@ -16,7 +16,8 @@ export const HOME_COLUMNS: HomeColumn[] = ["needs", "working", "review", "idle",
 export const COLUMN_LABEL: Record<HomeColumn, string> = {
   needs: "Needs you",
   working: "Working",
-  review: "Ready to review",
+  // QRP12: the owner never reviews by hand; finished work is simply "Done".
+  review: "Done",
   idle: "Idle",
   merged: "Merged",
 };
@@ -25,7 +26,7 @@ export const COLUMN_LABEL: Record<HomeColumn, string> = {
 export const COLUMN_EMPTY: Record<HomeColumn, string> = {
   needs: "Nothing is waiting on you.",
   working: "No agents working.",
-  review: "No finished work to review.",
+  review: "Nothing finished yet.",
   idle: "None idle.",
   merged: "Nothing merged yet.",
 };

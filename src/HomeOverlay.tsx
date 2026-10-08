@@ -1,5 +1,5 @@
 // HomeOverlay.tsx: Phase 5 Home. One sheet listing every agent pane in this
-// window by computed state (Needs you, Working, Ready to review, Idle, Merged).
+// window by computed state (Needs you, Working, Done, Idle, Merged).
 // The model lives in home.ts; this file only renders it. An overlay, not a
 // route: terminals underneath stay mounted, Escape closes it through the shared
 // overlay stack (ui.ts), and the bell and attention queue are untouched.
