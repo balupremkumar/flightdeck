@@ -7,6 +7,7 @@ import { Terminal, type TerminalHandle } from "./Terminal";
 import { get as getPaneSession, writeToPane } from "./paneSessions";
 import { getTerminalSettings } from "./settingsStore";
 import { rightClickAction, shouldConfirmPaste } from "./terminalMouse";
+import { takeSelectHint } from "./selectHint";
 import {
   IconBranch, IconClose, IconRefresh, IconDrag, IconOverflow,
   IconMaximizePane, IconMinimize, IconFolder, IconChevron, IconDiff, IconFile,
@@ -1249,6 +1250,16 @@ function PaneViewInner({
       </div>
       <div
         className={"pbody" + (bell ? " bell" : "")}
+        onMouseDown={(e) => {
+          if (takeSelectHint(pane.id, {
+            button: e.button,
+            shift: e.shiftKey,
+            mouseTracking: !!terminalRef.current?.isMouseTracking(),
+            agentVendor: vendorMeta(pane.vendor).kind === "agent",
+          })) {
+            pushToast("info", "Hold Shift to select text in this pane.");
+          }
+        }}
         onContextMenu={(e) => {
           e.preventDefault();
           // H2: Windows Terminal style. A right-click over a link never gets
