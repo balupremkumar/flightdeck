@@ -82,3 +82,7 @@ Sweep found K13-K16 (rename dblclick maximises, pane menu clips, Review omits un
 - Claude caught and fixed: Stop hook mapped to "idle" (reads as an exited pane), BOMs from Codex, search targeting Codex panes, quiet panes breathing amber.
 - Fable final gate: SHIP AFTER FIXES (H1 CSS-zoom fallback, H2 terminal shrink for stored zoom > 1, H3 end-of-turn questions silenced, M1-M4, L2); all fixed in 51366d7, e2e selectors in 45c6a44.
 - v0.6.3 cut: every gate passed; tag local, not pushed. QRP13 (run summary) and QRP17 (focus grab) deferred.
+
+## 2026-10-09: resume check, closed
+- Listed the QR table (15 of 17 shipped in 0.6.3; QRP13, QRP17 deferred) and the open backlog after it (AG2-AG14, K9, K0b, N1-N6).
+- Verified Balu runs stable 0.6.3 (installed exe FileVersion 0.6.3). No code changed; push still waits for Balu.
