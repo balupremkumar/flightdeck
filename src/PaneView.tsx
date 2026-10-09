@@ -15,6 +15,7 @@ import { cachedInvoke, usePoll, useVisible, usePaneMemory } from "./poll";
 import { compact, num, duration, bytes, tailEllipsis } from "./format";
 import { clearMcpNotices, mcpChip, noteMcpLine } from "./mcphealth";
 import { paneStateWord } from "./paneHeader";
+import { shouldBulkSelect } from "./paneSelectGesture";
 import { stateSince, lastLine, isOpenQuestion, attentionKind, STATE_LABEL as STATE_TITLE } from "./attention";
 import { missingCliHint } from "./paneMenu";
 import "./panes.css";
@@ -846,7 +847,7 @@ function PaneViewInner({
         // UX-553: shift+click toggles selection and does NOT steal focus —
         // a plain click elsewhere still clears a stale selection first, so
         // the bulk toolbar never lingers over an unrelated click.
-        if (e.shiftKey) { e.preventDefault(); togglePaneSelection(pane.id); return; }
+        if (shouldBulkSelect(e.shiftKey, e.target as HTMLElement)) { e.preventDefault(); togglePaneSelection(pane.id); return; }
         if (selectedIds.length) clearSelection();
         focusPane(wsId, pane.id);
       }}
