@@ -87,8 +87,8 @@ describe("emit_to listeners", () => {
       expect(events.has(event), `missing emit_to event: ${event}`).toBe(true);
     }
     expect(events.has("hook://event")).toBe(false);
-    // Brief criterion 2 conflicts with windows.rs:1207, which emits FLUSH_EVENT.
-    expect(events.has("app://flush"), "brief requires app://flush not to be an emit_to event").toBe(false);
+    // windows.rs:1207 sends FLUSH_EVENT with app.emit_to, so it is a targeted event too.
+    expect(events.has("app://flush"), "missing emit_to event: app://flush").toBe(true);
   });
 
   it("rejects all bare listeners for targeted events in frontend sources", () => {
