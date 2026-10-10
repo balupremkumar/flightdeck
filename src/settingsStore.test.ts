@@ -131,6 +131,72 @@ describe("terminal settings", () => {
   });
 });
 
+describe("stored terminal field validation", () => {
+  const valid: s.TerminalSettings = {
+    fontFamily: " Custom Mono ", fontSize: 13.75, cursorStyle: "underline",
+    scrollback: 1234.5, minimumContrastRatio: 5.25, lineHeight: 1.325,
+    copyOnSelect: false, rightClick: "menu",
+  };
+
+  it.each([
+    ["fontFamily", ""], ["fontFamily", 42], ["fontFamily", null],
+    ["fontSize", "13.75"], ["fontSize", "abc"], ["fontSize", 0], ["fontSize", -1], ["fontSize", null],
+    ["scrollback", "1234"], ["scrollback", -5], ["scrollback", null],
+    ["cursorStyle", "unknown"], ["cursorStyle", null],
+    ["rightClick", "unknown"], ["rightClick", null],
+    ["copyOnSelect", "false"], ["copyOnSelect", 0], ["copyOnSelect", null],
+    ["minimumContrastRatio", "bad"], ["lineHeight", "bad"],
+  ] as Array<[keyof s.TerminalSettings, unknown]>)("defaults invalid %s (%s) while preserving other fields", (field, value) => {
+    store(terminalKey, { ...valid, [field]: value });
+    expect(s.getTerminalSettings()).toEqual({ ...valid, [field]: s.DEFAULT_TERMINAL_SETTINGS[field] });
+  });
+
+  it.each([
+    ["fontSize", NaN], ["fontSize", Infinity], ["fontSize", -Infinity],
+    ["scrollback", NaN], ["scrollback", Infinity], ["scrollback", -Infinity],
+    ["minimumContrastRatio", NaN], ["minimumContrastRatio", Infinity],
+    ["lineHeight", NaN], ["lineHeight", Infinity],
+  ] as Array<[keyof s.TerminalSettings, number]>)("defaults non-finite %s (%s)", (field, value) => {
+    // JSON cannot encode NaN or Infinity, so inject them at the parsed-object boundary.
+    store(terminalKey, valid);
+    vi.spyOn(JSON, "parse").mockReturnValueOnce({ ...valid, [field]: value });
+    expect(s.getTerminalSettings()).toEqual({ ...valid, [field]: s.DEFAULT_TERMINAL_SETTINGS[field] });
+  });
+
+  it.each([
+    [0, 99, s.CONTRAST_RANGE.min, s.TERM_LINE_HEIGHT_RANGE.max],
+    [99, 0, s.CONTRAST_RANGE.max, s.TERM_LINE_HEIGHT_RANGE.min],
+  ])("clamps stored contrast %s and line height %s", (contrast, height, expectedContrast, expectedHeight) => {
+    store(terminalKey, { ...valid, minimumContrastRatio: contrast, lineHeight: height });
+    expect(s.getTerminalSettings()).toEqual({ ...valid, minimumContrastRatio: expectedContrast, lineHeight: expectedHeight });
+  });
+
+  it.each(["block", "underline", "bar"] as const)("preserves all valid fields with cursor %s exactly", (cursorStyle) => {
+    const stored = { ...valid, cursorStyle };
+    store(terminalKey, stored);
+    expect(s.getTerminalSettings()).toEqual(stored);
+  });
+
+  it("preserves zero scrollback and a small positive font size without invented limits", () => {
+    const stored = { ...valid, fontFamily: " ", fontSize: 0.125, scrollback: 0, copyOnSelect: true, rightClick: "paste" };
+    store(terminalKey, stored);
+    expect(s.getTerminalSettings()).toEqual(stored);
+    store(terminalKey, { ...stored, fontSize: 1000, scrollback: 1000000 });
+    expect(s.getTerminalSettings()).toEqual({ ...stored, fontSize: 1000, scrollback: 1000000 });
+  });
+
+  it("drops extra keys and returns exactly the eight terminal fields", () => {
+    store(terminalKey, { ...valid, extra: "ignored", nested: { fontSize: 99 } });
+    expect(s.getTerminalSettings()).toEqual(valid);
+    expect(Object.keys(s.getTerminalSettings()).sort()).toEqual(Object.keys(s.DEFAULT_TERMINAL_SETTINGS).sort());
+  });
+
+  it("defaults every missing field in an empty stored object", () => {
+    store(terminalKey, {});
+    expect(s.getTerminalSettings()).toEqual(s.DEFAULT_TERMINAL_SETTINGS);
+  });
+});
+
 describe("colour contrast", () => {
   it.each([["rgb(12, 34, 56)", [12, 34, 56]], ["rgba(1, 2, 3, 0.5)", [1, 2, 3]], ["rgb(4 5 6)", [4, 5, 6]], ["garbage", null], ["#ffffff", null]])(
     "parses %s", (input, expected) => { expect(s.parseRgb(input as string)).toEqual(expected); },

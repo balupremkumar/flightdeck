@@ -138,7 +138,19 @@ export function getTerminalSettings(): TerminalSettings {
     if (raw) {
       const p = JSON.parse(raw);
       // A stored string, number, null or array parses fine but is not a settings object.
-      if (p && typeof p === "object" && !Array.isArray(p)) return { ...DEFAULT_TERMINAL_SETTINGS, ...p };
+      if (p && typeof p === "object" && !Array.isArray(p)) {
+        const d = DEFAULT_TERMINAL_SETTINGS;
+        return {
+          fontFamily: typeof p.fontFamily === "string" && p.fontFamily.length > 0 ? p.fontFamily : d.fontFamily,
+          fontSize: typeof p.fontSize === "number" && Number.isFinite(p.fontSize) && p.fontSize > 0 ? p.fontSize : d.fontSize,
+          cursorStyle: p.cursorStyle === "block" || p.cursorStyle === "underline" || p.cursorStyle === "bar" ? p.cursorStyle : d.cursorStyle,
+          scrollback: typeof p.scrollback === "number" && Number.isFinite(p.scrollback) && p.scrollback >= 0 ? p.scrollback : d.scrollback,
+          minimumContrastRatio: clampNum(p.minimumContrastRatio, CONTRAST_RANGE.min, CONTRAST_RANGE.max, d.minimumContrastRatio),
+          lineHeight: clampNum(p.lineHeight, TERM_LINE_HEIGHT_RANGE.min, TERM_LINE_HEIGHT_RANGE.max, d.lineHeight),
+          copyOnSelect: typeof p.copyOnSelect === "boolean" ? p.copyOnSelect : d.copyOnSelect,
+          rightClick: p.rightClick === "paste" || p.rightClick === "menu" ? p.rightClick : d.rightClick,
+        };
+      }
     }
   } catch { /* non-persistent */ }
   return DEFAULT_TERMINAL_SETTINGS;
