@@ -410,3 +410,28 @@ describe("non-persistent operation", () => {
     expect(localStorage.getItem(s.TERMINAL_DEFAULT_MIGRATION_KEY)).toBeNull();
   });
 });
+
+describe("corrupted stored values (found by the T4/T5 test packs)", () => {
+  it("falls back to the default preview width for inherited object keys", () => {
+    store(s.READING_SETTINGS_KEY, { previewWidth: "toString" });
+    expect(s.getReadingSettings().previewWidth).toBe(s.DEFAULT_READING_SETTINGS.previewWidth);
+  });
+  it.each(["null", "42", '"abc"', "[1,2]", "true"])("ignores terminal settings that are not an object: %s", (stored) => {
+    localStorage.setItem(terminalKey, stored);
+    expect(s.getTerminalSettings()).toEqual(s.DEFAULT_TERMINAL_SETTINGS);
+  });
+  it.each(["null", "42", '"abc"', "[1,2]", "true"])("ignores shortcut overrides that are not an object: %s", (stored) => {
+    localStorage.setItem("flightdeck-shortcuts", stored);
+    expect(s.getShortcuts()).toEqual(s.DEFAULT_SHORTCUTS);
+    s.saveShortcut(s.DEFAULT_SHORTCUTS[0].id, "Ctrl+Alt+Q");
+    expect(s.getShortcuts()[0].combo).toBe("Ctrl+Alt+Q");
+  });
+  it("only accepts the two known startup behaviours", () => {
+    for (const stored of ["garbage", "", "REOPEN", "null"]) {
+      localStorage.setItem("flightdeck-startup", stored);
+      expect(s.getStartupBehavior(), stored).toBe("reopen");
+    }
+    localStorage.setItem("flightdeck-startup", "launcher");
+    expect(s.getStartupBehavior()).toBe("launcher");
+  });
+});

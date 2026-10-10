@@ -86,7 +86,7 @@ export function getReadingSettings(): ReadingSettings {
         previewFontSize: clampNum(p.previewFontSize, PREVIEW_FONT_RANGE.min, PREVIEW_FONT_RANGE.max, d.previewFontSize),
         uiTextScale: clampNum(p.uiTextScale, UI_TEXT_SCALE_RANGE.min, UI_TEXT_SCALE_RANGE.max, d.uiTextScale),
         previewLineHeight: clampNum(p.previewLineHeight, PREVIEW_LH_RANGE.min, PREVIEW_LH_RANGE.max, d.previewLineHeight),
-        previewWidth: p.previewWidth in PREVIEW_WIDTHS ? p.previewWidth : d.previewWidth,
+        previewWidth: Object.prototype.hasOwnProperty.call(PREVIEW_WIDTHS, p.previewWidth) ? p.previewWidth : d.previewWidth,
       };
     }
   } catch { /* non-persistent */ }
@@ -135,7 +135,11 @@ export const TERMINAL_FONTS = ["JetBrains Mono", "Cascadia Code", "Consolas", "F
 export function getTerminalSettings(): TerminalSettings {
   try {
     const raw = localStorage.getItem("flightdeck-terminal-settings");
-    if (raw) return { ...DEFAULT_TERMINAL_SETTINGS, ...JSON.parse(raw) };
+    if (raw) {
+      const p = JSON.parse(raw);
+      // A stored string, number, null or array parses fine but is not a settings object.
+      if (p && typeof p === "object" && !Array.isArray(p)) return { ...DEFAULT_TERMINAL_SETTINGS, ...p };
+    }
   } catch { /* non-persistent */ }
   return DEFAULT_TERMINAL_SETTINGS;
 }
@@ -197,14 +201,20 @@ export const CONTEXTUAL_SHORTCUTS: Array<ShortcutDef & { context: string }> = [
   { id: "review-next-hunk", label: "Next diff hunk", combo: "N", context: "Review drawer" },
   { id: "review-prev-hunk", label: "Previous diff hunk", combo: "P", context: "Review drawer" },
 ];
+/** Stored {id: combo} overrides. Valid JSON that is not an object (null, a number, an array) is
+ *  ignored, otherwise `overrides[s.id]` below would throw on every key press. */
+function shortcutOverrides(): Record<string, string> {
+  try {
+    const p = JSON.parse(localStorage.getItem("flightdeck-shortcuts") || "{}");
+    return p && typeof p === "object" && !Array.isArray(p) ? p : {};
+  } catch { return {}; }
+}
 export function getShortcuts(): ShortcutDef[] {
-  let overrides: Record<string, string> = {};
-  try { overrides = JSON.parse(localStorage.getItem("flightdeck-shortcuts") || "{}"); } catch { /* non-persistent */ }
+  const overrides = shortcutOverrides();
   return DEFAULT_SHORTCUTS.map((s) => ({ ...s, combo: overrides[s.id] ?? s.combo }));
 }
 export function saveShortcut(id: string, combo: string) {
-  let overrides: Record<string, string> = {};
-  try { overrides = JSON.parse(localStorage.getItem("flightdeck-shortcuts") || "{}"); } catch { /* non-persistent */ }
+  const overrides = shortcutOverrides();
   overrides[id] = combo;
   try { localStorage.setItem("flightdeck-shortcuts", JSON.stringify(overrides)); } catch { /* non-persistent */ }
 }
@@ -340,7 +350,7 @@ export type StartupBehavior = "reopen" | "launcher";
 export function getStartupBehavior(): StartupBehavior {
   // QRP9: reopening the last session is the default (the owner runs the same
   // fleet daily and the "Reopen?" dialog was a click every morning).
-  try { return (localStorage.getItem("flightdeck-startup") as StartupBehavior) || "reopen"; } catch { return "reopen"; }
+  try { return localStorage.getItem("flightdeck-startup") === "launcher" ? "launcher" : "reopen"; } catch { return "reopen"; }
 }
 export function saveStartupBehavior(v: StartupBehavior) {
   try { localStorage.setItem("flightdeck-startup", v); } catch { /* non-persistent */ }
