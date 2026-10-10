@@ -1308,9 +1308,14 @@ mod tests {
         assert_eq!(env_of(&c, "CLAUDE_CODE_NO_FLICKER").as_deref(), Some("1"));
         assert_eq!(env_of(&c, "CLAUDE_CODE_DISABLE_MOUSE").as_deref(), Some("1"));
         assert_eq!(env_of(&c, "CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN"), None);
-        // Other vendors never get the claude env.
+        // Other vendors never get the claude env ADDED. The command builder starts from the
+        // process environment, so when the tests run inside a Claude pane (this var already
+        // set) it is inherited, not added: compare with the ambient value, not with None.
         let (c, plan) = build_command("pwsh", "D:\\t", None, false, None);
-        assert_eq!(env_of(&c, "CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN"), None);
+        assert_eq!(
+            env_of(&c, "CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN"),
+            std::env::var("CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN").ok()
+        );
         assert!(plan.session_id.is_none());
     }
 
