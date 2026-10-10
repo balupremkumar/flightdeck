@@ -99,6 +99,13 @@ describe("vendor accents", () => {
     localStorage.setItem("flightdeck-vendor-accents", "{");
     expect(vendorAccentOverrides()).toEqual({});
   });
+  it("treats valid JSON that is not an id-to-colour map as no overrides", () => {
+    for (const stored of ["null", "42", '"x"', "[1,2]", "true"]) {
+      localStorage.setItem("flightdeck-vendor-accents", stored);
+      expect(vendorAccentOverrides(), stored).toEqual({});
+      expect(vendorColor("claude"), stored).toBe("var(--agent-claude)");
+    }
+  });
   it("persists, applies and removes overrides while notifying subscribers", () => {
     const before = vendorList();
     const subscriber = vi.fn();

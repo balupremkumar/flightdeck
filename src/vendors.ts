@@ -130,7 +130,12 @@ export function accentCss(accent: string): string {
 const VENDOR_ACCENT_KEY = "flightdeck-vendor-accents";
 
 export function vendorAccentOverrides(): Record<string, string> {
-  try { return JSON.parse(localStorage.getItem(VENDOR_ACCENT_KEY) ?? "{}"); } catch { return {}; }
+  try {
+    const map = JSON.parse(localStorage.getItem(VENDOR_ACCENT_KEY) ?? "{}");
+    // A stored `null`, number or array parses fine but is not an {id: hex} map, and
+    // vendorColor would throw on it.
+    return map && typeof map === "object" && !Array.isArray(map) ? map : {};
+  } catch { return {}; }
 }
 
 export function setVendorAccentOverride(id: string, hex: string | null) {
